@@ -109,12 +109,12 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 }
 .welcome-input-footer{display:flex;align-items:center;justify-content:flex-end;padding:6px 10px;}
 #welcome-send{
-  width:32px;height:32px;background:var(--ac);border:none;
-  border-radius:8px;color:#fff;cursor:pointer;
+  width:36px;height:36px;background:var(--ac);border:none;
+  border-radius:10px;color:#fff;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  transition:background .12s;flex-shrink:0;
+  transition:background .15s,transform .1s;flex-shrink:0;
 }
-#welcome-send:hover{background:#a020a0;}
+#welcome-send:hover{background:#a020a0;transform:translateY(-1px);}
 #welcome-send svg{width:13px;height:13px;}
 .welcome-pills{display:flex;gap:7px;flex-wrap:nowrap;justify-content:center;max-width:600px;margin-bottom:20px;}
 .welcome-pill{
@@ -154,13 +154,13 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 }
 .inp-foot{display:flex;align-items:center;padding:5px 10px;}
 #btn-send{
-  width:34px;height:34px;background:var(--ac);border:none;
-  border-radius:9px;color:#fff;cursor:pointer;
+  width:36px;height:36px;background:var(--ac);border:none;
+  border-radius:10px;color:#fff;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  transition:background .15s;flex-shrink:0;margin-left:auto;
+  transition:background .15s,transform .1s;flex-shrink:0;margin-left:auto;
 }
-#btn-send:hover{background:#a020a0;}
-#btn-send svg{width:14px;height:14px;}
+#btn-send:hover{background:#a020a0;transform:translateY(-1px);}
+#btn-send svg{width:15px;height:15px;}
 .msg-row{display:flex;margin-bottom:20px;animation:fadeUp .2s ease;align-items:flex-start;}
 .msg-row.user{justify-content:flex-end;}
 .msg-txt{font-size:14px;line-height:1.65;white-space:pre-wrap;word-wrap:break-word;}
@@ -343,6 +343,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <div id="welcome">
       <div id="welcome-heading">Start shipping with<br>Freight and Logistics, Inc.</div>
       <div id="welcome-trust">In operation since 2010 &nbsp;·&nbsp; 50+ carriers &nbsp;·&nbsp; White glove residential specialists</div>
+      <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 2 minutes</div>
 
       <div id="welcome-input-wrap">
         <textarea id="welcome-textarea" placeholder="Ask about rates, white glove delivery, tracking, or opening an account…" rows="1"
@@ -350,7 +351,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();welcomeSend();}"></textarea>
         <div class="welcome-input-footer">
           <button id="welcome-send" onclick="welcomeSend()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
         </div>
       </div>
@@ -406,7 +407,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
           <div class="inp-foot">
             <button id="btn-send" onclick="sendMsg()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </button>
           </div>
         </div>
@@ -492,7 +493,7 @@ WHEN ONBOARDING: Ask in this order:
 17. Offer invoice upload for free pricing review — we often beat current rates 15-25%
 18. Full name to authorize the credit application (Net 15, ACH or payment portal)
 
-WHEN NOT ONBOARDING: Answer freight questions directly. If someone asks for a quote, explain you can get them live rates once their account is active — it takes 2 minutes to set up right now.
+WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 2 minutes with no obligation, and once they are in we pull live contract rates from 50+ carriers instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
 
 COMPANY: Freight and Logistics, Inc. Phone: (800) 687-3713. Email: support@freightandlogistics.com. Hours: Mon-Fri 6:30 AM - 4:00 PM PST. PO Box 35311, Los Angeles, CA 90035. Terms: Net 15. Payment: ACH or payment portal.
 
@@ -510,10 +511,12 @@ async function callAI(userMsg) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':APIKEY,'anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,system:SYSTEM_PROMPT,messages:chatHistory})
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:SYSTEM_PROMPT,messages:chatHistory})
     });
     const d = await r.json();
+    if (!r.ok) throw new Error('API error ' + r.status);
     let text = (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+    if (!text) throw new Error('empty response');
     chatHistory.push({role:'assistant',content:text});
     removeTyping();
     const fillRe = /\[\[FILL:([^:]+):([^\]]*)\]\]/g;
@@ -522,7 +525,7 @@ async function callAI(userMsg) {
     appendBot(text.replace(/\[\[FILL:[^\]]*\]\]/g,'').trim());
   } catch(e) {
     removeTyping();
-    appendBot('Having trouble connecting. Please try again or call (800) 687-3713.');
+    appendBot('Having a moment of trouble — please try again or call us at (800) 687-3713 and we will help you right away.');
   }
 }
 
