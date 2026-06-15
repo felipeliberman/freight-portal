@@ -5455,7 +5455,7 @@ function renderSessionList() {
       titleEl.textContent = s.title;
       row.appendChild(titleEl);
       const dot = document.createElement('button');
-      dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+      dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>';
       dot.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 3px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
       dot.onclick = (e) => { e.stopPropagation(); showSessionMenu(e, s, row); };
       row.appendChild(dot);
