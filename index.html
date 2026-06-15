@@ -1049,6 +1049,90 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLoginModal();c
 function openMobileDrawer(){document.getElementById('mobile-drawer').classList.add('open');document.body.style.overflow='hidden';}
 function closeMobileDrawer(){document.getElementById('mobile-drawer').classList.remove('open');document.body.style.overflow='';}
 
+function openTermsPanel() {
+  const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">Legal Document</div>
+      <div style="font-size:12px;color:var(--mu);line-height:1.6;">This document governs the terms and conditions of your contract with Freight and Logistics, Inc. Please read carefully.</div>
+    </div>
+    ${[
+      ['1. Freight Brokerage', 'Freight and Logistics, Inc. is a Freight Broker. At no time does Freight and Logistics, Inc. hold, handle, store or transport freight. Customer acknowledges that Freight and Logistics, Inc. is a "freight broker" and NOT a "freight carrier."'],
+      ['2. Freight Carrier', 'The freight carrier is a duly licensed and registered company that provides all or part of the actual transportation of Customer\'s Shipment. The Carrier will be exclusively liable for the Shipment. Freight and Logistics, Inc. is not a freight carrier.'],
+      ['3. Customer Responsibilities', 'Customer is responsible for providing accurate weights, sizes, and descriptions of the Shipment including the freight class and NMFC code. All freight rates are quoted for business-to-business, dock-to-dock delivery. Residential services are available as an accessorial charge. Customer agrees to pay for all services as actually provided.'],
+      ['4. Bill of Lading (BOL)', 'On LTL shipments, Customer must use the Freight and Logistics, Inc. system-generated BOL and sign it prior to pickup. Under no circumstances shall Freight and Logistics, Inc. be shown on the BOL as the "Carrier."'],
+      ['5. Necessary Documentation', 'If Customer does not complete required documents, Freight and Logistics, Inc. may, where permitted by law, complete or correct documents at Customer\'s expense but is not obligated to do so.'],
+      ['6. BOL and Shipment Terms', 'Any BOL generated is NON-NEGOTIABLE and shall be deemed prepared by Customer. The General Rules Tariffs issued by the Carrier take precedence over any BOL terms and over these Terms and Conditions.'],
+      ['7. Customer\'s Warranties', 'Customer warrants compliance with all applicable state and federal laws, including customs, import/export laws, and economic sanctions. Freight and Logistics, Inc. assumes no liability for Customer\'s failure to comply.'],
+      ['8. Right to Cancel', 'Freight and Logistics, Inc. may cancel this Agreement and refuse service if the BOL is unsigned, attempts to designate Freight and Logistics, Inc. as "Carrier," or if shipments are tendered to unauthorized carriers.'],
+      ['9. Calculation of Rates', 'Shipments are rated by class, weight, size, volume, packing type, number of items, and commercial or residential service. All amounts are payable within Net 15 days. Late payments are subject to finance charges up to the maximum rate allowed by law.'],
+      ['10. LTL Service', 'Rates are based on origin and destination zip codes, distance, commodity freight class per NMFC, net shipping weight, and volume of space required.'],
+      ['11. TL Service', 'Rates are state-to-state and mileage-based. Full truckload includes two hours of detention. Cancellations less than four hours prior to scheduled pickup are charged $350 or 20%, whichever is greater.'],
+      ['12. Guaranteed Transit Time', 'Unless specifically listed as an accessorial, delivery times are estimates only. Delays caused by acts of God, war, or weather negate guaranteed service. Claims must be filed in writing within 10 business days of invoice.'],
+      ['13. Right to Refuse Shipments', 'Because Freight and Logistics, Inc. is not a common carrier, it reserves the right to refuse any shipment at any time.'],
+      ['14. Delay of Shipment', 'Neither Freight and Logistics, Inc. nor the Carrier shall be held liable for delays caused by accidents, governmental intervention, weather, or other circumstances beyond their control.'],
+      ['15. Preparation of Shipment', 'Customer is responsible for proper preparation, packing, load securement, and addressing of the Shipment unless otherwise arranged.'],
+      ['16. Claims and Limitations', 'Freight and Logistics, Inc. does not insure or indemnify Customer. In the event of a claim, Customer shall look solely to the Carrier and/or Customer\'s own insurance. Customer agrees to pay Freight and Logistics, Inc. regardless of any disputes with the Carrier.'],
+      ['17. Third Party Coverage', 'Freight and Logistics, Inc. may assist in obtaining third-party coverage upon request. If coverage is purchased and the shipment is later canceled, coverage fees are non-refundable.'],
+      ['18. Claim Assistance', 'Freight and Logistics, Inc. will assist with cargo claims as Customer\'s agent if a written claim is filed within 48 hours of delivery. The filing of a claim does not relieve Customer of freight charge obligations. Customer\'s account must be paid in full prior to claim assistance.'],
+      ['19. Exclusions of Liability', 'Freight and Logistics, Inc. is not liable for loss or non-delivery caused by Customer\'s act, defect of shipment, improper packing, or failure to follow carrier requirements.'],
+      ['20. Force Majeure', 'Freight and Logistics, Inc. is not liable for losses caused by acts of God, public enemies, war, terrorism, strikes, weather, or mechanical delay. Freight and Logistics, Inc.\'s liability shall be limited to fees paid with respect to the subject shipment.'],
+      ['21. Venue and Choice of Law', 'This Agreement is governed by the laws of the State of California. Venue for any legal action shall be exclusively in the courts of Los Angeles County, California, or in the U.S. District Court for the Western Division of California.'],
+      ['22. Payment for Services', 'Customer accepts full responsibility for a correct and accurate BOL and agrees to pay for all services as actually provided, including applicable accessorial charges, duties, taxes, and attorney fees allocable to the shipment.'],
+      ['23. Late Fees', 'All services are charged at the time of dispatch. If payment is not received within agreed terms, a $50 reprocessing charge will be applied and late fees of 10% of the total amount past due will be assessed.'],
+      ['24. Adjustments', 'If the actual shipment differs from the BOL, additional charges will be assessed. Charges and adjustments will be automatically debited to Customer\'s credit card or bank account.'],
+      ['25. No Withholding', 'Customer agrees it will not withhold payment to Freight and Logistics, Inc. for reasons related to disputes with the Carrier.'],
+      ['26. Method of Payment', 'Unless registered under a specialized plan, Customer must provide a valid credit card. By agreeing to these Terms, Customer authorizes Freight and Logistics, Inc. to automatically charge amounts payable for transportation services.'],
+      ['27. Changes in Terms', 'Freight and Logistics, Inc. may change or modify these Terms at any time. Changes are effective immediately upon notice. Continued use of services constitutes acceptance.'],
+      ['28. Severability', 'If any term or condition is found invalid or unenforceable, the remainder of the Agreement shall be unaffected.'],
+      ['29. No Waiver', 'Failure by Freight and Logistics, Inc. to insist upon performance of any term shall not constitute a waiver of that term on any subsequent occasion.'],
+      ['30. Indemnification', 'Customer agrees to indemnify and defend Freight and Logistics, Inc. against any claims, losses, fines, or penalties arising out of Customer\'s act, omission, or negligence.'],
+      ['31. Binding Effect', 'The individual purchasing on behalf of Customer warrants authority to bind Customer. This Agreement is binding upon the Parties and their respective heirs, successors, and assigns.'],
+    ].map(([title, text]) => `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">${title}</div>
+        <div style="font-size:13px;color:var(--mu);line-height:1.7;">${text}</div>
+      </div>`).join('')}
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">
+      Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>
+      (800) 687-3713 · support@freightandlogistics.com
+    </div>
+  </div>`;
+  openRightPanel('Terms and Conditions', html);
+}
+
+function openPrivacyPanel() {
+  const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">Legal Document</div>
+      <div style="font-size:12px;color:var(--mu);line-height:1.6;">This Privacy Policy describes your rights regarding our collection, use, storage, sharing, and protection of your personal information.</div>
+    </div>
+    ${[
+      ['Scope and Consent', 'By using Freight and Logistics and its related sites, applications, services and tools, you expressly consent to our collection, use, disclosure, and retention of your personal information as described in this Privacy Policy. We may amend this Policy at any time by posting updated terms on this site.'],
+      ['Mobile Privacy', 'This Privacy Policy applies to all mobile access and use of mobile devices. When you download or use our mobile applications or access a mobile-optimized site, we may receive information about your location and device, including a unique identifier. Most mobile devices allow you to control or disable location services in the device\'s settings.'],
+      ['Children\'s Privacy', 'The Freight and Logistics website is a general audience website and is not intended for children under the age of 18. We do not knowingly collect personal information from users in this age group.'],
+      ['Information We Collect Automatically', 'When you visit our sites or use our tools, we automatically collect information from your computer or mobile device. This may include: device ID, device type, geo-location, connection information, page view statistics, referral URLs, IP address, and standard web log information, including anonymous data from cookies and web beacons.'],
+      ['Information You Provide', 'We collect and store information you enter on our sites, including: account registration details (email, phone, physical contact information, and sometimes financial information); shipping and billing information; transactional information; and correspondence sent to us or generated through our sites.'],
+      ['Information from Other Sources', 'We may receive supplemental information about you from third-party sources, such as demographic data, credit check information, or additional contact details as permitted by law.'],
+      ['Use of Personal Information', 'We use your information to: provide access to our sites and services; prevent fraud and security breaches; customize and improve our services; contact you to resolve disputes, collect fees, or troubleshoot problems; and deliver targeted marketing and promotional offers based on your communication preferences.'],
+      ['Communication Preferences', 'You can control how and when you receive notifications from us through the Notification Settings section within My Account. You can also manage member-to-member communication preferences and choose which newsletters and promotions you receive.'],
+      ['Marketing', 'We do not sell or rent your personal information to third parties for their marketing purposes without your explicit consent. If you do not wish to receive marketing communications, you can indicate your preference in My Account or within any direct communication from us.'],
+      ['Disclosure of Your Information', 'We may disclose personal information to respond to legal requirements, enforce our policies, or protect anyone\'s rights or safety. We may also share information with service providers who support our business operations (such as fraud investigations and billing), and with other parties as authorized by you.'],
+      ['Data Security', 'We use industry-standard measures to protect your personal information from unauthorized access, alteration, or disclosure. However, no method of transmission over the internet is 100% secure.'],
+      ['Your Rights', 'You may request access, correction, or deletion of your personal information by contacting us at support@freightandlogistics.com.'],
+      ['Changes to This Policy', 'We may update this Privacy Policy from time to time. All amended terms automatically take effect immediately upon posting to this site.'],
+    ].map(([title, text]) => `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">${title}</div>
+        <div style="font-size:13px;color:var(--mu);line-height:1.7;">${text}</div>
+      </div>`).join('')}
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">
+      Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>
+      (800) 687-3713 · support@freightandlogistics.com
+    </div>
+  </div>`;
+  openRightPanel('Privacy Policy', html);
+}
+
 async function doIndexLogin() {
   const email = (document.getElementById('lm-email').value||'').trim().toLowerCase();
   const pw    = document.getElementById('lm-pw').value||'';
@@ -1079,9 +1163,9 @@ async function doIndexLogin() {
 <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 12px;padding:8px 20px;background:var(--card);border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);">
   <span>© 2026 Freight and Logistics, Inc.</span>
   <span>·</span>
-  <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Terms and Conditions</a>
+  <a href="#" onclick="event.preventDefault();openTermsPanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Terms and Conditions</a>
   <span>·</span>
-  <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
+  <a href="#" onclick="event.preventDefault();openPrivacyPanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
   <span>·</span>
   <a href="mailto:support@freightandlogistics.com" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">support@freightandlogistics.com</a>
 </div>
