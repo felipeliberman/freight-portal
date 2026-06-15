@@ -1087,13 +1087,11 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;
 
 <!-- FOOTER -->
 <footer>
-  <span>© 2026 by <a href=&quot;https://www.freightandlogistics.com/&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>Freight and Logistics, Inc.</a></span>
-  <span class=&quot;sep&quot;>-</span>
-  <a href=&quot;https://www.freightandlogistics.com/terms-and-conditions&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>Terms and Conditions</a>
-  <span class=&quot;sep&quot;>-</span>
-  <a href=&quot;https://www.freightandlogistics.com/privacy-policy&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>Privacy Policy</a>
-  <span class=&quot;sep&quot;>-</span>
-  <a href=&quot;mailto:support@freightandlogistics.com&quot;>support@freightandlogistics.com</a>
+  <span>© 2026 Freight and Logistics, Inc.</span>
+  <span class=&quot;sep&quot;>·</span>
+  <a href=&quot;#&quot; onclick=&quot;event.preventDefault();openTermsPanel()&quot;>Terms and Conditions</a>
+  <span class=&quot;sep&quot;>·</span>
+  <a href=&quot;#&quot; onclick=&quot;event.preventDefault();openPrivacyPanel()&quot;>Privacy Policy</a>
 </footer>
 
 <!-- SIGNUP MODAL -->
@@ -5605,6 +5603,33 @@ async function updatePlaceholder() {
 }
 
 function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
+
+function openTermsPanel() {
+  const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">Legal Document</div>
+      <div style="font-size:12px;color:var(--mu);line-height:1.6;">This document governs the terms and conditions of your contract with Freight and Logistics, Inc.</div>
+    </div>
+    ${[['1. Freight Brokerage','Freight and Logistics, Inc. is a Freight Broker. At no time does Freight and Logistics, Inc. hold, handle, store or transport freight.'],['2. Freight Carrier','The freight carrier provides all actual transportation. The Carrier will be exclusively liable for the Shipment. Freight and Logistics, Inc. is not a freight carrier.'],['3. Customer Responsibilities','Customer is responsible for accurate weights, sizes, descriptions, freight class and NMFC code. Customer agrees to pay for all services as actually provided.'],['4. Bill of Lading (BOL)','Customer must use the Freight and Logistics, Inc. system-generated BOL and sign it prior to pickup. Freight and Logistics, Inc. shall never appear as the Carrier on a BOL.'],['5. Calculation of Rates','Shipments are rated by class, weight, size, volume, packing type, and service type. All amounts payable within Net 15 days. Late payments subject to finance charges.'],['6. Guaranteed Transit Time','Unless listed as an accessorial, delivery times are estimates only. Claims must be filed in writing within 10 business days of invoice.'],['7. Claims and Limitations','In the event of a claim, Customer shall look solely to the Carrier and/or Customer's own insurance. Customer agrees to pay Freight and Logistics, Inc. regardless of disputes with the Carrier.'],['8. Late Fees','If payment is not received within agreed terms, a $50 reprocessing charge and late fees of 10% of the total amount past due will be assessed.'],['9. Adjustments','If the actual shipment differs from the BOL, additional charges will be assessed and automatically debited.'],['10. Venue and Choice of Law','Governed by California law. Venue exclusively in Los Angeles County courts or the U.S. District Court for the Western Division of California.'],['11. Indemnification','Customer agrees to indemnify and defend Freight and Logistics, Inc. against claims arising from Customer's act, omission, or negligence.'],['12. Changes in Terms','Freight and Logistics, Inc. may change Terms at any time. Continued use of services constitutes acceptance.']].map(([t,x]) => \`<div style="margin-bottom:16px;"><div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">\${t}</div><div style="font-size:13px;color:var(--mu);line-height:1.7;">\${x}</div></div>\`).join('')}
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.com</div>
+  </div>`;
+  const el = document.createElement('div'); el.innerHTML = html;
+  openRightPanel(el, 'Terms and Conditions');
+}
+
+function openPrivacyPanel() {
+  const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">Legal Document</div>
+      <div style="font-size:12px;color:var(--mu);line-height:1.6;">This Privacy Policy describes your rights regarding our collection, use, storage, sharing, and protection of your personal information.</div>
+    </div>
+    ${[['Scope and Consent','By using Freight and Logistics sites and tools, you consent to our collection, use, disclosure, and retention of your personal information as described in this Privacy Policy.'],['Information We Collect','We automatically collect device ID, geo-location, page view stats, IP address, and standard web log data. We also collect information you enter including account details, shipping and billing information, and correspondence.'],['Use of Personal Information','We use your information to provide services, prevent fraud, customize your experience, contact you to resolve disputes, and deliver relevant marketing based on your communication preferences.'],['Marketing','We do not sell or rent your personal information to third parties for marketing without your explicit consent.'],['Data Security','We use industry-standard measures to protect your personal information. No method of internet transmission is 100% secure.'],['Your Rights','You may request access, correction, or deletion of your personal information by contacting support@freightandlogistics.com.'],['Changes to This Policy','We may update this Privacy Policy at any time. Amended terms take effect immediately upon posting.']].map(([t,x]) => \`<div style="margin-bottom:16px;"><div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">\${t}</div><div style="font-size:13px;color:var(--mu);line-height:1.7;">\${x}</div></div>\`).join('')}
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.com</div>
+  </div>`;
+  const el = document.createElement('div'); el.innerHTML = html;
+  openRightPanel(el, 'Privacy Policy');
+}
+
 function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); sessionStorage.removeItem('fl_session'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
 function addRecent(title) { renderSessionList(); }
@@ -5648,7 +5673,12 @@ function showChatArea() { document.getElementById('welcome').style.display='none
 function welcomeAction(action) { showChatArea(); quickAction(action); }
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
-function openTalk(){ var t=document.getElementById('talk-view'); if(!t) return; var pv=document.getElementById('public-view'); var ap=document.getElementById('app'); if(pv) pv.style.display='none'; if(ap) ap.style.display='none'; t.style.display='flex'; t.scrollTop=0; }
+function openTalk(){
+  var el = document.createElement('div');
+  el.style.cssText = 'padding:0;height:100%;display:flex;flex-direction:column;';
+  el.innerHTML = '<iframe src="https://www.freightandlogistics.com/demo-session" title="Book a demo session" loading="lazy" style="flex:1;width:100%;border:none;min-height:500px;"></iframe>';
+  openRightPanel(el, 'Talk to Sales');
+}
 function closeTalk(){ var t=document.getElementById('talk-view'); if(t) t.style.display='none'; setLoggedIn(!!currentCustomer); }
 function talkToQuote(){
   closeTalk();
