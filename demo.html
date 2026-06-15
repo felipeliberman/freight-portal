@@ -313,6 +313,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   display:flex;align-items:flex-end;background:#f0ede8;
   border-bottom:1px solid var(--bdr);flex-shrink:0;
   min-height:38px;padding-top:4px;overflow-x:auto;
+  position:relative;z-index:10;pointer-events:all;
 }
 #rp-tabs-inner{display:flex;align-items:flex-end;flex:1;overflow-x:auto;padding-left:4px;}
 #rp-close-all{background:none;border:none;font-size:18px;cursor:pointer;color:#706c63;
@@ -1580,32 +1581,49 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
   const main    = document.getElementById('main');
   if (!resizer || !panel || !main) return;
   let dragging = false;
-  resizer.addEventListener('mousedown', e=>{ if (e.button !== 0) return; dragging=true; e.preventDefault(); e.stopPropagation(); document.body.style.userSelect='none'; });
+  resizer.addEventListener('mousedown', e=>{
+    if (e.button !== 0) return;
+    dragging = true;
+    // Remove .open class so CSS width doesn't fight inline style
+    panel.classList.remove('open');
+    e.preventDefault(); e.stopPropagation();
+    document.body.style.userSelect = 'none';
+  });
   document.addEventListener('mousemove', e=>{
     if (!dragging) return;
-    const pct = ((window.innerWidth - e.clientX) / window.innerWidth) * 100;
-    if (pct > 12 && pct < 75) {
-      const w = Math.round((window.innerWidth * pct) / 100);
+    const w = window.innerWidth - e.clientX;
+    if (w < 120) {
+      // Close if dragged nearly shut
+      panel.style.width = '0';
+    } else if (w < window.innerWidth * 0.75) {
       panel.style.width = w + 'px';
       panel.style.transition = 'none';
     }
   });
   document.addEventListener('mouseup', ()=>{
-    dragging=false;
-    document.body.style.userSelect='';
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
     panel.style.transition = '';
+    // If dragged shut, fully close
+    const w = parseInt(panel.style.width) || 0;
+    if (w < 120) {
+      closeRightPanel();
+    }
   });
   // Touch support
-  resizer.addEventListener('touchstart', e=>{ dragging=true; }, {passive:true});
+  resizer.addEventListener('touchstart', e=>{ dragging=true; panel.classList.remove('open'); }, {passive:true});
   document.addEventListener('touchmove', e=>{
     if (!dragging) return;
-    const pct = ((window.innerWidth - e.touches[0].clientX) / window.innerWidth) * 100;
-    if (pct > 12 && pct < 75) {
-      panel.style.width = Math.round((window.innerWidth * pct)/100) + 'px';
-      panel.style.transition = 'none';
-    }
+    const w = window.innerWidth - e.touches[0].clientX;
+    if (w < 120) { panel.style.width = '0'; }
+    else if (w < window.innerWidth * 0.75) { panel.style.width = w + 'px'; panel.style.transition = 'none'; }
   }, {passive:true});
-  document.addEventListener('touchend', ()=>{ dragging=false; panel.style.transition=''; });
+  document.addEventListener('touchend', ()=>{
+    if (!dragging) return;
+    dragging = false; panel.style.transition = '';
+    if ((parseInt(panel.style.width)||0) < 120) closeRightPanel();
+  });
 })();
 
 // ── MAP COORDS & INIT ─────────────────────────────────────────────────────────
@@ -2984,13 +3002,51 @@ document.addEventListener('keydown', e=>{
 });
 function openMeetingPanel() {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;';
-  wrap.innerHTML = '<div style="padding:14px 16px;border-bottom:1px solid var(--bdr);flex-shrink:0;"><div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:2px;">Book your Demo with a Freight and Logistics, Inc. Specialist.</div><div style="font-size:11px;color:var(--mu);">Schedule time with a member of our team.</div></div>';
+  wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;';
+
+  // Header with rich info
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'flex-shrink:0;padding:16px 18px;border-bottom:1px solid var(--bdr);background:var(--card);';
+  hdr.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+      '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--ac),#7c3aed);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.37 2 2 0 0 1 3.64 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.64a16 16 0 0 0 6 6l.95-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>' +
+      '</div>' +
+      '<div>' +
+        '<div style="font-size:14px;font-weight:700;color:var(--tx);">Talk to Our Team</div>' +
+        '<div style="font-size:11px;color:var(--mu);">Free consultation · No obligation · 15 minutes</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
+      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">LTL Freight</div>' +
+        '<div style="font-size:11px;color:var(--tx);">Live rates from 50+ carriers. Book in 60 seconds.</div>' +
+      '</div>' +
+      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">White Glove</div>' +
+        '<div style="font-size:11px;color:var(--tx);">Residential last-mile with automated accessorial detection.</div>' +
+      '</div>' +
+      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Free TMS</div>' +
+        '<div style="font-size:11px;color:var(--tx);">Full portal access — quotes, tracking, invoices, reports.</div>' +
+      '</div>' +
+      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Ground & Parcel</div>' +
+        '<div style="font-size:11px;color:var(--tx);">UPS and FedEx Ground alongside your freight — one account.</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.18);border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px;">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' +
+      '<span style="font-size:11px;color:var(--tx);">Opening an account is <strong>100% free</strong> with no obligation. We typically beat current rates by 15–25%.</span>' +
+    '</div>';
+  wrap.appendChild(hdr);
+
+  // Iframe wrapper — pointer-events blocked on iframe so tab bar stays clickable
   const iframeWrap = document.createElement('div');
-  iframeWrap.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+  iframeWrap.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative;';
   const iframe = document.createElement('iframe');
   iframe.src = 'https://meetings.hubspot.com/felipe-liberman/demo?uuid=851b4f7f-a823-4fff-bd5c-96891d22e27d&embed=true';
-  iframe.style.cssText = 'border:none;width:100%;height:700px;display:block;';
+  iframe.style.cssText = 'border:none;width:100%;height:720px;display:block;';
   iframe.title = 'Book a Demo';
   iframeWrap.appendChild(iframe);
   wrap.appendChild(iframeWrap);
