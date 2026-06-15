@@ -429,7 +429,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #welcome-input-wrap{display:none !important;}
 
   /* Chat area */
-  #chat-area{height:100%;display:none;flex-direction:column;}
+  #chat-area{height:100%;flex-direction:column;}
   #chat-area.shown{display:flex !important;}
   #messages{
     flex:1;overflow-y:auto;
@@ -5630,7 +5630,12 @@ function showSessionMenu(e, s, row) {
   setTimeout(() => document.addEventListener('click', () => menu.remove(), {once:true}), 0);
 }
 function togglePw() { const p=document.getElementById('login-pw'); p.type=p.type==='password'?'text':'password'; }
-function showChatArea() { document.getElementById('welcome').style.display='none'; document.getElementById('chat-area').style.display='flex'; }
+function showChatArea() { 
+  const w=document.getElementById('welcome'); 
+  const ca=document.getElementById('chat-area'); 
+  if(w) w.style.display='none'; 
+  if(ca){ca.style.display='flex';ca.classList.add('shown');}
+}
 function welcomeAction(action) { showChatArea(); quickAction(action); }
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
