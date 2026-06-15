@@ -476,7 +476,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 </div>
 
 <!-- BODY -->
-<div id="demo-banner" style="background:#1a1816;color:#a8a29a;font-size:11px;text-align:center;padding:7px 20px;display:flex;align-items:center;justify-content:center;gap:16px;flex-shrink:0;">
+<div id="demo-banner" style="background:#fdf0fd;border-bottom:1px solid rgba(189,39,188,.15);color:var(--mu);font-size:11px;text-align:center;padding:7px 20px;display:flex;align-items:center;justify-content:center;gap:16px;flex-shrink:0;">
   <span>This is an interactive demo of the Freight and Logistics portal. Data shown is for illustration only.</span>
   <a href="portal.html" style="color:#bd27bc;font-weight:600;text-decoration:none;white-space:nowrap;">Sign In to Your Account →</a>
 </div>
@@ -1915,7 +1915,7 @@ function showShipmentDetail(i) {
   overlay.innerHTML = `<div style="background:var(--card);border-radius:16px;width:100%;max-width:860px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:hidden;">
 
     <!-- SAMPLE DATA NOTICE -->
-    <div style="background:#1a1816;color:#a8a29a;font-size:11px;text-align:center;padding:6px 20px;flex-shrink:0;">
+    <div style="background:#fdf0fd;border-bottom:1px solid rgba(189,39,188,.15);color:var(--mu);font-size:11px;text-align:center;padding:6px 20px;flex-shrink:0;">
       Sample data for illustration · <a href="portal.html" style="color:#bd27bc;font-weight:600;text-decoration:none;">Sign In to Your Account →</a>
     </div>
 
@@ -2163,7 +2163,7 @@ function showInvoiceDetail(i) {
   overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
   overlay.innerHTML =
     '<div style="background:var(--card);border-radius:14px;width:100%;max-width:620px;max-height:90vh;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.25);display:flex;flex-direction:column;">'+
-    '<div style="background:#1a1816;color:#a8a29a;font-size:11px;text-align:center;padding:6px 20px;flex-shrink:0;">Sample data · <a href="portal.html" style="color:#bd27bc;font-weight:600;text-decoration:none;">Sign In →</a></div>'+
+    '<div style="background:#fdf0fd;border-bottom:1px solid rgba(189,39,188,.15);color:var(--mu);font-size:11px;text-align:center;padding:6px 20px;flex-shrink:0;">Sample data · <a href="portal.html" style="color:#bd27bc;font-weight:600;text-decoration:none;">Sign In →</a></div>'+
     '<div style="background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 24px;flex-shrink:0;display:flex;align-items:center;gap:0;position:relative;flex-wrap:wrap;padding-right:52px;">'+
       '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:20px;margin-right:4px;">'+
         '<div style="font-size:11px;font-weight:500;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:3px;">Invoice</div>'+
