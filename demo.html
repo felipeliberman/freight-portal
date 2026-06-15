@@ -342,7 +342,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 .rp-chrome-tab:hover .rp-tab-close,
 .rp-chrome-tab.active .rp-tab-close{opacity:1;}
 .rp-tab-close:hover{background:rgba(0,0,0,.15);}
-#rp-body{flex:1;overflow:hidden;padding:0;display:flex;flex-direction:column;}
+#rp-body{flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column;}
 
 /* ── SETUP FORM in right panel ── */
 .setup-form{padding:20px;}
@@ -2481,7 +2481,7 @@ function buildReportsPanel() {
   chartsRow.appendChild(buildCarrierChart('Shipments by Carrier', carrierMap, carrierIconMap));
   const STATUS_COLORS = {'Delivered':'#b0ac9f','Out for Delivery':'var(--ac)','In Transit':'var(--ac)','Dispatched':'var(--ac)','Scheduled':'#706c63','Exception':'#dc2626','Other':'#b0ac9f','Unknown':'#d1d5db'};
   const filteredStatus = Object.fromEntries(Object.entries(statusMap).filter(([k]) => k !== 'Unknown' || statusMap[k] > 0));
-  const statusColorArr = Object.keys(filteredStatus).map(k => STATUS_COLORS[k] || '#9ca3af');
+  const statusColorArr = Object.keys(filteredStatus).map(k => (STATUS_COLORS[k] || '#9ca3af').replace('var(--ac)', '#bd27bc'));
   chartsRow.appendChild(buildPieChart('Shipments by Status', filteredStatus, statusColorArr));
   container.appendChild(chartsRow);
 
@@ -2495,9 +2495,9 @@ function buildReportsPanel() {
   const last8months = monthsSorted.slice(-8);
   const monthSorted = {};
   last8months.forEach(k => monthSorted[k] = monthMap[k]);
-  chartsRow2.appendChild(buildBarChart('Monthly Shipment Volume', monthSorted, 'var(--ac)'));
+  chartsRow2.appendChild(buildBarChart('Monthly Shipment Volume', monthSorted, '#bd27bc'));
   const topStates = Object.entries(regionMap).sort((a,b) => b[1]-a[1]).slice(0,8);
-  chartsRow2.appendChild(buildBarChart('Top Destination States', Object.fromEntries(topStates), 'var(--ac)'));
+  chartsRow2.appendChild(buildBarChart('Top Destination States', Object.fromEntries(topStates), '#bd27bc'));
   container.appendChild(chartsRow2);
 
   // ── Spend by month ────────────────────────────────────────────────────────
