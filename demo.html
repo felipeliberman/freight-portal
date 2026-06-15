@@ -1488,19 +1488,18 @@ async function doDemoLogin() {
   btn.textContent = 'Signing in…'; btn.disabled = true;
   try {
     const r = await fetch('https://freightandlogistics-api.shipprimus.com/api/v1/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: email, password: pw })
     });
     if (!r.ok) throw new Error('invalid');
     const d = await r.json();
-    const token = d.data && d.data.accessToken;
-    if (!token) throw new Error('invalid');
-    // Success — write to localStorage so portal auto-logs in
-    localStorage.setItem('fl_remember', JSON.stringify({ email, pw }));
+    if (!d.data || !d.data.accessToken) throw new Error('invalid');
+    // Match exactly what homepage does so portal picks it up
+    sessionStorage.setItem('fl_email', email);
+    sessionStorage.setItem('fl_pw', pw);
     window.location.href = 'portal.html';
   } catch(e) {
-    errEl.textContent = 'Incorrect email or password. Need help? Email support@freightandlogistics.com';
+    errEl.textContent = 'Invalid email or password. Please try again.';
     errEl.style.display = 'block'; btn.textContent = 'Sign In →'; btn.disabled = false;
   }
 }
