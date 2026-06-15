@@ -306,19 +306,39 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 #right-panel.open{width:440px;}
 #right-resizer{display:none;}
 #right-resizer.visible{display:flex;}
-.rp-header{
-  height:48px;border-bottom:1px solid var(--bdr);
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 16px;flex-shrink:0;
+/* Chrome tab bar */
+#rp-tab-bar{
+  display:flex;align-items:flex-end;background:#f0ede8;
+  border-bottom:1px solid var(--bdr);flex-shrink:0;
+  min-height:38px;padding-top:4px;overflow-x:auto;
 }
-.rp-title{font-size:13px;font-weight:600;color:var(--tx);}
-.rp-close{
-  width:26px;height:26px;border-radius:6px;border:1px solid var(--bdr);
-  background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  color:var(--mu);transition:all .12s;
+#rp-tabs-inner{display:flex;align-items:flex-end;flex:1;overflow-x:auto;padding-left:4px;}
+#rp-close-all{background:none;border:none;font-size:18px;cursor:pointer;color:#706c63;
+  padding:0 12px 6px;flex-shrink:0;line-height:1;align-self:center;}
+.rp-chrome-tab{
+  position:relative;display:flex;align-items:center;gap:5px;
+  padding:6px 28px 6px 12px;min-width:80px;max-width:180px;
+  background:#f0ede8;border:1px solid transparent;border-bottom:none;
+  border-radius:8px 8px 0 0;cursor:pointer;font-family:var(--font);
+  font-size:12px;font-weight:400;color:var(--mu);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  margin-right:1px;transition:background .1s;flex-shrink:0;
 }
-.rp-close:hover{background:rgba(0,0,0,.05);color:var(--tx);}
-.rp-close svg{width:14px;height:14px;}
+.rp-chrome-tab.active{
+  background:#fff;border-color:var(--bdr);color:var(--tx);font-weight:600;
+  z-index:2;margin-bottom:-1px;padding-bottom:7px;
+}
+.rp-chrome-tab:not(.active):hover{background:#e8e4de;}
+.rp-tab-close{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:16px;height:16px;border-radius:50%;border:none;background:none;
+  cursor:pointer;color:var(--mu);font-size:13px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .1s;padding:0;
+}
+.rp-chrome-tab:hover .rp-tab-close,
+.rp-chrome-tab.active .rp-tab-close{opacity:1;}
+.rp-tab-close:hover{background:rgba(0,0,0,.15);}
 #rp-body{flex:1;overflow-y:auto;padding:0;}
 
 /* ── SETUP FORM in right panel ── */
@@ -614,11 +634,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
   <!-- RIGHT PANEL -->
   <div id="right-panel">
-    <div class="rp-header">
-      <span class="rp-title" id="rp-title">Details</span>
-      <button class="rp-close" onclick="closeRightPanel()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+    <div id="rp-tab-bar">
+      <div id="rp-tabs-inner"></div>
+      <button id="rp-close-all" onclick="closeRightPanel()">×</button>
     </div>
     <div id="rp-body"></div>
   </div>
@@ -876,20 +894,95 @@ function resetToWelcome() {
 }
 
 // ── RIGHT PANEL ───────────────────────────────────────────────────────────────
-function openRightPanel(title, html) {
-  document.getElementById('rp-title').textContent = title;
-  const body = document.getElementById('rp-body');
-  body.innerHTML = '';
-  if (html instanceof HTMLElement) {
-    body.appendChild(html);
+// ── Chrome-tab right panel state ─────────────────────────────────────────────
+const demoRpState = { tabs: [], activeId: null };
+
+const DEMO_TAB_ICONS = {
+  'My Shipments':   '<rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/>',
+  'Get a Quote':    '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'Saved Quotes':   '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  'Invoices':       '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+  'Reports':        '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+  'Address Book':   '<path d="M4 2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="14" y2="14"/>',
+  'Shipping Items': '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
+  'Track Shipment': '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  'Contact Support':'<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+  'Account Setup':  '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  'Settings':       '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+};
+
+function openRightPanel(title, content) {
+  const existing = demoRpState.tabs.find(t => t.title === title);
+  if (existing) {
+    existing.el = content;
+    demoRpState.activeId = existing.id;
   } else {
-    body.innerHTML = html;
+    const id = 'dt-' + Date.now();
+    demoRpState.tabs.push({ id, title, el: content });
+    demoRpState.activeId = id;
   }
+  renderDemoPanel();
   document.getElementById('right-panel').classList.add('open');
   document.getElementById('right-resizer').classList.add('visible');
+  initMapsInPanel();
 }
+
+function renderDemoPanel() {
+  const tabsInner = document.getElementById('rp-tabs-inner');
+  const body = document.getElementById('rp-body');
+  if (!tabsInner || !body) return;
+  tabsInner.innerHTML = '';
+  const active = demoRpState.tabs.find(t => t.id === demoRpState.activeId);
+
+  demoRpState.tabs.forEach(tab => {
+    const isActive = tab.id === demoRpState.activeId;
+    const btn = document.createElement('button');
+    btn.className = 'rp-chrome-tab' + (isActive ? ' active' : '');
+    btn.onclick = () => { demoRpState.activeId = tab.id; renderDemoPanel(); };
+
+    const iconKey = Object.keys(DEMO_TAB_ICONS).find(k => tab.title.startsWith(k)) || 'Get a Quote';
+    const svgSpan = document.createElement('span');
+    svgSpan.style.cssText = 'flex-shrink:0;display:flex;align-items:center;';
+    svgSpan.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + (isActive ? 'var(--ac)' : 'var(--mu)') + '" stroke-width="1.75">' + DEMO_TAB_ICONS[iconKey] + '</svg>';
+    btn.appendChild(svgSpan);
+    const titleSpan = document.createElement('span');
+    titleSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;flex:1;';
+    titleSpan.textContent = tab.title;
+    btn.appendChild(titleSpan);
+    const xBtn = document.createElement('button');
+    xBtn.className = 'rp-tab-close';
+    xBtn.textContent = '×';
+    xBtn.onclick = (e) => { e.stopPropagation(); closeDemoTab(tab.id); };
+    btn.appendChild(xBtn);
+    tabsInner.appendChild(btn);
+  });
+
+  body.innerHTML = '';
+  if (active) {
+    if (active.el instanceof HTMLElement) {
+      body.appendChild(active.el);
+    } else {
+      body.innerHTML = active.el || '';
+    }
+  }
+}
+
+function closeDemoTab(id) {
+  demoRpState.tabs = demoRpState.tabs.filter(t => t.id !== id);
+  if (!demoRpState.tabs.length) {
+    closeRightPanel();
+  } else {
+    demoRpState.activeId = demoRpState.tabs[demoRpState.tabs.length - 1].id;
+    renderDemoPanel();
+  }
+}
+
 function closeRightPanel() {
+  demoRpState.tabs = [];
+  demoRpState.activeId = null;
   document.getElementById('right-panel').classList.remove('open');
+  document.getElementById('right-resizer').classList.remove('visible');
+  document.querySelectorAll('.sb-link').forEach(l => l.classList.remove('active'));
 }
 
 // ── FORM PANEL ────────────────────────────────────────────────────────────────
@@ -1559,7 +1652,7 @@ function openDemoPanel(type) {
   setActiveSbLink('nav-'+type);
   switch(type) {
     case 'shipments': showShipments(); break;
-    case 'quote':     showQuoteDemo(); break;
+    case 'quote':     showChatArea(); appendBot('Here are live rates from our carrier network — enter your shipment details to get started.'); showQuoteDemo(); break;
     case 'saved':     showSavedQuotesDemo(); break;
     case 'track':     showTrackDemo(); break;
     case 'invoices':  showInvoices(); break;
@@ -2168,20 +2261,22 @@ function showReports() {
 
 function buildReportsPanel() {
   const ships = SAMPLE_SHIPS;
-  const invs  = SAMPLE_INVOICES;
 
-  // Compute stats
-  const totalSpend   = ships.reduce((s,x) => s + x.cost, 0);
-  const delivered    = ships.filter(s => s.status === 'Delivered').length;
-  const inTransit    = ships.filter(s => s.status === 'In Transit' || s.status === 'Pending Pickup').length;
+  // ── Compute data ──────────────────────────────────────────────────────────
+  const totalSpend = ships.reduce((s,x) => s + x.cost, 0);
+  const delivered  = ships.filter(s => s.status === 'Delivered').length;
+  const inTransit  = ships.filter(s => s.status === 'In Transit' || s.status === 'Pending Pickup').length;
+  const exception  = ships.filter(s => s.status === 'Claim Filed').length;
 
-  // Carrier breakdown
   const carrierMap = {};
   ships.forEach(s => { carrierMap[s.carrier] = (carrierMap[s.carrier]||0) + s.cost; });
-  const carrierEntries = Object.entries(carrierMap).sort((a,b)=>b[1]-a[1]);
-  const maxCarrierSpend = carrierEntries[0][1];
+  const carrierEntries = Object.entries(carrierMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const maxCarrier = carrierEntries[0][1];
 
-  // Monthly spend (last 6 months using index as proxy)
+  const statusMap = { Delivered: delivered, 'In Transit': inTransit, Exception: exception };
+  const statusColors = { Delivered: '#b0ac9f', 'In Transit': 'var(--ac)', Exception: '#dc2626' };
+
+  // Monthly spend last 6 months
   const monthLabels = [];
   const monthSpend  = {};
   for (let i = 5; i >= 0; i--) {
@@ -2193,22 +2288,53 @@ function buildReportsPanel() {
     const k = monthLabels[Math.min(Math.floor(idx/3.5), 5)];
     if (k) monthSpend[k] = (monthSpend[k]||0) + s.cost;
   });
-  const maxMonthSpend = Math.max(...Object.values(monthSpend));
+  const maxMonth = Math.max(...Object.values(monthSpend));
 
-  // Service mix
-  const wg  = ships.filter(s => s.service === 'White Glove').length;
-  const ltl = ships.filter(s => s.service === 'LTL').length;
-
-  // Top lanes
-  const laneMap = {};
+  // Top states
+  const stateMap = {};
   ships.forEach(s => {
-    const k = s.origin.split(',')[0] + ' → ' + s.dest.split(',')[0];
-    laneMap[k] = (laneMap[k]||0) + 1;
+    const st = (s.dest.split(',')[1]||'').trim();
+    if (st) stateMap[st] = (stateMap[st]||0) + 1;
   });
-  const topLanes = Object.entries(laneMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const topStates = Object.entries(stateMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const maxState = topStates[0]?.[1] || 1;
+
+  // Lane data for map — city approximate coords
+  const CITY_COORDS = {
+    'Los Angeles': [34.05,-118.24], 'Miami': [25.77,-80.19],
+    'Dallas': [32.78,-96.80], 'New York': [40.71,-74.01],
+    'Chicago': [41.88,-87.63], 'Atlanta': [33.75,-84.39],
+    'Phoenix': [33.45,-112.07], 'Seattle': [47.61,-122.33],
+    'Houston': [29.76,-95.37], 'Denver': [39.74,-104.99],
+    'Boston': [42.36,-71.06], 'Charlotte': [35.23,-80.84],
+    'Nashville': [36.17,-86.78], 'New Orleans': [29.95,-90.07],
+    'Birmingham': [33.52,-86.81], 'Las Vegas': [36.17,-115.14],
+    'Portland': [45.52,-122.68], 'Columbus': [39.96,-82.99],
+    'Detroit': [42.33,-83.05], 'San Antonio': [29.42,-98.49],
+    'San Diego': [32.72,-117.16], 'San Francisco': [37.77,-122.42],
+    'Jacksonville': [30.33,-81.66], 'Orlando': [28.54,-81.38],
+    'Sacramento': [38.58,-121.49], 'Tampa': [27.95,-82.46],
+    'Salt Lake City': [40.76,-111.89],
+  };
+
+  function cityCoord(loc) {
+    const city = loc.split(',')[0].trim();
+    return CITY_COORDS[city] || null;
+  }
+
+  // Projection: lat/lon → SVG coords (continental US bounds)
+  function proj(lat, lon, W, H) {
+    const x = ((lon - (-125)) / ((-65) - (-125))) * (W - 40) + 20;
+    const y = ((50 - lat) / (50 - 24)) * (H - 30) + 15;
+    return [Math.max(0,Math.min(W,x)), Math.max(0,Math.min(H,y))];
+  }
+
+  const CARRIER_COLORS = ['#bd27bc','#7c3aed','#2563eb','#059669','#d97706','#dc2626'];
+  const carrierColorMap = {};
+  Object.keys(carrierMap).forEach((c,i) => { carrierColorMap[c] = CARRIER_COLORS[i%CARRIER_COLORS.length]; });
 
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:0;';
+  container.style.cssText = 'display:flex;flex-direction:column;';
 
   // Sample notice
   const notice = document.createElement('div');
@@ -2219,98 +2345,180 @@ function buildReportsPanel() {
   const body = document.createElement('div');
   body.style.cssText = 'padding:14px 16px;display:flex;flex-direction:column;gap:14px;';
 
-  // ── Stat header — matches portal shipments style ──────────────────────────
+  // ── Stat header ───────────────────────────────────────────────────────────
   const statHdr = document.createElement('div');
-  statHdr.style.cssText = 'border-radius:12px;background:var(--card);border:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-wrap:wrap;';
+  statHdr.style.cssText = 'border-radius:12px;background:var(--card);border:1px solid var(--bdr);padding:14px 16px;display:flex;align-items:center;';
   statHdr.innerHTML =
-    '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:16px;margin-right:4px;">' +
+    '<div style="flex:1;border-right:1px solid var(--bdr);padding-right:16px;margin-right:4px;">' +
       '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Total Spend · Last 90 Days</div>' +
-      '<div style="display:flex;align-items:baseline;gap:6px;">' +
-        '<span style="font-size:32px;font-weight:500;color:var(--ac);line-height:1.1;">$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' +
-      '</div>' +
+      '<span style="font-size:28px;font-weight:500;color:var(--ac);">$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' +
     '</div>' +
-    '<div style="display:flex;flex:2;justify-content:space-around;flex-wrap:wrap;">' +
-      [['Shipments', ships.length], ['Delivered', delivered], ['In Transit', inTransit]].map(([l,v],idx,arr) =>
-        '<div style="text-align:center;padding:0 12px;' + (idx < arr.length-1 ? 'border-right:1px solid var(--bdr);' : '') + '">' +
-          '<div style="font-size:22px;font-weight:500;color:var(--tx);">' + v + '</div>' +
+    '<div style="display:flex;flex:2;justify-content:space-around;">' +
+      [['Shipments',ships.length,'var(--tx)'],['Delivered',delivered,'#166534'],['In Transit',inTransit,'var(--ac)'],['Exception',exception,'#dc2626']].map(([l,v,c],i,arr) =>
+        '<div style="text-align:center;padding:0 8px;' + (i<arr.length-1?'border-right:1px solid var(--bdr);':'') + '">' +
+          '<div style="font-size:20px;font-weight:500;color:' + c + ';">' + v + '</div>' +
           '<div style="font-size:10px;color:var(--fa);margin-top:2px;">' + l + '</div>' +
         '</div>'
       ).join('') +
     '</div>';
   body.appendChild(statHdr);
 
-  // ── Spend by Carrier bar chart ────────────────────────────────────────────
+  // ── Freight Lane Map ──────────────────────────────────────────────────────
+  const mapCard = document.createElement('div');
+  mapCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
+  const mapTitle = document.createElement('div');
+  mapTitle.style.cssText = 'padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;';
+  mapTitle.innerHTML = '<span>Freight Lanes</span><span style="font-weight:400;text-transform:none;color:var(--fa);">' + ships.length + ' shipments mapped</span>';
+  mapCard.appendChild(mapTitle);
+
+  const W = 400, H = 220;
+  // US outline (simplified)
+  const US_PATH = 'M 30,60 L 50,45 L 80,42 L 120,38 L 160,35 L 200,33 L 240,35 L 280,38 L 310,42 L 340,48 L 365,55 L 380,65 L 375,85 L 370,110 L 365,140 L 350,165 L 320,180 L 290,190 L 250,195 L 210,198 L 170,195 L 140,190 L 110,182 L 80,170 L 55,155 L 35,135 L 25,110 L 20,85 Z';
+
+  let svgContent = '<rect width="' + W + '" height="' + H + '" fill="var(--bg)"/>';
+  svgContent += '<path d="' + US_PATH + '" fill="#f0ede8" stroke="#e5e2d9" stroke-width="1"/>';
+
+  // Draw lanes
+  const lanesSvg = [];
+  ships.forEach(s => {
+    const oCoord = cityCoord(s.origin);
+    const dCoord = cityCoord(s.dest);
+    if (!oCoord || !dCoord) return;
+    const [ox,oy] = proj(oCoord[0], oCoord[1], W, H);
+    const [dx,dy] = proj(dCoord[0], dCoord[1], W, H);
+    // Bezier curve for arc
+    const mx = (ox+dx)/2, my = Math.min(oy,dy) - 30;
+    const color = carrierColorMap[s.carrier] || 'var(--ac)';
+    lanesSvg.push('<path d="M' + ox.toFixed(1) + ',' + oy.toFixed(1) + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1) + ' ' + dx.toFixed(1) + ',' + dy.toFixed(1) + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-opacity="0.55" stroke-linecap="round"/>');
+  });
+  svgContent += lanesSvg.join('');
+
+  // Draw city dots
+  const drawnCities = new Set();
+  ships.forEach(s => {
+    [s.origin, s.dest].forEach(loc => {
+      const coord = cityCoord(loc);
+      if (!coord || drawnCities.has(loc)) return;
+      drawnCities.add(loc);
+      const [cx,cy] = proj(coord[0], coord[1], W, H);
+      svgContent += '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="3" fill="var(--ac)" opacity="0.8"/>';
+    });
+  });
+
+  const mapSvg = document.createElement('div');
+  mapSvg.style.cssText = 'padding:8px;';
+  mapSvg.innerHTML = '<svg width="100%" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' + svgContent + '</svg>';
+  mapCard.appendChild(mapSvg);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.style.cssText = 'padding:8px 14px 10px;display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid var(--bdr);';
+  carrierEntries.slice(0,4).forEach(([carrier]) => {
+    const color = carrierColorMap[carrier] || 'var(--ac)';
+    const shortName = carrier.replace(' Freight','').replace(' LTL','').replace(' W&D','').split(' ').slice(0,2).join(' ');
+    legend.innerHTML += '<div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--mu);">' +
+      '<div style="width:16px;height:2px;background:' + color + ';border-radius:1px;"></div>' + shortName + '</div>';
+  });
+  mapCard.appendChild(legend);
+  body.appendChild(mapCard);
+
+  // ── Two-column charts row ─────────────────────────────────────────────────
+  const chartsRow = document.createElement('div');
+  chartsRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
+
+  // Spend by Carrier
   const carrierCard = document.createElement('div');
   carrierCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
-  carrierCard.innerHTML = '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Spend by Carrier</div>';
-  const carrierBody = document.createElement('div');
-  carrierBody.style.cssText = 'padding:10px 14px;display:flex;flex-direction:column;gap:8px;';
+  carrierCard.innerHTML = '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">By Carrier</div>';
+  const cBody = document.createElement('div');
+  cBody.style.cssText = 'padding:10px 12px;display:flex;flex-direction:column;gap:7px;';
   carrierEntries.forEach(([carrier, spend]) => {
-    const pct = Math.round((spend / maxCarrierSpend) * 100);
-    const row = document.createElement('div');
-    row.innerHTML =
-      '<div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px;">' +
-        '<span style="color:var(--tx);font-weight:500;">' + carrier + '</span>' +
-        '<span style="color:var(--mu);">$' + spend.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' +
-      '</div>' +
-      '<div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden;">' +
-        '<div style="height:100%;width:' + pct + '%;background:var(--ac);border-radius:3px;transition:width .6s ease;"></div>' +
-      '</div>';
-    carrierBody.appendChild(row);
+    const pct = Math.round((spend/maxCarrier)*100);
+    const color = carrierColorMap[carrier] || 'var(--ac)';
+    const short = carrier.replace(' Freight','').replace(' LTL','').replace(' W&D','').split(' ').slice(0,2).join(' ');
+    cBody.innerHTML += '<div><div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:10px;"><span style="color:var(--tx);">' + short + '</span><span style="color:var(--mu);">$' + Math.round(spend).toLocaleString() + '</span></div>' +
+      '<div style="height:5px;background:var(--bdr);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div></div>';
   });
-  carrierCard.appendChild(carrierBody);
-  body.appendChild(carrierCard);
+  carrierCard.appendChild(cBody);
+  chartsRow.appendChild(carrierCard);
 
-  // ── Monthly Spend trend ───────────────────────────────────────────────────
+  // Status donut (SVG)
+  const statusCard = document.createElement('div');
+  statusCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
+  statusCard.innerHTML = '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">By Status</div>';
+  const sBody = document.createElement('div');
+  sBody.style.cssText = 'padding:10px 12px;display:flex;align-items:center;gap:10px;';
+  const total = ships.length;
+  let offset = 0;
+  const r = 36, circ = 2 * Math.PI * r;
+  let donutPaths = '';
+  const sEntries = Object.entries(statusMap).filter(([,v])=>v>0);
+  sEntries.forEach(([label, count]) => {
+    const pct = count / total;
+    const dash = pct * circ;
+    const color = statusColors[label] || '#9ca3af';
+    donutPaths += '<circle cx="44" cy="44" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="14" stroke-dasharray="' + dash.toFixed(1) + ' ' + (circ - dash).toFixed(1) + '" stroke-dashoffset="-' + offset.toFixed(1) + '" stroke-linecap="butt"/>';
+    offset += dash;
+  });
+  sBody.innerHTML = '<svg width="88" height="88" viewBox="0 0 88 88" style="flex-shrink:0;"><circle cx="44" cy="44" r="' + r + '" fill="none" stroke="var(--bg)" stroke-width="14"/>' + donutPaths + '<text x="44" y="44" text-anchor="middle" dominant-baseline="middle" font-size="14" font-weight="600" fill="var(--tx)">' + total + '</text><text x="44" y="57" text-anchor="middle" font-size="7" fill="var(--fa)">total</text></svg>';
+  const legend2 = document.createElement('div');
+  legend2.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+  sEntries.forEach(([label, count]) => {
+    const color = statusColors[label] || '#9ca3af';
+    legend2.innerHTML += '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div style="width:10px;height:10px;border-radius:2px;background:' + color + ';flex-shrink:0;"></div><span style="color:var(--tx);">' + label + '</span><span style="color:var(--mu);margin-left:auto;">' + count + '</span></div>';
+  });
+  sBody.appendChild(legend2);
+  statusCard.appendChild(sBody);
+  chartsRow.appendChild(statusCard);
+  body.appendChild(chartsRow);
+
+  // ── Second charts row ─────────────────────────────────────────────────────
+  const chartsRow2 = document.createElement('div');
+  chartsRow2.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;';
+
+  // Monthly Spend
   const monthCard = document.createElement('div');
   monthCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
-  monthCard.innerHTML = '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Monthly Spend</div>';
-  const monthBody = document.createElement('div');
-  monthBody.style.cssText = 'padding:14px;display:flex;align-items:flex-end;gap:6px;height:90px;';
+  monthCard.innerHTML = '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Monthly Spend</div>';
+  const mBody = document.createElement('div');
+  mBody.style.cssText = 'padding:10px 12px;display:flex;align-items:flex-end;gap:4px;height:80px;';
   monthLabels.forEach(m => {
-    const spend = monthSpend[m] || 0;
-    const pct = maxMonthSpend > 0 ? Math.max(4, Math.round((spend / maxMonthSpend) * 100)) : 4;
-    const col = document.createElement('div');
-    col.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;';
-    col.innerHTML =
-      '<div style="width:100%;background:var(--ac);border-radius:3px 3px 0 0;height:' + pct + '%;min-height:4px;transition:height .6s ease;" title="$' + spend.toFixed(0) + '"></div>' +
-      '<div style="font-size:9px;color:var(--fa);white-space:nowrap;">' + m + '</div>';
-    monthBody.appendChild(col);
+    const spend = monthSpend[m]||0;
+    const pct = maxMonth > 0 ? Math.max(4, Math.round((spend/maxMonth)*100)) : 4;
+    mBody.innerHTML += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;">' +
+      '<div style="width:100%;background:var(--ac);border-radius:2px 2px 0 0;height:' + pct + '%;min-height:4px;" title="$' + Math.round(spend).toLocaleString() + '"></div>' +
+      '<div style="font-size:8px;color:var(--fa);">' + m + '</div></div>';
   });
-  monthCard.appendChild(monthBody);
-  body.appendChild(monthCard);
+  monthCard.appendChild(mBody);
+  chartsRow2.appendChild(monthCard);
+
+  // Top Dest States
+  const stateCard = document.createElement('div');
+  stateCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
+  stateCard.innerHTML = '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Top Dest. States</div>';
+  const stBody = document.createElement('div');
+  stBody.style.cssText = 'padding:8px 12px;display:flex;flex-direction:column;gap:5px;';
+  topStates.forEach(([state, count]) => {
+    const pct = Math.round((count/maxState)*100);
+    stBody.innerHTML += '<div><div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:10px;"><span style="color:var(--tx);">' + state + '</span><span style="color:var(--mu);">' + count + '</span></div>' +
+      '<div style="height:4px;background:var(--bdr);border-radius:2px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:var(--ac);border-radius:2px;"></div></div></div>';
+  });
+  stateCard.appendChild(stBody);
+  chartsRow2.appendChild(stateCard);
+  body.appendChild(chartsRow2);
 
   // ── Service Mix ───────────────────────────────────────────────────────────
+  const wg  = ships.filter(s => s.service === 'White Glove').length;
+  const ltl = ships.length - wg;
+  const wgPct = Math.round((wg/ships.length)*100);
   const mixCard = document.createElement('div');
   mixCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
-  mixCard.innerHTML = '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Service Mix</div>';
-  const wgPct = Math.round((wg / ships.length) * 100);
-  const ltlPct = 100 - wgPct;
-  mixCard.innerHTML += '<div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">' +
-    '<div>' +
-      '<div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px;"><span style="color:var(--tx);">White Glove</span><span style="color:var(--mu);">' + wgPct + '%</span></div>' +
-      '<div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + wgPct + '%;background:var(--ac);border-radius:3px;"></div></div>' +
-    '</div>' +
-    '<div>' +
-      '<div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px;"><span style="color:var(--tx);">LTL</span><span style="color:var(--mu);">' + ltlPct + '%</span></div>' +
-      '<div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + ltlPct + '%;background:var(--mu);border-radius:3px;"></div></div>' +
-    '</div>' +
-  '</div>';
+  mixCard.innerHTML = '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Service Mix</div>' +
+    '<div style="padding:10px 12px;display:flex;flex-direction:column;gap:7px;">' +
+      '<div><div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:11px;"><span style="color:var(--tx);">White Glove</span><span style="color:var(--mu);">' + wg + ' (' + wgPct + '%)</span></div><div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + wgPct + '%;background:var(--ac);border-radius:3px;"></div></div></div>' +
+      '<div><div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:11px;"><span style="color:var(--tx);">LTL</span><span style="color:var(--mu);">' + ltl + ' (' + (100-wgPct) + '%)</span></div><div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + (100-wgPct) + '%;background:var(--mu);border-radius:3px;"></div></div></div>' +
+    '</div>';
   body.appendChild(mixCard);
-
-  // ── Top Lanes ─────────────────────────────────────────────────────────────
-  const laneCard = document.createElement('div');
-  laneCard.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
-  laneCard.innerHTML = '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;">Top Lanes</div>';
-  const laneBody = document.createElement('div');
-  topLanes.forEach(([lane, count], idx) => {
-    const row = document.createElement('div');
-    row.style.cssText = 'padding:9px 14px;display:flex;justify-content:space-between;align-items:center;font-size:12px;' + (idx < topLanes.length-1 ? 'border-bottom:1px solid var(--bdr);' : '');
-    row.innerHTML = '<span style="color:var(--tx);">' + lane + '</span><span style="color:var(--mu);font-weight:600;">' + count + ' shipment' + (count!==1?'s':'') + '</span>';
-    laneBody.appendChild(row);
-  });
-  laneCard.appendChild(laneBody);
-  body.appendChild(laneCard);
 
   container.appendChild(body);
   return container;
@@ -2444,19 +2652,7 @@ function showSettingsDemo() {
   openRightPanel('Settings', container);
 }
 
-// ── OVERRIDE openRightPanel to also show resizer ──────────────────────────────
-const _origOpenRP = openRightPanel;
-openRightPanel = function(title, html) {
-  _origOpenRP(title, html);
-  document.getElementById('right-resizer').classList.add('visible');
-  initMapsInPanel();
-};
-const _origCloseRP = closeRightPanel;
-closeRightPanel = function() {
-  _origCloseRP();
-  document.getElementById('right-resizer').classList.remove('visible');
-  document.querySelectorAll('.sb-link').forEach(l=>l.classList.remove('active'));
-};
+// Tab system now built into openRightPanel/closeRightPanel above
 
 // ── DEMO TOAST (locked actions) ──────────────────────────────────────────────
 function showLockedAction(action) {
