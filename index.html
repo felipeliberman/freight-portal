@@ -884,10 +884,7 @@ function openMeetingPanel() {
   const hdr = document.createElement('div');
   hdr.style.cssText = 'flex-shrink:0;padding:16px 18px;border-bottom:1px solid var(--bdr);background:var(--card);';
   hdr.innerHTML =
-    '<div style="margin-bottom:10px;">' +
-      '<div style="font-size:14px;font-weight:700;color:var(--tx);margin-bottom:2px;">Talk to Our Team</div>' +
-      '<div style="font-size:11px;color:var(--mu);">Free consultation · No obligation · 15 minutes</div>' +
-    '</div>' +
+    '<div style="font-size:11px;color:var(--mu);margin-bottom:10px;">Free consultation · No obligation · 15 minutes</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
       '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">LTL Freight</div>' +
@@ -917,7 +914,7 @@ function openMeetingPanel() {
   iframeEl.style.cssText = 'flex:1;border:none;width:100%;min-height:500px;display:block;';
   iframeEl.title = 'Book a Demo';
   wrap.appendChild(iframeEl);
-  openRightPanel('Talk to Sales', wrap);
+  openRightPanel('Talk to Our Team', wrap);
   setTimeout(() => {
     const p = document.getElementById('right-panel');
     if (p) { p.style.width = '580px'; p.classList.add('open'); }
