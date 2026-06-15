@@ -415,18 +415,17 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
   /* Welcome screen */
   #welcome{padding:20px 16px 16px;justify-content:flex-start;margin-top:0;}
-  #welcome-heading{font-size:22px;margin-bottom:16px;}
+  #welcome-heading{font-size:22px;margin-bottom:12px;}
   #welcome-heading img.logo-img{height:24px;}
   #welcome-heading img.truck-img{height:22px;}
-  #welcome-input-wrap{border-radius:12px;}
+  #welcome-input-wrap{border-radius:12px;margin-bottom:10px;}
   #welcome-textarea{font-size:15px;padding:12px 80px 8px 14px;min-height:56px;}
   #welcome-send{width:34px;height:34px;bottom:8px;right:8px;}
   #welcome-mic{width:30px;height:30px;bottom:8px;right:46px;}
   .welcome-pills{gap:6px;justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
   .welcome-pills::-webkit-scrollbar{display:none;}
   .welcome-pill{flex-shrink:0;font-size:11px;padding:6px 11px;border-radius:20px;}
-  .mob-hide-pill{display:none;}
-  #welcome-input-wrap{display:none;}
+  .mob-hide-pill{display:none !important;}
 
   /* Chat area */
   #chat-area{height:100%;display:flex;flex-direction:column;}
@@ -436,7 +435,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     -webkit-overflow-scrolling:touch;
   }
   #input-bar{
-    padding:8px 12px 10px;
+    padding:8px 12px calc(10px + env(safe-area-inset-bottom));
     background:var(--bg);
     border-top:1px solid var(--bdr);
     flex-shrink:0;
