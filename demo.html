@@ -926,12 +926,10 @@ function openRightPanel(title, content) {
   const resizer = document.getElementById('right-resizer');
   panel.classList.add('open');
   resizer.classList.add('visible');
-  // Position resizer at left edge of panel
+  // Position resizer after CSS transition completes (250ms)
   setTimeout(() => {
-    const w = panel.offsetWidth || 520;
-    resizer.style.right = w + 'px';
-    resizer.style.left = 'auto';
-  }, 30);
+    resizer.style.right = panel.offsetWidth + 'px';
+  }, 280);
   initMapsInPanel();
 }
 
@@ -1590,20 +1588,30 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
   const panel   = document.getElementById('right-panel');
   if (!resizer || !panel) return;
   let dragging = false;
-  let currentW = 520;
+  let overlay = null;
 
-  function positionResizer(w) {
+  function positionResizer() {
+    const w = panel.offsetWidth;
     resizer.style.right = w + 'px';
-    resizer.style.left = 'auto';
+  }
+
+  function createOverlay() {
+    overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:199;cursor:col-resize;';
+    document.body.appendChild(overlay);
+  }
+
+  function removeOverlay() {
+    if (overlay) { overlay.remove(); overlay = null; }
   }
 
   resizer.addEventListener('mousedown', e=>{
     if (e.button !== 0) return;
     dragging = true;
-    currentW = panel.offsetWidth;
-    e.preventDefault(); e.stopPropagation();
-    document.body.style.userSelect = 'none';
     panel.style.transition = 'none';
+    document.body.style.userSelect = 'none';
+    createOverlay();
+    e.preventDefault(); e.stopPropagation();
   });
 
   document.addEventListener('mousemove', e=>{
@@ -1611,10 +1619,10 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
     const w = window.innerWidth - e.clientX;
     if (w < 80) {
       panel.style.width = '0';
-      positionResizer(0);
+      resizer.style.right = '0';
     } else if (w < window.innerWidth * 0.82) {
       panel.style.width = w + 'px';
-      positionResizer(w);
+      resizer.style.right = w + 'px';
     }
   });
 
@@ -1623,10 +1631,9 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
     dragging = false;
     document.body.style.userSelect = '';
     panel.style.transition = '';
+    removeOverlay();
     const w = parseInt(panel.style.width) || 0;
-    if (w < 80) {
-      closeRightPanel();
-    }
+    if (w < 80) closeRightPanel();
   });
 
   // Touch support
@@ -1634,8 +1641,8 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
   document.addEventListener('touchmove', e=>{
     if (!dragging) return;
     const w = window.innerWidth - e.touches[0].clientX;
-    if (w < 80) { panel.style.width='0'; positionResizer(0); }
-    else if (w < window.innerWidth*0.82) { panel.style.width=w+'px'; positionResizer(w); }
+    if (w < 80) { panel.style.width='0'; resizer.style.right='0'; }
+    else if (w < window.innerWidth*0.82) { panel.style.width=w+'px'; resizer.style.right=w+'px'; }
   }, {passive:true});
   document.addEventListener('touchend', ()=>{
     if (!dragging) return;
@@ -3065,10 +3072,12 @@ function openMeetingPanel() {
   wrap.appendChild(iframeEl);
 
   openRightPanel('Talk to Sales', wrap);
-  // Wider panel for calendar
+  // Wider panel for calendar — reposition resizer after width set
   setTimeout(() => {
     const p = document.getElementById('right-panel');
+    const r = document.getElementById('right-resizer');
     if (p) { p.style.width = '580px'; p.classList.add('open'); }
+    if (r) { setTimeout(() => { r.style.right = (p ? p.offsetWidth : 580) + 'px'; }, 50); }
   }, 50);
 }</script>
 
