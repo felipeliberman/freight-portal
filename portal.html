@@ -5641,21 +5641,8 @@ function goHomeTop(){
   if(f && f.contentWindow){ try{ f.contentWindow.location.reload(); }catch(e){} }
 }
 window.flAnthropic = async function(u,o){ const opts = Object.assign({}, o); opts.headers = Object.assign({'anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'}, opts.headers||{}); const r=await fetch(u,opts); if(!r.ok){ const e=await r.text().catch(()=>''); throw new Error('AI '+r.status+': '+e.slice(0,100)); } return await r.json(); };
-// Auto-login if remembered — runs after page fully loads
-window.addEventListener('load', function() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('fl_remember') || 'null');
-    if (saved && saved.email && saved.pw) {
-      setTimeout(function() {
-        const emailEl = document.getElementById('login-email');
-        const pwEl = document.getElementById('login-pw');
-        if (emailEl) emailEl.value = saved.email;
-        if (pwEl) pwEl.value = saved.pw;
-        doLogin();
-      }, 600);
-    }
-  } catch(e) {}
-});
+// Auto-login handled in DOMContentLoaded above
+
 
 function openLogin(){ window.location='index.html'; }
 function closeLogin(){ var ls=document.getElementById('login-screen'); if(ls) ls.style.display='none'; var er=document.getElementById('login-error'); if(er) er.style.display='none'; var lb=document.getElementById('login-btn'); if(lb){lb.textContent='Sign in';lb.disabled=false;} if(!currentCustomer){ window.location='index.html'; } }
@@ -6317,7 +6304,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   var _pv2 = document.getElementById('public-view');
   if (_pv2) _pv2.style.display = 'none';
 
-  // ── Check for existing session (refresh) ──────────────────────────────────
+  // ── Check for existing session (refresh) — must be synchronous ──────────
   let _sessionHandled = false;
   try {
     const saved = JSON.parse(sessionStorage.getItem('fl_session') || 'null');
@@ -6331,7 +6318,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     }
   } catch(e) {}
 
-  // ── SSO from homepage — check sessionStorage before showing login ──────────
+  // ── SSO from homepage ──────────────────────────────────────────────────────
   let _ssoHandled = false;
   if (!_sessionHandled) {
     try {
@@ -6349,7 +6336,24 @@ document.addEventListener('DOMContentLoaded',()=>{
       }
     } catch(e) {}
   }
-  if (!_sessionHandled && !_ssoHandled) openLogin();
+
+  // ── Remember Me auto-login ─────────────────────────────────────────────────
+  let _rememberHandled = false;
+  if (!_sessionHandled && !_ssoHandled) {
+    try {
+      const rem = JSON.parse(localStorage.getItem('fl_remember') || 'null');
+      if (rem && rem.email && rem.pw) {
+        _rememberHandled = true;
+        setTimeout(() => {
+          const em = document.getElementById('login-email');
+          const pw = document.getElementById('login-pw');
+          if (em && pw) { em.value = rem.email; pw.value = rem.pw; doLogin(); }
+        }, 300);
+      }
+    } catch(e) {}
+  }
+
+  if (!_sessionHandled && !_ssoHandled && !_rememberHandled) openLogin();
   // Restore tabs from previous session after a short delay (needs auth first)
   setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
   var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
