@@ -5583,7 +5583,7 @@ async function updatePlaceholder() {
 }
 
 function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
-function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
+function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); sessionStorage.removeItem('fl_session'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
 function addRecent(title) { renderSessionList(); }
 function showSessionMenu(e, s, row) {
@@ -5772,6 +5772,8 @@ function _finalizeLogin(c, email, pw) {
   const remEl = document.getElementById('login-remember');
   if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
   else { localStorage.removeItem('fl_remember'); }
+  // Save session so refresh doesn't kick out
+  try { sessionStorage.setItem('fl_session', JSON.stringify({ email, pw, customer: c })); } catch(e) {}
   closeLogin();
 
   setLoggedIn(true); loadSessions();
@@ -6314,24 +6316,40 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Portal starts on login screen — hide public-view iframe
   var _pv2 = document.getElementById('public-view');
   if (_pv2) _pv2.style.display = 'none';
-  // ── SSO from homepage — check sessionStorage before showing login ──────────
-  let _ssoHandled = false;
+
+  // ── Check for existing session (refresh) ──────────────────────────────────
+  let _sessionHandled = false;
   try {
-    const ssEmail = sessionStorage.getItem('fl_email');
-    const ssPw    = sessionStorage.getItem('fl_pw');
-    if (ssEmail && ssPw) {
-      sessionStorage.removeItem('fl_email');
-      sessionStorage.removeItem('fl_pw');
-      _ssoHandled = true;
-      // Pre-fill and auto-login without showing login screen
+    const saved = JSON.parse(sessionStorage.getItem('fl_session') || 'null');
+    if (saved && saved.email && saved.pw) {
+      _sessionHandled = true;
       setTimeout(() => {
         const em = document.getElementById('login-email');
         const pw = document.getElementById('login-pw');
-        if (em && pw) { em.value = ssEmail; pw.value = ssPw; doLogin(); }
+        if (em && pw) { em.value = saved.email; pw.value = saved.pw; doLogin(); }
       }, 100);
     }
   } catch(e) {}
-  if (!_ssoHandled) openLogin();
+
+  // ── SSO from homepage — check sessionStorage before showing login ──────────
+  let _ssoHandled = false;
+  if (!_sessionHandled) {
+    try {
+      const ssEmail = sessionStorage.getItem('fl_email');
+      const ssPw    = sessionStorage.getItem('fl_pw');
+      if (ssEmail && ssPw) {
+        sessionStorage.removeItem('fl_email');
+        sessionStorage.removeItem('fl_pw');
+        _ssoHandled = true;
+        setTimeout(() => {
+          const em = document.getElementById('login-email');
+          const pw = document.getElementById('login-pw');
+          if (em && pw) { em.value = ssEmail; pw.value = ssPw; doLogin(); }
+        }, 100);
+      }
+    } catch(e) {}
+  }
+  if (!_sessionHandled && !_ssoHandled) openLogin();
   // Restore tabs from previous session after a short delay (needs auth first)
   setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
   var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
