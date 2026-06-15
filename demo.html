@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FreightAI Demo — Freight and Logistics, Inc.</title>
+<title>Freight and Logistics, Inc. — Interactive Demo</title>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -447,7 +447,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
 <!-- BODY -->
 <div id="demo-banner" style="background:#1a1816;color:#a8a29a;font-size:11px;text-align:center;padding:7px 20px;display:flex;align-items:center;justify-content:center;gap:16px;flex-shrink:0;">
-  <span>This is an interactive demo of the FreightAI portal. Data shown is for illustration only.</span>
+  <span>This is an interactive demo of the Freight and Logistics portal. Data shown is for illustration only.</span>
   <a href="portal.html" style="color:#bd27bc;font-weight:600;text-decoration:none;white-space:nowrap;">Sign In to Your Account →</a>
 </div>
 <div id="body-wrap">
@@ -628,7 +628,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <div class="lm-link">No account? <a href="#" onclick="closeLoginModal();startOnboarding();return false;">Open one free →</a></div>
     <div style="margin-top:12px;padding:10px;background:#f9f8f5;border-radius:8px;border:1px solid var(--bdr);text-align:center;">
       <div style="font-size:10px;color:var(--fa);margin-bottom:3px;letter-spacing:.04em;font-weight:600;">FULL PORTAL</div>
-      <a href="portal.html" style="font-size:12px;color:var(--ac);text-decoration:none;font-weight:500;">Launch FreightAI Portal →</a>
+      <a href="portal.html" style="font-size:12px;color:var(--ac);text-decoration:none;font-weight:500;">Launch Portal →</a>
     </div>
   </div>
 </div>
@@ -1135,8 +1135,8 @@ async function submitForm() {
       body: JSON.stringify({
         to: 'felipe@freightandlogistics.com',
         subject: 'New Account Application — ' + body.company,
-        text: 'New account application submitted via FreightAI portal.\n\n' + emailBody,
-        from_name: 'FreightAI Onboarding',
+        text: 'New account application submitted via Freight and Logistics portal.\n\n' + emailBody,
+        from_name: 'Freight and Logistics Portal Onboarding',
         reply_to: body.email
       })
     });
@@ -1202,7 +1202,7 @@ const SVC_PANELS = {
     title: 'TMS Platform',
     eyebrow: 'Free Freight Software',
     headline: 'Quote, book, track, and report — all in one portal.',
-    sub: 'Our FreightAI portal is a full TMS at no extra cost. Every customer gets access on day one.',
+    sub: 'Our portal is a full TMS at no extra cost. Every customer gets access on day one.',
     stats: [['Free','Always'],['Real-Time','Rates'],['AI','Powered']],
     features: [
       ['Live rate shopping','Instant quotes from 50+ carriers with one-click booking.'],
@@ -1244,7 +1244,7 @@ function openSvcPanel(key) {
       <div class="svc-stat-row">${statsHtml}</div>
       <div class="svc-feature-list">${featHtml}</div>
       <button class="svc-cta-btn" onclick="startOnboarding()">Open an Account — It Takes 2 Minutes</button>
-      <button class="svc-secondary-btn" onclick="chatAboutService('${svc.title}')">Ask FreightAI about this →</button>
+      <button class="svc-secondary-btn" onclick="chatAboutService('${svc.title}')">Ask about this →</button>
     </div>
   </div>`;
   openRightPanel(svc.title, html);
@@ -1277,7 +1277,7 @@ function appendBot(text) {
   row.innerHTML = `
     <div class="b-av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
     <div class="msg-bub">
-      <div class="msg-name">FreightAI</div>
+      <div class="msg-name">Freight and Logistics</div>
       <div class="msg-txt bot">${escHtml(text)}</div>
     </div>`;
   msgs.appendChild(row);
@@ -1385,7 +1385,7 @@ async function submitSupport() {
         to:'felipe@freightandlogistics.com',
         subject:'Support Request — ' + get('sup-topic') + ' — ' + get('sup-name'),
         text:'NAME: '+get('sup-name')+'\nEMAIL: '+get('sup-email')+'\nTOPIC: '+get('sup-topic')+'\nBOL: '+get('sup-bol')+'\n\nMESSAGE:\n'+get('sup-message'),
-        from_name:'FreightAI Support Form',
+        from_name:'Freight and Logistics Portal Support Form',
         reply_to: get('sup-email')
       })
     });
