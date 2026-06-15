@@ -429,8 +429,8 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   .mob-hide-pill{display:none !important;}
 
   /* Chat area */
-  #chat-area{height:100%;flex-direction:column;}
-  #chat-area.shown{display:flex;height:100%;}
+  #chat-area{flex:1;flex-direction:column;min-height:0;}
+  #chat-area.shown{display:flex;}
   #messages{
     flex:1;overflow-y:auto;
     padding:16px 14px;
