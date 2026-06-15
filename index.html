@@ -343,7 +343,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <div id="welcome">
       <div id="welcome-heading">Start shipping with<br>Freight and Logistics, Inc.</div>
       <div id="welcome-trust">In operation since 2010 &nbsp;·&nbsp; 50+ carriers &nbsp;·&nbsp; White glove residential specialists</div>
-      <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 2 minutes</div>
+      <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 5 minutes</div>
 
       <div id="welcome-input-wrap">
         <textarea id="welcome-textarea" placeholder="Ask about rates, white glove delivery, tracking, or opening an account…" rows="1"
@@ -493,7 +493,7 @@ WHEN ONBOARDING: Ask in this order:
 17. Offer invoice upload for free pricing review — we often beat current rates 15-25%
 18. Full name to authorize the credit application (Net 15, ACH or payment portal)
 
-WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 2 minutes with no obligation, and once they are in we pull live contract rates from 50+ carriers instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
+WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 5 minutes with no obligation, and once they are in we pull live contract rates from 50+ carriers instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
 
 COMPANY: Freight and Logistics, Inc. Phone: (800) 687-3713. Email: support@freightandlogistics.com. Hours: Mon-Fri 6:30 AM - 4:00 PM PST. PO Box 35311, Los Angeles, CA 90035. Terms: Net 15. Payment: ACH or payment portal.
 
@@ -555,7 +555,7 @@ function startOnboarding() {
   isOnboarding=true;
   openFormPanel();
   showChatArea();
-  const opener="Welcome to Freight and Logistics. To open your account I just need a few quick questions — takes about 2 minutes and I fill everything in for you. To start, what type of freight are you looking to ship — LTL, white glove residential delivery, small parcel, or something else?";
+  const opener="Welcome to Freight and Logistics. To open your account I just need a few quick questions — takes about 5 minutes and I fill everything in for you. To start, what type of freight are you looking to ship — LTL, white glove residential delivery, small parcel, or something else?";
   chatHistory=[{role:'assistant',content:opener}];
   appendBot(opener);
 }
