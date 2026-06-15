@@ -5646,19 +5646,11 @@ window.addEventListener('load', function() {
   try {
     const saved = JSON.parse(localStorage.getItem('fl_remember') || 'null');
     if (saved && saved.email && saved.pw) {
-      // Try hardcoded first, then will fall through to Primus validation on doLogin
-      if (!CUSTOMERS[saved.email] || CUSTOMERS[saved.email].portalPass !== saved.pw) {
-        // For dynamic accounts, pre-fill and trigger login
+      setTimeout(function() {
         const emailEl = document.getElementById('login-email');
         const pwEl = document.getElementById('login-pw');
         if (emailEl) emailEl.value = saved.email;
         if (pwEl) pwEl.value = saved.pw;
-      }
-    }
-    if (saved && saved.email && saved.pw && CUSTOMERS[saved.email] && CUSTOMERS[saved.email].portalPass === saved.pw) {
-      setTimeout(function() {
-        document.getElementById('login-email').value = saved.email;
-        document.getElementById('login-pw').value = saved.pw;
         doLogin();
       }, 600);
     }
