@@ -302,13 +302,15 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #welcome{padding:16px 16px 80px;}
   #welcome-heading{font-size:clamp(20px,5vw,28px);}
 
-  /* Pills: 2-column wrap */
-  .welcome-pills{flex-wrap:wrap;justify-content:flex-start;gap:6px;}
-  .welcome-pill{font-size:12px;padding:6px 12px;}
+  /* Pills: single horizontal scroll row */
+  .welcome-pills{flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start;gap:6px;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .welcome-pills::-webkit-scrollbar{display:none;}
+  .welcome-pill{font-size:12px;padding:6px 12px;flex-shrink:0;}
 
-  /* Service tiles: 2-column grid */
-  .svc-tiles{grid-template-columns:repeat(2,1fr);gap:8px;}
-  .svc-tile{padding:12px 10px;}
+  /* Service tiles: horizontal scroll row */
+  .svc-tiles{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:4px;}
+  .svc-tiles::-webkit-scrollbar{display:none;}
+  .svc-tile{min-width:130px;flex-shrink:0;padding:12px 10px;}
   .svc-tile-desc{display:none;}
 
   /* Chat input: safe area bottom padding */
@@ -324,7 +326,6 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 }
 
 @media(max-width:480px){
-  .svc-tiles{grid-template-columns:repeat(2,1fr);}
   #welcome-heading{font-size:20px;}
 }
 </style>
