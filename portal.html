@@ -62,7 +62,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 #sidebar.collapsed #sb-footer{ padding:10px 4px 0; }
 #sidebar.collapsed .sb-user-row{ justify-content:center; padding:7px 4px; overflow:hidden; }
 #sidebar.collapsed .sb-user-name{ display:none; }
-#sidebar.collapsed .sb-av{ flex-shrink:0; }
+
 #sb-collapse-btn{
   position:absolute;right:-12px;top:50%;transform:translateY(-50%);
   background:var(--card);border:1px solid var(--bdr);cursor:pointer;color:var(--mu);
@@ -157,12 +157,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   transition:background .1s;
 }
 .sb-user-row:hover{background:rgba(0,0,0,.05);}
-.sb-av{
-  width:24px;height:24px;border-radius:50%;flex-shrink:0;
-  background:linear-gradient(135deg,#7c3aed,#db2777);
-  display:flex;align-items:center;justify-content:center;
-  font-size:10px;font-weight:600;color:#fff;
-}
+.sb-av{display:none !important;}
 
 /* ── MAIN ── */
 #main{flex:1;display:flex;flex-direction:column;height:100%;overflow:hidden;}
@@ -5737,7 +5732,7 @@ function _finalizeLogin(c, email, pw) {
   if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
   else { localStorage.removeItem('fl_remember'); }
   closeLogin();
-  try { document.getElementById('cust-avatar').textContent = c.avatar; } catch(e) {}
+
   setLoggedIn(true); loadSessions();
   document.getElementById('cust-name').textContent = c.name;
   applyGreeting();
@@ -6278,23 +6273,26 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Portal starts on login screen — hide public-view iframe
   var _pv2 = document.getElementById('public-view');
   if (_pv2) _pv2.style.display = 'none';
-  openLogin();
-  // Restore tabs from previous session after a short delay (needs auth first)
-  setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
-  // ── AUTO-LOGIN from homepage sessionStorage ──────────────────────────────
+  // ── SSO from homepage — check sessionStorage before showing login ──────────
+  let _ssoHandled = false;
   try {
     const ssEmail = sessionStorage.getItem('fl_email');
     const ssPw    = sessionStorage.getItem('fl_pw');
     if (ssEmail && ssPw) {
       sessionStorage.removeItem('fl_email');
       sessionStorage.removeItem('fl_pw');
+      _ssoHandled = true;
+      // Pre-fill and auto-login without showing login screen
       setTimeout(() => {
         const em = document.getElementById('login-email');
         const pw = document.getElementById('login-pw');
         if (em && pw) { em.value = ssEmail; pw.value = ssPw; doLogin(); }
-      }, 300);
+      }, 100);
     }
   } catch(e) {}
+  if (!_ssoHandled) openLogin();
+  // Restore tabs from previous session after a short delay (needs auth first)
+  setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
   var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
   const lb=document.getElementById('login-btn');
   const lp=document.getElementById('login-pw');
