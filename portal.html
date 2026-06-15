@@ -5433,20 +5433,37 @@ function renderSessionList() {
     { label: 'Older',        items: sessions.filter(s => now - s.ts >= 7*day) },
   ];
 
-  let html = '';
+  el.innerHTML = '';
   groups.forEach(g => {
     if (!g.items.length) return;
-    html += '<div class="sb-section-label">' + g.label + '</div>';
+    const lbl = document.createElement('div');
+    lbl.className = 'sb-section-label';
+    lbl.textContent = g.label;
+    el.appendChild(lbl);
     g.items.forEach(s => {
-      const active = s.id === currentSession ? ' active' : '';
-      html += '<div class="sb-link' + active + '" data-sid="' + s.id + '" title="' + s.title.replace(/"/g,'"') + '">' +
-              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;opacity:.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
-              '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + s.title + '</span></div>';
+      const row = document.createElement('div');
+      row.className = 'sb-link' + (s.id === currentSession ? ' active' : '');
+      row.dataset.sid = s.id;
+      row.title = s.title;
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;position:relative;';
+      const icon = document.createElement('span');
+      icon.style.cssText = 'flex-shrink:0;opacity:.5;display:flex;';
+      icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+      row.appendChild(icon);
+      const titleEl = document.createElement('span');
+      titleEl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      titleEl.textContent = s.title;
+      row.appendChild(titleEl);
+      const dot = document.createElement('button');
+      dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+      dot.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 3px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
+      dot.onclick = (e) => { e.stopPropagation(); showSessionMenu(e, s, row); };
+      row.appendChild(dot);
+      row.onmouseenter = () => { dot.style.display = 'flex'; };
+      row.onmouseleave = () => { dot.style.display = 'none'; };
+      row.addEventListener('click', (e) => { if (e.target !== dot && !dot.contains(e.target)) restoreSession(s.id); });
+      el.appendChild(row);
     });
-  });
-  el.innerHTML = html;
-  el.querySelectorAll('[data-sid]').forEach(function(el) {
-    el.addEventListener('click', function() { restoreSession(this.dataset.sid); });
   });
 }
 
@@ -5631,6 +5648,38 @@ function showChatMenu(e,title,idx,row) {
   });
   document.body.appendChild(menu);
   setTimeout(()=>document.addEventListener('click',()=>menu.remove(),{once:true}),0);
+}
+function showSessionMenu(e, s, row) {
+  document.querySelectorAll('.chat-ctx-menu').forEach(m=>m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'chat-ctx-menu';
+  menu.style.cssText = 'position:fixed;background:var(--card);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;min-width:140px;padding:4px;font-size:12px;';
+  const rect = row.getBoundingClientRect();
+  menu.style.left = (rect.right + 4) + 'px';
+  menu.style.top = rect.top + 'px';
+  const items = [
+    { label: '★ Star', fn: () => { s.title = (s.title.startsWith('★ ') ? s.title : '★ ' + s.title); renderSessionList(); } },
+    { label: '✏️ Rename', fn: () => {
+      const n = prompt('Rename chat:', s.title.replace('★ ',''));
+      if (n && n.trim()) { s.title = (s.title.startsWith('★ ') ? '★ ' : '') + n.trim(); renderSessionList(); }
+    }},
+    { label: '🗑 Delete', fn: () => {
+      chatSessions = chatSessions.filter(x => x.id !== s.id);
+      if (currentSession === s.id) { currentSession = null; }
+      renderSessionList();
+    }, color: '#dc2626' }
+  ];
+  items.forEach(item => {
+    const btn = document.createElement('button');
+    btn.textContent = item.label;
+    btn.style.cssText = 'display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:6px 10px;border-radius:5px;font-size:12px;font-family:var(--font);color:' + (item.color || 'var(--tx)') + ';';
+    btn.onmouseenter = () => { btn.style.background = 'var(--bg)'; };
+    btn.onmouseleave = () => { btn.style.background = 'none'; };
+    btn.onclick = () => { menu.remove(); item.fn(); };
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), {once:true}), 0);
 }
 function togglePw() { const p=document.getElementById('login-pw'); p.type=p.type==='password'?'text':'password'; }
 function showChatArea() { document.getElementById('welcome').style.display='none'; document.getElementById('chat-area').style.display='flex'; }
