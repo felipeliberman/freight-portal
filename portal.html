@@ -6242,7 +6242,7 @@ async function _supSendEmail(btn) {
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
     '<div style="white-space:pre-wrap;line-height:1.7;font-size:13px;">' + (w.draftText || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
-    '<p style="font-size:11px;color:#999;">Sent via FreightAI Portal</p></div>';
+    '<p style="font-size:11px;color:#999;">Sent via Freight and Logistics Portal</p></div>';
   try {
     const attachments = await Promise.all((w.files || []).map(async function(f) {
       const b64 = await new Promise(function(res, rej) { const rd = new FileReader(); rd.onload = function() { res(rd.result.split(',')[1]); }; rd.onerror = rej; rd.readAsDataURL(f); });
