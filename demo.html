@@ -211,17 +211,17 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
 /* ── RIGHT RESIZER ── */
 #right-resizer{
-  width:10px;flex-shrink:0;cursor:col-resize;
-  display:flex;align-items:center;justify-content:center;
-  background:transparent;transition:background .1s;z-index:10;
-  position:relative;
+  position:fixed;top:0;height:100vh;width:12px;
+  cursor:col-resize;z-index:200;
+  display:none;align-items:center;justify-content:center;
+  background:transparent;
 }
 #right-resizer:hover{background:rgba(0,0,0,.04);}
 #right-resizer-grip{
-  width:4px;height:48px;background:var(--bdr);border-radius:4px;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  width:4px;height:56px;background:var(--bdr);border-radius:4px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
 }
-#right-resizer-grip span{width:2px;height:2px;background:var(--fa);border-radius:50%;display:block;}
+#right-resizer-grip span{width:2px;height:2px;background:#9b9690;border-radius:50%;display:block;}
 
 /* sample data disclaimer */
 .sample-notice{
@@ -307,7 +307,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 }
 #right-panel.open{width:520px;}
 #right-resizer{display:none;}
-#right-resizer.visible{display:flex;}
+#right-resizer.visible{display:flex;align-items:center;justify-content:center;}
 /* Chrome tab bar */
 #rp-tab-bar{
   display:flex;align-items:flex-end;background:#f0ede8;
@@ -925,8 +925,16 @@ function openRightPanel(title, content) {
     demoRpState.activeId = id;
   }
   renderDemoPanel();
-  document.getElementById('right-panel').classList.add('open');
-  document.getElementById('right-resizer').classList.add('visible');
+  const panel = document.getElementById('right-panel');
+  const resizer = document.getElementById('right-resizer');
+  panel.classList.add('open');
+  resizer.classList.add('visible');
+  // Position resizer at left edge of panel
+  setTimeout(() => {
+    const w = panel.offsetWidth || 520;
+    resizer.style.right = w + 'px';
+    resizer.style.left = 'auto';
+  }, 30);
   initMapsInPanel();
 }
 
@@ -1013,8 +1021,11 @@ function closeDemoTab(id) {
 function closeRightPanel() {
   demoRpState.tabs = [];
   demoRpState.activeId = null;
-  document.getElementById('right-panel').classList.remove('open');
-  document.getElementById('right-resizer').classList.remove('visible');
+  const panel = document.getElementById('right-panel');
+  const resizer = document.getElementById('right-resizer');
+  panel.classList.remove('open');
+  panel.style.width = '';
+  if (resizer) { resizer.classList.remove('visible'); resizer.style.right = ''; }
   document.querySelectorAll('.sb-link').forEach(l => l.classList.remove('active'));
 }
 
@@ -1579,52 +1590,63 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
 (function initResizer(){
   const resizer = document.getElementById('right-resizer');
   const panel   = document.getElementById('right-panel');
-  const main    = document.getElementById('main');
-  if (!resizer || !panel || !main) return;
+  if (!resizer || !panel) return;
   let dragging = false;
+  let currentW = 520;
+
+  function positionResizer(w) {
+    resizer.style.right = w + 'px';
+    resizer.style.left = 'auto';
+  }
+
   resizer.addEventListener('mousedown', e=>{
     if (e.button !== 0) return;
     dragging = true;
-    // Remove .open class so CSS width doesn't fight inline style
-    panel.classList.remove('open');
+    currentW = panel.offsetWidth;
     e.preventDefault(); e.stopPropagation();
     document.body.style.userSelect = 'none';
+    panel.style.transition = 'none';
   });
+
   document.addEventListener('mousemove', e=>{
     if (!dragging) return;
     const w = window.innerWidth - e.clientX;
-    if (w < 120) {
-      // Close if dragged nearly shut
+    if (w < 80) {
       panel.style.width = '0';
-    } else if (w < window.innerWidth * 0.75) {
+      positionResizer(0);
+    } else if (w < window.innerWidth * 0.82) {
       panel.style.width = w + 'px';
-      panel.style.transition = 'none';
+      positionResizer(w);
     }
   });
+
   document.addEventListener('mouseup', ()=>{
     if (!dragging) return;
     dragging = false;
     document.body.style.userSelect = '';
     panel.style.transition = '';
-    // If dragged shut, fully close
     const w = parseInt(panel.style.width) || 0;
-    if (w < 120) {
+    if (w < 80) {
       closeRightPanel();
     }
   });
+
   // Touch support
-  resizer.addEventListener('touchstart', e=>{ dragging=true; panel.classList.remove('open'); }, {passive:true});
+  resizer.addEventListener('touchstart', e=>{ dragging=true; panel.style.transition='none'; }, {passive:true});
   document.addEventListener('touchmove', e=>{
     if (!dragging) return;
     const w = window.innerWidth - e.touches[0].clientX;
-    if (w < 120) { panel.style.width = '0'; }
-    else if (w < window.innerWidth * 0.75) { panel.style.width = w + 'px'; panel.style.transition = 'none'; }
+    if (w < 80) { panel.style.width='0'; positionResizer(0); }
+    else if (w < window.innerWidth*0.82) { panel.style.width=w+'px'; positionResizer(w); }
   }, {passive:true});
   document.addEventListener('touchend', ()=>{
     if (!dragging) return;
-    dragging = false; panel.style.transition = '';
-    if ((parseInt(panel.style.width)||0) < 120) closeRightPanel();
+    dragging=false; panel.style.transition='';
+    if ((parseInt(panel.style.width)||0) < 80) closeRightPanel();
   });
+
+  // Expose positionResizer for openRightPanel
+  window._positionResizer = positionResizer;
 })();
 
 // ── MAP COORDS & INIT ─────────────────────────────────────────────────────────
@@ -3044,10 +3066,10 @@ function openMeetingPanel() {
 
   // Iframe wrapper — pointer-events blocked on iframe so tab bar stays clickable
   const iframeWrap = document.createElement('div');
-  iframeWrap.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative;';
+  iframeWrap.style.cssText = 'flex:1;overflow:hidden;position:relative;';
   const iframe = document.createElement('iframe');
   iframe.src = 'https://meetings.hubspot.com/felipe-liberman/demo?uuid=851b4f7f-a823-4fff-bd5c-96891d22e27d&embed=true';
-  iframe.style.cssText = 'border:none;width:100%;height:720px;display:block;';
+  iframe.style.cssText = 'border:none;width:100%;height:100%;display:block;position:absolute;top:0;left:0;';
   iframe.title = 'Book a Demo';
   iframeWrap.appendChild(iframe);
   wrap.appendChild(iframeWrap);
