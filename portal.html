@@ -5758,8 +5758,13 @@ function _finalizeLogin(c, email, pw) {
   if (!c._dynamic) { primusToken = null; primusExpiry = 0; } // reset for hardcoded accounts
   try { localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {}
   const remEl = document.getElementById('login-remember');
-  if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
-  else { localStorage.removeItem('fl_remember'); }
+  // Only update fl_remember if user manually interacted with checkbox (login screen visible)
+  const loginScreen = document.getElementById('login-screen');
+  const loginVisible = loginScreen && loginScreen.style.display !== 'none' && loginScreen.style.display !== '';
+  if (loginVisible) {
+    if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
+    else { localStorage.removeItem('fl_remember'); }
+  }
   // Save session so refresh doesn't kick out
   try { sessionStorage.setItem('fl_session', JSON.stringify({ email, pw, customer: c })); } catch(e) {}
   closeLogin();
