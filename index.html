@@ -430,9 +430,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <div class="lm-title">Sign in to your account</div>
     <div class="lm-sub">Access your quotes, shipments, and invoices</div>
     <label class="lm-label">Email address</label>
-    <input type="email" class="lm-input" id="lm-email" placeholder="you@company.com">
+    <input type="email" class="lm-input" id="lm-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doIndexLogin()">
     <label class="lm-label">Password</label>
-    <input type="password" class="lm-input" id="lm-pw" placeholder="••••••••">
+    <input type="password" class="lm-input" id="lm-pw" placeholder="••••••••" onkeydown="if(event.key==='Enter')doIndexLogin()">
     <button class="lm-btn" id="lm-signin-btn" onclick="doIndexLogin()">Sign In →</button>
     <div id="lm-error" style="display:none;margin-top:8px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;text-align:center;"></div>
     <div class="lm-link">No account? <a href="#" onclick="closeLoginModal();startOnboarding();return false;">Open one free →</a></div>
