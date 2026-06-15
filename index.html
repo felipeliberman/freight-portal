@@ -303,9 +303,10 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #right-panel.open{position:fixed;inset:0;width:100%;z-index:200;}
 
   /* Welcome screen */
-  #body-wrap{overflow:hidden;}
-  #main{overflow:hidden;height:100%;}
-  #welcome{padding:16px 16px 40px;justify-content:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;min-height:0;}
+  html,body{overflow:auto;height:auto;}
+  #body-wrap{overflow:visible;height:auto;}
+  #main{overflow:visible;height:auto;}
+  #welcome{padding:16px 16px 40px;justify-content:flex-start;overflow:visible;flex:none;}
   #welcome-heading{font-size:clamp(22px,6vw,30px);margin-bottom:3px;}
   #welcome-trust{margin-bottom:14px;}
   #welcome-input-wrap{margin-bottom:8px;}
