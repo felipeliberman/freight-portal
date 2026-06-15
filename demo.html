@@ -1789,7 +1789,7 @@ function showShipments() {
   // Status pills
   const headerRight = document.createElement('div');
   headerRight.style.cssText = 'display:flex;align-items:center;gap:0;flex-wrap:wrap;flex:2;justify-content:space-around;';
-  const statColors = {'POD':'var(--tx)','In Transit':'var(--tx)','Scheduled':'var(--tx)','Out for Delivery':'var(--tx)','Exception':'#fdf0fd','Other':'var(--tx)'};
+  const statColors = {'POD':'var(--tx)','In Transit':'var(--tx)','Scheduled':'var(--tx)','Out for Delivery':'var(--tx)','Exception':'#e9d5ff','Other':'var(--tx)'};
   const entries = Object.entries(statusCounts);
   entries.forEach(([label, count], idx) => {
     const col = document.createElement('div');
@@ -2479,7 +2479,7 @@ function buildReportsPanel() {
   const chartsRow = document.createElement('div');
   chartsRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;';
   chartsRow.appendChild(buildCarrierChart('Shipments by Carrier', carrierMap, carrierIconMap));
-  const STATUS_COLORS = {'Delivered':'#b0ac9f','Out for Delivery':'var(--ac)','In Transit':'var(--ac)','Dispatched':'var(--ac)','Scheduled':'#706c63','Exception':'#fdf0fd','Other':'#b0ac9f','Unknown':'#d1d5db'};
+  const STATUS_COLORS = {'Delivered':'#b0ac9f','Out for Delivery':'var(--ac)','In Transit':'var(--ac)','Dispatched':'var(--ac)','Scheduled':'#706c63','Exception':'#e9d5ff','Other':'#b0ac9f','Unknown':'#d1d5db'};
   const filteredStatus = Object.fromEntries(Object.entries(statusMap).filter(([k]) => k !== 'Unknown' || statusMap[k] > 0));
   const statusColorArr = Object.keys(filteredStatus).map(k => (STATUS_COLORS[k] || '#9ca3af').replace('var(--ac)', '#bd27bc'));
   chartsRow.appendChild(buildPieChart('Shipments by Status', filteredStatus, statusColorArr));
