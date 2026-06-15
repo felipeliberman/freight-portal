@@ -6349,6 +6349,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   const ws=document.getElementById('welcome-send');
   const wt=document.getElementById('welcome-textarea');
   if(lb) lb.addEventListener('click',doLogin);
+  const le=document.getElementById('login-email');
+  if(le) le.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
   if(lp) lp.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
   if(sb) sb.addEventListener('click',sendMessage);
   if(ta){
