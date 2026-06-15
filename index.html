@@ -258,17 +258,74 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 .upload-pill:hover{border-color:var(--ac);color:var(--ac);}
 .upload-pill svg{width:14px;height:14px;}
 
-@media(max-width:768px){
-  #sidebar{display:none;}
-  #right-panel.open{position:fixed;inset:0;width:100%;z-index:100;}
-  .welcome-pills{flex-wrap:wrap;}
-  .svc-tiles{grid-template-columns:repeat(5,1fr);gap:5px;}
-  .svc-tile{padding:10px 8px;}
-  .svc-tile-desc{display:none;}
+/* ── MOBILE HAMBURGER BUTTON (hidden on desktop) ── */
+#nav-hamburger{display:none;background:none;border:1px solid var(--bdr);border-radius:8px;width:36px;height:36px;cursor:pointer;align-items:center;justify-content:center;color:var(--mu);flex-shrink:0;}
+#nav-hamburger svg{width:16px;height:16px;}
+
+/* ── MOBILE DRAWER ── */
+#mobile-drawer{
+  display:none;position:fixed;inset:0;z-index:200;
 }
+#mobile-drawer.open{display:block;}
+#mobile-drawer-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4);}
+#mobile-drawer-panel{
+  position:absolute;top:0;left:0;bottom:0;width:280px;
+  background:var(--card);display:flex;flex-direction:column;
+  padding:16px 0 24px;
+  box-shadow:4px 0 20px rgba(0,0,0,.15);
+  transform:translateX(-100%);transition:transform .25s ease;
+}
+#mobile-drawer.open #mobile-drawer-panel{transform:translateX(0);}
+.md-close{display:flex;align-items:center;justify-content:space-between;padding:0 16px 12px;border-bottom:1px solid var(--bdr);margin-bottom:8px;}
+.md-close span{font-size:13px;font-weight:600;color:var(--tx);}
+.md-close button{background:none;border:1px solid var(--bdr);border-radius:6px;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--mu);}
+.md-close button svg{width:13px;height:13px;}
+.md-link{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:14px;color:var(--mu);cursor:pointer;transition:background .1s;}
+.md-link:hover{background:rgba(0,0,0,.04);color:var(--tx);}
+.md-link svg{width:15px;height:15px;flex-shrink:0;stroke-width:1.5;}
+.md-divider{height:1px;background:var(--bdr);margin:6px 0;}
+.md-section-label{font-size:10px;font-weight:600;color:var(--fa);padding:6px 16px 3px;letter-spacing:.04em;text-transform:uppercase;}
+.md-cta{margin:12px 16px 0;background:var(--ac);color:#fff;border:none;border-radius:9px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans);width:calc(100% - 32px);text-align:center;}
+
+@media(max-width:768px){
+  /* Nav: hide all items except logo, phone, hamburger */
+  .nav-talk,.nav-classic,.nav-signin,.nav-cta{display:none;}
+  #nav-hamburger{display:flex;}
+
+  /* Sidebar hidden — replaced by drawer */
+  #sidebar{display:none;}
+
+  /* Right panel: full screen overlay */
+  #right-panel.open{position:fixed;inset:0;width:100%;z-index:200;}
+
+  /* Welcome screen */
+  #welcome{padding:16px 16px 80px;}
+  #welcome-heading{font-size:clamp(20px,5vw,28px);}
+
+  /* Pills: 2-column wrap */
+  .welcome-pills{flex-wrap:wrap;justify-content:flex-start;gap:6px;}
+  .welcome-pill{font-size:12px;padding:6px 12px;}
+
+  /* Service tiles: 2-column grid */
+  .svc-tiles{grid-template-columns:repeat(2,1fr);gap:8px;}
+  .svc-tile{padding:12px 10px;}
+  .svc-tile-desc{display:none;}
+
+  /* Chat input: safe area bottom padding */
+  #input-bar{padding-bottom:max(14px, env(safe-area-inset-bottom));}
+
+  /* Right panel close: larger touch target */
+  .rp-close{width:44px;height:44px;border-radius:8px;}
+
+  /* Topbar tighter on mobile */
+  #topbar{padding:0 12px;}
+  .nav-phone span{display:none;}
+  .nav-phone{padding:6px 10px;}
+}
+
 @media(max-width:480px){
-  .welcome-pills{gap:5px;}
-  .welcome-pill{font-size:11px;padding:5px 10px;}
+  .svc-tiles{grid-template-columns:repeat(2,1fr);}
+  #welcome-heading{font-size:20px;}
 }
 </style>
 </head>
@@ -285,6 +342,62 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <a href="https://freightandlogistics-portal.shipprimus.com/auth" target="_blank" class="nav-classic">Classic Portal</a>
     <button class="nav-signin" onclick="openLoginModal()">AI Portal Login <span style="background:var(--ac);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:4px;">NEW</span></button>
     <button class="nav-cta" onclick="startOnboarding()">Open an Account</button>
+    <button id="nav-hamburger" onclick="openMobileDrawer()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- MOBILE DRAWER -->
+<div id="mobile-drawer">
+  <div id="mobile-drawer-backdrop" onclick="closeMobileDrawer()"></div>
+  <div id="mobile-drawer-panel">
+    <div class="md-close">
+      <span>Menu</span>
+      <button onclick="closeMobileDrawer()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="md-section-label">Services</div>
+    <div class="md-link" onclick="closeMobileDrawer();openSvcPanel('ltl')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>
+      LTL Freight
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openSvcPanel('wg')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      White Glove
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openSvcPanel('ground')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+      Ground &amp; Parcel
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openSvcPanel('tms')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      TMS Platform
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openSvcPanel('api')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      API Integration
+    </div>
+    <div class="md-divider"></div>
+    <div class="md-link" onclick="closeMobileDrawer();openMeetingPanel()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Talk to Our Team
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openSupportPanel()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      Contact Support
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();openLoginModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      AI Portal Login
+    </div>
+    <div class="md-link" onclick="closeMobileDrawer();window.open('demo.html','_blank')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      See Live Demo
+    </div>
+    <div class="md-divider"></div>
+    <button class="md-cta" onclick="closeMobileDrawer();startOnboarding()">Open an Account</button>
   </div>
 </div>
 
@@ -930,7 +1043,10 @@ function openMeetingPanel() {
 
 function openLoginModal(){document.getElementById('login-modal').classList.add('open');setTimeout(()=>document.getElementById('lm-email').focus(),100);}
 function closeLoginModal(){document.getElementById('login-modal').classList.remove('open');}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLoginModal();closeRightPanel();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLoginModal();closeRightPanel();closeMobileDrawer();}});
+
+function openMobileDrawer(){document.getElementById('mobile-drawer').classList.add('open');document.body.style.overflow='hidden';}
+function closeMobileDrawer(){document.getElementById('mobile-drawer').classList.remove('open');document.body.style.overflow='';}
 
 async function doIndexLogin() {
   const email = (document.getElementById('lm-email').value||'').trim().toLowerCase();
