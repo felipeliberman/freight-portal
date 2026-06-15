@@ -429,7 +429,8 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #welcome-input-wrap{display:none !important;}
 
   /* Chat area */
-  #chat-area{height:100%;display:flex;flex-direction:column;}
+  #chat-area{height:100%;display:none;flex-direction:column;}
+  #chat-area.shown{display:flex;}
   #messages{
     flex:1;overflow-y:auto;
     padding:16px 14px;
@@ -5760,17 +5761,18 @@ async function doLogin() {
   }
 }
 
+let _userManualLogin = false; // set true when user manually clicks sign in
+
 function _finalizeLogin(c, email, pw) {
   currentCustomer = c;
-  if (!c._dynamic) { primusToken = null; primusExpiry = 0; } // reset for hardcoded accounts
+  if (!c._dynamic) { primusToken = null; primusExpiry = 0; }
   try { localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {}
-  const remEl = document.getElementById('login-remember');
-  // Only update fl_remember if user manually interacted with checkbox (login screen visible)
-  const loginScreen = document.getElementById('login-screen');
-  const loginVisible = loginScreen && loginScreen.style.display !== 'none' && loginScreen.style.display !== '';
-  if (loginVisible) {
+  // Only update fl_remember if user manually logged in
+  if (_userManualLogin) {
+    const remEl = document.getElementById('login-remember');
     if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
     else { localStorage.removeItem('fl_remember'); }
+    _userManualLogin = false;
   }
   // Save session so refresh doesn't kick out
   try { sessionStorage.setItem('fl_session', JSON.stringify({ email, pw, customer: c })); } catch(e) {}
@@ -6379,10 +6381,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   const ta=document.getElementById('input-textarea');
   const ws=document.getElementById('welcome-send');
   const wt=document.getElementById('welcome-textarea');
-  if(lb) lb.addEventListener('click',doLogin);
+  if(lb) lb.addEventListener('click',function(){ _userManualLogin=true; doLogin(); });
   const le=document.getElementById('login-email');
-  if(le) le.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-  if(lp) lp.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+  if(le) le.addEventListener('keydown',e=>{if(e.key==='Enter'){_userManualLogin=true;doLogin();}});
+  if(lp) lp.addEventListener('keydown',e=>{if(e.key==='Enter'){_userManualLogin=true;doLogin();}});
   if(sb) sb.addEventListener('click',sendMessage);
   if(ta){
     ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
