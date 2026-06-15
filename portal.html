@@ -5585,70 +5585,7 @@ async function updatePlaceholder() {
 function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
 function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
-function addRecent(title) {
-  recentChats=recentChats.filter(c=>c!==title);
-  recentChats.unshift(title);
-  if(recentChats.length>10)recentChats.pop();
-  renderRecentList();
-}
-function renderRecentList() {
-  const el=document.getElementById('recent-list');
-  if(!el)return;
-  el.innerHTML='';
-  recentChats.forEach((t,i)=>{
-    const row=document.createElement('div');
-    row.className='sb-link';
-    row.style.cssText='display:flex;align-items:center;justify-content:space-between;position:relative;';
-    const label=document.createElement('span');
-    label.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    label.textContent=t;
-    label.onclick=()=>setNav(row);
-    row.appendChild(label);
-    const dot=document.createElement('button');
-    dot.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
-    dot.style.cssText='background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 4px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
-    dot.onclick=(e)=>{e.stopPropagation();showChatMenu(e,t,i,row);};
-    row.onmouseenter=()=>{dot.style.display='flex';};
-    row.onmouseleave=()=>{dot.style.display='none';};
-    row.appendChild(dot);
-    el.appendChild(row);
-  });
-}
-function showChatMenu(e,title,idx,row) {
-  document.querySelectorAll('.chat-ctx-menu').forEach(m=>m.remove());
-  const menu=document.createElement('div');
-  menu.className='chat-ctx-menu';
-  menu.style.cssText='position:fixed;background:var(--card);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;min-width:140px;padding:4px;font-size:12px;';
-  const rect=row.getBoundingClientRect();
-  menu.style.left=(rect.right+4)+'px';
-  menu.style.top=rect.top+'px';
-  const starred=recentChats[idx] && recentChats[idx].startsWith('★ ');
-  const items=[
-    {label: starred ? 'Unstar' : '★ Star', fn:()=>{
-      if(starred){recentChats[idx]=title.replace('★ ','');}
-      else{recentChats[idx]='★ '+title;}
-      renderRecentList();
-    }},
-    {label:'✏️ Rename', fn:()=>{
-      const n=prompt('Rename chat:',title.replace('★ ',''));
-      if(n&&n.trim()){recentChats[idx]=(starred?'★ ':'')+n.trim();renderRecentList();}
-    }},
-    {label:'🗑 Delete', fn:()=>{
-      recentChats.splice(idx,1);renderRecentList();
-    }, color:'#dc2626'}
-  ];
-  items.forEach(item=>{
-    const btn=document.createElement('button');
-    btn.textContent=item.label;
-    btn.style.cssText='display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:6px 10px;border-radius:5px;font-size:12px;font-family:var(--font);color:'+(item.color||'var(--tx)')+';';
-    btn.onmouseenter=()=>{btn.style.background='var(--bg)';};
-    btn.onmouseleave=()=>{btn.style.background='none';};
-    btn.onclick=()=>{menu.remove();item.fn();};
-    menu.appendChild(btn);
-  });
-  document.body.appendChild(menu);
-  setTimeout(()=>document.addEventListener('click',()=>menu.remove(),{once:true}),0);
-}
+function addRecent(title) { renderSessionList(); }
 function showSessionMenu(e, s, row) {
   document.querySelectorAll('.chat-ctx-menu').forEach(m=>m.remove());
   const menu = document.createElement('div');
