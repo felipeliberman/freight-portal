@@ -636,7 +636,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   <div class="nav-right">
     <a href="tel:8006873713" class="nav-phone-link"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.69a16 16 0 0 0 6 6l1.27-.9a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg><span>(800) 687-3713</span></a>
     <button id="nav-talk" class="nav-talk" onclick="openTalk()">Talk to Sales</button>
-    <button id="nav-signin" class="nav-signin" onclick="openLogin()">AI Portal Login</button>
+    <button id="nav-signin" class="nav-signin" onclick="openLogin()">AI Portal Login <span style="background:var(--ac);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:4px;">NEW</span></button>
     <div id="nav-account" class="nav-account" style="display:none;">
       <span class="nav-acct-name" id="nav-acct-name"></span>
       <button class="nav-logout" onclick="doLogout()">Log out</button>
@@ -5568,7 +5568,70 @@ async function updatePlaceholder() {
 function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
 function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
-function addRecent(title) { recentChats=recentChats.filter(c=>c!==title); recentChats.unshift(title); if(recentChats.length>10)recentChats.pop(); const el=document.getElementById('recent-list'); if(el)el.innerHTML=recentChats.map(t=>`<div class="sb-link" onclick="setNav(this)">${t}</div>`).join(''); }
+function addRecent(title) {
+  recentChats=recentChats.filter(c=>c!==title);
+  recentChats.unshift(title);
+  if(recentChats.length>10)recentChats.pop();
+  renderRecentList();
+}
+function renderRecentList() {
+  const el=document.getElementById('recent-list');
+  if(!el)return;
+  el.innerHTML='';
+  recentChats.forEach((t,i)=>{
+    const row=document.createElement('div');
+    row.className='sb-link';
+    row.style.cssText='display:flex;align-items:center;justify-content:space-between;position:relative;';
+    const label=document.createElement('span');
+    label.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    label.textContent=t;
+    label.onclick=()=>setNav(row);
+    row.appendChild(label);
+    const dot=document.createElement('button');
+    dot.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+    dot.style.cssText='background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 4px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
+    dot.onclick=(e)=>{e.stopPropagation();showChatMenu(e,t,i,row);};
+    row.onmouseenter=()=>{dot.style.display='flex';};
+    row.onmouseleave=()=>{dot.style.display='none';};
+    row.appendChild(dot);
+    el.appendChild(row);
+  });
+}
+function showChatMenu(e,title,idx,row) {
+  document.querySelectorAll('.chat-ctx-menu').forEach(m=>m.remove());
+  const menu=document.createElement('div');
+  menu.className='chat-ctx-menu';
+  menu.style.cssText='position:fixed;background:var(--card);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;min-width:140px;padding:4px;font-size:12px;';
+  const rect=row.getBoundingClientRect();
+  menu.style.left=(rect.right+4)+'px';
+  menu.style.top=rect.top+'px';
+  const starred=recentChats[idx] && recentChats[idx].startsWith('★ ');
+  const items=[
+    {label: starred ? 'Unstar' : '★ Star', fn:()=>{
+      if(starred){recentChats[idx]=title.replace('★ ','');}
+      else{recentChats[idx]='★ '+title;}
+      renderRecentList();
+    }},
+    {label:'✏️ Rename', fn:()=>{
+      const n=prompt('Rename chat:',title.replace('★ ',''));
+      if(n&&n.trim()){recentChats[idx]=(starred?'★ ':'')+n.trim();renderRecentList();}
+    }},
+    {label:'🗑 Delete', fn:()=>{
+      recentChats.splice(idx,1);renderRecentList();
+    }, color:'#dc2626'}
+  ];
+  items.forEach(item=>{
+    const btn=document.createElement('button');
+    btn.textContent=item.label;
+    btn.style.cssText='display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:6px 10px;border-radius:5px;font-size:12px;font-family:var(--font);color:'+(item.color||'var(--tx)')+';';
+    btn.onmouseenter=()=>{btn.style.background='var(--bg)';};
+    btn.onmouseleave=()=>{btn.style.background='none';};
+    btn.onclick=()=>{menu.remove();item.fn();};
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+  setTimeout(()=>document.addEventListener('click',()=>menu.remove(),{once:true}),0);
+}
 function togglePw() { const p=document.getElementById('login-pw'); p.type=p.type==='password'?'text':'password'; }
 function showChatArea() { document.getElementById('welcome').style.display='none'; document.getElementById('chat-area').style.display='flex'; }
 function welcomeAction(action) { showChatArea(); quickAction(action); }
