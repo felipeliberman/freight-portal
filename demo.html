@@ -926,9 +926,8 @@ function openRightPanel(title, content) {
   const resizer = document.getElementById('right-resizer');
   panel.classList.add('open');
   resizer.classList.add('visible');
-  // Position resizer after CSS transition completes (250ms)
   setTimeout(() => {
-    resizer.style.right = panel.offsetWidth + 'px';
+    if (window._positionResizer) window._positionResizer();
   }, 280);
   initMapsInPanel();
 }
@@ -1587,70 +1586,46 @@ const SAMPLE_ADDRESSES = [{"name": "Pacific Warehouse Co.", "addr": "1842 S. Cen
   const resizer = document.getElementById('right-resizer');
   const panel   = document.getElementById('right-panel');
   if (!resizer || !panel) return;
-  let dragging = false;
-  let overlay = null;
 
   function positionResizer() {
-    const w = panel.offsetWidth;
-    resizer.style.right = w + 'px';
+    resizer.style.right = panel.offsetWidth + 'px';
   }
 
-  function createOverlay() {
-    overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:199;cursor:col-resize;';
-    document.body.appendChild(overlay);
-  }
-
-  function removeOverlay() {
-    if (overlay) { overlay.remove(); overlay = null; }
-  }
-
-  resizer.addEventListener('mousedown', e=>{
+  // Use pointer capture — works even when pointer moves over iframes
+  resizer.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    dragging = true;
+    resizer.setPointerCapture(e.pointerId);
     panel.style.transition = 'none';
     document.body.style.userSelect = 'none';
-    createOverlay();
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
   });
 
-  document.addEventListener('mousemove', e=>{
-    if (!dragging) return;
+  resizer.addEventListener('pointermove', e => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
     const w = window.innerWidth - e.clientX;
     if (w < 80) {
       panel.style.width = '0';
       resizer.style.right = '0';
-    } else if (w < window.innerWidth * 0.82) {
+    } else if (w < window.innerWidth * 0.85) {
       panel.style.width = w + 'px';
       resizer.style.right = w + 'px';
     }
   });
 
-  document.addEventListener('mouseup', ()=>{
-    if (!dragging) return;
-    dragging = false;
+  resizer.addEventListener('pointerup', e => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    resizer.releasePointerCapture(e.pointerId);
     document.body.style.userSelect = '';
     panel.style.transition = '';
-    removeOverlay();
     const w = parseInt(panel.style.width) || 0;
     if (w < 80) closeRightPanel();
   });
 
-  // Touch support
-  resizer.addEventListener('touchstart', e=>{ dragging=true; panel.style.transition='none'; }, {passive:true});
-  document.addEventListener('touchmove', e=>{
-    if (!dragging) return;
-    const w = window.innerWidth - e.touches[0].clientX;
-    if (w < 80) { panel.style.width='0'; resizer.style.right='0'; }
-    else if (w < window.innerWidth*0.82) { panel.style.width=w+'px'; resizer.style.right=w+'px'; }
-  }, {passive:true});
-  document.addEventListener('touchend', ()=>{
-    if (!dragging) return;
-    dragging=false; panel.style.transition='';
-    if ((parseInt(panel.style.width)||0) < 80) closeRightPanel();
+  resizer.addEventListener('pointercancel', e => {
+    document.body.style.userSelect = '';
+    panel.style.transition = '';
   });
 
-  // Expose positionResizer for openRightPanel
   window._positionResizer = positionResizer;
 })();
 
@@ -3072,12 +3047,10 @@ function openMeetingPanel() {
   wrap.appendChild(iframeEl);
 
   openRightPanel('Talk to Sales', wrap);
-  // Wider panel for calendar — reposition resizer after width set
   setTimeout(() => {
     const p = document.getElementById('right-panel');
-    const r = document.getElementById('right-resizer');
-    if (p) { p.style.width = '580px'; p.classList.add('open'); }
-    if (r) { setTimeout(() => { r.style.right = (p ? p.offsetWidth : 580) + 'px'; }, 50); }
+    if (p) { p.style.width = '580px'; }
+    setTimeout(() => { if (window._positionResizer) window._positionResizer(); }, 50);
   }, 50);
 }</script>
 
