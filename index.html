@@ -466,7 +466,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       </div>
 
       <div class="welcome-pills">
-        <div class="welcome-pill" onclick="window.location='demo.html'">Explore the demo</div>
+        <div class="welcome-pill" onclick="window.open('demo.html','_blank')">Explore the demo</div>
         <div class="welcome-pill" onclick="welcomeSendText('I need a rate — what information do you need from me?')">Get a rate</div>
         <div class="welcome-pill" onclick="welcomeSendText('I need to track a shipment')">Track a shipment</div>
         <div class="welcome-pill" onclick="openSupportPanel()">Contact support</div>
@@ -502,7 +502,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
       <!-- See it in action CTA -->
       <div style="margin-top:18px;text-align:center;">
-        <a href="demo.html" style="font-size:12px;color:var(--mu);text-decoration:none;border-bottom:1px solid var(--bdr);padding-bottom:1px;transition:color .15s;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">See the full portal demo →</a>
+        <a href="demo.html" target="_blank" rel="noopener" style="font-size:12px;color:var(--mu);text-decoration:none;border-bottom:1px solid var(--bdr);padding-bottom:1px;transition:color .15s;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">See the full portal demo →</a>
       </div>
     </div>
 
