@@ -341,7 +341,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 .log-close{position:absolute;top:-10px;right:-10px;width:28px;height:28px;border-radius:50%;border:1px solid var(--bdr);background:var(--card);color:var(--mu);cursor:pointer;font-size:16px;line-height:1;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,.1);}
 .log-close:hover{color:var(--tx);}
 @media(max-width:640px){#topbar{padding:0 12px;} #topbar .nav-phone-link span{display:none;} .nav-acct-name{max-width:90px;}}
-#public-view{flex:1;min-height:0;display:flex;}
+#public-view{flex:1;min-height:0;display:none;}
 #public-frame{flex:1;width:100%;height:100%;border:none;display:block;background:#f7f3ee;}
 
 /* Talk to Sales header CTA */
@@ -649,6 +649,12 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
 
 <!-- LOGIN -->
+<div id="fl-loading" style="position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;">
+    <div style="width:36px;height:36px;border:3px solid var(--bdr);border-top-color:var(--ac);border-radius:50%;animation:spin .7s linear infinite;"></div>
+  </div>
+</div>
+
 <div id="login-screen" style="display:none!important;">
 <div class="log-box" style="position:relative;"><button class="log-close" onclick="window.history.back()" aria-label="Close">×</button>
   <div style="text-align:center;margin-bottom:20px;">
@@ -5648,6 +5654,7 @@ window.flAnthropic = async function(u,o){ const opts = Object.assign({}, o); opt
 function openLogin(){ window.location='index.html'; }
 function closeLogin(){ var ls=document.getElementById('login-screen'); if(ls) ls.style.display='none'; var er=document.getElementById('login-error'); if(er) er.style.display='none'; var lb=document.getElementById('login-btn'); if(lb){lb.textContent='Sign in';lb.disabled=false;} if(!currentCustomer){ window.location='index.html'; } }
 function setLoggedIn(on){
+  var loader=document.getElementById('fl-loading'); if(loader) loader.style.display='none';
   var sIn=document.getElementById('nav-signin'), acct=document.getElementById('nav-account');
   var nm=document.getElementById('nav-acct-name'), row=document.getElementById('sb-user-row'), sr=document.getElementById('sb-signin-row');
   var sb=document.getElementById('sidebar'); if(sb) sb.style.display = on ? 'flex' : 'none';
@@ -6359,7 +6366,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     } catch(e) {}
   }
 
-  if (!_sessionHandled && !_ssoHandled && !_rememberHandled) openLogin();
+  if (!_sessionHandled && !_ssoHandled && !_rememberHandled) {
+    document.getElementById('fl-loading').style.display = 'none';
+    openLogin();
+  }
   // Restore tabs from previous session after a short delay (needs auth first)
   setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
   var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
