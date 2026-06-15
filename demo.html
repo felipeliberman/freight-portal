@@ -652,10 +652,17 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <label class="lm-label">Email address</label>
     <input type="email" class="lm-input" id="lm-email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doDemoLogin()">
     <label class="lm-label">Password</label>
-    <input type="password" class="lm-input" id="lm-pw" placeholder="••••••••" onkeydown="if(event.key==='Enter')doDemoLogin()">
+    <div style="position:relative;margin-bottom:10px;">
+      <input type="password" class="lm-input" id="lm-pw" placeholder="••••••••" onkeydown="if(event.key==='Enter')doDemoLogin()" style="margin-bottom:0;padding-right:38px;">
+      <button type="button" onclick="const i=document.getElementById('lm-pw');i.type=i.type==='password'?'text':'password';this.innerHTML=i.type==='password'?'<svg width=14 height=14 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\'><path d=\'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\'/><circle cx=\'12\' cy=\'12\' r=\'3\'/></svg>':'<svg width=14 height=14 viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\'><path d=\'M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94\'/><path d=\'M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19\'/><line x1=\'1\' y1=\'1\' x2=\'23\' y2=\'23\'/></svg>'" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--mu);display:flex;align-items:center;padding:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;">
+      <input type="checkbox" id="lm-remember" style="accent-color:var(--ac);width:14px;height:14px;cursor:pointer;" onchange="localStorage.setItem('fl_remember',this.checked)">
+      <label for="lm-remember" style="font-size:12px;color:var(--mu);cursor:pointer;">Remember me</label>
+    </div>
     <button class="lm-btn" onclick="doDemoLogin()">Sign In →</button>
     <div id="lm-error" style="display:none;font-size:12px;color:#dc2626;margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;text-align:center;"></div>
-    <div class="lm-link">No account? <a href="#" onclick="closeLoginModal();startOnboarding();return false;">Open one free →</a></div>
+    <div class="lm-link">No account? <a href="#" onclick="closeLoginModal();startOnboarding();return false;">Open a free account →</a></div>
   </div>
 </div>
 
@@ -1477,7 +1484,18 @@ function escHtml(s) {
 }
 
 // ── MODAL ─────────────────────────────────────────────────────────────────────
-function openLoginModal() { document.getElementById('login-modal').classList.add('open'); setTimeout(()=>{ const e=document.getElementById('lm-email'); if(e) e.focus(); },100); }
+function openLoginModal() {
+  document.getElementById('login-modal').classList.add('open');
+  const remembered = localStorage.getItem('fl_remembered_email');
+  const rememberCheck = document.getElementById('lm-remember');
+  if(remembered){
+    document.getElementById('lm-email').value = remembered;
+    if(rememberCheck) rememberCheck.checked = true;
+    setTimeout(()=>{ const p=document.getElementById('lm-pw'); if(p) p.focus(); },100);
+  } else {
+    setTimeout(()=>{ const e=document.getElementById('lm-email'); if(e) e.focus(); },100);
+  }
+}
 
 async function doDemoLogin() {
   const email = (document.getElementById('lm-email').value || '').trim().toLowerCase();
