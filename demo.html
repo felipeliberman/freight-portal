@@ -2422,7 +2422,7 @@ function buildReportsPanel() {
     const oCoords = MAP_COORDS[s.origin];
     const dCoords = MAP_COORDS[s.dest];
     if (oCoords && dCoords) {
-      laneData.push({ origin: oCoords, dest: dCoords, carrier, status: stLabel, bol: s.bol, originCity: s.origin, destCity: s.dest });
+      laneData.push({ origin: oCoords, dest: dCoords, carrier, status: stLabel, bol: s.bol, originCity: s.origin, destCity: s.dest, shipRef: { _demoIdx: SAMPLE_SHIPS.indexOf(s) } });
     }
   });
 
@@ -3008,7 +3008,7 @@ const STATE_CENTERS_GEO = {
       if (lane.shipRef) {
         g.addEventListener('click', function() {
           tooltip.style.opacity = '0';
-          if (typeof showShipmentDetail === 'function') showShipmentDetail(lane.shipRef);
+          if (typeof showShipmentDetail === 'function') { var idx = lane.shipRef && lane.shipRef._demoIdx !== undefined ? lane.shipRef._demoIdx : lane.shipRef; showShipmentDetail(idx); }
         });
         g.style.cursor = 'pointer';
       }
