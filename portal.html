@@ -799,7 +799,7 @@ main{flex:1;display:flex;flex-direction:column;overflow-y:auto;position:relative
 .tile-icon{color:var(--ac);}
 .tile-icon svg{width:20px;height:20px;stroke-width:1.75;}
 .tile-name{font-size:12px;font-weight:700;color:var(--tx);}
-.tile-desc{font-size:10px;color:var(--fa);line-height:1.4;}
+.tile-desc{font-size:11px;color:#374151;line-height:1.4;}
 
 /* Trust bar */
 .trust-bar{
@@ -1629,10 +1629,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   <div id="sb-footer">
     <div class="sb-signin-row" id="sb-signin-row" onclick="openLogin()" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--ac);font-weight:600;font-size:12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in to your account</div>
-    <div class="sb-user-row" id="sb-user-row" onclick="doLogout()" style="display:none;">
-      <div class="sb-av" id="cust-avatar"></div>
-      <span id="cust-name" style="font-size:12px;font-weight:500;color:var(--tx);flex:1;"></span>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="color:var(--fa);"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    <div class="sb-user-row" id="sb-user-row" style="display:none;padding:7px 10px;">
+      <span id="cust-name" style="font-size:12px;font-weight:500;color:var(--tx);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      <button onclick="doLogout()" title="Log out" style="background:none;border:none;cursor:pointer;padding:2px 4px;border-radius:5px;color:var(--fa);display:flex;align-items:center;transition:color .12s;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--fa)'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
     </div>
   </div>
 </div>
@@ -5575,7 +5574,7 @@ async function updatePlaceholder() {
 }
 
 function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
-function doLogout() { currentCustomer=null;primusToken=null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; recentChats=[]; chatSessions=[]; currentSession=null; const rl=document.getElementById('recent-list'); if(rl)rl.innerHTML=''; setLoggedIn(false); const wn=document.getElementById('welcome-name'); if(wn) wn.textContent='there'; const wg=document.getElementById('welcome-greeting'); if(wg) wg.textContent='Hey'; try { localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} }
+function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location='index.html'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
 function addRecent(title) { recentChats=recentChats.filter(c=>c!==title); recentChats.unshift(title); if(recentChats.length>10)recentChats.pop(); const el=document.getElementById('recent-list'); if(el)el.innerHTML=recentChats.map(t=>`<div class="sb-link" onclick="setNav(this)">${t}</div>`).join(''); }
 function togglePw() { const p=document.getElementById('login-pw'); p.type=p.type==='password'?'text':'password'; }
@@ -5738,7 +5737,7 @@ function _finalizeLogin(c, email, pw) {
   if (remEl && remEl.checked) { localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
   else { localStorage.removeItem('fl_remember'); }
   closeLogin();
-  document.getElementById('cust-avatar').textContent = c.avatar;
+  try { document.getElementById('cust-avatar').textContent = c.avatar; } catch(e) {}
   setLoggedIn(true); loadSessions();
   document.getElementById('cust-name').textContent = c.name;
   applyGreeting();
@@ -6282,6 +6281,20 @@ document.addEventListener('DOMContentLoaded',()=>{
   openLogin();
   // Restore tabs from previous session after a short delay (needs auth first)
   setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
+  // ── AUTO-LOGIN from homepage sessionStorage ──────────────────────────────
+  try {
+    const ssEmail = sessionStorage.getItem('fl_email');
+    const ssPw    = sessionStorage.getItem('fl_pw');
+    if (ssEmail && ssPw) {
+      sessionStorage.removeItem('fl_email');
+      sessionStorage.removeItem('fl_pw');
+      setTimeout(() => {
+        const em = document.getElementById('login-email');
+        const pw = document.getElementById('login-pw');
+        if (em && pw) { em.value = ssEmail; pw.value = ssPw; doLogin(); }
+      }, 300);
+    }
+  } catch(e) {}
   var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
   const lb=document.getElementById('login-btn');
   const lp=document.getElementById('login-pw');
