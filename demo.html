@@ -2457,56 +2457,22 @@ function buildReportsPanel() {
   statsRow.appendChild(statsRight);
   container.appendChild(statsRow);
 
-  // ── Freight Lane Map ──────────────────────────────────────────────────────
+  // ── Freight Lane Map — same SVG renderer as portal ───────────────────────
   if (laneData.length > 0) {
-    const mapWrap = document.createElement('div');
-    mapWrap.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;';
-    const mapTitle = document.createElement('div');
-    mapTitle.style.cssText = 'font-size:11px;font-weight:600;color:#706c63;text-transform:uppercase;letter-spacing:.05em;padding:12px 16px 0;';
-    mapTitle.textContent = 'Freight Lanes';
-    mapWrap.appendChild(mapTitle);
-    const mapEl = document.createElement('div');
-    mapEl.style.cssText = 'height:320px;width:100%;';
-    mapWrap.appendChild(mapEl);
-    container.appendChild(mapWrap);
-
-    setTimeout(() => {
-      if (typeof L === 'undefined') return;
-      const map = L.map(mapEl, { zoomControl: true, scrollWheelZoom: false });
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-      }).addTo(map);
-
-      const STATUS_COLORS = { 'Delivered': '#b0ac9f', 'In Transit': '#bd27bc', 'Out for Delivery': '#bd27bc', 'Dispatched': '#bd27bc', 'Scheduled': '#706c63', 'Exception': '#dc2626', 'Other': '#b0ac9f' };
-      const bounds = [];
-
-      laneData.forEach(lane => {
-        const oLL = lane.origin, dLL = lane.dest;
-        const color = STATUS_COLORS[lane.status] || '#706c63';
-
-        // Curved arc via midpoint offset
-        const midLat = (oLL[0] + dLL[0]) / 2 + (Math.abs(dLL[1] - oLL[1])) * 0.08;
-        const midLng = (oLL[1] + dLL[1]) / 2;
-        const arcPoints = [];
-        for (let t = 0; t <= 1; t += 0.05) {
-          const lat = (1-t)*(1-t)*oLL[0] + 2*(1-t)*t*midLat + t*t*dLL[0];
-          const lng = (1-t)*(1-t)*oLL[1] + 2*(1-t)*t*midLng + t*t*dLL[1];
-          arcPoints.push([lat, lng]);
-        }
-        L.polyline(arcPoints, { color, weight: 1.5, opacity: 0.6 }).addTo(map);
-        bounds.push(oLL, dLL);
-
-        // Origin pin
-        const oIcon = L.divIcon({ className: '', html: '<div style="width:8px;height:8px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>', iconSize: [8,8], iconAnchor: [4,4] });
-        L.marker(oLL, { icon: oIcon }).addTo(map).bindPopup('<b>' + (lane.originCity||'Origin') + '</b><br>' + lane.carrier + '<br>BOL: ' + (lane.bol||'—'));
-
-        // Dest pin
-        const dIcon = L.divIcon({ className: '', html: '<div style="width:10px;height:10px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>', iconSize: [10,10], iconAnchor: [5,5] });
-        L.marker(dLL, { icon: dIcon }).addTo(map).bindPopup('<b>' + (lane.destCity||'Destination') + '</b><br>' + lane.carrier + '<br>Status: ' + lane.status + '<br>BOL: ' + (lane.bol||'—'));
-      });
-
-      if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
-    }, 200);
+    const DEMO_CARRIER_COLORS = ['#bd27bc','#a020a0','#706c63','#b0ac9f','#8a8480','#c0bbb5','#d0ccc5','#e0ddd8'];
+    // Convert city-based laneData to format buildLaneMap expects
+    const resolvedLanes = laneData.map(l => ({
+      origin: l.origin,
+      dest:   l.dest,
+      carrier: l.carrier,
+      status:  l.status,
+      oZip:    l.originCity,
+      dZip:    l.destCity,
+      bol:     l.bol,
+      shipRef: {}
+    }));
+    const mapEl = buildLaneMap(resolvedLanes, DEMO_CARRIER_COLORS, Object.keys(carrierMap), {});
+    container.appendChild(mapEl);
   }
 
   // ── Charts row ────────────────────────────────────────────────────────────
