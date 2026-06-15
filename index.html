@@ -303,12 +303,12 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #welcome-heading{font-size:clamp(20px,5vw,28px);}
 
   /* Pills: single horizontal scroll row */
-  .welcome-pills{flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start;gap:6px;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .welcome-pills{flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start;gap:6px;padding:0 16px 4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-left:-16px;margin-right:-16px;width:calc(100% + 32px);}
   .welcome-pills::-webkit-scrollbar{display:none;}
   .welcome-pill{font-size:12px;padding:6px 12px;flex-shrink:0;}
 
   /* Service tiles: horizontal scroll row */
-  .svc-tiles{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:4px;}
+  .svc-tiles{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:0 16px 4px;margin-left:-16px;margin-right:-16px;width:calc(100% + 32px);}
   .svc-tiles::-webkit-scrollbar{display:none;}
   .svc-tile{min-width:130px;flex-shrink:0;padding:12px 10px;}
   .svc-tile-desc{display:none;}
