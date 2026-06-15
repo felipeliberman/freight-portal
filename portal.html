@@ -12140,7 +12140,7 @@ function renderReports(shipments) {
   const monthSorted = {};
   last8months.forEach(k => monthSorted[k] = monthMap[k]);
   chartsRow2.appendChild(buildBarChart('Monthly Shipment Volume', monthSorted, 'var(--ac)'));
-  const topStates = Object.entries(regionMap).sort((a,b) => b[1]-a[1]).slice(0,8);
+  const topStates = Object.entries(regionMap).sort((a,b) => b[1]-a[1]);
   chartsRow2.appendChild(buildBarChart('Top Destination States', Object.fromEntries(topStates), 'var(--ac)'));
   container.appendChild(chartsRow2);
 
@@ -12269,7 +12269,7 @@ const STATES_GEO = {
 const STATE_CENTERS_GEO = {
   'AL':[-86.7,32.0],
   'AR':[-91.6,34.7],
-  'AZ':[-113.6,34.4],
+  'AZ':[-111.7,34.3],
   'CA':[-120.0,36.6],
   'CO':[-106.2,39.0],
   'CT':[-72.9,41.4],
