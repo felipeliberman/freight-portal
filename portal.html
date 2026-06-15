@@ -2519,9 +2519,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     payBtn.style.cssText = 'background:#bd27bc;border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;';
     payBtn.onmouseover = () => payBtn.style.background = '#8e1b8d';
     payBtn.onmouseout  = () => payBtn.style.background = '#bd27bc';
-    payBtn.onclick = () => {
-      alert('Online payments coming soon! Please contact us at (800) 687-3713 to make a payment.');
-    };
+    payBtn.onclick = () => { window.open('https://signin.methodportal.com/freightandlogistics', '_blank'); };
     btnGroup.appendChild(payBtn);
   }
   titleSection.appendChild(btnGroup);
