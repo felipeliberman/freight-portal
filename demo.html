@@ -3023,20 +3023,15 @@ document.addEventListener('keydown', e=>{
 });
 function openMeetingPanel() {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;width:100%;height:100%;overflow:hidden;';
+  wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;';
 
-  // Header with rich info
+  // Header
   const hdr = document.createElement('div');
   hdr.style.cssText = 'flex-shrink:0;padding:16px 18px;border-bottom:1px solid var(--bdr);background:var(--card);';
   hdr.innerHTML =
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
-      '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--ac),#7c3aed);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.37 2 2 0 0 1 3.64 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.64a16 16 0 0 0 6 6l.95-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>' +
-      '</div>' +
-      '<div>' +
-        '<div style="font-size:14px;font-weight:700;color:var(--tx);">Talk to Our Team</div>' +
-        '<div style="font-size:11px;color:var(--mu);">Free consultation · No obligation · 15 minutes</div>' +
-      '</div>' +
+    '<div style="margin-bottom:10px;">' +
+      '<div style="font-size:14px;font-weight:700;color:var(--tx);margin-bottom:2px;">Talk to Our Team</div>' +
+      '<div style="font-size:11px;color:var(--mu);">Free consultation · No obligation · 15 minutes</div>' +
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
       '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
@@ -3058,22 +3053,19 @@ function openMeetingPanel() {
     '</div>' +
     '<div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.18);border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px;">' +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>' +
-      '<span style="font-size:11px;color:var(--tx);">Opening an account is <strong>100% free</strong> with no obligation. We typically beat current rates by 15–25%.</span>' +
+      '<span style="font-size:11px;color:var(--tx);">Opening an account is <strong>100% free</strong> with no obligation.</span>' +
     '</div>';
   wrap.appendChild(hdr);
 
-  // Iframe wrapper — pointer-events blocked on iframe so tab bar stays clickable
-  const iframeWrap = document.createElement('div');
-  iframeWrap.style.cssText = 'flex:1;overflow:hidden;position:relative;min-height:0;';
-  const iframe = document.createElement('iframe');
-  iframe.src = 'https://meetings.hubspot.com/felipe-liberman/demo?uuid=851b4f7f-a823-4fff-bd5c-96891d22e27d&embed=true';
-  iframe.style.cssText = 'border:none;width:100%;height:100%;min-height:600px;display:block;';
-  iframe.title = 'Book a Demo';
-  iframeWrap.appendChild(iframe);
-  wrap.appendChild(iframeWrap);
+  // Iframe — fixed height so it always shows
+  const iframeEl = document.createElement('iframe');
+  iframeEl.src = 'https://meetings.hubspot.com/felipe-liberman/demo?uuid=851b4f7f-a823-4fff-bd5c-96891d22e27d&embed=true';
+  iframeEl.style.cssText = 'border:none;width:100%;flex:1;min-height:500px;display:block;';
+  iframeEl.title = 'Book a Demo';
+  wrap.appendChild(iframeEl);
+
   openRightPanel('Talk to Sales', wrap);
-}
-</script>
+}</script>
 
 <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 12px;padding:8px 20px;background:var(--card);border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);">
   <span>© 2026 Freight and Logistics, Inc.</span>
