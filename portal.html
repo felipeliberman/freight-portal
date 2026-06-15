@@ -7264,10 +7264,10 @@ function applyGreeting(){
   var n=document.getElementById("welcome-name");
   var s=document.getElementById("welcome-subline");
   if(!g||!n) return;
-  var nm=(currentCustomer&&(currentCustomer.firstName||((currentCustomer.name||"").split(" ")[0])))||null;
+  var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
   var pick=pickGreeting();
   g.textContent=pick.greet;
-  n.textContent=nm ? nm+"." : ".";
+  n.textContent=nm ? nm+"." : "there";
   if(s) s.textContent=pick.sub;
 }
 // ===== Conversational shipment query engine =====
