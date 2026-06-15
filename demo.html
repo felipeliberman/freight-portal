@@ -435,8 +435,8 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 .lm-box{background:var(--card);border-radius:16px;padding:32px;width:100%;max-width:380px;position:relative;box-shadow:0 8px 40px rgba(0,0,0,.2);}
 .lm-close{position:absolute;top:12px;right:12px;width:28px;height:28px;border-radius:50%;border:1px solid var(--bdr);background:var(--card);color:var(--mu);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;}
 .lm-logo{height:20px;margin-bottom:16px;}
-.lm-title{font-size:16px;font-weight:600;margin-bottom:4px;}
-.lm-sub{font-size:12px;color:var(--mu);margin-bottom:20px;}
+.lm-title{font-size:16px;font-weight:600;margin-bottom:4px;text-align:center;}
+.lm-sub{font-size:12px;color:var(--mu);margin-bottom:20px;text-align:center;}
 .lm-label{font-size:11px;font-weight:500;color:var(--mu);margin-bottom:4px;display:block;letter-spacing:.03em;}
 .lm-input{width:100%;background:#f9f8f5;border:1.5px solid var(--bdr);border-radius:8px;padding:10px 12px;color:var(--tx);font-size:13px;font-family:var(--font);margin-bottom:12px;outline:none;transition:border-color .15s;}
 .lm-input:focus{border-color:var(--ac);}
@@ -653,12 +653,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <input type="email" class="lm-input" id="lm-email" placeholder="you@company.com">
     <label class="lm-label">Password</label>
     <input type="password" class="lm-input" id="lm-pw" placeholder="••••••••">
-    <button class="lm-btn">Sign In →</button>
+    <button class="lm-btn" onclick="doDemoLogin()">Sign In →</button>
+    <div id="lm-error" style="display:none;font-size:12px;color:#dc2626;margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;text-align:center;"></div>
     <div class="lm-link">No account? <a href="#" onclick="closeLoginModal();startOnboarding();return false;">Open one free →</a></div>
-    <div style="margin-top:12px;padding:10px;background:#f9f8f5;border-radius:8px;border:1px solid var(--bdr);text-align:center;">
-      <div style="font-size:10px;color:var(--fa);margin-bottom:3px;letter-spacing:.04em;font-weight:600;">FULL PORTAL</div>
-      <a href="portal.html" style="font-size:12px;color:var(--ac);text-decoration:none;font-weight:500;">Launch Portal →</a>
-    </div>
   </div>
 </div>
 
@@ -1479,7 +1476,49 @@ function escHtml(s) {
 }
 
 // ── MODAL ─────────────────────────────────────────────────────────────────────
-function openLoginModal() { document.getElementById('login-modal').classList.add('open'); }
+function openLoginModal() { document.getElementById('login-modal').classList.add('open'); setTimeout(()=>{ const e=document.getElementById('lm-email'); if(e) e.focus(); },100); }
+
+async function doDemoLogin() {
+  const email = (document.getElementById('lm-email').value || '').trim().toLowerCase();
+  const pw    = (document.getElementById('lm-pw').value || '').trim();
+  const errEl = document.getElementById('lm-error');
+  const btn   = document.querySelector('.lm-btn');
+  errEl.style.display = 'none';
+  if (!email || !pw) { errEl.textContent = 'Please enter your email and password.'; errEl.style.display = 'block'; return; }
+  btn.textContent = 'Signing in…'; btn.disabled = true;
+  try {
+    const res = await fetch('https://restapi.shipprimus.com/api/v1/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'claude', password: 'claude12' })
+    });
+    const d = await res.json();
+    const masterToken = d.data && d.data.accessToken;
+    if (!masterToken) throw new Error('Auth failed');
+    // Lookup customer by email
+    const custRes = await fetch('https://restapi.shipprimus.com/api/v1/customer?search=' + encodeURIComponent(email), {
+      headers: { 'Authorization': 'Bearer ' + masterToken }
+    });
+    const custData = await custRes.json();
+    const customers = (custData.data && custData.data.rows) || [];
+    const match = customers.find(c => (c.email||'').toLowerCase() === email || (c.contactEmail||'').toLowerCase() === email);
+    if (!match) { errEl.textContent = 'No account found for that email.'; errEl.style.display = 'block'; btn.textContent = 'Sign In →'; btn.disabled = false; return; }
+    // Validate password against Primus applet login
+    const appletRes = await fetch('https://restapi.shipprimus.com/applet/v1/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: email, password: pw, customerId: match.id })
+    });
+    if (!appletRes.ok) { errEl.textContent = 'Incorrect password.'; errEl.style.display = 'block'; btn.textContent = 'Sign In →'; btn.disabled = false; return; }
+    // Success — write to localStorage so portal auto-logs in
+    localStorage.setItem('fl_remember', JSON.stringify({ email, pw }));
+    window.location.href = 'portal.html';
+  } catch(e) {
+    errEl.textContent = 'Sign in failed. Please try again or call (800) 687-3713.';
+    errEl.style.display = 'block';
+    btn.textContent = 'Sign In →'; btn.disabled = false;
+  }
+}
 function closeLoginModal() { document.getElementById('login-modal').classList.remove('open'); }
 
 // ── SUPPORT PANEL ────────────────────────────────────────────────────────────
