@@ -577,7 +577,9 @@ function openRightPanel(title, content) {
   document.getElementById('right-resizer').classList.add('visible');
 }
 function closeRightPanel() {
-  document.getElementById('right-panel').classList.remove('open');
+  const rp = document.getElementById('right-panel');
+  rp.classList.remove('open');
+  rp.style.width = '';
   document.getElementById('right-resizer').classList.remove('visible');
   document.querySelectorAll('.sb-link').forEach(l=>l.classList.remove('active'));
 }
@@ -922,7 +924,7 @@ function openMeetingPanel() {
   openRightPanel('Talk to Our Team', wrap);
   setTimeout(() => {
     const p = document.getElementById('right-panel');
-    if (p) { p.style.width = '580px'; p.classList.add('open'); }
+    if (p) { p.classList.add('open'); }
   }, 50);
 }
 
