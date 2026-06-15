@@ -787,19 +787,19 @@ main{flex:1;display:flex;flex-direction:column;overflow-y:auto;position:relative
 
 /* Tiles */
 .tiles{
-  max-width:680px;width:100%;display:flex;gap:8px;
+  max-width:800px;width:100%;display:flex;gap:8px;
 }
 .tile{
   flex:1;background:var(--card);border:1px solid var(--border);
-  border-radius:10px;padding:11px 13px;cursor:pointer;
-  transition:all .15s;display:flex;flex-direction:column;gap:5px;
+  border-radius:12px;padding:16px 14px;cursor:pointer;
+  transition:all .15s;display:flex;flex-direction:column;gap:6px;
   box-shadow:var(--shadow);
 }
 .tile:hover{border-color:var(--ac);background:var(--ac2);transform:translateY(-1px);box-shadow:var(--shadow2);}
 .tile-icon{color:var(--ac);}
-.tile-icon svg{width:16px;height:16px;stroke-width:1.75;}
-.tile-name{font-size:12px;font-weight:600;color:var(--tx);}
-.tile-desc{font-size:10px;color:var(--fa);line-height:1.3;}
+.tile-icon svg{width:20px;height:20px;stroke-width:1.75;}
+.tile-name{font-size:12px;font-weight:700;color:var(--tx);}
+.tile-desc{font-size:10px;color:var(--fa);line-height:1.4;}
 
 /* Trust bar */
 .trust-bar{
@@ -1032,17 +1032,27 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;
       <div class=&quot;tile&quot; onclick=&quot;expandAndAsk('Tell me about LTL freight — rates, carriers, and how it works')&quot;>
         <div class=&quot;tile-icon&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot;><path d=&quot;M1 3h15v13H1z&quot;/><path d=&quot;M16 8h4l3 3v5h-7V8z&quot;/><circle cx=&quot;5.5&quot; cy=&quot;18.5&quot; r=&quot;2.5&quot;/><circle cx=&quot;18.5&quot; cy=&quot;18.5&quot; r=&quot;2.5&quot;/></svg></div>
         <div class=&quot;tile-name&quot;>LTL Freight</div>
-        <div class=&quot;tile-desc&quot;>50+ carriers - live quotes</div>
+        <div class=&quot;tile-desc&quot;>Compare live contract rates across top national and regional carriers. Optimized for rapid, dock-to-dock commercial quoting.</div>
       </div>
       <div class=&quot;tile&quot; onclick=&quot;expandAndAsk('Tell me about white glove delivery — threshold, room of choice, assembly and installation')&quot;>
         <div class=&quot;tile-icon&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot;><path d=&quot;M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z&quot;/></svg></div>
         <div class=&quot;tile-name&quot;>White Glove</div>
-        <div class=&quot;tile-desc&quot;>Threshold - room-of-choice - assembly</div>
+        <div class=&quot;tile-desc&quot;>Guarantee final-mile compliance with automated residential address detection, liftgate verification, and inside-delivery scheduling.</div>
       </div>
       <div class=&quot;tile&quot; onclick=&quot;expandAndAsk('Tell me about your FedEx and UPS ground shipping service')&quot;>
         <div class=&quot;tile-icon&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot;><rect x=&quot;1&quot; y=&quot;3&quot; width=&quot;15&quot; height=&quot;13&quot; rx=&quot;1&quot;/><path d=&quot;M16 8h4l3 4v5h-7V8z&quot;/><circle cx=&quot;5.5&quot; cy=&quot;18.5&quot; r=&quot;2.5&quot;/><circle cx=&quot;18.5&quot; cy=&quot;18.5&quot; r=&quot;2.5&quot;/></svg></div>
         <div class=&quot;tile-name&quot;>Ground &amp;amp; Parcel</div>
-        <div class=&quot;tile-desc&quot;>FedEx - UPS - small shipments</div>
+        <div class=&quot;tile-desc&quot;>Add UPS and FedEx Ground to your freight account for convenient one-stop shipping management.</div>
+      </div>
+      <div class=&quot;tile&quot; onclick=&quot;expandAndAsk('Tell me about your free TMS platform — features, access, and how it works')&quot;>
+        <div class=&quot;tile-icon&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot;><rect x=&quot;2&quot; y=&quot;3&quot; width=&quot;20&quot; height=&quot;14&quot; rx=&quot;2&quot;/><line x1=&quot;8&quot; y1=&quot;21&quot; x2=&quot;16&quot; y2=&quot;21&quot;/><line x1=&quot;12&quot; y1=&quot;17&quot; x2=&quot;12&quot; y2=&quot;21&quot;/></svg></div>
+        <div class=&quot;tile-name&quot;>TMS Platform</div>
+        <div class=&quot;tile-desc&quot;>Consolidate your entire shipping operations into one clean interface. Track historical loads, audit billing, and manage documentation without the clutter.</div>
+      </div>
+      <div class=&quot;tile&quot; onclick=&quot;expandAndAsk('Tell me about your API integration — how it works and who it is for')&quot;>
+        <div class=&quot;tile-icon&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot;><polyline points=&quot;16 18 22 12 16 6&quot;/><polyline points=&quot;8 6 2 12 8 18&quot;/></svg></div>
+        <div class=&quot;tile-name&quot;>API Integration</div>
+        <div class=&quot;tile-desc&quot;>Eliminate manual entry entirely. Connect your ERP, WMS, or e-commerce storefront directly to our backend for silent, high-volume automation.</div>
       </div>
     </div>
 
@@ -3114,7 +3124,7 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
     wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#c4b5fd #f5f3ff;';
     const table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:980px;';
-    const cols = ['BOL#','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total','Status',''];
+    const cols = ['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total',''];
     // Priority: always=0, medium=1 (hide <500px), narrow=2 (hide <380px)
     const colPriority = [0,2,2,2,1,1,0,1,2,0,0,0];
     const thead = document.createElement('thead');
@@ -3190,12 +3200,12 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
   // Right: stats spread evenly — clickable to filter
   let activeShipFilter = 'all';
   const headerRight = document.createElement('div');
-  headerRight.style.cssText = 'display:flex;flex:2;justify-content:space-around;flex-wrap:wrap;gap:8px;';
+  headerRight.style.cssText = 'display:flex;flex:2;justify-content:space-around;gap:4px;min-width:0;';
   const entries = Object.entries(statusCounts);
   entries.forEach(([label, count], idx) => {
     const color = statColors[label] || '#706c63';
     const statCol = document.createElement('div');
-    statCol.style.cssText = 'text-align:center;padding:0 16px;cursor:pointer;border-radius:8px;transition:background .12s;' + (idx < entries.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
+    statCol.style.cssText = 'text-align:center;padding:0 8px;cursor:pointer;border-radius:8px;transition:background .12s;flex:1;min-width:0;' + (idx < entries.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
     statCol.innerHTML = `
       <div style="font-size:22px;font-weight:500;color:${color};">${count}</div>
       <div style="font-size:10px;color:var(--fa);margin-top:2px;">${label}</div>
@@ -3323,7 +3333,7 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
   wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#c4b5fd #f5f3ff;';
   const table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:980px;';
-  const cols = ['BOL#','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total','Status',''];
+  const cols = ['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total',''];
   
   // Store sort state on the table element
   table.sortField = null;
@@ -3596,16 +3606,16 @@ function renderShipmentRows(shipments, tbody, limit, offset) {
     const _cp = [0,2,2,2,1,1,0,1,2,0,0,0];
     tr.insertAdjacentHTML('beforeend', `
       <td data-col="0" data-priority="0" style="padding:9px 12px;font-weight:600;color:var(--ac);white-space:nowrap;font-size:12px;">${bol}</td>
-      <td data-col="1" data-priority="2" style="padding:9px 12px;"><span style="background:#f0ede6;border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">${mode}</span></td>
-      <td data-col="2" data-priority="2" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${created}</td>
-      <td data-col="3" data-priority="2" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${estPU}</td>
-      <td data-col="4" data-priority="1" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${estDEL}</td>
-      <td data-col="5" data-priority="1" style="padding:9px 12px;font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${shipper}">${shipper}</td>
-      <td data-col="6" data-priority="0" style="padding:9px 12px;font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${consignee}">${consignee}</td>
-      <td data-col="7" data-priority="1" style="padding:9px 12px;color:var(--mu);font-size:11px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${carrier}">${carrier}</td>
-      <td data-col="8" data-priority="2" style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);">${pro||'—'}</td>
-      <td data-col="9" data-priority="0" style="padding:9px 12px;font-weight:600;white-space:nowrap;font-size:12px;">${total}</td>
-      <td data-col="10" data-priority="0" style="padding:9px 12px;">${isShipmentDispatched(s) ? '<span style="color:var(--mu);font-size:10px;font-weight:500;letter-spacing:.02em;white-space:nowrap;">' + (status||'—') + '</span>' : '<span style="display:inline-flex;align-items:center;gap:4px;background:#f3f4f6;border:1px solid var(--bdr);border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;color:var(--mu);">Saved</span>'}</td>
+      <td data-col="1" data-priority="0" style="padding:9px 12px;">${isShipmentDispatched(s) ? '<span style="color:var(--mu);font-size:10px;font-weight:500;letter-spacing:.02em;white-space:nowrap;">' + (status||'—') + '</span>' : '<span style="display:inline-flex;align-items:center;gap:4px;background:#f3f4f6;border:1px solid var(--bdr);border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;color:var(--mu);">Saved</span>'}</td>
+      <td data-col="2" data-priority="2" style="padding:9px 12px;"><span style="background:#f0ede6;border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">${mode}</span></td>
+      <td data-col="3" data-priority="2" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${created}</td>
+      <td data-col="4" data-priority="2" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${estPU}</td>
+      <td data-col="5" data-priority="1" style="padding:9px 12px;color:var(--mu);white-space:nowrap;font-size:11px;">${estDEL}</td>
+      <td data-col="6" data-priority="1" style="padding:9px 12px;font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${shipper}">${shipper}</td>
+      <td data-col="7" data-priority="0" style="padding:9px 12px;font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${consignee}">${consignee}</td>
+      <td data-col="8" data-priority="1" style="padding:9px 12px;color:var(--mu);font-size:11px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${carrier}">${carrier}</td>
+      <td data-col="9" data-priority="2" style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);">${pro||'—'}</td>
+      <td data-col="10" data-priority="0" style="padding:9px 12px;font-weight:600;white-space:nowrap;font-size:12px;">${total}</td>
       <td data-col="11" data-priority="0" style="padding:9px 8px;white-space:nowrap;" onclick="event.stopPropagation();">
         ${!isShipmentDispatched(s) ? '<button class="row-dispatch-btn" title="Dispatch Shipment" style="background:var(--ac);color:#fff;border:none;border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--font);margin-right:4px;">Dispatch</button>' : ''}
         <button onclick="openDocsModal('${bolId}','${bol}')" title="Documents"
@@ -3735,7 +3745,7 @@ function exportShipmentsToExcel(shipments) {
   }
   
   // Prepare CSV data
-  const headers = ['BOL#', 'Mode', 'Created', 'Est. PU', 'Est. DEL', 'Shipper', 'Consignee', 'Carrier', 'PRO#', 'Total', 'Status'];
+  const headers = ['BOL#', 'Status', 'Mode', 'Created', 'Est. PU', 'Est. DEL', 'Shipper', 'Consignee', 'Carrier', 'PRO#', 'Total'];
   const rows = [];
   
   shipments.forEach(s => {
@@ -12733,7 +12743,7 @@ document.addEventListener('DOMContentLoaded', () => { applyNavState(); });
 const rpState = {
   tabs: [],
   activeId: null,
-  width: parseFloat(localStorage.getItem('rpWidth') || '37'),
+  width: parseFloat(localStorage.getItem('rpWidth') || '44'),
 };
 
 function openRightPanel(contentEl, title) {
