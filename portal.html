@@ -5603,7 +5603,7 @@ async function updatePlaceholder() {
   setTimeout(() => { if (tipEl) tipEl.style.opacity = '0'; }, 7000);
 }
 
-function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; applyGreeting(); updatePlaceholder(); }
+function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; setTimeout(applyGreeting, 50); updatePlaceholder(); }
 
 
 function openTermsPanel() {
@@ -5890,8 +5890,7 @@ function _finalizeLogin(c, email, pw) {
   setLoggedIn(true); loadSessions();
   document.getElementById('cust-name').textContent = c.name;
   updatePlaceholder();
-  applyGreeting();
-  setTimeout(applyGreeting, 200);
+  setTimeout(applyGreeting, 300);
   setTimeout(showDidYouKnow, 800);
 }
 
