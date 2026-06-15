@@ -1074,8 +1074,18 @@ function openMeetingPanel() {
 
 function openLoginModal(){
   document.getElementById('login-modal').classList.add('open');
-  const remembered = localStorage.getItem('fl_remembered_email');
   const rememberCheck = document.getElementById('lm-remember');
+  try {
+    const rem = JSON.parse(localStorage.getItem('fl_remember') || 'null');
+    if(rem && rem.email && rem.pw){
+      document.getElementById('lm-email').value = rem.email;
+      document.getElementById('lm-pw').value = rem.pw;
+      if(rememberCheck) rememberCheck.checked = true;
+      setTimeout(()=>document.getElementById('lm-signin-btn').focus(),100);
+      return;
+    }
+  } catch(e){}
+  const remembered = localStorage.getItem('fl_remembered_email');
   if(remembered){
     document.getElementById('lm-email').value = remembered;
     if(rememberCheck) rememberCheck.checked = true;
