@@ -550,9 +550,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       <span class="sb-text">Settings</span>
     </div>
 
-    <div id="sb-footer">
-      <div class="sb-text" style="font-size:10.5px;color:var(--fa);padding:8px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Start shipping with Freight and Logistics, Inc.</div>
-    </div>
+    <div id="sb-footer"></div>
   </div>
     <!-- MAIN -->
   <div id="main">
@@ -1231,6 +1229,7 @@ function openFormPanel() {
 
     <div id="sf-error" style="display:none;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#dc2626;margin-bottom:12px;"></div>
 
+    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href=\"https://www.freightandlogistics.com/terms-and-conditions\" target=\"_blank\" style=\"color:var(--mu);\">Terms and Conditions</a> and <a href=\"https://www.freightandlogistics.com/privacy-policy\" target=\"_blank\" style=\"color:var(--mu);\">Privacy Policy</a>.</div>
     <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Submit Account Application</button>
     <div style="text-align:center;margin-top:10px;font-size:11px;color:var(--fa);">Our onboarding team will reach out within 1 business day.</div>
   </div>`;
@@ -3076,5 +3075,15 @@ function openMeetingPanel() {
   openRightPanel('Talk to Sales', wrap);
 }
 </script>
+
+<div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 12px;padding:8px 20px;background:var(--card);border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);">
+  <span>© 2026 Freight and Logistics, Inc.</span>
+  <span>·</span>
+  <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Terms and Conditions</a>
+  <span>·</span>
+  <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
+  <span>·</span>
+  <a href="mailto:support@freightandlogistics.com" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">support@freightandlogistics.com</a>
+</div>
 </body>
 </html>
