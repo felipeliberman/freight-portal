@@ -303,6 +303,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   border-left:1px solid var(--bdr);
   display:flex;flex-direction:column;overflow:hidden;
   transition:width .25s ease;
+  align-self:stretch;
 }
 #right-panel.open{width:520px;}
 #right-resizer{display:none;}
@@ -3022,7 +3023,7 @@ document.addEventListener('keydown', e=>{
 });
 function openMeetingPanel() {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;width:100%;';
+  wrap.style.cssText = 'display:flex;flex-direction:column;width:100%;height:100%;overflow:hidden;';
 
   // Header with rich info
   const hdr = document.createElement('div');
@@ -3063,10 +3064,10 @@ function openMeetingPanel() {
 
   // Iframe wrapper — pointer-events blocked on iframe so tab bar stays clickable
   const iframeWrap = document.createElement('div');
-  iframeWrap.style.cssText = 'flex:1;overflow:hidden;position:relative;';
+  iframeWrap.style.cssText = 'flex:1;overflow:hidden;position:relative;min-height:0;';
   const iframe = document.createElement('iframe');
   iframe.src = 'https://meetings.hubspot.com/felipe-liberman/demo?uuid=851b4f7f-a823-4fff-bd5c-96891d22e27d&embed=true';
-  iframe.style.cssText = 'border:none;width:100%;height:100%;display:block;position:absolute;top:0;left:0;';
+  iframe.style.cssText = 'border:none;width:100%;height:100%;min-height:600px;display:block;';
   iframe.title = 'Book a Demo';
   iframeWrap.appendChild(iframe);
   wrap.appendChild(iframeWrap);
