@@ -88,10 +88,34 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   font-family:var(--serif);
   font-size:clamp(22px,2.8vw,34px);
   font-weight:400;color:var(--tx);
-  margin-bottom:6px;text-align:center;
+  margin-bottom:4px;text-align:center;
   line-height:1.15;letter-spacing:-.01em;
+  position:relative;overflow:hidden;
 }
-#welcome-trust{font-size:12px;color:var(--fa);text-align:center;margin-bottom:22px;letter-spacing:.01em;}
+#welcome-heading::after{
+  content:'';
+  position:absolute;
+  top:-20%;left:-150%;
+  width:80%;height:140%;
+  background:linear-gradient(105deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0.75) 48%,rgba(255,255,255,1) 50%,rgba(255,255,255,0.75) 52%,rgba(255,255,255,0) 100%);
+  transform:skewX(-15deg);
+  animation:logoSheen 2s ease-in-out 0.3s 1 forwards;
+}
+@keyframes logoSheen{
+  0%  {left:-150%;opacity:1;}
+  75% {left:140%;opacity:1;}
+  82% {left:155%;opacity:0.2;}
+  86% {left:155%;opacity:0.9;}
+  90% {left:155%;opacity:0.1;}
+  94% {left:155%;opacity:0.6;}
+  100%{left:155%;opacity:0;}
+}
+#welcome-subline{
+  font-size:16px;color:var(--mu);text-align:center;
+  margin-bottom:20px;font-family:var(--sans);font-weight:400;
+  letter-spacing:0;
+}
+#welcome-trust{font-size:12px;color:var(--fa);text-align:center;margin-bottom:16px;letter-spacing:.01em;}
 #welcome-input-wrap{
   width:100%;max-width:600px;
   background:var(--card);border:1.5px solid var(--bdr);
@@ -461,6 +485,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   <div id="main">
     <div id="welcome">
       <div id="welcome-heading">Start shipping with<br>Freight and Logistics, Inc.</div>
+      <div id="welcome-subline">Freight quotes, tracking, and support — powered by AI.</div>
       <div id="welcome-trust">Instant quotes from 50+ carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
       <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 5 minutes</div>
 
