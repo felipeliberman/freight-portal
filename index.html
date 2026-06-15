@@ -281,7 +281,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.69a16 16 0 0 0 6 6l1.27-.9a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
       <span>(800) 687-3713</span>
     </a>
-    <button class="nav-talk" onclick="openMeetingPanel()">Talk to Sales</button>
+    <button class="nav-talk" onclick="openMeetingPanel()">Talk to Our Team</button>
     <a href="https://freightandlogistics-portal.shipprimus.com/auth" target="_blank" class="nav-classic">Classic Portal</a>
     <button class="nav-signin" onclick="openLoginModal()">AI Portal Login <span style="background:var(--ac);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;letter-spacing:.04em;vertical-align:middle;margin-left:4px;">NEW</span></button>
     <button class="nav-cta" onclick="startOnboarding()">Open an Account</button>
@@ -582,30 +582,33 @@ function closeRightPanel() {
   const resizer=document.getElementById('right-resizer');
   const panel=document.getElementById('right-panel');
   if(!resizer||!panel) return;
-  let dragging=false;
-  resizer.addEventListener('mousedown',e=>{
-    if(e.button!==0)return;
-    dragging=true;
-    panel.classList.remove('open');
-    e.preventDefault();e.stopPropagation();
-    document.body.style.userSelect='none';
-    panel.style.transition='none';
+  function positionResizer() { resizer.style.right = panel.offsetWidth + 'px'; }
+  window._positionResizer = positionResizer;
+  resizer.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    resizer.setPointerCapture(e.pointerId);
+    panel.style.transition = 'none';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
   });
-  document.addEventListener('mousemove',e=>{
-    if(!dragging)return;
-    const w=window.innerWidth-e.clientX;
-    if(w<80){panel.style.width='0';}
-    else if(w<window.innerWidth*0.82){panel.style.width=w+'px';}
+  resizer.addEventListener('pointermove', e => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    const w = window.innerWidth - e.clientX;
+    if (w < 80) { panel.style.width = '0'; resizer.style.right = '0'; }
+    else if (w < window.innerWidth * 0.85) { panel.style.width = w + 'px'; resizer.style.right = w + 'px'; }
   });
-  document.addEventListener('mouseup',()=>{
-    if(!dragging)return;
-    dragging=false;document.body.style.userSelect='';panel.style.transition='';
-    const w=parseInt(panel.style.width)||0;
-    if(w<80){
-      panel.style.width='';
-      document.getElementById('right-resizer').classList.remove('visible');
-      document.querySelectorAll('.sb-link').forEach(l=>l.classList.remove('active'));
-    }
+  resizer.addEventListener('pointerup', e => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    resizer.releasePointerCapture(e.pointerId);
+    document.body.style.userSelect = '';
+    panel.style.transition = '';
+    const w = parseInt(panel.style.width) || 0;
+    if (w < 80) { panel.style.width = ''; resizer.classList.remove('visible'); document.querySelectorAll('.sb-link').forEach(l=>l.classList.remove('active')); }
+    else positionResizer();
+  });
+  resizer.addEventListener('pointercancel', e => {
+    document.body.style.userSelect = '';
+    panel.style.transition = '';
   });
 })();
 
@@ -886,19 +889,19 @@ function openMeetingPanel() {
       '<div style="font-size:11px;color:var(--mu);">Free consultation · No obligation · 15 minutes</div>' +
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
-      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+      '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">LTL Freight</div>' +
         '<div style="font-size:11px;color:var(--tx);">Live rates from 50+ carriers. Book in 60 seconds.</div>' +
       '</div>' +
-      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+      '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">White Glove</div>' +
         '<div style="font-size:11px;color:var(--tx);">Residential last-mile with automated accessorial detection.</div>' +
       '</div>' +
-      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+      '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Free TMS</div>' +
         '<div style="font-size:11px;color:var(--tx);">Full portal access — quotes, tracking, invoices, reports.</div>' +
       '</div>' +
-      '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
+      '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Ground & Parcel</div>' +
         '<div style="font-size:11px;color:var(--tx);">UPS and FedEx Ground alongside your freight — one account.</div>' +
       '</div>' +
