@@ -7264,7 +7264,7 @@ function applyGreeting(){
   var n=document.getElementById("welcome-name");
   var s=document.getElementById("welcome-subline");
   if(!g||!n) return;
-  var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
+  var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null; if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;}
   var pick=pickGreeting();
   g.textContent=pick.greet;
   n.textContent=nm ? nm+"." : "there";
