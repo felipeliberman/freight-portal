@@ -1660,6 +1660,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       <div style="font-size:30px;font-weight:500;margin-top:8px;">
         <span id="welcome-greeting">Hey</span>, <span id="welcome-name" style="color:var(--mu);">there</span>
       </div>
+      <div id="welcome-subline" style="font-size:15px;color:var(--mu);margin-top:4px;font-weight:400;"></div>
     </div>
         <div id="welcome-input-wrap" style="position:relative;">
       <textarea id="welcome-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:80px;min-height:72px;"></textarea>
@@ -7238,23 +7239,36 @@ function removePicker() {
 
 // ===== Dynamic greeting =====
 function pickGreeting(){
-  const h=new Date().getHours(), day=new Date().getDay();
-  let pool;
-  if(h>=5&&h<12) pool=[{t:'Good morning',p:'!'},{t:'Morning',p:'!'},{t:'Rise and ship',p:'!'},{t:'Top of the morning',p:'!'}];
-  else if(h>=12&&h<17) pool=[{t:'Good afternoon',p:'!'},{t:'Afternoon',p:'!'},{t:'Hope the day is moving',p:'!'}];
-  else if(h>=17&&h<22) pool=[{t:'Good evening',p:'!'},{t:'Evening',p:'!'}];
-  else pool=[{t:'Working late',p:'?'},{t:'Burning the midnight oil',p:'?'},{t:'Up late',p:'?'},{t:'Still moving freight',p:'?'}];
-  if(day===5 && Math.random()<0.4) pool.push({t:'Happy Friday',p:'!'});
-  if(day===1 && Math.random()<0.3) pool.push({t:'Happy Monday',p:'!'});
-  return pool[Math.floor(Math.random()*pool.length)];
+  var h=new Date().getHours(), day=new Date().getDay();
+  var greet, sublines;
+  if(h>=5&&h<12){
+    greet="Good morning";
+    sublines=["Ready to move some freight?","Need a quote today?","What can we ship for you?","Let us get rolling."];
+  } else if(h>=12&&h<17){
+    greet="Good afternoon";
+    sublines=["Need a rate? Just ask.","Tracking a shipment?","What are we shipping today?","How can we help?"];
+  } else if(h>=17&&h<22){
+    greet="Good evening";
+    sublines=["Still moving freight?","Need a quick quote?","We are here all evening.","What can we help with?"];
+  } else {
+    greet="Working late";
+    sublines=["We are here around the clock.","Need an urgent quote?","Get it done tonight."];
+  }
+  if(day===5) sublines.push("Happy Friday. Close the week strong.");
+  if(day===1) sublines.push("Happy Monday. Time to roll.");
+  var sub=sublines[Math.floor(Math.random()*sublines.length)];
+  return {greet:greet, sub:sub};
 }
 function applyGreeting(){
-  const g=document.getElementById('welcome-greeting'), n=document.getElementById('welcome-name');
+  var g=document.getElementById("welcome-greeting");
+  var n=document.getElementById("welcome-name");
+  var s=document.getElementById("welcome-subline");
   if(!g||!n) return;
-  const nm=(currentCustomer&&(currentCustomer.firstName||((currentCustomer.name||'').split(' ')[0])))||'there';
-  const pick=pickGreeting();
-  g.textContent=pick.t;
-  n.textContent=(nm==='there')?nm:(nm+pick.p);
+  var nm=(currentCustomer&&(currentCustomer.firstName||((currentCustomer.name||"").split(" ")[0])))||null;
+  var pick=pickGreeting();
+  g.textContent=pick.greet;
+  n.textContent=nm ? nm+"." : ".";
+  if(s) s.textContent=pick.sub;
 }
 // ===== Conversational shipment query engine =====
 let shipCtx = null;     // { from,to,page,totalPages,loaded:[],done,query,filtered }
