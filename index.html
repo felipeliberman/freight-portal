@@ -333,9 +333,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       See Live Demo
     </div>
-    <div id="sb-footer">
-      <div class="sb-footer-text">Start shipping with Freight and Logistics, Inc.</div>
-    </div>
+    <div id="sb-footer"></div>
   </div>
 
   <!-- MAIN -->
@@ -624,11 +622,12 @@ function openSvcPanel(key) {
   <div class="svc-body">
     <div class="svc-stat-row">${stats}</div>
     <div class="svc-feature-list">${feats}</div>
-    <button class="svc-cta-btn" onclick="startOnboarding()">Open an Account — 2 Minutes</button>
+    <button class="svc-cta-btn" onclick="startOnboarding()">Open an Account — It Takes 5 Minutes</button>
     <button class="svc-secondary-btn" onclick="chatAboutService('${key}')">Ask about this →</button>
     <div style="margin-top:10px;text-align:center;"><a href="demo.html" target="_blank" style="font-size:11px;color:var(--mu);text-decoration:none;border-bottom:1px solid var(--bdr);" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">See it in the portal demo →</a></div>
   </div>`;
-  openRightPanel(key.toUpperCase()+' Freight', html);
+  const _titles={ltl:'LTL Freight',wg:'White Glove',ground:'Ground & Parcel',tms:'TMS Platform',api:'API Integration'};
+  openRightPanel(_titles[key]||key, html);
 }
 
 function chatAboutService(key) {
@@ -771,6 +770,7 @@ function openFormPanel() {
       </div>
     </div>
     <div id="sf-error" style="display:none;padding:9px 11px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:10px;"></div>
+    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href=\"https://www.freightandlogistics.com/terms-and-conditions\" target=\"_blank\" style=\"color:var(--mu);\">Terms and Conditions</a> and <a href=\"https://www.freightandlogistics.com/privacy-policy\" target=\"_blank\" style=\"color:var(--mu);\">Privacy Policy</a>.</div>
     <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Submit Account Application</button>
     <div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Our onboarding team will reach out within 1 business day.</div>
   </div>`;
@@ -907,5 +907,15 @@ async function doIndexLogin() {
   }
 }
 </script>
+
+<div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 12px;padding:8px 20px;background:var(--card);border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);">
+  <span>© 2026 Freight and Logistics, Inc.</span>
+  <span>·</span>
+  <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Terms and Conditions</a>
+  <span>·</span>
+  <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
+  <span>·</span>
+  <a href="mailto:support@freightandlogistics.com" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">support@freightandlogistics.com</a>
+</div>
 </body>
 </html>
