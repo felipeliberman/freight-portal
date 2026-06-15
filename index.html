@@ -1180,8 +1180,6 @@ async function doIndexLogin() {
   const btn   = document.getElementById('lm-signin-btn');
   const err   = document.getElementById('lm-error');
   const remember = document.getElementById('lm-remember')?.checked;
-  if(remember) { localStorage.setItem('fl_remembered_email', email); localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
-  else { localStorage.removeItem('fl_remembered_email'); localStorage.removeItem('fl_remember'); }
   if (!email||!pw) { err.textContent='Please enter your email and password.'; err.style.display='block'; return; }
   btn.textContent='Signing in…'; btn.disabled=true; err.style.display='none';
   try {
@@ -1192,6 +1190,9 @@ async function doIndexLogin() {
     if (!r.ok) throw new Error('invalid');
     const d = await r.json();
     if (!d.data || !d.data.accessToken) throw new Error('invalid');
+    // Save remember me AFTER successful login
+    if(remember) { localStorage.setItem('fl_remembered_email', email); localStorage.setItem('fl_remember', JSON.stringify({ email, pw })); }
+    else { localStorage.removeItem('fl_remembered_email'); localStorage.removeItem('fl_remember'); }
     // Store credentials for portal to pick up
     sessionStorage.setItem('fl_email', email);
     sessionStorage.setItem('fl_pw', pw);
