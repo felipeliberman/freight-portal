@@ -7796,7 +7796,6 @@ async function lookupIdentifier(id){
     removeTyping();
     if(s){
       appendMessage('bot', null, {trackInline: s});
-      setTimeout(() => showShipmentDetail(s), 400);
     } else {
       appendMessage('bot',"I couldn't find a shipment with BOL or PRO "+id+". Double-check the number, or tell me the approximate date.");
     }
@@ -13530,7 +13529,9 @@ async function mobShowShipments() {
         mobSetActive('chat');
         document.getElementById('mob-ships-view').style.display = 'none';
         showChatArea();
-        if (typeof handleInput === 'function') handleInput('Tell me about BOL ' + bol);
+        var msg = 'Tell me about BOL ' + bol;
+        if (typeof appendMessage === 'function') appendMessage('user', msg);
+        if (typeof handleInput === 'function') handleInput(msg);
       };
       list.appendChild(card);
     });
