@@ -629,9 +629,105 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   #ship-modal-overlay [style*="overflow-x:auto"]::-webkit-scrollbar{
     display:none !important;
   }
-  /* Subtle dim behind modal on mobile */
-  #ship-modal-overlay{
-    background:rgba(0,0,0,.15) !important;
+  /* Shipment detail modal: no dim on mobile (handled by JS) */
+
+  /* ── Mobile content view: reflow all panel content ── */
+
+  /* Remove the × button from mob-content-view header */
+  #mob-content-header button{ display:none !important; }
+
+  /* Stat rows: stack vertically, remove side borders */
+  #mob-content-body [style*="display:flex"][style*="flex-wrap:wrap"],
+  #mob-content-body [style*="display:flex"][style*="flex-wrap: wrap"]{
+    flex-direction:column !important;
+    gap:0 !important;
+  }
+
+  /* Remove border-right dividers inside stat rows */
+  #mob-content-body [style*="border-right:1px solid var(--bdr)"],
+  #mob-content-body [style*="border-right: 1px solid var(--bdr)"]{
+    border-right:none !important;
+    border-bottom:1px solid var(--bdr) !important;
+    padding-right:0 !important;
+    margin-right:0 !important;
+    padding-bottom:14px !important;
+    margin-bottom:14px !important;
+  }
+
+  /* Hero spend number — smaller on mobile */
+  #mob-content-body [style*="font-size:36px"]{
+    font-size:28px !important;
+  }
+
+  /* Stat columns: left-align instead of center on mobile */
+  #mob-content-body [style*="text-align:center"]{
+    text-align:left !important;
+    padding:10px 0 !important;
+    border-right:none !important;
+  }
+
+  /* Stats side-by-side: make them 2-column grid on mobile */
+  #mob-content-body [style*="justify-content:space-around"]{
+    display:grid !important;
+    grid-template-columns:1fr 1fr !important;
+    gap:0 !important;
+  }
+
+  /* Tables: allow horizontal scroll, hide scrollbar */
+  #mob-content-body table{
+    font-size:11px !important;
+  }
+  #mob-content-body [style*="overflow-x:auto"]{
+    scrollbar-width:none !important;
+  }
+  #mob-content-body [style*="overflow-x:auto"]::-webkit-scrollbar{
+    display:none !important;
+  }
+
+  /* Invoice aging cards: full width, tighter */
+  #mob-content-body [style*="min-width:200px"]{
+    min-width:0 !important;
+    width:100% !important;
+  }
+
+  /* Charts row: stack vertically */
+  #mob-content-body [style*="display:flex"][style*="gap:16px"],
+  #mob-content-body [style*="display:flex"][style*="gap: 16px"]{
+    flex-direction:column !important;
+  }
+
+  /* Map: constrain height on mobile */
+  #mob-content-body svg[style*="height:280px"],
+  #mob-content-body svg[style*="height: 280px"]{
+    height:180px !important;
+  }
+
+  /* Address book / shipping items: full-width cards */
+  #mob-content-body [style*="display:grid"][style*="grid-template-columns"]{
+    grid-template-columns:1fr !important;
+  }
+
+  /* Email support form: full width inputs */
+  #mob-content-body input,
+  #mob-content-body textarea,
+  #mob-content-body select{
+    width:100% !important;
+    box-sizing:border-box !important;
+    font-size:14px !important;
+  }
+
+  /* Saved quotes: tighter */
+  #mob-content-body [style*="min-width:320px"]{
+    min-width:0 !important;
+    width:100% !important;
+  }
+
+  /* Padding adjustments */
+  #mob-content-body [style*="padding:20px 24px"]{
+    padding:14px 16px !important;
+  }
+  #mob-content-body [style*="padding:18px 22px"]{
+    padding:14px 16px !important;
   }
 }
 
@@ -4912,7 +5008,7 @@ async function showShipmentDetail(s) {
   overlay.id = 'ship-modal-overlay';
   var _isMob = window.innerWidth <= 768;
   overlay.style.cssText = _isMob
-    ? 'position:fixed;inset:0;background:transparent;z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:0;'
+    ? 'position:fixed;inset:0;background:transparent;z-index:300;display:flex;align-items:flex-start;justify-content:flex-start;padding:0;'
     : 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;';
   overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
 
@@ -4966,7 +5062,7 @@ async function showShipmentDetail(s) {
     'Old Dominion':'https://www.odfl.com/content/dam/odfl/images/logos/odfl-logo.svg',
   })[carrierName] || '';
 
-  overlay.innerHTML = `<div style="background:var(--card);${_isMob ? 'border-radius:18px 18px 0 0;width:100%;max-width:100%;max-height:92dvh;' : 'border-radius:16px;width:100%;max-width:860px;max-height:88vh;'};display:flex;flex-direction:column;box-shadow:${_isMob ? '0 -4px 24px rgba(0,0,0,.15)' : '0 24px 64px rgba(0,0,0,.28)'};overflow:hidden;">
+  overlay.innerHTML = `<div style="background:var(--card);${_isMob ? 'border-radius:0;width:100%;max-width:100%;height:100dvh;max-height:100dvh;' : 'border-radius:16px;width:100%;max-width:860px;max-height:88vh;'};display:flex;flex-direction:column;box-shadow:${_isMob ? 'none' : '0 24px 64px rgba(0,0,0,.28)'};overflow:hidden;">
 
     <!-- HEADER — matches Shipments style -->
     <div style="background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 24px;padding-right:52px;flex-shrink:0;display:flex;align-items:center;justify-content:space-around;gap:0;position:relative;flex-wrap:wrap;">
