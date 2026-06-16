@@ -612,27 +612,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     max-height:92dvh !important;
     box-shadow:0 -4px 24px rgba(0,0,0,.18) !important;
   }
-  #ship-modal-overlay [style*="display:flex;gap:8px;flex-wrap:wrap"]{
-    flex-direction:column !important;
-  }
-  #ship-modal-overlay [style*="display:flex;gap:8px;flex-wrap:wrap"] button{
-    width:100% !important;
-    justify-content:center !important;
-    margin-left:0 !important;
-  }
-
-  /* Shipment detail modal — full screen on mobile */
-  #ship-modal-overlay{
-    padding:0 !important;
-    align-items:flex-end !important;
-  }
-  #ship-modal-overlay > div{
-    border-radius:18px 18px 0 0 !important;
-    max-width:100% !important;
-    width:100% !important;
-    max-height:92dvh !important;
-  }
-  /* Buttons — wrap naturally, full row on mobile */
+  /* Shipment detail modal — buttons stack on mobile */
   #ship-modal-overlay [style*="display:flex;gap:8px;flex-wrap:wrap"]{
     flex-direction:column !important;
     gap:8px !important;
@@ -641,6 +621,17 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     width:100% !important;
     justify-content:center !important;
     margin-left:0 !important;
+  }
+  /* Hide freight table scrollbar on mobile */
+  #ship-modal-overlay [style*="overflow-x:auto"]{
+    scrollbar-width:none !important;
+  }
+  #ship-modal-overlay [style*="overflow-x:auto"]::-webkit-scrollbar{
+    display:none !important;
+  }
+  /* Subtle dim behind modal on mobile */
+  #ship-modal-overlay{
+    background:rgba(0,0,0,.15) !important;
   }
 }
 
