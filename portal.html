@@ -598,6 +598,28 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
   /* Prevent body scroll when panel open */
   body.panel-open #main{overflow:hidden;}
+
+  /* Shipment detail modal — full screen on mobile */
+  #ship-modal-overlay{
+    padding:0 !important;
+    align-items:flex-end !important;
+  }
+  #ship-modal-overlay > div{
+    border-radius:18px 18px 0 0 !important;
+    max-width:100% !important;
+    width:100% !important;
+    max-height:92dvh !important;
+  }
+  /* Buttons — wrap naturally, full row on mobile */
+  #ship-modal-overlay [style*="display:flex;gap:8px;flex-wrap:wrap"]{
+    flex-direction:column !important;
+    gap:8px !important;
+  }
+  #ship-modal-overlay [style*="display:flex;gap:8px;flex-wrap:wrap"] button{
+    width:100% !important;
+    justify-content:center !important;
+    margin-left:0 !important;
+  }
 }
 
 /* iOS safe area padding for input bar */
@@ -4820,8 +4842,10 @@ async function showShipmentDetail(s) {
   const total = rawTotalModal != null && rawTotalModal !== 0 ? '$'+Number(rawTotalModal).toFixed(2) : '';
   const transit = detail.transitDays || ven.transitDays || ti.transitDays || '';
   const quoteNum = (detail.accountingInformation && detail.accountingInformation.customerQuoteNumber) || detail.customerQuoteNumber || detail.quoteNumber || detail.priceSheetId || '';
-  const totalWeight = detail.weight || detail.totalWeight || '';
-  const pieces = detail.pieces || detail.totalPieces || '';
+  const _calcWeight = Array.isArray(items) && items.length ? items.reduce(function(s,it){return s+((parseFloat(it.weight)||0)*(parseInt(it.qty||it.quantity)||1));},0) : 0;
+  const _calcPieces = Array.isArray(items) && items.length ? items.reduce(function(s,it){return s+(parseInt(it.qty||it.quantity)||1);},0) : 0;
+  const totalWeight = detail.weight || detail.totalWeight || (_calcWeight>0?_calcWeight:null);
+  const pieces = detail.pieces || detail.totalPieces || (_calcPieces>0?_calcPieces:null);
 
   let freightRows = '';
   if (Array.isArray(items) && items.length) {
@@ -7610,7 +7634,7 @@ async function fetchBookingByPRO(pro){
   const dateFrom=from.toISOString().split('T')[0], dateTo=now.toISOString().split('T')[0];
   const perPage=10, headers={'Authorization':'Bearer '+token};
   const url=function(p){return PRIMUS_BASE+'/applet/v1/book?limit=10&page='+p;};
-  const match=function(arr){ for(const sh of arr){ const f=shipFields(sh); if(f.pro && f.pro===want){ const o=sh.thirdParty&&sh.thirdParty.id; if(custId&&o&&String(o)===String(custId))return sh; } } return null; };
+  const match=function(arr){ for(const sh of arr){ const f=shipFields(sh); if(f.pro && f.pro===want){ const o=sh.thirdParty&&sh.thirdParty.id; if(!custId||!o||String(o)===String(custId))return sh; } } return null; };
   const r1=await fetch(url(1),{headers}); if(!r1.ok)return null;
   const d1=JSON.parse(await r1.text()); const h1=match((d1.data&&d1.data.results)||[]); if(h1)return h1;
   const total=(d1.data&&d1.data.pagingDetails&&d1.data.pagingDetails.totalResults)||0;
