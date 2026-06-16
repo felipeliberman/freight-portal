@@ -416,8 +416,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
   /* Welcome screen */
   #welcome{padding:20px 16px 16px;justify-content:flex-start;margin-top:0;}
-  #welcome-heading{font-size:22px;margin-bottom:12px;text-align:center;}
-  #welcome-heading > img{display:none !important;}
+  #welcome-heading{font-size:22px;margin-bottom:12px;}
   #welcome-heading img.logo-img{height:24px;}
   #welcome-heading img.truck-img{height:22px;}
   #welcome-input-wrap{border-radius:12px;margin-bottom:10px;}
@@ -13237,6 +13236,10 @@ function closeRightPanel() {
   if (panel) panel.style.width = '0';
   if (resizer) resizer.style.display = 'none';
   if (main) main.style.marginRight = '0';
+  // Remove mobile backdrop if present
+  var bd = document.getElementById('mob-panel-backdrop');
+  if (bd) bd.remove();
+  document.body.classList.remove('panel-open');
   if (window.innerWidth <= 768) mobSetActive('chat');
 }
 
@@ -13387,6 +13390,14 @@ setTimeout(() => {
           if (resizer) resizer.style.display = 'none';
           document.getElementById('main').style.marginRight = '0';
           document.body.classList.add('panel-open');
+          // Inject backdrop if not already present
+          if (!document.getElementById('mob-panel-backdrop')) {
+            var bd = document.createElement('div');
+            bd.id = 'mob-panel-backdrop';
+            bd.style.cssText = 'position:fixed;inset:0;bottom:60px;background:rgba(0,0,0,0.45);z-index:149;';
+            bd.addEventListener('click', function() { closeRightPanel(); });
+            document.body.appendChild(bd);
+          }
         }, 50);
       }
     };
@@ -13409,12 +13420,18 @@ function mobTab(tab) {
   mobSetActive(tab);
   if (tab === 'chat') {
     closeRightPanel();
-  } else if (tab === 'shipments') {
-    if (typeof quickAction === 'function') quickAction('My Shipments');
-  } else if (tab === 'quote') {
-    if (typeof showQuoteForm === 'function') showQuoteForm();
-  } else if (tab === 'invoices') {
-    if (typeof quickAction === 'function') quickAction('My Invoices');
+  } else {
+    // Always close first on mobile so tabs never stack
+    closeRightPanel();
+    setTimeout(function() {
+      if (tab === 'shipments') {
+        if (typeof quickAction === 'function') quickAction('My Shipments');
+      } else if (tab === 'quote') {
+        if (typeof showQuoteForm === 'function') showQuoteForm();
+      } else if (tab === 'invoices') {
+        if (typeof quickAction === 'function') quickAction('My Invoices');
+      }
+    }, 30);
   }
 }
 
