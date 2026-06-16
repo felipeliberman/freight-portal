@@ -13547,7 +13547,7 @@ async function mobShowShipments() {
   if (countEl) countEl.textContent = '';
   try {
     var ships = await fetchShipments();
-    if (typeof shipCtx !== 'undefined') { shipCtx.loaded = ships; }
+    if (shipCtx && typeof shipCtx === 'object') { shipCtx.loaded = ships; }
     var top10 = ships.slice(0, 10);
     if (countEl) countEl.textContent = ships.length + ' total';
     if (!top10.length) {
