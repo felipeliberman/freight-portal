@@ -13079,17 +13079,40 @@ function renderPanel() {
     'Settings':        '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   };
 
-  panel.innerHTML = `
-    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
-      <!-- Chrome-style tab bar -->
-      <div style="display:flex;align-items:flex-end;background:#f0ede8;border-bottom:1px solid #e5e2d9;flex-shrink:0;min-height:38px;padding-top:4px;overflow-x:auto;">
-        <div style="display:flex;align-items:flex-end;flex:1;overflow-x:auto;padding-left:4px;" id="rp-tabs"></div>
-        <button onclick="closeRightPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#706c63;padding:0 12px 6px;flex-shrink:0;line-height:1;align-self:center;">×</button>
+  // Mobile gets a simple header; desktop gets the full chrome tab bar
+  if (window.innerWidth <= 768) {
+    panel.innerHTML = `
+      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+        <!-- Mobile drag handle + title + close -->
+        <div id="rp-mob-header" style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding:0 8px 0 16px;min-height:48px;border-bottom:1px solid var(--bdr);background:var(--card);">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:32px;height:4px;background:var(--bdr);border-radius:2px;flex-shrink:0;"></div>
+            <span id="rp-mob-title" style="font-size:15px;font-weight:600;color:var(--tx);"></span>
+          </div>
+          <button id="rp-mob-close" style="width:40px;height:40px;border-radius:8px;border:none;background:none;font-size:24px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">×</button>
+        </div>
+        <!-- Content -->
+        <div id="rp-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;"></div>
       </div>
-      <!-- Content -->
-      <div id="rp-body" style="flex:1;overflow:auto;padding:16px;"></div>
-    </div>
-  `;
+    `;
+    // Wire close button with event listener (not onclick) so it survives re-renders
+    document.getElementById('rp-mob-close').addEventListener('click', function() { closeRightPanel(); });
+    // Set title
+    var titleEl = document.getElementById('rp-mob-title');
+    if (titleEl && active) titleEl.textContent = active.title.replace(/\s*\(\d+\)$/, '');
+  } else {
+    panel.innerHTML = `
+      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+        <!-- Chrome-style tab bar -->
+        <div style="display:flex;align-items:flex-end;background:#f0ede8;border-bottom:1px solid #e5e2d9;flex-shrink:0;min-height:38px;padding-top:4px;overflow-x:auto;">
+          <div style="display:flex;align-items:flex-end;flex:1;overflow-x:auto;padding-left:4px;" id="rp-tabs"></div>
+          <button onclick="closeRightPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#706c63;padding:0 12px 6px;flex-shrink:0;line-height:1;align-self:center;">×</button>
+        </div>
+        <!-- Content -->
+        <div id="rp-body" style="flex:1;overflow:auto;padding:16px;"></div>
+      </div>
+    `;
+  }
 
   // Chrome tab CSS
   if (!document.getElementById('chrome-tab-style')) {
@@ -13126,11 +13149,10 @@ function renderPanel() {
     document.head.appendChild(st);
   }
 
-  // Render tabs
-  const tabBar = panel.querySelector('#rp-tabs');
+  // Only build chrome tabs on desktop — mobile has its own simple header
+  const tabBar = window.innerWidth <= 768 ? null : panel.querySelector('#rp-tabs');
   let dragSrcIdx = null;
-
-  rpState.tabs.forEach((tab, idx) => {
+  if (tabBar) rpState.tabs.forEach((tab, idx) => {
     const btn = document.createElement('button');
     const isActive = tab.id === rpState.activeId;
     btn.className = 'rp-chrome-tab' + (isActive ? ' active' : '');
@@ -13236,10 +13258,6 @@ function closeRightPanel() {
   if (panel) panel.style.width = '0';
   if (resizer) resizer.style.display = 'none';
   if (main) main.style.marginRight = '0';
-  // Remove mobile backdrop if present
-  var bd = document.getElementById('mob-panel-backdrop');
-  if (bd) bd.remove();
-  document.body.classList.remove('panel-open');
   if (window.innerWidth <= 768) mobSetActive('chat');
 }
 
@@ -13390,14 +13408,6 @@ setTimeout(() => {
           if (resizer) resizer.style.display = 'none';
           document.getElementById('main').style.marginRight = '0';
           document.body.classList.add('panel-open');
-          // Inject backdrop if not already present
-          if (!document.getElementById('mob-panel-backdrop')) {
-            var bd = document.createElement('div');
-            bd.id = 'mob-panel-backdrop';
-            bd.style.cssText = 'position:fixed;inset:0;bottom:60px;background:rgba(0,0,0,0.45);z-index:149;';
-            bd.addEventListener('click', function() { closeRightPanel(); });
-            document.body.appendChild(bd);
-          }
         }, 50);
       }
     };
@@ -13420,18 +13430,12 @@ function mobTab(tab) {
   mobSetActive(tab);
   if (tab === 'chat') {
     closeRightPanel();
-  } else {
-    // Always close first on mobile so tabs never stack
-    closeRightPanel();
-    setTimeout(function() {
-      if (tab === 'shipments') {
-        if (typeof quickAction === 'function') quickAction('My Shipments');
-      } else if (tab === 'quote') {
-        if (typeof showQuoteForm === 'function') showQuoteForm();
-      } else if (tab === 'invoices') {
-        if (typeof quickAction === 'function') quickAction('My Invoices');
-      }
-    }, 30);
+  } else if (tab === 'shipments') {
+    if (typeof quickAction === 'function') quickAction('My Shipments');
+  } else if (tab === 'quote') {
+    if (typeof showQuoteForm === 'function') showQuoteForm();
+  } else if (tab === 'invoices') {
+    if (typeof quickAction === 'function') quickAction('My Invoices');
   }
 }
 
