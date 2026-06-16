@@ -1781,6 +1781,24 @@ document.addEventListener('DOMContentLoaded',()=>{
     </div>
   </div>
 
+<div id="mob-ships-view" style="display:none;position:fixed;top:50px;left:0;right:0;bottom:60px;z-index:120;background:var(--bg);flex-direction:column;overflow:hidden;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);">
+    <div style="font-size:16px;font-weight:600;color:var(--tx);">My Shipments</div>
+    <div id="mob-ships-count" style="font-size:12px;color:var(--mu);"></div>
+  </div>
+  <div id="mob-ships-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 12px;">
+    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">Loading...</div>
+  </div>
+  <div style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <input id="mob-ships-input" type="text" placeholder="Ask about a shipment..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobShipsAsk()">
+      <button onclick="mobShipsAsk()" style="width:38px;height:38px;background:var(--ac);border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+    <div style="font-size:10px;color:var(--fa);text-align:center;margin-top:5px;">Tap a shipment or ask a question</div>
+  </div>
+</div>
 </div><!-- end main -->
 
 </div><!-- end app -->
@@ -13445,20 +13463,91 @@ function mobTab(tab) {
     return;
   }
   mobSetActive(tab);
+  // Hide shipments view whenever switching away from shipments
+  var sv = document.getElementById('mob-ships-view');
+  if (sv && tab !== 'shipments') sv.style.display = 'none';
   if (tab === 'chat') {
     closeRightPanel();
   } else if (tab === 'shipments') {
-    if (typeof quickAction === 'function') quickAction('My Shipments');
+    closeRightPanel();
+    mobShowShipments();
   } else if (tab === 'quote') {
-    if (typeof showQuoteForm === 'function') showQuoteForm();
+    closeRightPanel();
+    setTimeout(function() { if (typeof showQuoteForm === 'function') showQuoteForm(); }, 30);
   } else if (tab === 'invoices') {
-    if (typeof quickAction === 'function') quickAction('My Invoices');
+    closeRightPanel();
+    setTimeout(function() { if (typeof quickAction === 'function') quickAction('My Invoices'); }, 30);
   }
 }
 
 function closeMobMore() {
   var sheet = document.getElementById('mob-more-sheet');
   if (sheet) sheet.style.display = 'none';
+}
+
+async function mobShowShipments() {
+  var view = document.getElementById('mob-ships-view');
+  var list = document.getElementById('mob-ships-list');
+  var countEl = document.getElementById('mob-ships-count');
+  if (!view || !list) return;
+  view.style.display = 'flex';
+  list.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">Loading...</div>';
+  if (countEl) countEl.textContent = '';
+  try {
+    var ships = await fetchShipments();
+    var top10 = ships.slice(0, 10);
+    if (countEl) countEl.textContent = ships.length + ' total';
+    if (!top10.length) {
+      list.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">No shipments found.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    top10.forEach(function(s) {
+      var ti = s.trackingInformation || {};
+      var bol = s.BOLNumber || s.bolNumber || s.BOLId || '';
+      var consignee = s.consigneeName || (s.consignee && (s.consignee.name || s.consignee.companyName)) || ti.consigneeName || '';
+      var rawSt = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '';
+      var status = rawSt.replace(/_/g,' ').toUpperCase().trim() || 'UNKNOWN';
+      var date = s.bookDate || ti.bookDate || s.createdDate || '';
+      if (date) { try { date = new Date(date).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(e){} }
+      var badgeColor = '#6b7280'; var badgeBg = '#f3f4f6';
+      if (status.includes('POD') || status.includes('DELIVERED')) { badgeColor = '#166534'; badgeBg = '#dcfce7'; }
+      else if (status.includes('SCHEDULED') || status.includes('APPOINTMENT')) { badgeColor = '#92400e'; badgeBg = '#fef3c7'; }
+      else if (status.includes('TRANSIT') || status.includes('PICKED UP') || status.includes('DISPATCHED') || status.includes('DISPATCH')) { badgeColor = '#1e40af'; badgeBg = '#dbeafe'; }
+      else if (status.includes('EXCEPTION') || status.includes('DELAY')) { badgeColor = '#991b1b'; badgeBg = '#fee2e2'; }
+      var card = document.createElement('div');
+      card.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;-webkit-tap-highlight-color:transparent;';
+      card.innerHTML = '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;font-weight:600;color:var(--ac);margin-bottom:3px;">' + (bol || '—') + '</div>' +
+        '<div style="font-size:12px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (consignee || 'No consignee') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">' +
+        '<span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:20px;background:' + badgeBg + ';color:' + badgeColor + ';white-space:nowrap;">' + status + '</span>' +
+        '<span style="font-size:11px;color:var(--fa);">' + (date || '') + '</span>' +
+        '</div>';
+      card.onclick = function() {
+        mobSetActive('chat');
+        document.getElementById('mob-ships-view').style.display = 'none';
+        showChatArea();
+        if (typeof handleInput === 'function') handleInput('Tell me about BOL ' + bol);
+      };
+      list.appendChild(card);
+    });
+  } catch(e) {
+    list.innerHTML = '<div style="padding:16px;color:var(--mu);font-size:13px;">Could not load shipments. Please try again.</div>';
+    console.error('mobShowShipments error:', e);
+  }
+}
+
+function mobShipsAsk() {
+  var inp = document.getElementById('mob-ships-input');
+  if (!inp || !inp.value.trim()) return;
+  var q = inp.value.trim();
+  inp.value = '';
+  mobSetActive('chat');
+  document.getElementById('mob-ships-view').style.display = 'none';
+  showChatArea();
+  if (typeof handleInput === 'function') handleInput(q);
 }
 
 // Patch setLoggedIn to show/hide tab bar appropriately
