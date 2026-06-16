@@ -1841,6 +1841,29 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div style="font-size:10px;color:var(--fa);text-align:center;margin-top:5px;">Tap a shipment or ask a question</div>
   </div>
 </div>
+<div id="mob-content-view" style="display:none;position:fixed;top:50px;left:0;right:0;bottom:60px;z-index:121;background:var(--bg);flex-direction:column;overflow:hidden;">
+  <div id="mob-content-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);">
+    <div id="mob-content-title" style="font-size:16px;font-weight:600;color:var(--tx);"></div>
+    <button onclick="closeMobContent()" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:22px;line-height:1;padding:2px 6px;">×</button>
+  </div>
+  <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+  <div style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
+      <button onclick="document.getElementById('mob-content-file').click()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <input id="mob-content-input" type="text" placeholder="Ask a question..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobContentAsk()">
+      <button id="mob-content-mic" onclick="toggleMic()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
+      <button onclick="mobContentAsk()" style="width:38px;height:38px;background:var(--ac);border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+    <div style="font-size:10px;color:var(--fa);text-align:center;margin-top:5px;">Tap Chat to return to conversation</div>
+  </div>
+</div>
 </div><!-- end main -->
 
 </div><!-- end app -->
@@ -5881,6 +5904,8 @@ function goHomeTop(){
   if (window.innerWidth <= 768) {
     var sv = document.getElementById('mob-ships-view');
     if (sv) sv.style.display = 'none';
+    var mcv = document.getElementById('mob-content-view');
+    if (mcv) mcv.style.display = 'none';
     if (typeof closeRightPanel === 'function') closeRightPanel();
     if (typeof mobSetActive === 'function') mobSetActive('chat');
   }
@@ -13026,7 +13051,7 @@ function startMic() {
   recognition.lang = 'en-US';
 
   // Set buttons to listening state
-  const micBtns = document.querySelectorAll('#btn-mic, #welcome-mic, #mob-ships-mic');
+  const micBtns = document.querySelectorAll('#btn-mic, #welcome-mic, #mob-ships-mic, #mob-content-mic');
   micBtns.forEach(btn => btn.classList.add('listening'));
   isListening = true;
 
@@ -13074,7 +13099,7 @@ function stopMic() {
     recognition.stop();
     recognition = null;
   }
-  const micBtns = document.querySelectorAll('#btn-mic, #welcome-mic, #mob-ships-mic');
+  const micBtns = document.querySelectorAll('#btn-mic, #welcome-mic, #mob-ships-mic, #mob-content-mic');
   micBtns.forEach(btn => btn.classList.remove('listening'));
   isListening = false;
 }
@@ -13113,6 +13138,21 @@ const rpState = {
 };
 
 function openRightPanel(contentEl, title) {
+  // On mobile: redirect into full-screen content view instead of side panel
+  if (window.innerWidth <= 768) {
+    var mcv = document.getElementById('mob-content-view');
+    var body = document.getElementById('mob-content-body');
+    var titleEl = document.getElementById('mob-content-title');
+    var sv = document.getElementById('mob-ships-view');
+    if (mcv && body) {
+      if (sv) sv.style.display = 'none';
+      body.innerHTML = '';
+      body.appendChild(contentEl);
+      if (titleEl) titleEl.textContent = title || '';
+      mcv.style.display = 'flex';
+      return;
+    }
+  }
   // Check if tab with same title already exists — replace it
   const existing = rpState.tabs.find(t => t.title === title);
   if (existing) {
@@ -13515,9 +13555,11 @@ function mobTab(tab) {
     return;
   }
   mobSetActive(tab);
-  // Hide shipments view whenever switching away from shipments
+  // Hide full-screen views when switching tabs
   var sv = document.getElementById('mob-ships-view');
   if (sv && tab !== 'shipments') sv.style.display = 'none';
+  var mcv = document.getElementById('mob-content-view');
+  if (mcv) mcv.style.display = 'none';
   if (tab === 'chat') {
     closeRightPanel();
   } else if (tab === 'shipments') {
@@ -13535,6 +13577,23 @@ function mobTab(tab) {
 function closeMobMore() {
   var sheet = document.getElementById('mob-more-sheet');
   if (sheet) sheet.style.display = 'none';
+}
+
+function closeMobContent() {
+  var mcv = document.getElementById('mob-content-view');
+  if (mcv) mcv.style.display = 'none';
+  if (typeof mobSetActive === 'function') mobSetActive('chat');
+}
+
+function mobContentAsk() {
+  var inp = document.getElementById('mob-content-input');
+  if (!inp || !inp.value.trim()) return;
+  var q = inp.value.trim();
+  inp.value = '';
+  closeMobContent();
+  if (typeof showChatArea === 'function') showChatArea();
+  if (typeof appendMessage === 'function') appendMessage('user', q);
+  if (typeof handleInput === 'function') handleInput(q);
 }
 
 async function mobShowShipments() {
