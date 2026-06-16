@@ -13531,7 +13531,9 @@ async function mobShowShipments() {
         showChatArea();
         var msg = 'Tell me about BOL ' + bol;
         if (typeof appendMessage === 'function') appendMessage('user', msg);
-        if (typeof handleInput === 'function') handleInput(msg);
+        if (!currentSession) startSession(msg.slice(0, 60)); else updateSessionTitle(msg.slice(0, 60));
+        // Bypass AI query parser — call lookupIdentifier directly with the BOL
+        if (typeof lookupIdentifier === 'function') lookupIdentifier(bol);
       };
       list.appendChild(card);
     });
