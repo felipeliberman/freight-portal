@@ -5909,7 +5909,19 @@ function goHomeTop(){
     if (typeof closeRightPanel === 'function') closeRightPanel();
     if (typeof mobSetActive === 'function') mobSetActive('chat');
   }
-  if(currentCustomer){ if(typeof newChat==='function') newChat(); return; }
+  if(currentCustomer){
+    if(typeof newChat==='function') newChat();
+    // Force app and welcome visible on mobile
+    if (window.innerWidth <= 768) {
+      var app = document.getElementById('app');
+      if (app) app.style.display = 'flex';
+      var welcome = document.getElementById('welcome');
+      if (welcome) welcome.style.display = 'flex';
+      var chatArea = document.getElementById('chat-area');
+      if (chatArea) chatArea.style.display = 'none';
+    }
+    return;
+  }
   var f=document.getElementById('public-frame');
   if(f && f.contentWindow){ try{ f.contentWindow.location.reload(); }catch(e){} }
 }
