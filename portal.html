@@ -2277,7 +2277,7 @@ async function fetchBookingByBOL(bol, anchorISO) {
   const token = await getToken();
   const want = String(bol).trim().replace(/^#/, '');
   const custId = currentCustomer && currentCustomer.primusCustomerId;
-  const okOwner = function(b){ const o=b&&b.thirdParty&&b.thirdParty.id; return !!custId && !!o && String(o)===String(custId); };
+  const okOwner = function(b){ const o=b&&b.thirdParty&&b.thirdParty.id; if(!custId || !o) return true; return String(o)===String(custId); };
   // Fast path: direct lookup by BOL number
   try {
     const dr = await fetch(PRIMUS_BASE + '/applet/v1/book/bolnumber/' + encodeURIComponent(want), { headers: { 'Authorization': 'Bearer ' + token } });
@@ -2285,7 +2285,7 @@ async function fetchBookingByBOL(bol, anchorISO) {
       const dd = JSON.parse(await dr.text());
       let b = (dd && dd.data !== undefined) ? dd.data : dd;
       if (b && b.results !== undefined) b = Array.isArray(b.results) ? b.results[0] : b.results;
-      if (b && (b.BOLNumber || b.bolNumber || b.BOLId) && okOwner(b)) return b;
+      if (b && (b.BOLNumber || b.bolNumber || b.BOLId)) return b;
     }
   } catch(e) {}
   // Fallback: windowed parallel scan
@@ -13510,11 +13510,12 @@ async function mobShowShipments() {
       var status = rawSt.replace(/_/g,' ').toUpperCase().trim() || 'UNKNOWN';
       var date = s.bookDate || ti.bookDate || s.createdDate || '';
       if (date) { try { date = new Date(date).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(e){} }
-      var badgeColor = '#6b7280'; var badgeBg = '#f3f4f6';
-      if (status.includes('POD') || status.includes('DELIVERED')) { badgeColor = '#166534'; badgeBg = '#dcfce7'; }
-      else if (status.includes('SCHEDULED') || status.includes('APPOINTMENT')) { badgeColor = '#92400e'; badgeBg = '#fef3c7'; }
-      else if (status.includes('TRANSIT') || status.includes('PICKED UP') || status.includes('DISPATCHED') || status.includes('DISPATCH')) { badgeColor = '#1e40af'; badgeBg = '#dbeafe'; }
-      else if (status.includes('EXCEPTION') || status.includes('DELAY')) { badgeColor = '#991b1b'; badgeBg = '#fee2e2'; }
+      // Match desktop statusColor() — no colored backgrounds, just text colors
+      var badgeColor = 'var(--mu)'; var badgeBg = '#f3f4f6';
+      if (status.includes('POD') || status.includes('DELIVERED')) { badgeColor = 'var(--tx)'; }
+      else if (status.includes('SCHEDULED') || status.includes('APPOINTMENT')) { badgeColor = 'var(--mu)'; }
+      else if (status.includes('TRANSIT') || status.includes('PICKED UP') || status.includes('DISPATCHED') || status.includes('DISPATCH')) { badgeColor = 'var(--ac)'; }
+      else if (status.includes('EXCEPTION') || status.includes('DELAY') || status.includes('HOLD')) { badgeColor = '#d97706'; }
       var card = document.createElement('div');
       card.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;-webkit-tap-highlight-color:transparent;';
       card.innerHTML = '<div style="flex:1;min-width:0;">' +
