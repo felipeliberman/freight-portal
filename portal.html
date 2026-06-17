@@ -9919,9 +9919,9 @@ function showSavedQuotes() {
     {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
   ].forEach(function(s,i,a){
     var c=document.createElement('div');
-    c.style.cssText='height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
-    var n=document.createElement('div');n.style.cssText='font-size:18px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
-    var l=document.createElement('div');l.style.cssText='font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
+    c.style.cssText='position:relative;height:56px;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
+    var n=document.createElement('div');n.style.cssText='position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
+    var l=document.createElement('div');l.style.cssText='position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
     c.appendChild(n);c.appendChild(l);hdr.appendChild(c);
   });
   var _hdr_dummy = '<div style="display:none">' +
@@ -10766,7 +10766,7 @@ function showShippingItems() {
     {label:'Add', value:null, color:'var(--ac)', id:'ab-hdr-add'},
   ].forEach(function(s,i,a){
     var c2=document.createElement('div');
-    c2.style.cssText='height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
+    c2.style.cssText='position:relative;height:56px;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
     if(s.value===null){
       var btn=document.createElement('button');
       btn.id='ab-add-btn';
@@ -10774,8 +10774,8 @@ function showShippingItems() {
       btn.innerHTML='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add';
       c2.appendChild(btn);
     } else {
-      var n=document.createElement('div');n.id=s.id;n.style.cssText='font-size:20px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
-      var l=document.createElement('div');l.style.cssText='font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
+      var n=document.createElement('div');n.id=s.id;n.style.cssText='position:absolute;top:12px;left:0;right:0;text-align:center;font-size:20px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
+      var l=document.createElement('div');l.style.cssText='position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
       c2.appendChild(n);c2.appendChild(l);
     }
     abStrip.appendChild(c2);
@@ -12503,12 +12503,12 @@ function renderReports(shipments) {
   statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
     const isLast = idx === arr.length - 1;
-    col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid ' + (!isLast ? 'var(--bdr);' : 'transparent;');
+    col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (!isLast ? 'var(--bdr);' : 'transparent;');
     const numEl = document.createElement('div');
-    numEl.style.cssText = 'font-size:16px;font-weight:600;color:' + color + ';line-height:1;';
+    numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:' + color + ';line-height:1;';
     numEl.textContent = value;
     const lblEl = document.createElement('div');
-    lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+    lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
     lblEl.textContent = label;
     col.appendChild(numEl);
     col.appendChild(lblEl);
@@ -13818,12 +13818,12 @@ async function mobShowInvoices() {
           { label:'Paid', value: paid, color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
-          col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid ' + (idx < arr.length-1 ? 'var(--bdr);' : 'transparent;');
+          col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (idx < arr.length-1 ? 'var(--bdr);' : 'transparent;');
           var numEl = document.createElement('div');
-          numEl.style.cssText = 'font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
+          numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
           numEl.textContent = s.value;
           var lblEl = document.createElement('div');
-          lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+          lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
           lblEl.textContent = s.label;
           col.appendChild(numEl);
           col.appendChild(lblEl);
@@ -13911,12 +13911,13 @@ async function mobShowShipments() {
       statsEl.style.display = 'grid'; statsEl.style.gridTemplateColumns = 'repeat(4,1fr)'; statsEl.style.overflow = 'hidden'; statsEl.style.padding = '0';
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
-        col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid ' + (idx < statItems.length - 1 ? 'var(--bdr);' : 'transparent;');
+        col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (idx < statItems.length - 1 ? 'var(--bdr);' : 'transparent;');
+        col.style.position = 'relative';
         var numEl = document.createElement('div');
-        numEl.style.cssText = 'font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
+        numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
         numEl.textContent = item.value;
         var lblEl = document.createElement('div');
-        lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+        lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
         lblEl.textContent = item.label;
         col.appendChild(numEl);
         col.appendChild(lblEl);
