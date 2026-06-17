@@ -760,6 +760,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   100%{left:155%;opacity:0;}
 }
 </style>
+<script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
 
@@ -2524,6 +2525,7 @@ function scrollBottom() {
 
 function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   const allInvoices = fullInvoicesList || invoices;
+  window._currentInvoiceList = allInvoices; // used by Pay button
   const container = document.createElement('div');
 
   // ── Dashboard header ──────────────────────────────────────────────────────
@@ -2752,16 +2754,33 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   };
   btnGroup.appendChild(stmtBtn);
 
-  // Pay My Invoices button
-  if (unpaid > 0) {
-    const payBtn = document.createElement('button');
-    payBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Pay My Invoices`;
-    payBtn.style.cssText = 'background:#bd27bc;border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;';
-    payBtn.onmouseover = () => payBtn.style.background = '#8e1b8d';
-    payBtn.onmouseout  = () => payBtn.style.background = '#bd27bc';
-    payBtn.onclick = () => { window.open('https://signin.methodportal.com/freightandlogistics', '_blank'); };
-    btnGroup.appendChild(payBtn);
-  }
+  // Pay Invoices button — always visible
+  const payBtn = document.createElement('button');
+  payBtn.id = 'inv-pay-btn';
+  payBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span class="pay-btn-label">Pay Invoices</span>`;
+  payBtn.style.cssText = 'background:#bd27bc;border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;position:relative;';
+  payBtn.onmouseover = () => { payBtn.style.background = '#8e1b8d'; const tt = document.getElementById('pay-btn-tooltip'); if (tt) tt.style.opacity = '1'; };
+  payBtn.onmouseout  = () => { payBtn.style.background = '#bd27bc'; const tt = document.getElementById('pay-btn-tooltip'); if (tt) tt.style.opacity = '0'; };
+  // Tooltip
+  const payTooltip = document.createElement('div');
+  payTooltip.id = 'pay-btn-tooltip';
+  payTooltip.textContent = 'Check a box next to an unpaid invoice to select it for payment';
+  payTooltip.style.cssText = 'position:absolute;bottom:calc(100% + 8px);right:0;background:#1a1a1a;color:#fff;font-size:11px;padding:7px 10px;border-radius:7px;white-space:normal;width:200px;line-height:1.4;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;text-align:left;font-weight:400;';
+  payBtn.appendChild(payTooltip);
+  payBtn.onclick = () => {
+    const unpaidSelected = [...selectedInvoices].filter(key => {
+      const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
+      return inv && !getInvoiceFields(inv).isPaid;
+    });
+    if (!unpaidSelected.length) {
+      const tt = document.getElementById('pay-btn-tooltip');
+      if (tt) { tt.style.opacity = '1'; setTimeout(() => { tt.style.opacity = '0'; }, 2500); }
+      return;
+    }
+    const invsToPay = (window._currentInvoiceList || []).filter(i => unpaidSelected.includes(getInvoiceFields(i).invNum));
+    showStripePaymentModal(invsToPay);
+  };
+  btnGroup.appendChild(payBtn);
   titleSection.appendChild(btnGroup);
 
   // updateDownloadBtn is now a global function
@@ -3038,6 +3057,193 @@ function getInvoiceFields(inv) {
     docUrl:    inv.docUrl   || inv.url || '',
   };
 }
+
+// ── STRIPE PAYMENT MODAL ──────────────────────────────────────────────────────
+function showStripePaymentModal(invoices) {
+  // Remove any existing modal
+  const existing = document.getElementById('stripe-pay-modal');
+  if (existing) existing.remove();
+
+  const STRIPE_PK = 'pk_test_51TjE6IALHpracb1ckjIFQJNkTDDGxH2UU3VAyWYlhX5wdg09C87rZ9plQcoZRFRTzsq9OVUJvT1pB55Pm0wJpgrr00WRlD3ZlX';
+  const stripe = window.Stripe ? window.Stripe(STRIPE_PK) : null;
+
+  const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
+  let payMethod = 'ach'; // default: ACH, no fee
+
+  function calcTotal(method) {
+    if (method === 'card') return subtotal * 1.029 + 0.30;
+    return subtotal;
+  }
+
+  // Overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'stripe-pay-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+  // Modal box
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:16px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);display:flex;flex-direction:column;font-family:var(--font);';
+
+  // Header
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid #e5e2d9;flex-shrink:0;';
+  hdr.innerHTML = `<div style="font-size:17px;font-weight:700;color:#1a1a1a;">Pay Invoices</div>
+    <button onclick="document.getElementById('stripe-pay-modal').remove()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px;line-height:1;padding:0;">&times;</button>`;
+  box.appendChild(hdr);
+
+  // Invoice list
+  const invList = document.createElement('div');
+  invList.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
+  invoices.forEach(inv => {
+    const f = getInvoiceFields(inv);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;';
+    row.innerHTML = `<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#${f.invNum}</strong>${f.consignee ? ' &mdash; ' + f.consignee : ''}</span>
+      <span style="font-weight:600;color:#1a1a1a;">$${Number(f.rawAmt||0).toFixed(2)}</span>`;
+    invList.appendChild(row);
+  });
+  // Subtotal
+  const subRow = document.createElement('div');
+  subRow.style.cssText = 'display:flex;justify-content:space-between;padding:10px 0 0;border-top:1px solid #e5e2d9;margin-top:6px;font-size:13px;font-weight:600;color:#1a1a1a;';
+  subRow.innerHTML = `<span>Subtotal</span><span>$${subtotal.toFixed(2)}</span>`;
+  invList.appendChild(subRow);
+  box.appendChild(invList);
+
+  // Payment method toggle
+  const methodSection = document.createElement('div');
+  methodSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
+  methodSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Payment Method</div>';
+
+  const toggleWrap = document.createElement('div');
+  toggleWrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;';
+
+  function makeMethodBtn(id, label, sublabel, method) {
+    const btn = document.createElement('button');
+    btn.id = id;
+    btn.style.cssText = 'border:2px solid ' + (method === payMethod ? '#bd27bc' : '#e5e2d9') + ';border-radius:10px;padding:10px 12px;cursor:pointer;font-family:var(--font);text-align:left;background:' + (method === payMethod ? '#fdf0fd' : '#fff') + ';transition:all .15s;';
+    btn.innerHTML = `<div style="font-size:12px;font-weight:700;color:#1a1a1a;">${label}</div>
+      <div style="font-size:10px;color:#888;margin-top:2px;">${sublabel}</div>`;
+    btn.onclick = () => {
+      payMethod = method;
+      document.getElementById('pay-method-ach').style.borderColor = method === 'ach' ? '#bd27bc' : '#e5e2d9';
+      document.getElementById('pay-method-ach').style.background  = method === 'ach' ? '#fdf0fd' : '#fff';
+      document.getElementById('pay-method-card').style.borderColor = method === 'card' ? '#bd27bc' : '#e5e2d9';
+      document.getElementById('pay-method-card').style.background  = method === 'card' ? '#fdf0fd' : '#fff';
+      // Show/hide correct input
+      document.getElementById('pay-ach-section').style.display  = method === 'ach'  ? 'block' : 'none';
+      document.getElementById('pay-card-section').style.display = method === 'card' ? 'block' : 'none';
+      // Update total
+      const total = calcTotal(method);
+      const feeEl = document.getElementById('pay-fee-row');
+      const totEl = document.getElementById('pay-total-amt');
+      if (feeEl) feeEl.style.display = method === 'card' ? 'flex' : 'none';
+      if (totEl) totEl.textContent = '$' + total.toFixed(2);
+      const confirmBtn = document.getElementById('pay-confirm-btn');
+      if (confirmBtn) confirmBtn.textContent = 'Pay $' + total.toFixed(2);
+    };
+    return btn;
+  }
+
+  toggleWrap.appendChild(makeMethodBtn('pay-method-ach',  'Pay by Bank', 'ACH transfer - No fee', 'ach'));
+  toggleWrap.appendChild(makeMethodBtn('pay-method-card', 'Pay by Card', '2.9% + /bin/sh.30 convenience fee', 'card'));
+  methodSection.appendChild(toggleWrap);
+  box.appendChild(methodSection);
+
+  // ACH section (default shown)
+  const achSection = document.createElement('div');
+  achSection.id = 'pay-ach-section';
+  achSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
+  achSection.innerHTML = `<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Bank Account</div>
+    <div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:14px;font-size:13px;color:#555;line-height:1.5;">
+      ACH bank payment is coming soon. Please use <strong>Pay by Card</strong> for now or contact us at <strong>(800) 687-3713</strong> to arrange a bank transfer.
+    </div>`;
+  box.appendChild(achSection);
+
+  // Card section (hidden by default)
+  const cardSection = document.createElement('div');
+  cardSection.id = 'pay-card-section';
+  cardSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;display:none;';
+  cardSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Card Details</div>';
+  const cardElementWrap = document.createElement('div');
+  cardElementWrap.id = 'stripe-card-element';
+  cardElementWrap.style.cssText = 'border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;background:#fff;';
+  cardSection.appendChild(cardElementWrap);
+  const cardError = document.createElement('div');
+  cardError.id = 'stripe-card-error';
+  cardError.style.cssText = 'color:#dc2626;font-size:12px;margin-top:8px;min-height:16px;';
+  cardSection.appendChild(cardError);
+  box.appendChild(cardSection);
+
+  // Total section
+  const totalSection = document.createElement('div');
+  totalSection.style.cssText = 'padding:14px 24px;border-bottom:1px solid #e5e2d9;';
+  const feeRow = document.createElement('div');
+  feeRow.id = 'pay-fee-row';
+  feeRow.style.cssText = 'display:none;justify-content:space-between;font-size:12px;color:#888;margin-bottom:6px;';
+  feeRow.innerHTML = `<span>Convenience fee (2.9% + $0.30)</span><span>$${(subtotal * 0.029 + 0.30).toFixed(2)}</span>`;
+  const totalRow = document.createElement('div');
+  totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:#1a1a1a;';
+  totalRow.innerHTML = `<span>Total</span><span id="pay-total-amt">$${subtotal.toFixed(2)}</span>`;
+  totalSection.appendChild(feeRow);
+  totalSection.appendChild(totalRow);
+  box.appendChild(totalSection);
+
+  // Confirm button
+  const footer = document.createElement('div');
+  footer.style.cssText = 'padding:16px 24px;flex-shrink:0;';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.id = 'pay-confirm-btn';
+  confirmBtn.textContent = 'Pay $' + subtotal.toFixed(2);
+  confirmBtn.style.cssText = 'width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--font);transition:background .15s;';
+  confirmBtn.onmouseover = () => confirmBtn.style.background = '#8e1b8d';
+  confirmBtn.onmouseout  = () => confirmBtn.style.background = '#bd27bc';
+  confirmBtn.onclick = async () => {
+    if (payMethod === 'ach') {
+      // ACH not yet implemented — message already shown
+      return;
+    }
+    // Card payment — placeholder until Worker is live
+    confirmBtn.textContent = 'Processing...';
+    confirmBtn.disabled = true;
+    await new Promise(r => setTimeout(r, 1200));
+    // TODO: replace with real Worker call
+    console.log('[Stripe] Would charge $' + calcTotal('card').toFixed(2) + ' for invoices:', invoices.map(i => getInvoiceFields(i).invNum));
+    confirmBtn.style.background = '#16a34a';
+    confirmBtn.textContent = 'Payment processing - we will email you a confirmation';
+    setTimeout(() => overlay.remove(), 3000);
+  };
+  footer.appendChild(confirmBtn);
+  const secureNote = document.createElement('div');
+  secureNote.style.cssText = 'text-align:center;font-size:10px;color:#aaa;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:4px;';
+  secureNote.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Secured by Stripe`;
+  footer.appendChild(secureNote);
+  box.appendChild(footer);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  // Mount Stripe card element if Stripe loaded
+  if (stripe) {
+    const elements = stripe.elements();
+    const cardEl = elements.create('card', {
+      style: {
+        base: { fontFamily: 'system-ui, sans-serif', fontSize: '14px', color: '#1a1a1a', '::placeholder': { color: '#aaa' } },
+        invalid: { color: '#dc2626' }
+      },
+      hidePostalCode: false
+    });
+    cardEl.mount('#stripe-card-element');
+    cardEl.on('change', e => {
+      document.getElementById('stripe-card-error').textContent = e.error ? e.error.message : '';
+    });
+    window._stripeCardElement = cardEl;
+    window._stripeInstance = stripe;
+  } else {
+    cardElementWrap.innerHTML = '<div style="font-size:12px;color:#dc2626;">Stripe failed to load. Please refresh and try again.</div>';
+  }
+}
+
 
 function showInvoiceDetail(inv) {
   const f = getInvoiceFields(inv);
@@ -7589,14 +7795,32 @@ function updateBolDownloadBtn() {
 var selectedInvoices = new Set();
 function updateDownloadBtn() {
   const dlBtn = document.getElementById('inv-dl-btn');
-  if (!dlBtn) return;
-  const count = selectedInvoices.size;
-  if (count > 0) {
-    dlBtn.style.display = 'inline-flex';
-    const lbl = dlBtn.querySelector('.dl-btn-label');
-    if (lbl) lbl.textContent = 'Download Selected (' + count + ')';
+  if (dlBtn) {
+    const count = selectedInvoices.size;
+    if (count > 0) {
+      dlBtn.style.display = 'inline-flex';
+      const lbl = dlBtn.querySelector('.dl-btn-label');
+      if (lbl) lbl.textContent = 'Download Selected (' + count + ')';
+    } else {
+      dlBtn.style.display = 'none';
+    }
+  }
+  // Update Pay button
+  const payBtn = document.getElementById('inv-pay-btn');
+  if (!payBtn) return;
+  const lbl = payBtn.querySelector('.pay-btn-label');
+  const tt  = document.getElementById('pay-btn-tooltip');
+  // Count only unpaid selected invoices
+  const unpaidSelected = [...selectedInvoices].filter(key => {
+    const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
+    return inv && !getInvoiceFields(inv).isPaid;
+  });
+  if (unpaidSelected.length > 0) {
+    if (lbl) lbl.textContent = 'Pay Selected (' + unpaidSelected.length + ')';
+    if (tt)  tt.textContent  = 'Click to pay ' + unpaidSelected.length + ' selected invoice' + (unpaidSelected.length > 1 ? 's' : '');
   } else {
-    dlBtn.style.display = 'none';
+    if (lbl) lbl.textContent = 'Pay Invoices';
+    if (tt)  tt.textContent  = 'Check a box next to an unpaid invoice to select it for payment';
   }
 }
 
