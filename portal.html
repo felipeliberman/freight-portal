@@ -9911,22 +9911,34 @@ function showSavedQuotes() {
 
   const hdr = document.createElement('div');
   hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
-  hdr.innerHTML =
-    '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
+  // Build hdr columns via DOM to ensure white-space:nowrap
+  [
+    {label:'Saved', value:quotes.length, color:'var(--ac)'},
+    {label:'Value', value:totalValue?'$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}):'—', color:'var(--tx)'},
+    {label:'Carriers', value:carriers, color:'var(--tx)'},
+    {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
+  ].forEach(function(s,i,a){
+    var c=document.createElement('div');
+    c.style.cssText='height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;'+(i<a.length-1?'border-right:1px solid var(--bdr);':'');
+    var n=document.createElement('div');n.style.cssText='font-size:18px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
+    var l=document.createElement('div');l.style.cssText='font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
+    c.appendChild(n);c.appendChild(l);hdr.appendChild(c);
+  });
+  var _hdr_dummy = '<div style="display:none">' +
       '<div style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">' + quotes.length + '</div>' +
-      '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Saved</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
     '</div>' +
     '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
       '<div style="font-size:16px;font-weight:600;color:var(--tx);line-height:1;white-space:nowrap;">' + (totalValue ? '$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—') + '</div>' +
-      '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Value</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Value</div>' +
     '</div>' +
     '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
       '<div style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">' + carriers + '</div>' +
-      '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Carriers</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Carriers</div>' +
     '</div>' +
     '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
       '<div style="font-size:14px;font-weight:500;color:var(--tx);line-height:1;white-space:nowrap;">' + mostRecent + '</div>' +
-      '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Last Saved</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Last Saved</div>' +
     '</div>';
   container.appendChild(hdr);
 
@@ -10744,34 +10756,31 @@ function showShippingItems() {
 
   // ── Hero header ──────────────────────────────────────────────────────────────
   const hdr = document.createElement('div');
-  hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);';
-  hdr.innerHTML =
-    '<div style="background:var(--card);border-bottom:1px solid var(--bdr);padding:20px 18px;display:flex;align-items:center;gap:0;">' +
-      '<div style="flex:1;border-right:1px solid var(--bdr);padding-right:20px;margin-right:4px;">' +
-        '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Shipping Items</div>' +
-        '<div id="si-hdr-count" style="display:flex;align-items:baseline;gap:6px;">' +
-          '<span style="font-size:36px;font-weight:500;color:var(--ac);line-height:1.1;">—</span>' +
-          '<span style="font-size:12px;color:var(--fa);">saved</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
-        '<div style="text-align:center;padding:0 14px;border-right:1px solid var(--bdr);">' +
-          '<div id="si-hdr-avgwt" style="font-size:18px;font-weight:500;color:var(--ac);">—</div>' +
-          '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Avg Weight</div>' +
-        '</div>' +
-        '<div style="text-align:center;padding:0 14px;">' +
-          '<button id="si-add-btn" style="display:flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
-            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Item' +
-          '</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div style="padding:10px 18px;background:var(--card);">' +
-      '<div style="position:relative;">' +
-        '<svg style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--fa);pointer-events:none;" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' +
-        '<input id="si-search" placeholder="Search items…" style="'+iS+'padding-left:28px;" autocomplete="off">' +
-      '</div>' +
-    '</div>';
+  hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);';
+  var abStrip = document.createElement('div');
+  abStrip.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
+  [
+    {label:'Saved', value:'—', color:'var(--ac)', id:'ab-hdr-count'},
+    {label:'Ship From', value:'—', color:'var(--tx)', id:'ab-hdr-from'},
+    {label:'Ship To', value:'—', color:'var(--tx)', id:'ab-hdr-to'},
+    {label:'Add', value:null, color:'var(--ac)', id:'ab-hdr-add'},
+  ].forEach(function(s,i,a){
+    var c2=document.createElement('div');
+    c2.style.cssText='height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;'+(i<a.length-1?'border-right:1px solid var(--bdr);':'');
+    if(s.value===null){
+      var btn=document.createElement('button');
+      btn.id='ab-add-btn';
+      btn.style.cssText='display:inline-flex;align-items:center;gap:4px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+      btn.innerHTML='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add';
+      c2.appendChild(btn);
+    } else {
+      var n=document.createElement('div');n.id=s.id;n.style.cssText='font-size:20px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
+      var l=document.createElement('div');l.style.cssText='font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
+      c2.appendChild(n);c2.appendChild(l);
+    }
+    abStrip.appendChild(c2);
+  });
+  hdr.appendChild(abStrip);
   c.appendChild(hdr);
 
   // ── List ──────────────────────────────────────────────────────────────────────
@@ -11055,15 +11064,15 @@ function showAddressBook() {
     '<div style="background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;">' +
       '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-count" style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Saved</div>' +
+        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
       '</div>' +
       '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-from" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Ship From</div>' +
+        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship From</div>' +
       '</div>' +
       '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-to" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">Ship To</div>' +
+        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship To</div>' +
       '</div>' +
       '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
         '<button id="ab-add-btn" style="display:inline-flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
@@ -12489,15 +12498,20 @@ function renderReports(shipments) {
     { label: 'Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)' },
     { label: 'Shipments', value: shipments.length, color: 'var(--tx)' },
     { label: 'Delivered', value: delivered, color: 'var(--tx)' },
-    { label: 'Transit', value: inTransit, color: 'var(--tx)' },
+    { label: 'In Transit', value: inTransit, color: 'var(--tx)' },
   ];
   statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
     const isLast = idx === arr.length - 1;
     col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (!isLast ? 'border-right:1px solid var(--bdr);' : '');
-    col.innerHTML =
-      '<div style="font-size:16px;font-weight:600;color:' + color + ';line-height:1;">' + value + '</div>' +
-      '<div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;">' + label + '</div>';
+    const numEl = document.createElement('div');
+    numEl.style.cssText = 'font-size:16px;font-weight:600;color:' + color + ';line-height:1;';
+    numEl.textContent = value;
+    const lblEl = document.createElement('div');
+    lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+    lblEl.textContent = label;
+    col.appendChild(numEl);
+    col.appendChild(lblEl);
     statsRow.appendChild(col);
   });
   container.appendChild(statsRow);
@@ -13737,7 +13751,7 @@ function mobShowSavedQuotes() {
     ].forEach(function(s,idx,arr){
       var col = document.createElement('div');
       col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx<arr.length-1?'border-right:1px solid var(--bdr);':'');
-      col.innerHTML = '<div style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">'+s.label+'</div>';
+      col.innerHTML = '<div style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
       hdr.appendChild(col);
     });
     container.appendChild(hdr);
@@ -13805,7 +13819,14 @@ async function mobShowInvoices() {
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
           col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx < arr.length-1 ? 'border-right:1px solid var(--bdr);' : '');
-          col.innerHTML = '<div style="font-size:16px;font-weight:600;color:'+s.color+';line-height:1;white-space:nowrap;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">'+s.label+'</div>';
+          var numEl = document.createElement('div');
+          numEl.style.cssText = 'font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
+          numEl.textContent = s.value;
+          var lblEl = document.createElement('div');
+          lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+          lblEl.textContent = s.label;
+          col.appendChild(numEl);
+          col.appendChild(lblEl);
           strip.appendChild(col);
         });
         titleSection.replaceWith(strip);
@@ -13882,7 +13903,7 @@ async function mobShowShipments() {
       var scheduled = ships.length - inTransit - delivered;
       var statItems = [
         { label: 'Total', value: ships.length, color: 'var(--tx)' },
-        { label: 'Transit', value: inTransit, color: 'var(--ac)' },
+        { label: 'In Transit', value: inTransit, color: 'var(--ac)' },
         { label: 'Delivered', value: delivered, color: 'var(--mu)' },
         { label: 'Other', value: scheduled, color: 'var(--fa)' },
       ];
@@ -13891,7 +13912,14 @@ async function mobShowShipments() {
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
         col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx < statItems.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
-        col.innerHTML = '<div style="font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;">' + item.value + '</div><div style="font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">' + item.label + '</div>';
+        var numEl = document.createElement('div');
+        numEl.style.cssText = 'font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
+        numEl.textContent = item.value;
+        var lblEl = document.createElement('div');
+        lblEl.style.cssText = 'font-size:9px;color:var(--fa);margin-top:2px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
+        lblEl.textContent = item.label;
+        col.appendChild(numEl);
+        col.appendChild(lblEl);
         statsEl.appendChild(col);
       });
     }
