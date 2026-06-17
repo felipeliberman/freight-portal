@@ -1917,7 +1917,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div style="font-size:16px;font-weight:600;color:var(--tx);">My Shipments</div>
     <div id="mob-ships-count" style="font-size:12px;color:var(--mu);"></div>
   </div>
-  <div id="mob-ships-stats" style="display:none;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--bdr);overflow:hidden;"></div>
+  <div id="mob-ships-stats" style="display:none;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--bdr);overflow:hidden;height:56px;"></div>
   <div id="mob-ships-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 12px;">
     <div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">Loading...</div>
   </div>
@@ -9907,19 +9907,19 @@ function showSavedQuotes() {
   const hdr = document.createElement('div');
   hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
   hdr.innerHTML =
-    '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+    '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
       '<div style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">' + quotes.length + '</div>' +
       '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
     '</div>' +
-    '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+    '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
       '<div style="font-size:16px;font-weight:600;color:var(--tx);line-height:1;white-space:nowrap;">' + (totalValue ? '$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—') + '</div>' +
       '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Value</div>' +
     '</div>' +
-    '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+    '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
       '<div style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">' + carriers + '</div>' +
       '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Carriers</div>' +
     '</div>' +
-    '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;">' +
+    '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
       '<div style="font-size:14px;font-weight:500;color:var(--tx);line-height:1;white-space:nowrap;">' + mostRecent + '</div>' +
       '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Last Saved</div>' +
     '</div>';
@@ -11048,19 +11048,19 @@ function showAddressBook() {
   hdr.innerHTML =
     // Hero card — compact strip
     '<div style="background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;">' +
-      '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-count" style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">—</div>' +
         '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
       '</div>' +
-      '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-from" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
         '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship From</div>' +
       '</div>' +
-      '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--bdr);">' +
+      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
         '<div id="ab-hdr-to" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
         '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship To</div>' +
       '</div>' +
-      '<div style="text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;">' +
+      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
         '<button id="ab-add-btn" style="display:inline-flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
           '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add' +
         '</button>' +
@@ -12489,7 +12489,7 @@ function renderReports(shipments) {
   statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
     const isLast = idx === arr.length - 1;
-    col.style.cssText = 'text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (!isLast ? 'border-right:1px solid var(--bdr);' : '');
+    col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (!isLast ? 'border-right:1px solid var(--bdr);' : '');
     col.innerHTML =
       '<div style="font-size:16px;font-weight:600;color:' + color + ';line-height:1;">' + value + '</div>' +
       '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;text-align:center;">' + label + '</div>';
@@ -13731,7 +13731,7 @@ function mobShowSavedQuotes() {
       {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
     ].forEach(function(s,idx,arr){
       var col = document.createElement('div');
-      col.style.cssText = 'text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (idx<arr.length-1?'border-right:1px solid var(--bdr);':'');
+      col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx<arr.length-1?'border-right:1px solid var(--bdr);':'');
       col.innerHTML = '<div style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
       hdr.appendChild(col);
     });
@@ -13799,7 +13799,7 @@ async function mobShowInvoices() {
           { label:'Paid', value: paid, color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
-          col.style.cssText = 'text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (idx < arr.length-1 ? 'border-right:1px solid var(--bdr);' : '');
+          col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx < arr.length-1 ? 'border-right:1px solid var(--bdr);' : '');
           col.innerHTML = '<div style="font-size:16px;font-weight:600;color:'+s.color+';line-height:1;white-space:nowrap;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
           strip.appendChild(col);
         });
@@ -13885,7 +13885,7 @@ async function mobShowShipments() {
       statsEl.style.display = 'grid'; statsEl.style.gridTemplateColumns = 'repeat(4,1fr)'; statsEl.style.overflow = 'hidden'; statsEl.style.padding = '0';
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
-        col.style.cssText = 'text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (idx < statItems.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
+        col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx < statItems.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
         col.innerHTML = '<div style="font-size:20px;font-weight:500;color:' + item.color + ';line-height:1;">' + item.value + '</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">' + item.label + '</div>';
         statsEl.appendChild(col);
       });
