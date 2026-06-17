@@ -5520,7 +5520,7 @@ function showLocationChecker() {
   addRecent('Check a Location');
 
   const c = document.createElement('div');
-  c.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;';
+  c.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
 
   // Hero header
   const hdr = document.createElement('div');
@@ -9894,7 +9894,7 @@ function showSavedQuotes() {
   addRecent('Saved Quotes');
   const quotes = getSavedQuotes();
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;';
+  container.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
 
   // ── Hero header ──────────────────────────────────────────────────────────────
   const totalValue = quotes.reduce((sum, q) => {
@@ -10735,7 +10735,7 @@ function showShippingItems() {
   const iS = 'width:100%;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;transition:border-color .15s;outline:none;';
 
   const c = document.createElement('div');
-  c.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;position:relative;';
+  c.style.cssText = 'display:flex;flex-direction:column;min-height:100%;position:relative;';
 
   // ── Hero header ──────────────────────────────────────────────────────────────
   const hdr = document.createElement('div');
@@ -12359,7 +12359,7 @@ async function showReports() {
 
 function renderReports(shipments) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding-bottom:16px;';
+  container.style.cssText = 'display:flex;flex-direction:column;padding-bottom:16px;';
 
   if (!shipments || !shipments.length) {
     container.innerHTML = '<div style="color:var(--mu);font-size:13px;">No shipment data available.</div>';
@@ -12477,7 +12477,7 @@ function renderReports(shipments) {
   const activeRate   = totalTracked ? Math.round(((delivered + inTransit) / totalTracked) * 100) : 0;
 
   const statsRow = document.createElement('div');
-  statsRow.style.cssText = 'border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
+  statsRow.style.cssText = 'border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;margin-bottom:16px;';
 
   const statDefs = [
     { label: 'Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)' },
