@@ -3076,7 +3076,8 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
   if (confirmationId) {
     const confDiv = document.createElement('div');
     confDiv.style.cssText = 'padding:10px 24px;background:#fdf0fd;border-bottom:1px solid #e5e2d9;font-size:12px;color:#888;text-align:center;';
-    confDiv.innerHTML = 'Confirmation #: <strong style="color:#1a1a1a;font-family:monospace;">' + confirmationId + '</strong>';
+    var shortConfId = confirmationId ? confirmationId.slice(-8).toUpperCase() : '';
+    confDiv.innerHTML = 'Confirmation #: <strong style="color:#1a1a1a;font-family:monospace;">' + shortConfId + '</strong>';
     box.appendChild(confDiv);
   }
 
