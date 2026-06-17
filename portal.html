@@ -3238,7 +3238,7 @@ function showStripePaymentModal(invoices) {
   const existing = document.getElementById('stripe-pay-modal');
   if (existing) existing.remove();
 
-  const STRIPE_PK = 'pk_test_51TjE6IALHpracb1ckjIFQJNkTDDGxH2UU3VAyWYlhX5wdg09C87rZ9plQcoZRFRTzsq9OVUJvT1pB55Pm0wJpgrr00WRlD3ZlX';
+  const STRIPE_PK = 'pk_live_51TjE6BAJRfa3jdmDq3AA0UTJF4OlLv6jOsvkxxiN4FfkXs2t3FbiWUzWolXgzzbOWyxYP6Nat05ywLCwaKvZGnTg00Wzj0pbwI';
   const stripe = window.Stripe ? window.Stripe(STRIPE_PK) : null;
 
   const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
