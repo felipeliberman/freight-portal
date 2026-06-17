@@ -3148,91 +3148,75 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
 }
 
 function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
-  const date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  const time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
-  const refNum = 'FL-' + Date.now().toString().slice(-8);
+  var date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  var time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+  var refNum = 'FL-' + Date.now().toString().slice(-8);
+  var subtotal = invoices.reduce(function(s, inv) { return s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0); }, 0);
+  var fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+  var shortId = confirmationId ? confirmationId.slice(-8).toUpperCase() : '';
+  var cardLabel = cardBrand && cardLast4 ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) + ' ending in ' + cardLast4 : (paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card');
+  var logoUrl = 'https://felipeliberman.github.io/freight-portal/logo.png';
 
-  const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
-  const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
-  const rows = invoices.map(inv => {
-    const f = getInvoiceFields(inv);
-    return `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">
-        <strong>#${f.invNum}</strong>
-        ${f.bolNum && f.bolNum !== '—' ? '<br><span style="font-size:11px;color:#888;">BOL: ' + f.bolNum + '</span>' : ''}
-        ${f.carrier && f.carrier !== '—' ? '<br><span style="font-size:11px;color:#888;">' + f.carrier + '</span>' : ''}
-      </td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">
-        ${f.consignee || ''}
-        ${f.shipper && f.shipper !== '—' ? '<br><span style="font-size:11px;color:#888;">From: ' + f.shipper + '</span>' : ''}
-      </td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;text-align:right;">$${Number(f.rawAmt||0).toFixed(2)}</td>
-    </tr>`;
+  var rows = invoices.map(function(inv) {
+    var f = getInvoiceFields(inv);
+    return '<div style="padding:14px 36px;display:flex;border-bottom:1px solid #e5e2d9;">' +
+      '<div style="flex:0 0 40%;">' +
+        '<div style="font-weight:600;color:#1a1a1a;font-size:13px;">#' + f.invNum + '</div>' +
+        (f.bolNum && f.bolNum !== '—' ? '<div style="font-size:11px;color:#888;margin-top:3px;">BOL: ' + f.bolNum + '</div>' : '') +
+        (f.carrier && f.carrier !== '—' ? '<div style="font-size:11px;color:#888;">' + f.carrier + '</div>' : '') +
+      '</div>' +
+      '<div style="flex:0 0 40%;font-size:13px;color:#1a1a1a;">' +
+        (f.consignee || '') +
+        (f.shipper && f.shipper !== '—' ? '<div style="font-size:11px;color:#888;margin-top:3px;">From: ' + f.shipper + '</div>' : '') +
+      '</div>' +
+      '<div style="flex:0 0 20%;text-align:right;font-size:13px;color:#1a1a1a;">$' + Number(f.rawAmt||0).toFixed(2) + '</div>' +
+    '</div>';
   }).join('');
-  const feeRows = fee > 0 ? `
-    <tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#888;">Subtotal</td><td style="padding:6px 12px;font-size:12px;color:#888;text-align:right;">$${subtotal.toFixed(2)}</td></tr>
-    <tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#888;">Convenience fee (2.9% + $0.30)</td><td style="padding:6px 12px;font-size:12px;color:#888;text-align:right;">$${fee.toFixed(2)}</td></tr>
-  ` : '';
 
-  const cardLabel = cardBrand && cardLast4 ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) + ' ending in ' + cardLast4 : (paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card');
-  const logoUrl = 'https://felipeliberman.github.io/freight-portal/logo.png';
+  var feeSection = fee > 0 ?
+    '<div style="padding:12px 36px 4px;display:flex;justify-content:space-between;font-size:12px;color:#888;"><span>Subtotal</span><span>$' + subtotal.toFixed(2) + '</span></div>' +
+    '<div style="padding:4px 36px 12px;display:flex;justify-content:space-between;font-size:12px;color:#888;border-bottom:1px solid #e5e2d9;"><span>Convenience fee (2.9% + $0.30)</span><span>$' + fee.toFixed(2) + '</span></div>'
+    : '<div style="border-bottom:1px solid #e5e2d9;"></div>';
 
-  const html = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Payment Receipt - Freight and Logistics, Inc.</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto; color: #1a1a1a; }
-  .header { background: #fff; border: 2px solid #bd27bc; border-bottom: none; border-radius: 12px 12px 0 0; padding: 24px 32px 20px; text-align:center; }
-  .header img { height: 44px; width: auto; margin-bottom: 10px; display: block; margin-left: auto; margin-right: auto; }
-  .header h1 { margin: 0; font-size: 22px; color: #bd27bc; }
-  .body { background: #fff; border: 2px solid #bd27bc; border-top: none; border-radius: 0 0 12px 12px; padding: 32px; }
-  .conf { background:#fdf0fd;padding:8px 16px;border-radius:6px;font-size:12px;color:#888;margin-bottom:20px;text-align:center; }
-  .conf strong { color:#1a1a1a;font-family:monospace; }
-  .meta { display: flex; gap: 24px; flex-wrap:wrap; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
-  .meta-item label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 3px; }
-  .meta-item span { font-size: 13px; font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-  th { padding: 8px 12px; text-align: left; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; background: #f9f8f5; }
-  th:last-child { text-align: right; }
-  .total-row td { padding: 12px; font-weight: 700; font-size: 15px; border-top: 2px solid #e5e2d9; }
-  .total-row td:last-child { text-align: right; color: #bd27bc; }
-  .save-note { font-size:11px;color:#aaa;margin-top:12px;text-align:center; }
-  .footer { margin-top: 24px; padding-top: 20px; border-top: 2px solid #bd27bc; font-size: 11px; color: #555; text-align: center; }
-  .footer a { color:#bd27bc;text-decoration:none; }
-  @media print { body { margin: 0; } }
-</style>
-</head>
-<body>
-  <div class="header">
-    <img src="${logoUrl}" alt="Freight and Logistics, Inc." onerror="this.style.display='none'">
-    <h1>Payment Receipt</h1>
-  </div>
-  <div class="body">
-    ${confirmationId ? '<div class="conf">Confirmation #: <strong>' + confirmationId + '</strong></div>' : ''}
-    <div class="meta">
-      <div class="meta-item"><label>Date</label><span>${date} at ${time}</span></div>
-      <div class="meta-item"><label>Method</label><span>${cardLabel}</span></div>
-    </div>
-    <table>
-      <thead><tr><th>Invoice</th><th>Consignee</th><th style="text-align:right;">Amount</th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot>${feeRows}<tr class="total-row"><td colspan="2">Total Paid</td><td>$${Number(total).toFixed(2)}</td></tr></tfoot>
-    </table>
-    ${paymentMethod === 'ach' ? '<p style="font-size:12px;color:#888;">ACH transfers typically settle within 2-5 business days.</p>' : ''}
-    <p class="save-note">Please save this receipt for your records.</p>
-    <div class="footer">
-      Freight and Logistics, Inc. &bull; 
-      <a href="tel:18006873713">(800) 687-3713</a> &bull; 
-      <a href="mailto:support@freightandlogistics.com">support@freightandlogistics.com</a> &bull; 
-      <a href="https://www.freightandlogistics.com">www.freightandlogistics.com</a>
-    </div>
-  </div>
-</body>
-</html>`;
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment Receipt - Freight and Logistics, Inc.</title>' +
+    '<style>* { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: system-ui, -apple-system, sans-serif; background: #f5f4f0; padding: 40px 20px; } .card { max-width: 680px; margin: 0 auto; background: #fff; border: 1px solid #e5e2d9; border-radius: 12px; overflow: hidden; } @media print { body { background: #fff; padding: 0; } .card { border: none; border-radius: 0; } }</style>' +
+    '</head><body><div class="card">' +
+    '<div style="padding:28px 36px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #bd27bc;">' +
+      '<div><img src="' + logoUrl + '" alt="Freight and Logistics, Inc." style="height:48px;width:auto;" onerror="this.style.display=\'none\'"></div>' +
+      '<div style="text-align:right;">' +
+        '<div style="font-size:20px;font-weight:600;color:#bd27bc;margin-bottom:6px;">Payment Receipt</div>' +
+        '<div style="font-size:11px;color:#888;margin-bottom:3px;">' + date + ' at ' + time + '</div>' +
+        (shortId ? '<div style="font-size:11px;color:#888;margin-bottom:3px;">Confirmation <span style="font-family:monospace;color:#1a1a1a;font-weight:600;">' + shortId + '</span></div>' : '') +
+        '<div style="font-size:11px;color:#888;">' + cardLabel + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="border-bottom:3px solid #bd27bc;padding:12px 36px 10px;display:flex;">' +
+      '<div style="flex:0 0 40%;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.07em;">Invoice</div>' +
+      '<div style="flex:0 0 40%;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.07em;">Consignee</div>' +
+      '<div style="flex:0 0 20%;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.07em;text-align:right;">Amount</div>' +
+    '</div>' +
+    rows +
+    feeSection +
+    '<div style="padding:14px 36px;display:flex;justify-content:space-between;font-size:15px;font-weight:600;border-bottom:1px solid #e5e2d9;">' +
+      '<span style="color:#1a1a1a;">Total Paid</span>' +
+      '<span style="color:#bd27bc;">$' + Number(total).toFixed(2) + '</span>' +
+    '</div>' +
+    (paymentMethod === 'ach' ? '<div style="padding:10px 36px;font-size:11px;color:#888;border-bottom:1px solid #e5e2d9;">ACH transfers typically settle within 2-5 business days.</div>' : '') +
+    '<div style="padding:20px 36px;text-align:center;">' +
+      '<div style="font-size:11px;color:#888;margin-bottom:8px;">Please save this receipt for your records.</div>' +
+      '<div style="font-size:11px;color:#888;">' +
+        '<a href="tel:18006873713" style="color:#bd27bc;text-decoration:none;">(800) 687-3713</a>' +
+        '<span style="margin:0 8px;color:#ccc;">&bull;</span>' +
+        '<a href="mailto:support@freightandlogistics.com" style="color:#bd27bc;text-decoration:none;">support@freightandlogistics.com</a>' +
+        '<span style="margin:0 8px;color:#ccc;">&bull;</span>' +
+        '<a href="https://www.freightandlogistics.com" style="color:#bd27bc;text-decoration:none;">www.freightandlogistics.com</a>' +
+      '</div>' +
+    '</div>' +
+    '</div></body></html>';
 
-  const blob = new Blob([html], { type: 'text/html' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
+  var blob = new Blob([html], { type: 'text/html' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
   a.href     = url;
   a.download = 'receipt-' + refNum + '.html';
   a.click();
