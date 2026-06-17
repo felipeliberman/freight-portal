@@ -393,6 +393,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   }
   :root{--header-h:50px;}
   #topbar .nav-phone-link{display:none;}
+  #nav-hamburger{display:flex !important;}
   #topbar .nav-portal{display:none;}
   .nav-talk{display:none;}
   .nav-acct-name{max-width:110px;font-size:12px;}
@@ -782,9 +783,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
     <span>Invoices</span>
   </button>
-  <button class="mob-tab" id="mob-tab-more" onclick="mobTab('more')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-    <span>More</span>
+  <button class="mob-tab" id="mob-tab-reports" onclick="mobTab('reports')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    <span>Reports</span>
   </button>
 </div>
 
@@ -823,6 +824,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       <span class="nav-acct-name" id="nav-acct-name"></span>
       <button class="nav-logout" onclick="doLogout()">Log out</button>
     </div>
+    <button id="nav-hamburger" onclick="var s=document.getElementById('mob-more-sheet');if(s)s.style.display='flex';" style="display:none;background:none;border:none;cursor:pointer;color:var(--tx);padding:6px;border-radius:8px;align-items:center;justify-content:center;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
     <a href="https://freightandlogistics-portal.shipprimus.com/auth" target="_blank" class="nav-portal">Classic Portal</a>
   </div>
 </nav>
@@ -13663,17 +13665,12 @@ function mobSetActive(tab) {
 }
 
 function mobTab(tab) {
-  if (tab === 'more') {
-    var sheet = document.getElementById('mob-more-sheet');
-    if (sheet) sheet.style.display = 'flex';
-    return;
-  }
   mobSetActive(tab);
   // Hide full-screen views when switching tabs
   var sv = document.getElementById('mob-ships-view');
   if (sv && tab !== 'shipments') sv.style.display = 'none';
   var mcv = document.getElementById('mob-content-view');
-  if (mcv) mcv.style.display = 'none';
+  if (mcv && tab !== 'invoices' && tab !== 'reports') mcv.style.display = 'none';
   if (tab === 'chat') {
     closeRightPanel();
   } else if (tab === 'shipments') {
@@ -13685,6 +13682,9 @@ function mobTab(tab) {
   } else if (tab === 'invoices') {
     closeRightPanel();
     mobShowInvoices();
+  } else if (tab === 'reports') {
+    closeRightPanel();
+    mobShowReports();
   }
 }
 
