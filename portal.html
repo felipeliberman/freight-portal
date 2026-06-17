@@ -12619,6 +12619,10 @@ function renderReports(shipments) {
     };
   }, 100);
 
+  // Fill remaining space to avoid gray bar
+  var spacer = document.createElement('div');
+  spacer.style.cssText = 'flex:1;background:#fff;';
+  container.appendChild(spacer);
   return container;
 }
 
