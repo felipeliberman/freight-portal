@@ -3154,10 +3154,27 @@ function showStripePaymentModal(invoices) {
   const achSection = document.createElement('div');
   achSection.id = 'pay-ach-section';
   achSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
-  achSection.innerHTML = `<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Bank Account</div>
-    <div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:14px;font-size:13px;color:#555;line-height:1.5;">
-      ACH bank payment is coming soon. Please use <strong>Pay by Card</strong> for now or contact us at <strong>(800) 687-3713</strong> to arrange a bank transfer.
-    </div>`;
+  const inputStyle = 'width:100%;box-sizing:border-box;border:1px solid #e5e2d9;border-radius:10px;padding:11px 14px;font-size:14px;font-family:var(--font);color:#1a1a1a;outline:none;background:#fff;';
+  achSection.innerHTML = `
+    <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Bank Account</div>
+    <div style="margin-bottom:10px;">
+      <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">Routing Number</label>
+      <input id="ach-routing" type="tel" maxlength="9" placeholder="9-digit routing number" style="${inputStyle}" />
+    </div>
+    <div style="margin-bottom:10px;">
+      <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">Account Number</label>
+      <input id="ach-account" type="tel" maxlength="17" placeholder="Account number" style="${inputStyle}" />
+    </div>
+    <div>
+      <label style="font-size:11px;color:#888;display:block;margin-bottom:6px;">Account Type</label>
+      <div style="display:flex;gap:8px;">
+        <button id="ach-type-checking" onclick="document.getElementById('ach-type-checking').style.cssText='flex:1;padding:8px;border:2px solid #bd27bc;border-radius:8px;background:#fdf0fd;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:#bd27bc;';document.getElementById('ach-type-savings').style.cssText='flex:1;padding:8px;border:2px solid #e5e2d9;border-radius:8px;background:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);color:#555;';window._achAccountType='checking';" style="flex:1;padding:8px;border:2px solid #bd27bc;border-radius:8px;background:#fdf0fd;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:#bd27bc;">Checking</button>
+        <button id="ach-type-savings" onclick="document.getElementById('ach-type-savings').style.cssText='flex:1;padding:8px;border:2px solid #bd27bc;border-radius:8px;background:#fdf0fd;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:#bd27bc;';document.getElementById('ach-type-checking').style.cssText='flex:1;padding:8px;border:2px solid #e5e2d9;border-radius:8px;background:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);color:#555;';window._achAccountType='savings';" style="flex:1;padding:8px;border:2px solid #e5e2d9;border-radius:8px;background:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);color:#555;">Savings</button>
+      </div>
+    </div>
+    <div id="ach-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:16px;"></div>
+  `;
+  window._achAccountType = 'checking';
   box.appendChild(achSection);
 
   // Card section (hidden by default)
@@ -3199,19 +3216,96 @@ function showStripePaymentModal(invoices) {
   confirmBtn.onmouseover = () => confirmBtn.style.background = '#8e1b8d';
   confirmBtn.onmouseout  = () => confirmBtn.style.background = '#bd27bc';
   confirmBtn.onclick = async () => {
+    const total = calcTotal(payMethod);
+    const customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || '';
+    const invoiceMeta = invoices.map(i => ({ invNum: getInvoiceFields(i).invNum, consignee: getInvoiceFields(i).consignee, amount: getInvoiceFields(i).rawAmt }));
+    const invoiceNums = invoiceMeta.map(i => i.invNum).join(', ');
+    const WORKER = 'https://stripe-payments.felipe-b80.workers.dev';
+
+    // ── ACH flow ─────────────────────────────────────────────────────────────
     if (payMethod === 'ach') {
-      // ACH not yet implemented — message already shown
+      const routing = (document.getElementById('ach-routing') || {}).value || '';
+      const account = (document.getElementById('ach-account') || {}).value || '';
+      const errEl   = document.getElementById('ach-error');
+      if (routing.length !== 9) { if (errEl) errEl.textContent = 'Please enter a valid 9-digit routing number.'; return; }
+      if (account.length < 4)   { if (errEl) errEl.textContent = 'Please enter a valid account number.'; return; }
+      if (errEl) errEl.textContent = '';
+      confirmBtn.textContent = 'Processing...';
+      confirmBtn.disabled = true;
+      try {
+        // Create PaymentIntent
+        const piRes = await fetch(WORKER + '/create-payment-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail })
+        });
+        const piData = await piRes.json();
+        if (piData.error) throw new Error(piData.error);
+        // Confirm ACH with bank account details via Stripe.js
+        const stripe = window._stripeInstance;
+        const { error } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
+          payment_method: {
+            us_bank_account: {
+              routing_number: routing,
+              account_number: account,
+              account_type: window._achAccountType || 'checking',
+              account_holder_type: 'company',
+            },
+            billing_details: { email: customerEmail }
+          }
+        });
+        if (error) throw new Error(error.message);
+        // Send confirmation email
+        await fetch(WORKER + '/send-confirmation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'ach' })
+        });
+        confirmBtn.style.background = '#16a34a';
+        confirmBtn.textContent = 'Payment submitted - check your email for confirmation';
+        setTimeout(() => overlay.remove(), 3500);
+      } catch(e) {
+        const errEl = document.getElementById('ach-error');
+        if (errEl) errEl.textContent = e.message || 'Payment failed. Please try again.';
+        confirmBtn.textContent = 'Pay $' + total.toFixed(2);
+        confirmBtn.disabled = false;
+      }
       return;
     }
-    // Card payment — placeholder until Worker is live
+
+    // ── Card flow ─────────────────────────────────────────────────────────────
     confirmBtn.textContent = 'Processing...';
     confirmBtn.disabled = true;
-    await new Promise(r => setTimeout(r, 1200));
-    // TODO: replace with real Worker call
-    console.log('[Stripe] Would charge $' + calcTotal('card').toFixed(2) + ' for invoices:', invoices.map(i => getInvoiceFields(i).invNum));
-    confirmBtn.style.background = '#16a34a';
-    confirmBtn.textContent = 'Payment processing - we will email you a confirmation';
-    setTimeout(() => overlay.remove(), 3000);
+    try {
+      // Create PaymentIntent server-side
+      const piRes = await fetch(WORKER + '/create-payment-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: total, paymentMethod: 'card', invoiceNums, customerEmail })
+      });
+      const piData = await piRes.json();
+      if (piData.error) throw new Error(piData.error);
+      // Confirm card payment with Stripe.js
+      const stripe = window._stripeInstance;
+      const cardEl = window._stripeCardElement;
+      const { error, paymentIntent } = await stripe.confirmCardPayment(piData.clientSecret, {
+        payment_method: { card: cardEl, billing_details: { email: customerEmail } }
+      });
+      if (error) throw new Error(error.message);
+      // Send confirmation email
+      await fetch(WORKER + '/send-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card' })
+      });
+      confirmBtn.style.background = '#16a34a';
+      confirmBtn.textContent = 'Payment confirmed - check your email for confirmation';
+      setTimeout(() => overlay.remove(), 3500);
+    } catch(e) {
+      document.getElementById('stripe-card-error').textContent = e.message || 'Payment failed. Please try again.';
+      confirmBtn.textContent = 'Pay $' + total.toFixed(2);
+      confirmBtn.disabled = false;
+    }
   };
   footer.appendChild(confirmBtn);
   const secureNote = document.createElement('div');
