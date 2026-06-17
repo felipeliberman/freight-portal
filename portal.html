@@ -3349,6 +3349,11 @@ function showStripePaymentModal(invoices) {
     <div id="ach-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:16px;"></div>
   `;
   window._achPaymentMethod = null;
+  // Resolve customer email at modal open time so ACH link button can use it
+  let customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || '';
+  if (!customerEmail) { try { const sess = JSON.parse(sessionStorage.getItem('fl_session') || '{}'); customerEmail = sess.email || ''; } catch(e) {} }
+  if (!customerEmail) { try { const rem = JSON.parse(localStorage.getItem('fl_remember') || '{}'); customerEmail = rem.email || ''; } catch(e) {} }
+  window._modalCustomerEmail = customerEmail;
   box.appendChild(achSection);
 
   // Card section (hidden by default)
@@ -3513,7 +3518,7 @@ function showStripePaymentModal(invoices) {
         const piRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/create-payment-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: calcTotal('ach'), paymentMethod: 'ach', invoiceNums: '', customerEmail })
+          body: JSON.stringify({ amount: calcTotal('ach'), paymentMethod: 'ach', invoiceNums: '', customerEmail: window._modalCustomerEmail || '' })
         });
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
