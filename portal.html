@@ -3163,7 +3163,7 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
     return '<div style="padding:10px 32px;border-bottom:1px solid #f0ede8;">' +
       '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;">' +
         '<span>Invoice <strong style="color:#bd27bc;">#' + f.invNum + '</strong>' + (f.consignee ? ' &mdash; ' + f.consignee : '') + '</span>' +
-        '<span style="font-weight:600;">$' + Number(f.rawAmt||0).toFixed(2) + '</span>' +
+        '<span style="font-weight:600;white-space:nowrap;">$' + Number(f.rawAmt||0).toFixed(2) + '</span>' +
       '</div>' +
       '<div style="font-size:11px;color:#888;line-height:1.6;">' +
         (f.bolNum && f.bolNum !== '—' ? 'BOL: ' + f.bolNum + ' &nbsp;&bull;&nbsp; ' : '') +
