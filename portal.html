@@ -2854,8 +2854,8 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   const cols = ['Invoice #','BOL #','Date','Due Date','Shipper','Consignee','Amount','Status'];
   const fieldKeys = ['invNum','bolNum','date','due','shipper','consignee','amount','status'];
 
-  // Reset selection on each render
-  selectedInvoices.clear();
+  // Reset selection only on fresh load (not pagination)
+  if (!window._invPaginating) selectedInvoices.clear();
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
@@ -2948,7 +2948,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       prevBtn.onclick = () => {
         footer._paginationState.page--;
         const s = footer._paginationState.page * PAGE_SIZE;
-        renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s);
+        window._invPaginating = true; renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s); window._invPaginating = false;
         updateInvoiceFooter();
       };
       footerRight.appendChild(prevBtn);
@@ -2964,7 +2964,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       nextBtn.onclick = () => {
         footer._paginationState.page++;
         const s = footer._paginationState.page * PAGE_SIZE;
-        renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s);
+        window._invPaginating = true; renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s); window._invPaginating = false;
         updateInvoiceFooter();
       };
       footerRight.appendChild(nextBtn);
@@ -8084,10 +8084,15 @@ function updateDownloadBtn() {
     return inv && !getInvoiceFields(inv).isPaid;
   });
   if (unpaidSelected.length > 0) {
-    if (lbl) lbl.textContent = 'Pay Selected (' + unpaidSelected.length + ')';
+    const unpaidTotal = unpaidSelected.reduce((s, key) => {
+      const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
+      return s + (inv ? parseFloat(getInvoiceFields(inv).rawAmt) || 0 : 0);
+    }, 0);
+    const totalStr = '$' + unpaidTotal.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    if (lbl) lbl.innerHTML = 'Pay Selected (' + unpaidSelected.length + ') <span style="background:rgba(255,255,255,.22);border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:4px;">' + totalStr + '</span>';
     if (tt)  tt.textContent  = 'Click to pay ' + unpaidSelected.length + ' selected invoice' + (unpaidSelected.length > 1 ? 's' : '');
   } else {
-    if (lbl) lbl.textContent = 'Pay Invoices';
+    if (lbl) lbl.innerHTML = 'Pay Invoices';
     if (tt)  tt.textContent  = 'Check a box next to an unpaid invoice to select it for payment';
   }
 }
