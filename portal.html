@@ -3523,11 +3523,16 @@ function showStripePaymentModal(invoices) {
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
 
+        // Get customer name for billing details
+        let custName = '';
+        try { const sess = JSON.parse(sessionStorage.getItem('fl_session') || '{}'); custName = (sess.customer && (sess.customer.companyName || sess.customer.name)) || ''; } catch(e2) {}
+        if (!custName) custName = (window._modalCustomerEmail || '').split('@')[0] || 'Customer';
+
         const { paymentIntent, error } = await stripe.collectBankAccountForPayment({
           clientSecret: piData.clientSecret,
           params: {
             payment_method_type: 'us_bank_account',
-            payment_method_data: { billing_details: { email: customerEmail } }
+            payment_method_data: { billing_details: { name: custName, email: window._modalCustomerEmail || customerEmail || '' } }
           },
           expand: ['payment_method']
         });
