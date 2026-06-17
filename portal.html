@@ -6002,6 +6002,11 @@ function talkToQuote(){
   var f=document.getElementById('public-frame');
   if(f && f.contentWindow){ try{ if(f.contentWindow.expandAndAsk){ f.contentWindow.expandAndAsk('I need a freight quote'); } else if(f.contentWindow.expandChat){ f.contentWindow.expandChat(); } }catch(e){} }
 }
+function isMobile() {
+  var tb = document.getElementById('mob-tab-bar');
+  return tb ? tb.style.display !== 'none' && getComputedStyle(tb).display !== 'none' : window.innerWidth <= 768;
+}
+
 function goHomeTop(){
   closeTalk();
   if (isMobile()) {
