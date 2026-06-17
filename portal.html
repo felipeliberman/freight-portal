@@ -13818,7 +13818,7 @@ async function mobShowInvoices() {
           { label:'Paid', value: paid, color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
-          col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < arr.length-1 ? '#c8c4bc;' : 'transparent;');
+          col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < arr.length-1 ? '#c8c4bc;' : 'transparent;') + 'cursor:pointer;transition:background .15s;';
           var numEl = document.createElement('div');
           numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
           numEl.textContent = s.value;
@@ -13827,6 +13827,23 @@ async function mobShowInvoices() {
           lblEl.textContent = s.label;
           col.appendChild(numEl);
           col.appendChild(lblEl);
+          col.onmouseover = function() { this.style.background = '#f3f0eb'; };
+          col.onmouseout = function() { this.style.background = 'var(--card)'; };
+          (function(filterKey, stripEl) {
+            col.onclick = function() {
+              stripEl.querySelectorAll('div[style*="height:56px"]').forEach(function(c){ c.style.background='var(--card)'; });
+              col.style.background = '#f3e8ff';
+              var filtered = filterKey === 'Outstanding' || filterKey === 'Total' ? invoices :
+                filterKey === 'Unpaid' ? invoices.filter(function(i){ return !getInvoiceFields(i).isPaid; }) :
+                invoices.filter(function(i){ return getInvoiceFields(i).isPaid; });
+              // Re-render the invoice table
+              var tbody = body.querySelector('tbody');
+              var footer = body.querySelector('[data-inv-footer]');
+              if (tbody && typeof renderInvoiceRows === 'function') {
+                renderInvoiceRows(filtered, tbody, 20, 0);
+              }
+            };
+          })(s.label, strip);
           strip.appendChild(col);
         });
         titleSection.replaceWith(strip);
@@ -13875,6 +13892,48 @@ async function mobShowReports() {
   }
 }
 
+function mobRenderShipCards(shipsArr, listEl) {
+  listEl.innerHTML = '';
+  if (!shipsArr.length) { listEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">No shipments found.</div>'; return; }
+  shipsArr.forEach(function(s) {
+      var ti = s.trackingInformation || {};
+      var bol = s.BOLNumber || s.bolNumber || s.BOLId || '';
+      var consignee = s.consigneeName || (s.consignee && (s.consignee.name || s.consignee.companyName)) || ti.consigneeName || '';
+      var rawSt = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '';
+      var status = rawSt.replace(/_/g,' ').toUpperCase().trim() || 'UNKNOWN';
+      var date = s.bookDate || ti.bookDate || s.createdDate || '';
+      if (date) { try { date = new Date(date).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(e){} }
+      // Match desktop statusColor() — no colored backgrounds, just text colors
+      var badgeColor = 'var(--mu)'; var badgeBg = '#f3f4f6';
+      if (status.includes('POD') || status.includes('DELIVERED')) { badgeColor = 'var(--tx)'; }
+      else if (status.includes('SCHEDULED') || status.includes('APPOINTMENT')) { badgeColor = 'var(--mu)'; }
+      else if (status.includes('TRANSIT') || status.includes('PICKED UP') || status.includes('DISPATCHED') || status.includes('DISPATCH')) { badgeColor = 'var(--ac)'; }
+      else if (status.includes('EXCEPTION') || status.includes('DELAY') || status.includes('HOLD')) { badgeColor = '#d97706'; }
+      var card = document.createElement('div');
+      card.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;-webkit-tap-highlight-color:transparent;';
+      card.innerHTML = '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;font-weight:600;color:var(--ac);margin-bottom:3px;">' + (bol || '—') + '</div>' +
+        '<div style="font-size:12px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (consignee || 'No consignee') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">' +
+        '<span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:20px;background:' + badgeBg + ';color:' + badgeColor + ';white-space:nowrap;">' + status + '</span>' +
+        '<span style="font-size:11px;color:var(--fa);">' + (date || '') + '</span>' +
+        '</div>';
+      card.onclick = function() {
+        mobSetActive('chat');
+        document.getElementById('mob-ships-view').style.display = 'none';
+        showChatArea();
+        var msg = 'Tell me about BOL ' + bol;
+        if (typeof appendMessage === 'function') appendMessage('user', msg);
+        if (!currentSession) startSession(msg.slice(0, 60)); else updateSessionTitle(msg.slice(0, 60));
+        // Clear support mode and bypass AI query parser — call lookupIdentifier directly
+        window._supModeActive = false; window._supWizard = null;
+        if (typeof lookupIdentifier === 'function') lookupIdentifier(bol);
+      };
+    listEl.appendChild(card);
+  });
+}
+
 async function mobShowShipments() {
   var view = document.getElementById('mob-ships-view');
   var list = document.getElementById('mob-ships-list');
@@ -13911,7 +13970,7 @@ async function mobShowShipments() {
       statsEl.style.display = 'grid'; statsEl.style.gridTemplateColumns = 'repeat(4,1fr)'; statsEl.style.overflow = 'hidden'; statsEl.style.padding = '0';
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
-        col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < statItems.length - 1 ? '#c8c4bc;' : 'transparent;');
+        col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < statItems.length - 1 ? '#c8c4bc;' : 'transparent;') + 'cursor:pointer;transition:background .15s;';
         col.style.position = 'relative';
         var numEl = document.createElement('div');
         numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
@@ -13921,6 +13980,25 @@ async function mobShowShipments() {
         lblEl.textContent = item.label;
         col.appendChild(numEl);
         col.appendChild(lblEl);
+        col.onmouseover = function() { this.style.background = '#f3f0eb'; };
+        col.onmouseout = function() { this.style.background = 'var(--card)'; };
+        (function(filterLabel) {
+          col.onclick = function() {
+            // Highlight active col
+            statsEl.querySelectorAll('div').forEach(function(c) { c.style.background = 'var(--card)'; });
+            col.style.background = '#f3e8ff';
+            // Filter ships
+            var filtered = filterLabel === 'Total' ? ships : ships.filter(function(s) {
+              var st = (s.lastStatus || (s.trackingInformation && (s.trackingInformation.lastStatusExternal || s.trackingInformation.lastStatusInternal)) || '').toUpperCase();
+              if (filterLabel === 'In Transit') return st.includes('TRANSIT') || st.includes('PICKED UP') || st.includes('DISPATCHED') || st.includes('DISPATCH');
+              if (filterLabel === 'Delivered') return st.includes('DELIVERED') || st.includes('POD');
+              if (filterLabel === 'Other') return !st.includes('TRANSIT') && !st.includes('PICKED UP') && !st.includes('DISPATCHED') && !st.includes('DISPATCH') && !st.includes('DELIVERED') && !st.includes('POD');
+              return true;
+            });
+            if (countEl) countEl.textContent = filtered.length + (filterLabel !== 'Total' ? ' ' + filterLabel.toLowerCase() : ' total');
+            mobRenderShipCards(filtered.slice(0, 10), list);
+          };
+        })(item.label);
         statsEl.appendChild(col);
       });
     }
@@ -13928,44 +14006,7 @@ async function mobShowShipments() {
       list.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">No shipments found.</div>';
       return;
     }
-    list.innerHTML = '';
-    top10.forEach(function(s) {
-      var ti = s.trackingInformation || {};
-      var bol = s.BOLNumber || s.bolNumber || s.BOLId || '';
-      var consignee = s.consigneeName || (s.consignee && (s.consignee.name || s.consignee.companyName)) || ti.consigneeName || '';
-      var rawSt = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '';
-      var status = rawSt.replace(/_/g,' ').toUpperCase().trim() || 'UNKNOWN';
-      var date = s.bookDate || ti.bookDate || s.createdDate || '';
-      if (date) { try { date = new Date(date).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(e){} }
-      // Match desktop statusColor() — no colored backgrounds, just text colors
-      var badgeColor = 'var(--mu)'; var badgeBg = '#f3f4f6';
-      if (status.includes('POD') || status.includes('DELIVERED')) { badgeColor = 'var(--tx)'; }
-      else if (status.includes('SCHEDULED') || status.includes('APPOINTMENT')) { badgeColor = 'var(--mu)'; }
-      else if (status.includes('TRANSIT') || status.includes('PICKED UP') || status.includes('DISPATCHED') || status.includes('DISPATCH')) { badgeColor = 'var(--ac)'; }
-      else if (status.includes('EXCEPTION') || status.includes('DELAY') || status.includes('HOLD')) { badgeColor = '#d97706'; }
-      var card = document.createElement('div');
-      card.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;-webkit-tap-highlight-color:transparent;';
-      card.innerHTML = '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:14px;font-weight:600;color:var(--ac);margin-bottom:3px;">' + (bol || '—') + '</div>' +
-        '<div style="font-size:12px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (consignee || 'No consignee') + '</div>' +
-        '</div>' +
-        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">' +
-        '<span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:20px;background:' + badgeBg + ';color:' + badgeColor + ';white-space:nowrap;">' + status + '</span>' +
-        '<span style="font-size:11px;color:var(--fa);">' + (date || '') + '</span>' +
-        '</div>';
-      card.onclick = function() {
-        mobSetActive('chat');
-        document.getElementById('mob-ships-view').style.display = 'none';
-        showChatArea();
-        var msg = 'Tell me about BOL ' + bol;
-        if (typeof appendMessage === 'function') appendMessage('user', msg);
-        if (!currentSession) startSession(msg.slice(0, 60)); else updateSessionTitle(msg.slice(0, 60));
-        // Clear support mode and bypass AI query parser — call lookupIdentifier directly
-        window._supModeActive = false; window._supWizard = null;
-        if (typeof lookupIdentifier === 'function') lookupIdentifier(bol);
-      };
-      list.appendChild(card);
-    });
+    mobRenderShipCards(top10, list);
   } catch(e) {
     list.innerHTML = '<div style="padding:16px;color:var(--mu);font-size:13px;">Could not load shipments. Please try again.</div>';
     console.error('mobShowShipments error:', e);
