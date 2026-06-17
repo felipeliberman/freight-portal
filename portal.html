@@ -1919,6 +1919,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div style="font-size:16px;font-weight:600;color:var(--tx);">My Shipments</div>
     <div id="mob-ships-count" style="font-size:12px;color:var(--mu);"></div>
   </div>
+  <div id="mob-ships-stats" style="display:none;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--bdr);padding:10px 16px;display:flex;align-items:center;justify-content:space-around;gap:0;"></div>
   <div id="mob-ships-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 12px;">
     <div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">Loading...</div>
   </div>
@@ -13732,6 +13733,27 @@ async function mobShowInvoices() {
     } else {
       body.innerHTML = '';
       var el = renderInvoices(invoices, invoices);
+      // Hide date range filter on mobile
+      var dateBar = el.querySelector ? el.querySelector('#inv-date-from, #inv-date-to, #inv-date-apply, #inv-date-all') : null;
+      var dateBarDiv = el.firstChild;
+      if (dateBarDiv && dateBarDiv.style && dateBarDiv.querySelector && dateBarDiv.querySelector('#inv-date-apply')) {
+        dateBarDiv.style.display = 'none';
+      }
+      // Fix stats row overflow on mobile — tighten padding
+      var statsDiv = el.querySelector ? null : null;
+      var titleSection = el.firstChild && el.firstChild.nextSibling ? el.firstChild.nextSibling : null;
+      if (titleSection && titleSection.style) {
+        titleSection.style.flexWrap = 'nowrap';
+        titleSection.style.padding = '10px 12px';
+        titleSection.style.gap = '6px';
+        // Tighten inner stat columns
+        var cols = titleSection.querySelectorAll ? titleSection.querySelectorAll('div[style*="border-right"], div[style*="padding-right"]') : [];
+        cols.forEach(function(col) {
+          col.style.padding = '0 10px';
+        });
+        var bigNums = titleSection.querySelectorAll ? titleSection.querySelectorAll('div[style*="font-size:32px"]') : [];
+        bigNums.forEach(function(n) { n.style.fontSize = '22px'; });
+      }
       body.appendChild(el);
     }
   } catch(e) {
@@ -13789,6 +13811,34 @@ async function mobShowShipments() {
     if (shipCtx && typeof shipCtx === 'object') { shipCtx.loaded = ships; }
     var top10 = ships.slice(0, 10);
     if (countEl) countEl.textContent = ships.length + ' total';
+
+    // Stats bar
+    var statsEl = document.getElementById('mob-ships-stats');
+    if (statsEl && ships.length) {
+      var inTransit = ships.filter(function(s) {
+        var st = (s.lastStatus || (s.trackingInformation && (s.trackingInformation.lastStatusExternal || s.trackingInformation.lastStatusInternal)) || '').toUpperCase();
+        return st.includes('TRANSIT') || st.includes('PICKED UP') || st.includes('DISPATCHED') || st.includes('DISPATCH');
+      }).length;
+      var delivered = ships.filter(function(s) {
+        var st = (s.lastStatus || (s.trackingInformation && (s.trackingInformation.lastStatusExternal || s.trackingInformation.lastStatusInternal)) || '').toUpperCase();
+        return st.includes('DELIVERED') || st.includes('POD');
+      }).length;
+      var scheduled = ships.length - inTransit - delivered;
+      var statItems = [
+        { label: 'Total', value: ships.length, color: 'var(--tx)' },
+        { label: 'In Transit', value: inTransit, color: 'var(--ac)' },
+        { label: 'Delivered', value: delivered, color: 'var(--mu)' },
+        { label: 'Other', value: scheduled, color: 'var(--fa)' },
+      ];
+      statsEl.innerHTML = '';
+      statsEl.style.display = 'flex';
+      statItems.forEach(function(item, idx) {
+        var col = document.createElement('div');
+        col.style.cssText = 'text-align:center;flex:1;' + (idx < statItems.length - 1 ? 'border-right:1px solid var(--bdr);' : '');
+        col.innerHTML = '<div style="font-size:20px;font-weight:500;color:' + item.color + ';line-height:1;">' + item.value + '</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">' + item.label + '</div>';
+        statsEl.appendChild(col);
+      });
+    }
     if (!top10.length) {
       list.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100px;color:var(--mu);font-size:14px;">No shipments found.</div>';
       return;
