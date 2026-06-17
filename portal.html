@@ -12374,7 +12374,7 @@ async function showReports() {
 
 function renderReports(shipments) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;';
+  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;min-height:100%;box-sizing:border-box;';
 
   if (!shipments || !shipments.length) {
     container.innerHTML = '<div style="color:var(--mu);font-size:13px;">No shipment data available.</div>';
