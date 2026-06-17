@@ -3379,7 +3379,7 @@ function showStripePaymentModal(invoices) {
   confirmBtn.onmouseout  = () => confirmBtn.style.background = '#bd27bc';
   confirmBtn.onclick = async () => {
     const total = calcTotal(payMethod);
-    const customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || '';
+    let customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || ''; if (!customerEmail) { try { const sess = JSON.parse(sessionStorage.getItem('fl_session') || '{}'); customerEmail = sess.email || ''; } catch(e) {} } if (!customerEmail) { try { const rem = JSON.parse(localStorage.getItem('fl_remember') || '{}'); customerEmail = rem.email || ''; } catch(e) {} }
     const invoiceMeta = invoices.map(i => { const f = getInvoiceFields(i); return { invNum: f.invNum, consignee: f.consignee, amount: f.rawAmt, bolNum: f.bolNum, shipper: f.shipper, carrier: f.carrier }; });
     const invoiceNums = invoiceMeta.map(i => i.invNum).join(', ');
     const WORKER = 'https://stripe-payments.felipe-b80.workers.dev';
