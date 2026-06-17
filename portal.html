@@ -3453,11 +3453,15 @@ function showStripePaymentModal(invoices) {
       });
       if (error) throw new Error(error.message);
       // Send confirmation email
-      await fetch(WORKER + '/send-confirmation', {
+      const sgPayload = { customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card' };
+      console.log('[payment] sending confirmation to:', customerEmail, 'payload:', JSON.stringify(sgPayload));
+      const sgRes = await fetch(WORKER + '/send-confirmation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card' })
+        body: JSON.stringify(sgPayload)
       });
+      const sgData = await sgRes.json();
+      console.log('[payment] confirmation response:', sgRes.status, sgData);
       showPaymentSuccess(overlay, box, invoices, total, 'card');
     } catch(e) {
       document.getElementById('stripe-card-error').textContent = e.message || 'Payment failed. Please try again.';
