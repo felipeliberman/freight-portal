@@ -634,8 +634,6 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 
   /* ── Mobile content view: reflow all panel content ── */
 
-  /* Remove the × button from mob-content-view header */
-  #mob-content-header button{ display:none !important; }
 
   /* Stat rows: stack vertically, remove side borders */
   #mob-content-body [style*="display:flex"][style*="flex-wrap:wrap"],
@@ -797,10 +795,10 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
     <div style="display:flex;flex-direction:column;gap:2px;">
       <button onclick="closeMobMore();mobSetActive('chat');var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';var _cv=document.getElementById('mob-content-view');if(_cv)_cv.style.display='none';quickAction('Track Shipment')" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>Track Shipment</button>
       <button onclick="closeMobMore();mobShowReports()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Reports</button>
-      <button onclick="closeMobMore();showAddressBook()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Address Book</button>
-      <button onclick="closeMobMore();showShippingItems()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Shipping Items</button>
+      <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';mobSetActive('chat');showAddressBook();" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Address Book</button>
+      <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';mobSetActive('chat');showShippingItems();" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Shipping Items</button>
       <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';var _cv=document.getElementById('mob-content-view');if(_cv)_cv.style.display='none';mobSetActive('chat');showSupportForm();" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Email Support</button>
-      <button onclick="closeMobMore();showSavedQuotes()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved Quotes</button>
+      <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';mobSetActive('chat');showSavedQuotes();" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved Quotes</button>
 
       <div style="height:1px;background:var(--bdr);margin:6px 0;"></div>
       <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';var _cv=document.getElementById('mob-content-view');if(_cv)_cv.style.display='none';mobSetActive('chat');window._supModeActive=false;window._supWizard=null;newChat()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--mu);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.75"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Chat</button>
@@ -9892,7 +9890,7 @@ function deleteQuote(id) {
 }
 
 function showSavedQuotes() {
-  showChatArea();
+  if (!isMobile()) showChatArea();
   addRecent('Saved Quotes');
   const quotes = getSavedQuotes();
   const container = document.createElement('div');
@@ -10733,7 +10731,7 @@ function saveShippingItems(items) {
 }
 
 function showShippingItems() {
-  showChatArea();
+  if (!isMobile()) showChatArea();
   addRecent('Shipping Items');
 
   const lS = 'font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;display:block;';
@@ -11039,7 +11037,7 @@ function applyAddressToBookingSection(addr, prefix) {
 }
 
 function showAddressBook() {
-  showChatArea();
+  if (!isMobile()) showChatArea();
 
   const lS = 'font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;display:block;';
   const iS = 'width:100%;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;transition:border-color .15s;outline:none;';
@@ -13624,19 +13622,24 @@ setTimeout(() => {
   var _origOpen = window.openRightPanel;
   if (typeof _origOpen === 'function') {
     window.openRightPanel = function(el, title) {
-      _origOpen(el, title);
       if (isMobile()) {
-        setTimeout(function() {
-          var panel = document.getElementById('right-panel');
-          var resizer = document.getElementById('right-resizer');
-          if (panel) {
-            panel.style.cssText = 'position:fixed!important;right:0!important;left:0!important;bottom:60px!important;top:auto!important;width:100%!important;height:85dvh!important;border-left:none!important;border-top:1px solid #e5e2d9!important;border-radius:18px 18px 0 0!important;box-shadow:0 -4px 24px rgba(0,0,0,.14)!important;z-index:150!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;';
-          }
-          if (resizer) resizer.style.display = 'none';
-          document.getElementById('main').style.marginRight = '0';
-          document.body.classList.add('panel-open');
-        }, 50);
+        // Route into mob-content-view fullscreen instead of bottom sheet
+        var view = document.getElementById('mob-content-view');
+        var body = document.getElementById('mob-content-body');
+        var titleEl = document.getElementById('mob-content-title');
+        var footer = document.getElementById('mob-content-footer');
+        var sv = document.getElementById('mob-ships-view');
+        if (sv) sv.style.display = 'none';
+        if (footer) { footer.style.display = 'none'; footer.style.height = '0'; footer.style.overflow = 'hidden'; footer.style.borderTop = 'none'; }
+        if (titleEl) titleEl.textContent = title || '';
+        if (body) { body.innerHTML = ''; body.appendChild(el); }
+        if (view) view.style.display = 'flex';
+        // close right panel if open
+        var panel = document.getElementById('right-panel');
+        if (panel) panel.style.width = '0';
+        return;
       }
+      _origOpen(el, title);
     };
   }
 })();
