@@ -3064,27 +3064,47 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
 
   // Header
   const hdr = document.createElement('div');
-  hdr.style.cssText = 'background:#16a34a;border-radius:16px 16px 0 0;padding:28px 24px 24px;text-align:center;';
+  hdr.style.cssText = 'background:#bd27bc;border-radius:16px 16px 0 0;padding:28px 24px 24px;text-align:center;';
   hdr.innerHTML = `
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
     <div style="color:#fff;font-size:20px;font-weight:700;margin-bottom:4px;">Payment Confirmed</div>
-    <div style="color:#bbf7d0;font-size:13px;">A confirmation email has been sent to you.</div>
+    <div style="color:#f5d0f5;font-size:13px;">A confirmation email has been sent to you.</div>
   `;
   box.appendChild(hdr);
 
   // Invoice summary
   const summary = document.createElement('div');
   summary.style.cssText = 'padding:20px 24px;border-bottom:1px solid #e5e2d9;';
+  const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
+  const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
   invoices.forEach(inv => {
     const f = getInvoiceFields(inv);
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;justify-content:space-between;font-size:13px;padding:5px 0;';
-    row.innerHTML = `<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#${f.invNum}</strong>${f.consignee ? ' &mdash; ' + f.consignee : ''}</span>
-      <span style="font-weight:600;">$${Number(f.rawAmt||0).toFixed(2)}</span>`;
-    summary.appendChild(row);
+    const block = document.createElement('div');
+    block.style.cssText = 'padding:8px 0;border-bottom:1px solid #f0ede8;';
+    block.innerHTML = `
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;">
+        <span>Invoice <strong style="color:#bd27bc;">#${f.invNum}</strong>${f.consignee ? ' &mdash; ' + f.consignee : ''}</span>
+        <span style="font-weight:600;">$${Number(f.rawAmt||0).toFixed(2)}</span>
+      </div>
+      <div style="font-size:11px;color:#888;line-height:1.6;">
+        ${f.bolNum && f.bolNum !== '—' ? 'BOL: ' + f.bolNum + ' &nbsp;&bull;&nbsp; ' : ''}
+        ${f.shipper && f.shipper !== '—' ? f.shipper + ' &rarr; ' + f.consignee : ''}
+        ${f.carrier && f.carrier !== '—' ? ' &nbsp;&bull;&nbsp; ' + f.carrier : ''}
+      </div>`;
+    summary.appendChild(block);
   });
+  if (fee > 0) {
+    const subtotalRow = document.createElement('div');
+    subtotalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:#888;padding:8px 0 2px;';
+    subtotalRow.innerHTML = `<span>Subtotal</span><span>$${subtotal.toFixed(2)}</span>`;
+    summary.appendChild(subtotalRow);
+    const feeRow = document.createElement('div');
+    feeRow.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 0 6px;border-bottom:1px solid #e5e2d9;';
+    feeRow.innerHTML = `<span>Convenience fee (2.9% + $0.30)</span><span>$${fee.toFixed(2)}</span>`;
+    summary.appendChild(feeRow);
+  }
   const totalRow = document.createElement('div');
-  totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:10px 0 0;border-top:1px solid #e5e2d9;margin-top:8px;';
+  totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:10px 0 0;' + (fee === 0 ? 'border-top:1px solid #e5e2d9;margin-top:8px;' : '');
   totalRow.innerHTML = `<span>Total Paid</span><span>$${Number(total).toFixed(2)}</span>`;
   summary.appendChild(totalRow);
   const methodNote = document.createElement('div');
@@ -3123,14 +3143,27 @@ function generatePaymentReceipt(invoices, total, paymentMethod) {
   const time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
   const refNum = 'FL-' + Date.now().toString().slice(-8);
 
+  const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
+  const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
   const rows = invoices.map(inv => {
     const f = getInvoiceFields(inv);
     return `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">#${f.invNum}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">${f.consignee || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">
+        <strong>#${f.invNum}</strong>
+        ${f.bolNum && f.bolNum !== '—' ? '<br><span style="font-size:11px;color:#888;">BOL: ' + f.bolNum + '</span>' : ''}
+        ${f.carrier && f.carrier !== '—' ? '<br><span style="font-size:11px;color:#888;">' + f.carrier + '</span>' : ''}
+      </td>
+      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">
+        ${f.consignee || ''}
+        ${f.shipper && f.shipper !== '—' ? '<br><span style="font-size:11px;color:#888;">From: ' + f.shipper + '</span>' : ''}
+      </td>
       <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;text-align:right;">$${Number(f.rawAmt||0).toFixed(2)}</td>
     </tr>`;
   }).join('');
+  const feeRows = fee > 0 ? `
+    <tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#888;">Subtotal</td><td style="padding:6px 12px;font-size:12px;color:#888;text-align:right;">$${subtotal.toFixed(2)}</td></tr>
+    <tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#888;">Convenience fee (2.9% + $0.30)</td><td style="padding:6px 12px;font-size:12px;color:#888;text-align:right;">$${fee.toFixed(2)}</td></tr>
+  ` : '';
 
   const html = `<!DOCTYPE html>
 <html>
@@ -3167,7 +3200,7 @@ function generatePaymentReceipt(invoices, total, paymentMethod) {
     <table>
       <thead><tr><th>Invoice</th><th>Consignee</th><th style="text-align:right;">Amount</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr class="total-row"><td colspan="2">Total Paid</td><td>$${Number(total).toFixed(2)}</td></tr></tfoot>
+      <tfoot>${feeRows}<tr class="total-row"><td colspan="2">Total Paid</td><td>$${Number(total).toFixed(2)}</td></tr></tfoot>
     </table>
     ${paymentMethod === 'ach' ? '<p style="font-size:12px;color:#888;">ACH transfers typically settle within 2-5 business days.</p>' : ''}
     <div class="footer">
@@ -3347,7 +3380,7 @@ function showStripePaymentModal(invoices) {
   confirmBtn.onclick = async () => {
     const total = calcTotal(payMethod);
     const customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || '';
-    const invoiceMeta = invoices.map(i => ({ invNum: getInvoiceFields(i).invNum, consignee: getInvoiceFields(i).consignee, amount: getInvoiceFields(i).rawAmt }));
+    const invoiceMeta = invoices.map(i => { const f = getInvoiceFields(i); return { invNum: f.invNum, consignee: f.consignee, amount: f.rawAmt, bolNum: f.bolNum, shipper: f.shipper, carrier: f.carrier }; });
     const invoiceNums = invoiceMeta.map(i => i.invNum).join(', ');
     const WORKER = 'https://stripe-payments.felipe-b80.workers.dev';
 
