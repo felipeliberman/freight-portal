@@ -6004,7 +6004,7 @@ function talkToQuote(){
 }
 function goHomeTop(){
   closeTalk();
-  if (window.innerWidth <= 768) {
+  if (isMobile()) {
     var sv = document.getElementById('mob-ships-view');
     if (sv) sv.style.display = 'none';
     var mcv = document.getElementById('mob-content-view');
@@ -6015,7 +6015,7 @@ function goHomeTop(){
   if(currentCustomer){
     if(typeof newChat==='function') newChat();
     // Force app and welcome visible on mobile
-    if (window.innerWidth <= 768) {
+    if (isMobile()) {
       var app = document.getElementById('app');
       if (app) app.style.display = 'flex';
       var welcome = document.getElementById('welcome');
@@ -9890,7 +9890,7 @@ function deleteQuote(id) {
 }
 
 function showSavedQuotes() {
-  if (!isMobile()) showChatArea();
+  showChatArea();
   addRecent('Saved Quotes');
   const quotes = getSavedQuotes();
   const container = document.createElement('div');
@@ -10728,7 +10728,7 @@ function saveShippingItems(items) {
 }
 
 function showShippingItems() {
-  if (!isMobile()) showChatArea();
+  showChatArea();
   addRecent('Shipping Items');
 
   const lS = 'font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;display:block;';
@@ -11034,7 +11034,7 @@ function applyAddressToBookingSection(addr, prefix) {
 }
 
 function showAddressBook() {
-  if (!isMobile()) showChatArea();
+  showChatArea();
 
   const lS = 'font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;display:block;';
   const iS = 'width:100%;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;transition:border-color .15s;outline:none;';
@@ -12314,6 +12314,7 @@ async function fetchInvoices(dateFrom, dateTo) {
 // ── REPORTS ───────────────────────────────────────────────────────────────────
 async function showReports() {
   if (needsLogin('Reports')) return;
+  if (typeof isMobile === 'function' && isMobile()) { mobShowReports(); return; }
   showChatArea();
   addRecent('Reports');
   appendMessage('user', 'Show me my reports');
@@ -13231,7 +13232,7 @@ const rpState = {
 
 function openRightPanel(contentEl, title) {
   // On mobile: redirect into full-screen content view instead of side panel
-  if (window.innerWidth <= 768) {
+  if (isMobile()) {
     var mcv = document.getElementById('mob-content-view');
     var body = document.getElementById('mob-content-body');
     var titleEl = document.getElementById('mob-content-title');
@@ -13585,7 +13586,7 @@ setTimeout(() => {
 <script>
 // ── MOBILE DETECTION & SETUP ─────────────────────────────────────────────────
 (function() {
-  function isMobile() { return window.innerWidth <= 768; }
+  function isMobile() { var tb = document.getElementById('mob-tab-bar'); return tb ? tb.style.display !== 'none' && getComputedStyle(tb).display !== 'none' : window.innerWidth <= 768; }
 
   function showMobTabBar() {
     var bar = document.getElementById('mob-tab-bar');
@@ -13692,6 +13693,73 @@ function mobContentAsk() {
   if (typeof appendMessage === 'function') appendMessage('user', q);
   if (typeof handleInput === 'function') handleInput(q);
 }
+
+function mobOpenContentView(title, buildFn) {
+  var view = document.getElementById('mob-content-view');
+  var body = document.getElementById('mob-content-body');
+  var titleEl = document.getElementById('mob-content-title');
+  var footer = document.getElementById('mob-content-footer');
+  var sv = document.getElementById('mob-ships-view');
+  if (!view || !body) return;
+  if (sv) sv.style.display = 'none';
+  if (footer) { footer.style.display = 'none'; footer.style.height = '0'; footer.style.overflow = 'hidden'; footer.style.borderTop = 'none'; }
+  if (titleEl) titleEl.textContent = title;
+  body.innerHTML = '';
+  var el = buildFn();
+  if (el) body.appendChild(el);
+  view.style.display = 'flex';
+  var panel = document.getElementById('right-panel');
+  if (panel) panel.style.width = '0';
+}
+
+function mobShowSavedQuotes() {
+  if (typeof needsLogin === 'function' && needsLogin('Saved Quotes')) return;
+  addRecent('Saved Quotes');
+  mobOpenContentView('Saved Quotes', function() {
+    var quotes = getSavedQuotes();
+    var container = document.createElement('div');
+    container.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
+    var totalValue = quotes.reduce(function(sum,q){ var p=q.price||(q.rates&&q.rates[0]&&((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0))||0; return sum+Number(p); },0);
+    var mostRecent = quotes.length ? new Date(Math.max(...quotes.map(q=>q.savedAt||0))).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+    var carriers = new Set(quotes.map(q=>q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
+    [
+      {label:'Saved', value:quotes.length, color:'var(--ac)'},
+      {label:'Value', value:totalValue?'$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}):'—', color:'var(--tx)'},
+      {label:'Carriers', value:carriers, color:'var(--tx)'},
+      {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
+    ].forEach(function(s,idx,arr){
+      var col = document.createElement('div');
+      col.style.cssText = 'text-align:center;padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (idx<arr.length-1?'border-right:1px solid var(--bdr);':'');
+      col.innerHTML = '<div style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
+      hdr.appendChild(col);
+    });
+    container.appendChild(hdr);
+    if (!quotes.length) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:48px 20px;color:var(--mu);';
+      empty.innerHTML = '<div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:6px;">No saved quotes yet</div><div style="font-size:13px;">Get a quote and save it to access it here later.</div>';
+      container.appendChild(empty);
+    } else {
+      var list = document.createElement('div');
+      list.style.cssText = 'padding:14px;display:flex;flex-direction:column;gap:10px;';
+      quotes.forEach(function(q) {
+        var p = q.price||(q.rates&&q.rates[0]&&((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0))||0;
+        var carrier = q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'Unknown Carrier';
+        var saved = q.savedAt ? new Date(q.savedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+        var card = document.createElement('div');
+        card.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:14px;';
+        card.innerHTML = '<div style="font-size:14px;font-weight:600;color:var(--tx);">'+carrier+'</div>'+(p?'<div style="font-size:20px;font-weight:500;color:var(--ac);margin:4px 0;">$'+Number(p).toFixed(2)+'</div>':'')+'<div style="font-size:11px;color:var(--fa);">Saved '+saved+'</div>';
+        list.appendChild(card);
+      });
+      container.appendChild(list);
+    }
+    return container;
+  });
+}
+
+
 
 async function mobShowInvoices() {
   if (typeof needsLogin === 'function' && needsLogin('Invoices')) return;
