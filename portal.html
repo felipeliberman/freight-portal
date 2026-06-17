@@ -2950,6 +2950,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
         const s = footer._paginationState.page * PAGE_SIZE;
         window._invPaginating = true; renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s); window._invPaginating = false;
         updateInvoiceFooter();
+        updateDownloadBtn();
       };
       footerRight.appendChild(prevBtn);
     }
@@ -2966,6 +2967,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
         const s = footer._paginationState.page * PAGE_SIZE;
         window._invPaginating = true; renderInvoiceRows(footer._invoices, footer._tbody, s + PAGE_SIZE, s); window._invPaginating = false;
         updateInvoiceFooter();
+        updateDownloadBtn();
       };
       footerRight.appendChild(nextBtn);
     }
