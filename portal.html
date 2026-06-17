@@ -3058,6 +3058,135 @@ function getInvoiceFields(inv) {
   };
 }
 
+function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
+  // Clear box contents
+  box.innerHTML = '';
+
+  // Header
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'background:#16a34a;border-radius:16px 16px 0 0;padding:28px 24px 24px;text-align:center;';
+  hdr.innerHTML = `
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
+    <div style="color:#fff;font-size:20px;font-weight:700;margin-bottom:4px;">Payment Confirmed</div>
+    <div style="color:#bbf7d0;font-size:13px;">A confirmation email has been sent to you.</div>
+  `;
+  box.appendChild(hdr);
+
+  // Invoice summary
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:20px 24px;border-bottom:1px solid #e5e2d9;';
+  invoices.forEach(inv => {
+    const f = getInvoiceFields(inv);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;font-size:13px;padding:5px 0;';
+    row.innerHTML = `<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#${f.invNum}</strong>${f.consignee ? ' &mdash; ' + f.consignee : ''}</span>
+      <span style="font-weight:600;">$${Number(f.rawAmt||0).toFixed(2)}</span>`;
+    summary.appendChild(row);
+  });
+  const totalRow = document.createElement('div');
+  totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:10px 0 0;border-top:1px solid #e5e2d9;margin-top:8px;';
+  totalRow.innerHTML = `<span>Total Paid</span><span>$${Number(total).toFixed(2)}</span>`;
+  summary.appendChild(totalRow);
+  const methodNote = document.createElement('div');
+  methodNote.style.cssText = 'font-size:11px;color:#888;margin-top:6px;';
+  methodNote.textContent = paymentMethod === 'ach' ? 'ACH Bank Transfer - settles in 2-5 business days' : 'Credit / Debit Card';
+  summary.appendChild(methodNote);
+  box.appendChild(summary);
+
+  // Buttons
+  const btnWrap = document.createElement('div');
+  btnWrap.style.cssText = 'padding:20px 24px;display:flex;flex-direction:column;gap:10px;';
+
+  // Download Receipt button
+  const dlBtn = document.createElement('button');
+  dlBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download Receipt`;
+  dlBtn.style.cssText = 'width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;';
+  dlBtn.onmouseover = () => dlBtn.style.background = '#8e1b8d';
+  dlBtn.onmouseout  = () => dlBtn.style.background = '#bd27bc';
+  dlBtn.onclick = () => generatePaymentReceipt(invoices, total, paymentMethod);
+  btnWrap.appendChild(dlBtn);
+
+  // Done button
+  const doneBtn = document.createElement('button');
+  doneBtn.textContent = 'Done';
+  doneBtn.style.cssText = 'width:100%;background:#f9f8f5;color:#555;border:1px solid #e5e2d9;border-radius:10px;padding:13px;font-size:14px;font-weight:500;cursor:pointer;font-family:var(--font);';
+  doneBtn.onmouseover = () => doneBtn.style.background = '#f0ede8';
+  doneBtn.onmouseout  = () => doneBtn.style.background = '#f9f8f5';
+  doneBtn.onclick = () => overlay.remove();
+  btnWrap.appendChild(doneBtn);
+
+  box.appendChild(btnWrap);
+}
+
+function generatePaymentReceipt(invoices, total, paymentMethod) {
+  const date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+  const refNum = 'FL-' + Date.now().toString().slice(-8);
+
+  const rows = invoices.map(inv => {
+    const f = getInvoiceFields(inv);
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">#${f.invNum}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;">${f.consignee || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;text-align:right;">$${Number(f.rawAmt||0).toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Payment Receipt - Freight and Logistics, Inc.</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto; color: #1a1a1a; }
+  .header { background: #bd27bc; color: #fff; padding: 32px; border-radius: 12px 12px 0 0; }
+  .header h1 { margin: 0 0 4px; font-size: 24px; }
+  .header p { margin: 0; color: #f5d0f5; font-size: 13px; }
+  .body { background: #fff; border: 1px solid #e5e2d9; border-top: none; border-radius: 0 0 12px 12px; padding: 32px; }
+  .meta { display: flex; gap: 40px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+  .meta-item label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 3px; }
+  .meta-item span { font-size: 14px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { padding: 8px 12px; text-align: left; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; background: #f9f8f5; }
+  th:last-child { text-align: right; }
+  .total-row td { padding: 12px; font-weight: 700; font-size: 15px; border-top: 2px solid #e5e2d9; }
+  .total-row td:last-child { text-align: right; color: #bd27bc; }
+  .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #eee; font-size: 11px; color: #aaa; text-align: center; }
+  @media print { body { margin: 0; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Payment Receipt</h1>
+    <p>Freight and Logistics, Inc.</p>
+  </div>
+  <div class="body">
+    <div class="meta">
+      <div class="meta-item"><label>Date</label><span>${date} at ${time}</span></div>
+      <div class="meta-item"><label>Reference</label><span>${refNum}</span></div>
+      <div class="meta-item"><label>Method</label><span>${paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card'}</span></div>
+    </div>
+    <table>
+      <thead><tr><th>Invoice</th><th>Consignee</th><th style="text-align:right;">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr class="total-row"><td colspan="2">Total Paid</td><td>$${Number(total).toFixed(2)}</td></tr></tfoot>
+    </table>
+    ${paymentMethod === 'ach' ? '<p style="font-size:12px;color:#888;">ACH transfers typically settle within 2-5 business days.</p>' : ''}
+    <div class="footer">
+      Freight and Logistics, Inc. &bull; (800) 687-3713 &bull; support@freightandlogistics.com &bull; freightandlogistics.com
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'receipt-' + refNum + '.html';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
 // ── STRIPE PAYMENT MODAL ──────────────────────────────────────────────────────
 function showStripePaymentModal(invoices) {
   // Remove any existing modal
@@ -3261,9 +3390,7 @@ function showStripePaymentModal(invoices) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'ach' })
         });
-        confirmBtn.style.background = '#16a34a';
-        confirmBtn.textContent = 'Payment submitted - check your email for confirmation';
-        setTimeout(() => overlay.remove(), 3500);
+        showPaymentSuccess(overlay, box, invoices, total, 'ach');
       } catch(e) {
         const errEl = document.getElementById('ach-error');
         if (errEl) errEl.textContent = e.message || 'Payment failed. Please try again.';
@@ -3298,9 +3425,7 @@ function showStripePaymentModal(invoices) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card' })
       });
-      confirmBtn.style.background = '#16a34a';
-      confirmBtn.textContent = 'Payment confirmed - check your email for confirmation';
-      setTimeout(() => overlay.remove(), 3500);
+      showPaymentSuccess(overlay, box, invoices, total, 'card');
     } catch(e) {
       document.getElementById('stripe-card-error').textContent = e.message || 'Payment failed. Please try again.';
       confirmBtn.textContent = 'Pay $' + total.toFixed(2);
