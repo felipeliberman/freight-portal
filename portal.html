@@ -13829,21 +13829,19 @@ async function mobShowInvoices() {
           col.appendChild(lblEl);
           col.onmouseover = function() { this.style.background = '#f3f0eb'; };
           col.onmouseout = function() { this.style.background = 'var(--card)'; };
-          (function(filterKey, stripEl) {
-            col.onclick = function() {
-              stripEl.querySelectorAll('div[style*="height:56px"]').forEach(function(c){ c.style.background='var(--card)'; });
-              col.style.background = '#f3e8ff';
+          (function(filterKey, stripEl, colEl) {
+            colEl.addEventListener('click', function() {
+              Array.from(stripEl.children).forEach(function(c){ c.style.background='var(--card)'; });
+              colEl.style.background = '#f3e8ff';
               var filtered = filterKey === 'Outstanding' || filterKey === 'Total' ? invoices :
                 filterKey === 'Unpaid' ? invoices.filter(function(i){ return !getInvoiceFields(i).isPaid; }) :
                 invoices.filter(function(i){ return getInvoiceFields(i).isPaid; });
-              // Re-render the invoice table
               var tbody = body.querySelector('tbody');
-              var footer = body.querySelector('[data-inv-footer]');
               if (tbody && typeof renderInvoiceRows === 'function') {
                 renderInvoiceRows(filtered, tbody, 20, 0);
               }
-            };
-          })(s.label, strip);
+            });
+          })(s.label, strip, col);
           strip.appendChild(col);
         });
         titleSection.replaceWith(strip);
@@ -13982,11 +13980,11 @@ async function mobShowShipments() {
         col.appendChild(lblEl);
         col.onmouseover = function() { this.style.background = '#f3f0eb'; };
         col.onmouseout = function() { this.style.background = 'var(--card)'; };
-        (function(filterLabel) {
-          col.onclick = function() {
+        (function(filterLabel, colEl) {
+          colEl.addEventListener('click', function() {
             // Highlight active col
-            statsEl.querySelectorAll('div').forEach(function(c) { c.style.background = 'var(--card)'; });
-            col.style.background = '#f3e8ff';
+            Array.from(statsEl.children).forEach(function(c) { c.style.background = 'var(--card)'; });
+            colEl.style.background = '#f3e8ff';
             // Filter ships
             var filtered = filterLabel === 'Total' ? ships : ships.filter(function(s) {
               var st = (s.lastStatus || (s.trackingInformation && (s.trackingInformation.lastStatusExternal || s.trackingInformation.lastStatusInternal)) || '').toUpperCase();
@@ -13997,8 +13995,8 @@ async function mobShowShipments() {
             });
             if (countEl) countEl.textContent = filtered.length + (filterLabel !== 'Total' ? ' ' + filterLabel.toLowerCase() : ' total');
             mobRenderShipCards(filtered.slice(0, 10), list);
-          };
-        })(item.label);
+          });
+        })(item.label, col);
         statsEl.appendChild(col);
       });
     }
