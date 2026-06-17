@@ -12374,7 +12374,7 @@ async function showReports() {
 
 function renderReports(shipments) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;padding-bottom:16px;';
+  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;background:var(--bg);';
 
   if (!shipments || !shipments.length) {
     container.innerHTML = '<div style="color:var(--mu);font-size:13px;">No shipment data available.</div>';
@@ -12492,7 +12492,7 @@ function renderReports(shipments) {
   const activeRate   = totalTracked ? Math.round(((delivered + inTransit) / totalTracked) * 100) : 0;
 
   const statsRow = document.createElement('div');
-  statsRow.style.cssText = 'border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;margin-bottom:16px;';
+  statsRow.style.cssText = 'border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
 
   const statDefs = [
     { label: 'Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)' },
