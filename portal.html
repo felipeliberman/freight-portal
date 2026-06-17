@@ -9919,7 +9919,7 @@ function showSavedQuotes() {
     {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
   ].forEach(function(s,i,a){
     var c=document.createElement('div');
-    c.style.cssText='position:relative;height:56px;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
+    c.style.cssText='position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
     var n=document.createElement('div');n.style.cssText='position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
     var l=document.createElement('div');l.style.cssText='position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
     c.appendChild(n);c.appendChild(l);hdr.appendChild(c);
@@ -10766,7 +10766,7 @@ function showShippingItems() {
     {label:'Add', value:null, color:'var(--ac)', id:'ab-hdr-add'},
   ].forEach(function(s,i,a){
     var c2=document.createElement('div');
-    c2.style.cssText='position:relative;height:56px;box-sizing:border-box;border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
+    c2.style.cssText='position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid '+(i<a.length-1?'var(--bdr);':'transparent;');
     if(s.value===null){
       var btn=document.createElement('button');
       btn.id='ab-add-btn';
@@ -12503,7 +12503,7 @@ function renderReports(shipments) {
   statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
     const isLast = idx === arr.length - 1;
-    col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (!isLast ? 'var(--bdr);' : 'transparent;');
+    col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (!isLast ? 'var(--bdr);' : 'transparent;');
     const numEl = document.createElement('div');
     numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:' + color + ';line-height:1;';
     numEl.textContent = value;
@@ -13818,7 +13818,7 @@ async function mobShowInvoices() {
           { label:'Paid', value: paid, color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
-          col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (idx < arr.length-1 ? 'var(--bdr);' : 'transparent;');
+          col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < arr.length-1 ? 'var(--bdr);' : 'transparent;');
           var numEl = document.createElement('div');
           numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
           numEl.textContent = s.value;
@@ -13911,7 +13911,7 @@ async function mobShowShipments() {
       statsEl.style.display = 'grid'; statsEl.style.gridTemplateColumns = 'repeat(4,1fr)'; statsEl.style.overflow = 'hidden'; statsEl.style.padding = '0';
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
-        col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;border-right:1px solid ' + (idx < statItems.length - 1 ? 'var(--bdr);' : 'transparent;');
+        col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < statItems.length - 1 ? 'var(--bdr);' : 'transparent;');
         col.style.position = 'relative';
         var numEl = document.createElement('div');
         numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
