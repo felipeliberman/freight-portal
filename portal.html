@@ -1946,7 +1946,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <button onclick="closeMobContent()" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:22px;line-height:1;padding:2px 6px;">×</button>
   </div>
   <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:16px;"></div>
-  <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));">
+  <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;height:0;overflow:hidden;border-top:none;">
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
       <button onclick="document.getElementById('mob-content-file').click()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -11053,29 +11053,27 @@ function showAddressBook() {
   const hdr = document.createElement('div');
   hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);';
   hdr.innerHTML =
-    // Hero card — matches Shipments style
-    '<div style="background:var(--card);border-bottom:1px solid var(--bdr);padding:20px 18px;display:flex;align-items:center;gap:0;">' +
-      '<div style="flex:1;border-right:1px solid var(--bdr);padding-right:20px;margin-right:20px;">' +
-        '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Address Book</div>' +
-        '<div id="ab-hdr-count" style="display:flex;align-items:baseline;gap:6px;">' +
-          '<span style="font-size:36px;font-weight:500;color:var(--ac);line-height:1.1;">—</span>' +
-          '<span style="font-size:12px;color:var(--fa);">saved</span>' +
+    // Hero card — compact strip
+    '<div style="background:var(--card);border-bottom:1px solid var(--bdr);padding:12px 0;display:flex;align-items:center;gap:0;">' +
+      '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px;">Address Book</div>' +
+        '<div id="ab-hdr-count" style="display:flex;align-items:baseline;justify-content:center;gap:4px;">' +
+          '<span style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">—</span>' +
+          '<span style="font-size:10px;color:var(--fa);">saved</span>' +
         '</div>' +
       '</div>' +
-      '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;gap:8px;">' +
-        '<div style="text-align:center;padding:0 16px;border-right:1px solid var(--bdr);">' +
-          '<div id="ab-hdr-from" style="font-size:22px;font-weight:500;color:var(--tx);">—</div>' +
-          '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Ship From</div>' +
-        '</div>' +
-        '<div style="text-align:center;padding:0 16px;border-right:1px solid var(--bdr);">' +
-          '<div id="ab-hdr-to" style="font-size:22px;font-weight:500;color:var(--tx);">—</div>' +
-          '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Ship To</div>' +
-        '</div>' +
-        '<div style="text-align:center;padding:0 16px;">' +
-          '<button id="ab-add-btn" style="display:flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
-            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add' +
-          '</button>' +
-        '</div>' +
+      '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+        '<div id="ab-hdr-from" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
+        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship From</div>' +
+      '</div>' +
+      '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+        '<div id="ab-hdr-to" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
+        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship To</div>' +
+      '</div>' +
+      '<div style="flex:1;text-align:center;">' +
+        '<button id="ab-add-btn" style="display:inline-flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
+          '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add' +
+        '</button>' +
       '</div>' +
     '</div>' +
     // Search bar below hero
@@ -12488,23 +12486,22 @@ function renderReports(shipments) {
   const totalTracked = Object.values(statusMap).reduce((a,b) => a+b, 0);
   const activeRate   = totalTracked ? Math.round(((delivered + inTransit) / totalTracked) * 100) : 0;
 
-  // ── Summary stat header — compact single row ──────────────────────────────
   const statsRow = document.createElement('div');
-  statsRow.style.cssText = 'margin-bottom:16px;border-radius:14px;background:var(--card);border:1px solid var(--bdr);padding:14px 16px;display:flex;align-items:center;gap:0;';
+  statsRow.style.cssText = 'margin-bottom:16px;border-radius:14px;background:var(--card);border:1px solid var(--bdr);padding:12px 0;display:flex;align-items:center;gap:0;';
 
   const statDefs = [
-    { label: 'Total Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)', big: true },
+    { label: 'Total Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)' },
     { label: 'Shipments',   value: shipments.length, color: 'var(--tx)' },
     { label: 'Delivered',   value: delivered,         color: 'var(--tx)' },
     { label: 'In Transit',  value: inTransit,         color: 'var(--tx)' },
   ];
-  statDefs.forEach(({ label, value, color, big }, idx, arr) => {
+  statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
     const isLast = idx === arr.length - 1;
     col.style.cssText = 'flex:1;text-align:center;' + (!isLast ? 'border-right:1px solid var(--bdr);' : '');
     col.innerHTML =
-      '<div style="font-size:' + (big ? '20px' : '18px') + ';font-weight:500;color:' + color + ';line-height:1;">' + value + '</div>' +
-      '<div style="font-size:10px;color:var(--fa);margin-top:3px;white-space:nowrap;">' + label + '</div>';
+      '<div style="font-size:16px;font-weight:600;color:' + color + ';line-height:1;white-space:nowrap;">' + value + '</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;">' + label + '</div>';
     statsRow.appendChild(col);
   });
   container.appendChild(statsRow);
@@ -13731,16 +13728,16 @@ async function mobShowInvoices() {
         var unpaid = invoices.length - paid;
         var outstanding = invoices.reduce(function(sum,i){ var f=getInvoiceFields(i); return f.isPaid?sum:sum+(parseFloat(f.rawAmt)||0); },0);
         var strip = document.createElement('div');
-        strip.style.cssText = 'display:flex;align-items:center;background:var(--card);border-bottom:1px solid var(--bdr);padding:12px 0;flex-shrink:0;';
+        strip.style.cssText = 'display:flex;align-items:center;background:var(--card);border-bottom:1px solid var(--bdr);padding:10px 0;flex-shrink:0;';
         [
-          { label:'Total', value: invoices.length, color:'var(--ac)' },
-          { label:'Unpaid', value: unpaid, color:'var(--ac)' },
+          { label:'Outstanding', value: '$'+outstanding.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color:'var(--ac)' },
+          { label:'Total', value: invoices.length, color:'var(--tx)' },
+          { label:'Unpaid', value: unpaid, color:'var(--tx)' },
           { label:'Paid', value: paid, color:'var(--tx)' },
-          { label:'Outstanding', value: '$'+outstanding.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
           col.style.cssText = 'flex:1;text-align:center;' + (idx < arr.length-1 ? 'border-right:1px solid var(--bdr);' : '');
-          col.innerHTML = '<div style="font-size:18px;font-weight:500;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:10px;color:var(--fa);margin-top:3px;">'+s.label+'</div>';
+          col.innerHTML = '<div style="font-size:16px;font-weight:600;color:'+s.color+';line-height:1;white-space:nowrap;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
           strip.appendChild(col);
         });
         titleSection.replaceWith(strip);
