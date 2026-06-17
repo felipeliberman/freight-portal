@@ -1943,7 +1943,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div id="mob-content-title" style="font-size:16px;font-weight:600;color:var(--tx);"></div>
     <button onclick="closeMobContent()" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:22px;line-height:1;padding:2px 6px;">×</button>
   </div>
-  <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg);padding:0 0 16px;"></div>
+  <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#fff;padding:0 0 16px;"></div>
   <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;height:0;overflow:hidden;border-top:none;">
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
@@ -12374,7 +12374,7 @@ async function showReports() {
 
 function renderReports(shipments) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;background:var(--bg);';
+  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;';
 
   if (!shipments || !shipments.length) {
     container.innerHTML = '<div style="color:var(--mu);font-size:13px;">No shipment data available.</div>';
