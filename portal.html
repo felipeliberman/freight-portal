@@ -3058,7 +3058,7 @@ function getInvoiceFields(inv) {
   };
 }
 
-function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
+function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
   // Clear box contents
   box.innerHTML = '';
 
@@ -3071,6 +3071,14 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
     <div style="color:#f5d0f5;font-size:13px;">A confirmation email has been sent to you.</div>
   `;
   box.appendChild(hdr);
+
+  // Confirmation ID
+  if (confirmationId) {
+    const confDiv = document.createElement('div');
+    confDiv.style.cssText = 'padding:10px 24px;background:#fdf0fd;border-bottom:1px solid #e5e2d9;font-size:12px;color:#888;text-align:center;';
+    confDiv.innerHTML = 'Confirmation #: <strong style="color:#1a1a1a;font-family:monospace;">' + confirmationId + '</strong>';
+    box.appendChild(confDiv);
+  }
 
   // Invoice summary
   const summary = document.createElement('div');
@@ -3109,7 +3117,8 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
   summary.appendChild(totalRow);
   const methodNote = document.createElement('div');
   methodNote.style.cssText = 'font-size:11px;color:#888;margin-top:6px;';
-  methodNote.textContent = paymentMethod === 'ach' ? 'ACH Bank Transfer - settles in 2-5 business days' : 'Credit / Debit Card';
+  const cardLabel = cardBrand && cardLast4 ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) + ' ending in ' + cardLast4 : 'Credit / Debit Card';
+  methodNote.textContent = paymentMethod === 'ach' ? 'ACH Bank Transfer - settles in 2-5 business days' : cardLabel;
   summary.appendChild(methodNote);
   box.appendChild(summary);
 
@@ -3123,7 +3132,7 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
   dlBtn.style.cssText = 'width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;';
   dlBtn.onmouseover = () => dlBtn.style.background = '#8e1b8d';
   dlBtn.onmouseout  = () => dlBtn.style.background = '#bd27bc';
-  dlBtn.onclick = () => generatePaymentReceipt(invoices, total, paymentMethod);
+  dlBtn.onclick = () => generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4);
   btnWrap.appendChild(dlBtn);
 
   // Done button
@@ -3138,7 +3147,7 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod) {
   box.appendChild(btnWrap);
 }
 
-function generatePaymentReceipt(invoices, total, paymentMethod) {
+function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
   const date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
   const refNum = 'FL-' + Date.now().toString().slice(-8);
@@ -3165,37 +3174,44 @@ function generatePaymentReceipt(invoices, total, paymentMethod) {
     <tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#888;">Convenience fee (2.9% + $0.30)</td><td style="padding:6px 12px;font-size:12px;color:#888;text-align:right;">$${fee.toFixed(2)}</td></tr>
   ` : '';
 
+  const cardLabel = cardBrand && cardLast4 ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) + ' ending in ' + cardLast4 : (paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card');
+  const logoUrl = 'https://felipeliberman.github.io/freight-portal/logo.png';
+
   const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Payment Receipt - Freight and Logistics, Inc.</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto; color: #1a1a1a; }
-  .header { background: #bd27bc; color: #fff; padding: 32px; border-radius: 12px 12px 0 0; }
-  .header h1 { margin: 0 0 4px; font-size: 24px; }
-  .header p { margin: 0; color: #f5d0f5; font-size: 13px; }
+  .header { background: #bd27bc; color: #fff; padding: 24px 32px 20px; border-radius: 12px 12px 0 0; text-align:center; }
+  .header img { height: 40px; width: auto; margin-bottom: 10px; display: block; margin-left: auto; margin-right: auto; }
+  .header h1 { margin: 0; font-size: 22px; }
   .body { background: #fff; border: 1px solid #e5e2d9; border-top: none; border-radius: 0 0 12px 12px; padding: 32px; }
-  .meta { display: flex; gap: 40px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+  .conf { background:#fdf0fd;padding:8px 16px;border-radius:6px;font-size:12px;color:#888;margin-bottom:20px;text-align:center; }
+  .conf strong { color:#1a1a1a;font-family:monospace; }
+  .meta { display: flex; gap: 24px; flex-wrap:wrap; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
   .meta-item label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 3px; }
-  .meta-item span { font-size: 14px; font-weight: 600; }
+  .meta-item span { font-size: 13px; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
   th { padding: 8px 12px; text-align: left; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; background: #f9f8f5; }
   th:last-child { text-align: right; }
   .total-row td { padding: 12px; font-weight: 700; font-size: 15px; border-top: 2px solid #e5e2d9; }
   .total-row td:last-child { text-align: right; color: #bd27bc; }
-  .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #eee; font-size: 11px; color: #aaa; text-align: center; }
+  .save-note { font-size:11px;color:#aaa;margin-top:12px;text-align:center; }
+  .footer { margin-top: 24px; padding-top: 20px; border-top: 1px solid #eee; font-size: 11px; color: #aaa; text-align: center; }
+  .footer a { color:#bd27bc;text-decoration:none; }
   @media print { body { margin: 0; } }
 </style>
 </head>
 <body>
   <div class="header">
+    <img src="${logoUrl}" alt="Freight and Logistics, Inc." onerror="this.style.display='none'">
     <h1>Payment Receipt</h1>
-    <p>Freight and Logistics, Inc.</p>
   </div>
   <div class="body">
+    ${confirmationId ? '<div class="conf">Confirmation #: <strong>' + confirmationId + '</strong></div>' : ''}
     <div class="meta">
       <div class="meta-item"><label>Date</label><span>${date} at ${time}</span></div>
-      <div class="meta-item"><label>Reference</label><span>${refNum}</span></div>
-      <div class="meta-item"><label>Method</label><span>${paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card'}</span></div>
+      <div class="meta-item"><label>Method</label><span>${cardLabel}</span></div>
     </div>
     <table>
       <thead><tr><th>Invoice</th><th>Consignee</th><th style="text-align:right;">Amount</th></tr></thead>
@@ -3203,8 +3219,12 @@ function generatePaymentReceipt(invoices, total, paymentMethod) {
       <tfoot>${feeRows}<tr class="total-row"><td colspan="2">Total Paid</td><td>$${Number(total).toFixed(2)}</td></tr></tfoot>
     </table>
     ${paymentMethod === 'ach' ? '<p style="font-size:12px;color:#888;">ACH transfers typically settle within 2-5 business days.</p>' : ''}
+    <p class="save-note">Please save this receipt for your records.</p>
     <div class="footer">
-      Freight and Logistics, Inc. &bull; (800) 687-3713 &bull; support@freightandlogistics.com &bull; <a href='https://www.freightandlogistics.com' style='color:#bd27bc;text-decoration:none;'>www.freightandlogistics.com</a>
+      Freight and Logistics, Inc. &bull; 
+      <a href="tel:18006873713">(800) 687-3713</a> &bull; 
+      <a href="mailto:support@freightandlogistics.com">support@freightandlogistics.com</a> &bull; 
+      <a href="https://www.freightandlogistics.com">www.freightandlogistics.com</a>
     </div>
   </div>
 </body>
@@ -3452,17 +3472,18 @@ function showStripePaymentModal(invoices) {
         payment_method: { card: cardEl, billing_details: { email: customerEmail } }
       });
       if (error) throw new Error(error.message);
+      // Extract card details from paymentIntent
+      const pm = paymentIntent.payment_method_details || {};
+      const cardBrand = (pm.card && pm.card.brand) || '';
+      const cardLast4 = (pm.card && pm.card.last4) || '';
+      const confirmationId = paymentIntent.id || '';
       // Send confirmation email
-      const sgPayload = { customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card' };
-      console.log('[payment] sending confirmation to:', customerEmail, 'payload:', JSON.stringify(sgPayload));
-      const sgRes = await fetch(WORKER + '/send-confirmation', {
+      await fetch(WORKER + '/send-confirmation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sgPayload)
+        body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card', confirmationId, cardBrand, cardLast4 })
       });
-      const sgData = await sgRes.json();
-      console.log('[payment] confirmation response:', sgRes.status, sgData);
-      showPaymentSuccess(overlay, box, invoices, total, 'card');
+      showPaymentSuccess(overlay, box, invoices, total, 'card', confirmationId, cardBrand, cardLast4);
     } catch(e) {
       document.getElementById('stripe-card-error').textContent = e.message || 'Payment failed. Please try again.';
       confirmBtn.textContent = 'Pay $' + total.toFixed(2);
