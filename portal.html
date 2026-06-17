@@ -799,7 +799,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       <button onclick="closeMobMore();mobShowReports()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Reports</button>
       <button onclick="closeMobMore();showAddressBook()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Address Book</button>
       <button onclick="closeMobMore();showShippingItems()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Shipping Items</button>
-      <button onclick="closeMobMore();showSupportForm()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Email Support</button>
+      <button onclick="closeMobMore();var _sv=document.getElementById('mob-ships-view');if(_sv)_sv.style.display='none';var _cv=document.getElementById('mob-content-view');if(_cv)_cv.style.display='none';mobSetActive('chat');showSupportForm();" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Email Support</button>
       <button onclick="closeMobMore();showSavedQuotes()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--tx);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved Quotes</button>
 
       <div style="height:1px;background:var(--bdr);margin:6px 0;"></div>
@@ -1945,7 +1945,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div id="mob-content-title" style="font-size:16px;font-weight:600;color:var(--tx);"></div>
     <button onclick="closeMobContent()" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:22px;line-height:1;padding:2px 6px;">×</button>
   </div>
-  <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:16px;"></div>
+  <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
   <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;height:0;overflow:hidden;border-top:none;">
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
@@ -9907,28 +9907,26 @@ function showSavedQuotes() {
   const carriers = new Set(quotes.map(q => q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
 
   const hdr = document.createElement('div');
-  hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:18px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
+  hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:12px 0;display:flex;align-items:center;gap:0;flex-shrink:0;';
   hdr.innerHTML =
-    '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:20px;margin-right:4px;">' +
-      '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Saved Quotes</div>' +
-      '<div style="display:flex;align-items:baseline;gap:6px;">' +
-        '<span style="font-size:36px;font-weight:500;color:var(--ac);line-height:1.1;">' + quotes.length + '</span>' +
-        '<span style="font-size:12px;color:var(--fa);">saved</span>' +
+    '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+      '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px;">Saved Quotes</div>' +
+      '<div style="display:flex;align-items:baseline;justify-content:center;gap:4px;">' +
+        '<span style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">' + quotes.length + '</span>' +
+        '<span style="font-size:10px;color:var(--fa);">saved</span>' +
       '</div>' +
     '</div>' +
-    '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
-      '<div style="text-align:center;padding:0 14px;border-right:1px solid var(--bdr);">' +
-        '<div style="font-size:18px;font-weight:500;color:var(--tx);">' + (totalValue ? '$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—') + '</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Total Value</div>' +
-      '</div>' +
-      '<div style="text-align:center;padding:0 14px;border-right:1px solid var(--bdr);">' +
-        '<div style="font-size:18px;font-weight:500;color:var(--tx);">' + carriers + '</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Carriers</div>' +
-      '</div>' +
-      '<div style="text-align:center;padding:0 14px;">' +
-        '<div style="font-size:13px;font-weight:500;color:var(--tx);">' + mostRecent + '</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Last Saved</div>' +
-      '</div>' +
+    '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+      '<div style="font-size:16px;font-weight:600;color:var(--tx);line-height:1;white-space:nowrap;">' + (totalValue ? '$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—') + '</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Total Value</div>' +
+    '</div>' +
+    '<div style="flex:1;text-align:center;border-right:1px solid var(--bdr);">' +
+      '<div style="font-size:16px;font-weight:600;color:var(--tx);line-height:1;">' + carriers + '</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Carriers</div>' +
+    '</div>' +
+    '<div style="flex:1;text-align:center;">' +
+      '<div style="font-size:14px;font-weight:500;color:var(--tx);line-height:1;white-space:nowrap;">' + mostRecent + '</div>' +
+      '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Last Saved</div>' +
     '</div>';
   container.appendChild(hdr);
 
@@ -12369,7 +12367,7 @@ async function showReports() {
 
 function renderReports(shipments) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;';
+  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding-bottom:16px;';
 
   if (!shipments || !shipments.length) {
     container.innerHTML = '<div style="color:var(--mu);font-size:13px;">No shipment data available.</div>';
