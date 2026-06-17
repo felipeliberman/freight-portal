@@ -2855,7 +2855,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   const fieldKeys = ['invNum','bolNum','date','due','shipper','consignee','amount','status'];
 
   // Reset selection only on fresh load (not pagination)
-  if (!window._invPaginating) selectedInvoices.clear();
+  if (!window._invPaginating) { selectedInvoices.clear(); window._selectedInvAmounts = {}; }
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
@@ -3783,8 +3783,16 @@ function renderInvoiceRows(invoices, tbody, limit, offset) {
     cb.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:var(--ac);';
     cb.checked = selectedInvoices.has(invNum);
     cb.onchange = () => {
-      if (cb.checked) selectedInvoices.add(invNum);
-      else selectedInvoices.delete(invNum);
+      if (cb.checked) {
+        selectedInvoices.add(invNum);
+        if (!isPaid) {
+          window._selectedInvAmounts = window._selectedInvAmounts || {};
+          window._selectedInvAmounts[invNum] = parseFloat(rawAmt) || 0;
+        }
+      } else {
+        selectedInvoices.delete(invNum);
+        if (window._selectedInvAmounts) delete window._selectedInvAmounts[invNum];
+      }
       updateDownloadBtn();
     };
     tdCb.appendChild(cb);
@@ -8087,6 +8095,9 @@ function updateDownloadBtn() {
   });
   if (unpaidSelected.length > 0) {
     const unpaidTotal = unpaidSelected.reduce((s, key) => {
+      // Use cached amount map first (works across pages), fall back to invoice list
+      const cached = window._selectedInvAmounts && window._selectedInvAmounts[key];
+      if (cached !== undefined) return s + cached;
       const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
       return s + (inv ? parseFloat(getInvoiceFields(inv).rawAmt) || 0 : 0);
     }, 0);
