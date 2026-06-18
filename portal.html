@@ -10073,7 +10073,7 @@ async function handleInput(text) {
 
 
   // ── Explicit carrier/terminal/phone questions — FORCE web search ──────
-  const isCarrierBusinessQ = /\b(terminal|phone|number|address|hours|location|closest|nearest)\b/i.test(lower) && /\b(ABF|Estes|Saia|XPO|TForce|FedEx|Pilot|Metro|Southeastern|Forward|AAA Cooper|R&L|WARP|Old Dominion|Dayton|Pitt|Ward|carrier|carriers)\b/i.test(t);
+  const isCarrierBusinessQ = (/\b(terminal|phone|number|address|hours|location|closest|nearest|where|what|in|at|near|service)\b/i.test(lower) && /\b(ABF|Estes|Saia|XPO|TForce|FedEx|Pilot|Metro|Southeastern|Forward|AAA Cooper|R&L|WARP|Old Dominion|Dayton|Pitt|Ward|carrier|carriers)\b/i.test(t)) || (/\b(ABF|Estes|Saia|XPO|TForce|FedEx|Pilot|Metro|Southeastern|Forward|AAA Cooper|R&L|WARP|Old Dominion|Dayton|Pitt|Ward)\b/i.test(t) && /\b(in|near|at|terminal|location|address|phone|where|what)\b/i.test(lower));
   
   if (isCarrierBusinessQ && !window._collectingItems && !window._awaitingDims && !window._awaitingWeight && !window._awaitingPackaging && !window._awaitingAccessorial) {
     // Force web search for carrier info
@@ -10082,11 +10082,13 @@ async function handleInput(text) {
       const _carrierData = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 512, tools: [{type:'web_search_20250305',name:'web_search'}], system: 'You are a freight broker. The user asked about a carrier. IMMEDIATELY search for the answer. Do not answer from memory. Return actual contact info, addresses, and phone numbers. Plain prose, 2-4 sentences, sound like a broker.', messages: [{ role: 'user', content: t }] })
-      }).catch(() => null);
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: 'You are a direct, knowledgeable freight broker. User asked about a carrier. SEARCH IMMEDIATELY - do not answer from memory. Return actual address, phone, hours, location. 2-3 sentences max. Sound like a real broker.', messages: [{ role: 'user', content: t }] })
+      }).catch((err) => { console.log('Carrier API error:', err); return null; });
       removeTyping();
       const _carrierText = _carrierData && _carrierData.content && _carrierData.content.find(b => b.type === 'text') && _carrierData.content.find(b => b.type === 'text').text;
-      if (_carrierText) { appendMessage('bot', _carrierText); return; }
+      if (_carrierText && _carrierText.trim().length > 10) { appendMessage('bot', _carrierText); return; }
+      else if (_carrierText) { appendMessage('bot', _carrierText); return; }
+      else { appendMessage('bot', 'Let me search that for you — one sec.'); return; }
     } catch(e) { removeTyping(); console.log('Carrier search error:', e); }
   }
 
