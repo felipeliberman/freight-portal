@@ -3337,11 +3337,11 @@ function showStripePaymentModal(invoices) {
       </div>
     </div>
     <div id="ach-bank-linked" style="display:none;">
-      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
+      <div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#706c63" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
         <div>
-          <div style="font-size:13px;font-weight:600;color:#15803d;" id="ach-bank-name">Bank account linked</div>
-          <div style="font-size:11px;color:#16a34a;" id="ach-bank-last4"></div>
+          <div style="font-size:13px;font-weight:600;color:#706c63;" id="ach-bank-name">Bank account linked</div>
+          <div style="font-size:11px;color:#b0ac9f;" id="ach-bank-last4"></div>
         </div>
         <button id="ach-relink-btn" style="margin-left:auto;background:none;border:none;font-size:11px;color:#888;cursor:pointer;text-decoration:underline;">Change</button>
       </div>
@@ -3421,9 +3421,10 @@ function showStripePaymentModal(invoices) {
         });
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
-        // Confirm ACH with linked payment method
+        // Confirm ACH with linked payment method and customer
         const { error } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
-          payment_method: window._achPaymentMethod
+          payment_method: window._achPaymentMethod,
+          customer: window._stripeCustomerId || undefined
         });
         if (error) throw new Error(error.message);
         // Send confirmation email
@@ -3541,7 +3542,19 @@ function showStripePaymentModal(invoices) {
 
         const pm = paymentIntent && paymentIntent.payment_method;
         if (pm) {
-          window._achPaymentMethod = pm.id || pm;
+          const pmId = pm.id || pm;
+          window._achPaymentMethod = pmId;
+          
+          // Attach PaymentMethod to Customer via Worker
+          const attachRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/attach-payment-method', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentMethodId: pmId, customerEmail: window._modalCustomerEmail || '' })
+          });
+          const attachData = await attachRes.json();
+          if (attachData.error) throw new Error(attachData.error);
+          if (attachData.customerId) window._stripeCustomerId = attachData.customerId;
+          
           const bankName = (pm.us_bank_account && pm.us_bank_account.bank_name) || 'Bank account';
           const last4    = (pm.us_bank_account && pm.us_bank_account.last4) || '';
           document.getElementById('ach-bank-unlinked').style.display = 'none';
