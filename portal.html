@@ -3355,6 +3355,31 @@ function showStripePaymentModal(invoices) {
   if (!customerEmail) { try { const rem = JSON.parse(localStorage.getItem('fl_remember') || '{}'); customerEmail = rem.email || ''; } catch(e) {} }
   window._modalCustomerEmail = customerEmail;
   box.appendChild(achSection);
+  
+  // Auto-detect linked PaymentMethods when modal opens
+  async function autoDetectLinkedBank() {
+    if (!customerEmail) return;
+    try {
+      const pmRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/get-payment-methods', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail })
+      });
+      const pmData = await pmRes.json();
+      if (pmData.paymentMethods && pmData.paymentMethods.length > 0) {
+        const pm = pmData.paymentMethods[0];
+        window._achPaymentMethod = pm.id;
+        window._stripeCustomerId = null; // Will be set on confirmation
+        document.getElementById('ach-bank-unlinked').style.display = 'none';
+        document.getElementById('ach-bank-linked').style.display = 'block';
+        document.getElementById('ach-bank-name').textContent = pm.bankName + ' linked';
+        document.getElementById('ach-bank-last4').textContent = pm.last4 ? 'Account ending in ' + pm.last4 : '';
+      }
+    } catch (e) {
+      console.error('Error auto-detecting linked bank:', e);
+    }
+  }
+  autoDetectLinkedBank();
 
   // Card section (hidden by default)
   const cardSection = document.createElement('div');
