@@ -2570,8 +2570,8 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   totalCol.style.cssText = 'padding-right:24px;border-right:1px solid var(--bdr);cursor:pointer;border-radius:8px;transition:background .12s;';
   totalCol.title = 'Show all invoices';
   totalCol.innerHTML = `
-    <div style="font-size:32px;font-weight:500;color:var(--tx);line-height:1;">${allInvoices.length}</div>
-    <div style="font-size:10px;color:var(--fa);margin-top:1px;">Total</div>`;
+    <div style="font-size:22px;font-weight:500;color:var(--tx);line-height:1;">${allInvoices.length}</div>
+    <div style="font-size:10px;color:var(--fa);margin-top:2px;">Total</div>`;
   totalCol.onmouseover = () => totalCol.style.background = 'var(--bg)';
   totalCol.onmouseout  = () => totalCol.style.background = '';
   totalCol.onclick = () => {
