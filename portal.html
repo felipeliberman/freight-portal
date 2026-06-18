@@ -2677,6 +2677,15 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   };
   btnGroup.appendChild(dlBtn);
 
+  // Excel button
+  const xlBtn = document.createElement('button');
+  xlBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Excel`;
+  xlBtn.style.cssText = 'background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;';
+  xlBtn.onmouseover = () => xlBtn.style.background = '#ede9e2';
+  xlBtn.onmouseout  = () => xlBtn.style.background = '#f7f5f2';
+  xlBtn.onclick = () => { xlBtn.textContent = 'Exporting...'; exportInvoicesToExcel(footer._invoices || allInvoices); setTimeout(() => { xlBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Excel'; xlBtn.style.cssText = 'background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;'; }, 1000); };
+  btnGroup.appendChild(xlBtn);
+
   // Download Statement button
   const stmtBtn = document.createElement('button');
   stmtBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Open Invoice Statement`;
