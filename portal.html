@@ -3711,7 +3711,7 @@ function showInvoiceDetail(inv) {
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           Email Invoice
         </button>
-        <button id="inv-dl-btn" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;">Download Invoice</button>
+        <button id="inv-detail-dl-btn" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;">Download Invoice</button>
         <button id="inv-view-ship-btn" style="background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;${!inv._shipment||!inv._shipment.BOLId?'opacity:.4;cursor:default;':''}color:var(--tx);">View Shipment →</button>
       </div>
     </div>
@@ -3725,7 +3725,7 @@ function showInvoiceDetail(inv) {
   if (invCloseBtn) invCloseBtn.onclick = () => overlay.remove();
 
   // Download PDF button
-  const dlBtn = overlay.querySelector('#inv-dl-btn');
+  const dlBtn = overlay.querySelector('#inv-detail-dl-btn');
   if (dlBtn) dlBtn.onclick = async function() {
     const bolId = inv._bolId || '';
     if (!bolId) return;
