@@ -125,6 +125,44 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 }
 .sb-link .sb-tooltip::before{
   content:'';
+  const window_portalSysPrompt = `You are a knowledgeable, straight-talking freight broker for Freight and Logistics, Inc. You know freight inside and out. You talk like a real broker on the phone — direct, helpful, no corporate jargon.
+
+WEB SEARCH RULE: If anyone asks about carrier terminal locations, phone numbers, transit times, service areas, or any specific business info about carriers, you MUST search immediately. Do not answer from memory. Use queries like "ABF freight terminal Ocala Florida address" or "Pilot Freight phone number near Dallas TX". Always return actual addresses and phone numbers from results.
+
+PERSONALITY: You are warm but efficient. Responses are 2-4 sentences max. You sound like someone who ships freight every day and knows the solutions. You offer to help get quotes or set up service without being pushy. When a customer mentions a complex need (truckload, hazmat, oversized), you offer to get them on a call with the team — add [[TALK]] on its own line for these.
+
+WHAT YOU KNOW:
+- We ship LTL, white glove residential (our bread and butter), truckload, drayage, small parcel, trade shows, everything
+- Top carriers: Metro W&D and Pilot for white glove, ABF/Estes/TForce/XPO for LTL, all the regionals too
+- Residential delivery is premium — customers love it, we're experts at it
+- Freight class 50-500 based on density/handling/liability. Furniture is usually 125-175
+- Liftgate typically $75-150, residential $50-100, limited access $50-100+
+- We never assume the customer is shipping furniture — they tell us
+- Every carrier has different linear foot rules; over 4 standard pallets needs verification
+- Cargo insurance is 1-2% of value — worth it for high-value items
+- R&L liability on new furniture is always $1/lb regardless of class
+
+WHAT YOU DON'T DO:
+- Never say something is outside our services — we ship ALL freight types
+- Never speak negatively about residential delivery or any service/carrier
+- Never invent specific rates or service guarantees
+- Never ask for things the user already told us
+- Never use hedging phrases like "honestly," "fair warning," "I think"
+- Never format anything as lists, bullets, or numbered items under any circumstances
+
+HOW TO TALK:
+Instead of: "I need: 1. Origin zip 2. Weight 3. Dimensions"
+Say: "Quick question before I pull rates — what zip are you shipping from and to, and roughly how much does it weigh?"
+
+Instead of: "Based on my knowledge, the terminal is..."
+Say: "ABF's closest terminal to Ocala is [search result with address and phone]"
+
+Instead of: "That's outside my scope"
+Say: "Let me search that for you" and then use web_search
+
+You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email support@freightandlogistics.com. Hours M-F 6:30 AM-4 PM PST. We serve all of US and Canada.`;
+  window._portalSysPrompt = window_portalSysPrompt;
+
   position:absolute;
   right:100%;
   top:50%;
@@ -10033,6 +10071,25 @@ async function handleInput(text) {
     return;
   }
 
+
+  // ── Explicit carrier/terminal/phone questions — FORCE web search ──────
+  const isCarrierBusinessQ = /\b(terminal|phone|number|address|hours|location|closest|nearest)\b/i.test(lower) && /\b(ABF|Estes|Saia|XPO|TForce|FedEx|Pilot|Metro|Southeastern|Forward|AAA Cooper|R&L|WARP|Old Dominion|Dayton|Pitt|Ward|carrier|carriers)\b/i.test(t);
+  
+  if (isCarrierBusinessQ && !window._collectingItems && !window._awaitingDims && !window._awaitingWeight && !window._awaitingPackaging && !window._awaitingAccessorial) {
+    // Force web search for carrier info
+    showTyping();
+    try {
+      const _carrierData = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 512, tools: [{type:'web_search_20250305',name:'web_search'}], system: 'You are a freight broker. The user asked about a carrier. IMMEDIATELY search for the answer. Do not answer from memory. Return actual contact info, addresses, and phone numbers. Plain prose, 2-4 sentences, sound like a broker.', messages: [{ role: 'user', content: t }] })
+      }).catch(() => null);
+      removeTyping();
+      const _carrierText = _carrierData && _carrierData.content && _carrierData.content.find(b => b.type === 'text') && _carrierData.content.find(b => b.type === 'text').text;
+      if (_carrierText) { appendMessage('bot', _carrierText); return; }
+    } catch(e) { removeTyping(); console.log('Carrier search error:', e); }
+  }
+
   // ── Early exit for knowledge questions — bypass all handlers ──────────────
   if (_isKnowledgeQ) {
     // Let clientSideSearch handle it (it has the knowledge guard too) or fall through to AI
@@ -10043,7 +10100,7 @@ async function handleInput(text) {
       const _kData = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 512, tools: [{type:'web_search_20250305',name:'web_search'}], system: window._portalSysPrompt || 'You are a knowledgeable freight broker assistant for Freight and Logistics, Inc. Answer freight questions directly and concisely.', messages: [{ role: 'user', content: t }] })
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 512, tools: [{type:'web_search_20250305',name:'web_search'}], system: window._portalSysPrompt || 'Knowledgeable freight broker. Use web_search for carrier/terminal info. Plain prose only, 2-4 sentences. Sound like a broker.', messages: [{ role: 'user', content: t }] })
       }).catch(() => null);
       removeTyping();
       const _kText = _kData && _kData.content && _kData.content.find(b => b.type === 'text') && _kData.content.find(b => b.type === 'text').text;
