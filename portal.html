@@ -8951,6 +8951,11 @@ async function clientSideSearch(t, lower) {
   const isCalculationQ = /\b(if.*weigh|if.*lbs|if.*lb|calculate|formula|equation|how many linear|what class|what freight class|per lb|per pound|maximum claim|max claim)/i.test(lower);
   if (isKnowledgeQ || isCalculationQ) return false; // Let AI handle it
 
+  // ── Carrier / terminal / location guard — let aiConverse handle with web_search ──
+  const isCarrierLocationQ = /\b(terminal|service center|freight station|depot)\b/i.test(lower) ||
+    (/\b(abf|arcbest|estes|saia|xpo|tforce|fedex|forward air|southeastern|sefl|aaa cooper|r&l|rl carriers|pilot|metro|metropolitan|old dominion|odfl|central transport|pitt ohio|ward)\b/i.test(lower) && /\b(phone|number|address|hours|location|where|closest|nearest|near|service area|coverage|call|contact)\b/i.test(lower));
+  if (isCarrierLocationQ) return false; // aiConverse will search the web for this
+
 
   // ── Reports ──
   if (/\b(report|reports|analytics|dashboard|charts?|breakdown|spend|statistics|stats)\b/.test(lower) && currentCustomer) {
@@ -8958,10 +8963,11 @@ async function clientSideSearch(t, lower) {
     return true;
   }
 
-  // ── Terminal / carrier location search ──
-  const portalTerminalQ = /\b(terminal|closest terminal|nearest terminal|terminal near|terminal in|terminal to|terminal closest|terminal location|service center|freight station|where.*terminal|ABF terminal|closest.*terminal)\b/i.test(t) || /\b(ABF|Estes|Saia|XPO|TForce|FedEx|Forward Air|Southeastern|Pilot|Metro)\s+.*\b(terminal|location|address|closest|nearest)\b/i.test(t);
-  const portalTerminalFollowUp = lastTerminalContext && /\b(address|phone|number|hours|open|location|where|contact|call|fax|zip|city|state|street)\b/i.test(t) && !/\b(shipment|bol|invoice|quote|rate)\b/i.test(t);
-  if ((portalTerminalQ || portalTerminalFollowUp) && currentCustomer) {
+  // ── Terminal / carrier location search — DISABLED, handled by aiConverse ──
+  // Terminal questions now flow through to the conversational AI with web_search.
+  if (false) {
+    const portalTerminalQ = false;
+    const portalTerminalFollowUp = false;
     const cMatch = t.match(/\b(abf|arcbest|estes|saia|xpo|tforce|fedex|forward air|southeastern|sefl|aaa cooper|r\.?l|rl carriers|pilot|metro|metropolitan|dayton|pitt ohio|ward|warp|old dominion|odfl)\b/i);
     const zMatch = t.match(/\b(\d{5})\b/);
     const cityMatch = t.match(/(?:to|near|in|closest to|nearest to)\s+([a-zA-Z\s]+?)(?:\s*,\s*([a-zA-Z]{2}))?(?:\.|\?|$)/i);
@@ -10482,7 +10488,7 @@ async function handleInput(text) {
     || /\b(difference between|vs\.|versus|compare|pros and cons|advantages|disadvantages|better for|when to use)\b/i.test(lower);
 
   // Override isEducational for account-specific questions that need data
-  const isAccountSpecific = /\b(my (carrier|shipment|lane|invoice|top|spend|volume|bol|pro)|which carrier|top lane|my lane|how many shipment|shipment count|what.*owe|my invoice|terminal|closest.*terminal|nearest.*terminal|terminal.*closest|terminal.*nearest|terminal.*to|terminal.*near|terminal.*in|terminal.*for|delivery.*terminal|terminal.*delivery|address.*terminal|terminal.*address|phone.*terminal|terminal.*phone|when will|will it deliver|will.*arrive|eta for|\d{7,}|is.*address|is.*residential|is.*limited|do i need.*liftgate|carriers.*on|on.*lane|fl.*ca|fl.*ny|fl.*pa|fl.*mi|fl.*va|abf.*terminal|estes.*terminal|saia.*terminal|xpo.*terminal|metro.*terminal|pilot.*terminal|tforce.*terminal)\b/i.test(lower);
+  const isAccountSpecific = /\b(my (carrier|shipment|lane|invoice|top|spend|volume|bol|pro)|which carrier|top lane|my lane|how many shipment|shipment count|what.*owe|my invoice|when will|will it deliver|will.*arrive|eta for|\d{7,}|is.*address|is.*residential|is.*limited|do i need.*liftgate|carriers.*on|on.*lane|fl.*ca|fl.*ny|fl.*pa|fl.*mi|fl.*va)\b/i.test(lower);
 
   if (isEducational && !isAccountSpecific) {
     // Falls through to main AI handler — skip clientSideSearch
