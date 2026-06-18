@@ -3578,16 +3578,6 @@ function showStripePaymentModal(invoices) {
           const pmId = pm.id || pm;
           window._achPaymentMethod = pmId;
           
-          // Attach PaymentMethod to Customer via Worker
-          const attachRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/attach-payment-method', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentMethodId: pmId, customerEmail: window._modalCustomerEmail || '' })
-          });
-          const attachData = await attachRes.json();
-          if (attachData.error) throw new Error(attachData.error);
-          if (attachData.customerId) window._stripeCustomerId = attachData.customerId;
-          
           const bankName = (pm.us_bank_account && pm.us_bank_account.bank_name) || 'Bank account';
           const last4    = (pm.us_bank_account && pm.us_bank_account.last4) || '';
           document.getElementById('ach-bank-unlinked').style.display = 'none';
