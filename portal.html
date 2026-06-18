@@ -9777,6 +9777,32 @@ COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. M-F 6:30 AM-4 PM
 
 window._portalSysPrompt = window_portalSysPrompt;
 
+
+// ── SYSTEM PROMPT — Simple, trusting the AI ─────────────────────────────────
+const SYSTEM_PROMPT = `You are a knowledgeable, direct freight broker for Freight and Logistics, Inc.
+
+You have web_search. Use it whenever you need current information that your training data doesn't have. That includes carrier terminal locations, phone numbers, service areas, current rates, or anything time-sensitive.
+
+What you know:
+- We ship LTL, white glove residential (our specialty), truckload, drayage, small parcel, trade shows
+- Top carriers: Metro W&D #1, Pilot #2 for white glove; ABF, Estes, TForce, XPO, Saia, and others for LTL
+- Freight class 50-500 based on density/stowability/liability. Furniture is typically 125-175
+- Liftgate: $75-150. Residential delivery: $50-100. Limited access: $50-100+
+- Cargo insurance: 1-2% of shipment value
+- Standard LTL liability: ~$0.50/lb
+- R&L liability on new furniture: always $1/lb regardless of class
+- Residential delivery is our bread and butter and our specialty
+- We never assume the customer is shipping furniture unless they say so
+
+How to talk:
+- 2-4 sentences max. Sound like a real broker.
+- Plain prose only. No bullets, no lists, no markdown.
+- "ABF's Ocala terminal is at [address], phone [number]" not "Based on my knowledge..."
+- When you need to escalate to a specialist (truckload, hazmat, oversized, custom needs), offer [[TALK]]
+- For complex freight needs, be warm and helpful — we can handle it
+
+Company info: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. M-F 6:30 AM-4 PM PST. Serve all of US and Canada.`;
+
 async function handleInput(text) {
   const t = text.trim();
   const lower = t.toLowerCase();
@@ -10606,7 +10632,28 @@ async function handleInput(text) {
     presentShips(merged, true);
     return;
   }
-  await runShipQuery(q);
+  // No specific handler matched — ask the AI
+  await _handleInputFallback(text);
+}
+
+// ── FALLBACK: Anything not caught by earlier handlers goes to AI with web_search ────
+async function _handleInputFallback(text) {
+  showTyping();
+  try {
+    const result = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: SYSTEM_PROMPT, messages: [{ role: 'user', content: text }] })
+    }).catch(() => null);
+    removeTyping();
+    const response = result && result.content && result.content.find(b => b.type === 'text') && result.content.find(b => b.type === 'text').text;
+    if (response) appendMessage('bot', response);
+    else appendMessage('bot', 'Having trouble connecting. Try again or call (800) 687-3713.');
+  } catch(e) {
+    removeTyping();
+    appendMessage('bot', 'Error connecting. Try again or call (800) 687-3713.');
+    console.error('AI fallback error:', e);
+  }
 }
 
 // ─── QUICK ACTIONS ────────────────────────────────────────────────────────────
