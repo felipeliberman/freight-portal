@@ -10624,10 +10624,17 @@ async function handleInput(text) {
 async function _handleInputFallback(text) {
   showTyping();
   try {
+    // Detect carrier/terminal questions and force a search by injecting into the user message
+    const isCarrierInfoQ = /\b(terminal|address|phone|number|hours|location|closest|nearest|where|service center)\b/i.test(text) &&
+      /\b(ABF|ArcBest|Estes|Saia|XPO|TForce|FedEx|Forward Air|Southeastern|Pilot|Metro|AAA Cooper|R&L|WARP|Old Dominion|carrier)\b/i.test(text);
+    const userMessage = isCarrierInfoQ
+      ? text + '\n\n(Use web_search to find the actual current address, phone number, and hours. Do not answer from memory.)'
+      : text;
+
     const result = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: SYSTEM_PROMPT, messages: [{ role: 'user', content: text }] })
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: SYSTEM_PROMPT, messages: [{ role: 'user', content: userMessage }] })
     }).catch(() => null);
     removeTyping();
     const response = result && result.content && result.content.find(b => b.type === 'text') && result.content.find(b => b.type === 'text').text;
