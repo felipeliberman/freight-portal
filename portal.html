@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Freight and Logistics, Inc. — AI Freight Assistant</title>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.google.com/recaptcha/api.js?render=6LcLCyctAAAAAHQ9cmNfENLYm2dqRDap3kvRJlAF"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -6676,6 +6677,34 @@ async function doLogin() {
 
   btn.textContent = 'Signing in...'; btn.disabled = true;
   err.style.display = 'none';
+
+  // reCAPTCHA v3 — silent token generation
+  try {
+    if (window.grecaptcha && _userManualLogin) {
+      const token = await new Promise((resolve, reject) => {
+        grecaptcha.ready(() => {
+          grecaptcha.execute('6LcLCyctAAAAAHQ9cmNfENLYm2dqRDap3kvRJlAF', { action: 'login' })
+            .then(resolve).catch(reject);
+        });
+      });
+      // Verify token server-side
+      const verifyRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/verify-recaptcha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyData.success || verifyData.score < 0.3) {
+        err.textContent = 'Security check failed. Please try again.';
+        err.style.display = 'block';
+        btn.textContent = 'Sign In'; btn.disabled = false;
+        return;
+      }
+    }
+  } catch(e) {
+    // reCAPTCHA failure should not block login — fail open
+    console.warn('reCAPTCHA error:', e);
+  }
 
   // Check hardcoded map first (for internal accounts)
   const hardcoded = CUSTOMERS[email];
