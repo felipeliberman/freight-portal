@@ -8679,6 +8679,101 @@ async function openDocsFor(id){
 // ── CONVERSATIONAL AI — Sonnet with web_search and a proper tool-use loop ──────
 // This is the natural-conversation brain. Claude decides when to search the web.
 // Handles multi-turn tool use: calls a tool, gets results, continues until done.
+// ── TOOL: update_quote — Claude builds/edits the quote form by conversation ──────
+// Surgical: only touches fields passed in. Opens the form if not already open.
+function _execUpdateQuote(input) {
+  input = input || {};
+  const changed = [];
+
+  // Open the quote form if it's not already open
+  if (!window._quoteFormOpen) {
+    const pf = {};
+    if (input.originZip) pf.originZip = String(input.originZip);
+    if (input.destZip) pf.destZip = String(input.destZip);
+    if (input.pickupDate) pf.pickupDate = input.pickupDate;
+    if (input.items && input.items.length) {
+      const it0 = input.items[0];
+      pf.pieces = it0.pieces; pf.weight = it0.weight;
+      pf.length = it0.length; pf.width = it0.width; pf.height = it0.height;
+    }
+    if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = input.addAccessorials.slice();
+    showQuoteForm(pf);
+    changed.push('opened the quote form');
+    // Give the DOM a moment to render, then apply remaining field updates
+    setTimeout(() => _applyQuoteFields(input), 350);
+    return { ok: true, summary: 'Quote form opened' + (changed.length ? ' with ' + describeQuoteInput(input) : '') };
+  }
+
+  // Form already open — apply surgical updates
+  _applyQuoteFields(input);
+  return { ok: true, summary: 'Updated: ' + (describeQuoteInput(input) || 'quote') };
+}
+
+function describeQuoteInput(input) {
+  const parts = [];
+  if (input.originZip) parts.push('origin ' + input.originZip);
+  if (input.destZip) parts.push('destination ' + input.destZip);
+  if (input.pickupDate) parts.push('pickup ' + input.pickupDate);
+  if (input.items && input.items.length) {
+    input.items.forEach((it, i) => {
+      const d = [];
+      if (it.pieces) d.push(it.pieces + ' pcs');
+      if (it.weight) d.push(it.weight + ' lbs');
+      if (it.length && it.width && it.height) d.push(it.length + 'x' + it.width + 'x' + it.height);
+      if (it.freightClass) d.push('class ' + it.freightClass);
+      if (it.commodity) d.push(it.commodity);
+      if (d.length) parts.push((input.items.length > 1 ? 'item ' + (i+1) + ' ' : '') + d.join(' '));
+    });
+  }
+  const accMap = { RSO:'residential pickup', LFO:'liftgate pickup', NAO:'limited access pickup', RSD:'residential delivery', LFD:'liftgate delivery', IND:'inside delivery', NAD:'limited access delivery', LAD:'appointment', INS:'insurance' };
+  if (input.addAccessorials && input.addAccessorials.length) parts.push('added ' + input.addAccessorials.map(c=>accMap[c]||c).join(', '));
+  if (input.removeAccessorials && input.removeAccessorials.length) parts.push('removed ' + input.removeAccessorials.map(c=>accMap[c]||c).join(', '));
+  return parts.join('; ');
+}
+
+function _applyQuoteFields(input) {
+  const panel = document.getElementById('right-panel') || document;
+
+  // Top-level fields
+  if (input.originZip) { const el = panel.querySelector('#qt-origin'); if (el) { el.value = String(input.originZip); el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
+  if (input.destZip)   { const el = panel.querySelector('#qt-dest');   if (el) { el.value = String(input.destZip);   el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); if (window._checkResidential) setTimeout(() => window._checkResidential(String(input.destZip)), 500); } }
+  if (input.pickupDate){ const el = panel.querySelector('#qt-date');   if (el) { el.value = input.pickupDate; el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
+
+  // Line items — surgical per-row, per-field
+  if (input.items && input.items.length) {
+    input.items.forEach((it, idx) => {
+      let row = panel.querySelectorAll('.qt-line')[idx];
+      if (!row) { const addBtn = panel.querySelector('#qt-add-line'); if (addBtn) { addBtn.click(); row = panel.querySelectorAll('.qt-line')[idx]; } }
+      if (!row) return;
+      const setF = (sel, val, ev) => { if (val === undefined || val === null || val === '') return; const el = row.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event(ev||'input')); if (typeof flashField === 'function') flashField(el); } };
+      setF('.li-qty', it.pieces);
+      setF('.li-weight', it.weight);
+      setF('.li-len', it.length);
+      setF('.li-wid', it.width);
+      setF('.li-hgt', it.height);
+      setF('.li-class', it.freightClass, 'change');
+      setF('.li-commodity', it.commodity);
+      if (it.type) setF('.li-type', it.type, 'change');
+    });
+  }
+
+  // Accessorials — toggle by data-code, respecting current state
+  const toggleAcc = (code, wantOn) => {
+    const btn = [...document.querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
+    if (!btn) return;
+    const isOn = btn.classList.contains('acc-active');
+    if (wantOn && !isOn) btn.click();
+    if (!wantOn && isOn) btn.click();
+  };
+  if (input.addAccessorials) input.addAccessorials.forEach(c => toggleAcc(c, true));
+  if (input.removeAccessorials) input.removeAccessorials.forEach(c => toggleAcc(c, false));
+
+  // Pull rates if requested
+  if (input.getRates) {
+    setTimeout(() => { if (window._doGetRates) window._doGetRates(); else { const b = document.querySelector('#qt-get-rates'); if (b) b.click(); } }, 400);
+  }
+}
+
 const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
 
 You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
@@ -8701,6 +8796,16 @@ HOW TO TALK:
 - Never invent specific shipping rates.
 - For truckload, hazmat, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call.
 
+BUILDING A QUOTE — you have an update_quote tool:
+When a customer wants to ship something or get a rate, use update_quote to open and fill the quote form. You can call it repeatedly as the conversation evolves — it only changes the fields you pass, leaving everything else intact. Examples:
+- "Quote a sofa from Ocala to Wilmington" → call update_quote with originZip (look up Ocala = 34470 area), destZip, and an item with commodity "sofa" and freightClass 175 (sofas are class 175). Infer sensible defaults: a sofa is roughly 1 piece, ~150 lbs, 90x40x40. Tell the customer what you set and that they can adjust anything.
+- "The weight is actually 250" → call update_quote with items:[{weight:250}] — only the weight changes.
+- "Make the length 96" → update_quote items:[{length:96}].
+- "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "NAD".
+- "Pull the rates" / "get me prices" → update_quote getRates:true.
+Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, NAD limited access, LAD appointment. Other: INS insurance.
+Infer freight class from the commodity (furniture 125-175, sofas/upholstered 175, mattresses 250, appliances 92.5-125, electronics 92.5). Always tell the customer what you filled in and invite them to correct anything — they review before pulling rates. Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
+
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
 async function aiConverse(userText) {
@@ -8719,7 +8824,7 @@ async function aiConverse(userText) {
   try {
     let loops = 0;
     let convo = msgs.slice();
-    while (loops < 4) {
+    while (loops < 5) {
       loops++;
       const data = await _call('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -8728,32 +8833,74 @@ async function aiConverse(userText) {
           model: 'claude-sonnet-4-6',
           max_tokens: 1024,
           system: _convoSysPrompt,
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          tools: [
+            { type: 'web_search_20250305', name: 'web_search' },
+            {
+              name: 'update_quote',
+              description: 'Open or update the freight quote form. Only the fields you pass are changed; everything else stays as-is. Call repeatedly as the customer adjusts details.',
+              input_schema: {
+                type: 'object',
+                properties: {
+                  originZip: { type: 'string', description: '5-digit origin ZIP code' },
+                  destZip: { type: 'string', description: '5-digit destination ZIP code' },
+                  pickupDate: { type: 'string', description: 'Pickup date YYYY-MM-DD' },
+                  items: {
+                    type: 'array',
+                    description: 'Freight line items. Pass only the fields that changed.',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        pieces: { type: 'number' },
+                        weight: { type: 'number', description: 'Weight in lbs' },
+                        length: { type: 'number', description: 'Length in inches' },
+                        width: { type: 'number', description: 'Width in inches' },
+                        height: { type: 'number', description: 'Height in inches' },
+                        freightClass: { type: 'number' },
+                        commodity: { type: 'string' },
+                        type: { type: 'string', description: 'PLT, BOX, CRT, etc.' }
+                      }
+                    }
+                  },
+                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn ON: RSO/LFO/NAO (pickup), RSD/LFD/IND/NAD/LAD (delivery), INS' },
+                  removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
+                  getRates: { type: 'boolean', description: 'Set true to pull live rates now' }
+                }
+              }
+            }
+          ],
           messages: convo
         })
       });
 
       const content = data.content || [];
-      // web_search is a server-side tool — Anthropic runs it and returns final text in the same response.
-      // If stop_reason is tool_use for a client tool we'd loop, but for server tools the text is already here.
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
-      if (data.stop_reason === 'tool_use' && content.some(b => b.type === 'tool_use')) {
-        // Client-side tool requested (none yet, but future-proof). Echo assistant turn and continue.
+      // Check for a client-side tool call (update_quote)
+      const toolUse = content.find(b => b.type === 'tool_use' && b.name === 'update_quote');
+
+      if (data.stop_reason === 'tool_use' && toolUse) {
+        // Show any text Claude said alongside the tool call
+        removeTyping();
+        if (textOut) appendMessage('bot', textOut);
+        // Execute the quote update
+        let result;
+        try { result = _execUpdateQuote(toolUse.input); }
+        catch (err) { console.error('update_quote exec error:', err); result = { ok: false, summary: 'form update failed' }; }
+        // Feed the result back so Claude can continue naturally
         convo.push({ role: 'assistant', content: content });
-        // No client tools defined yet, so break with whatever text we have.
-        if (textOut) { removeTyping(); chatHistory.push({ role: 'assistant', content: textOut }); appendMessage('bot', textOut); return; }
-        continue;
+        convo.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }] });
+        showTyping();
+        continue; // loop for Claude's natural follow-up
       }
 
-      // Normal completion (includes server-side web_search results already resolved)
+      // Normal completion (includes resolved server-side web_search)
       removeTyping();
       const finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
       chatHistory.push({ role: 'assistant', content: finalText });
       appendMessage('bot', finalText);
       return;
     }
-    // Safety: ran out of loops
+    // Ran out of loops — show whatever we have
     removeTyping();
     appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.");
   } catch (e) {
