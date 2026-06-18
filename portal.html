@@ -8797,17 +8797,25 @@ HOW TO TALK:
 - For truckload, hazmat, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call.
 
 BUILDING A QUOTE — you have an update_quote tool:
-When a customer wants to ship something or get a rate, use update_quote to open and fill the quote form. You can call it repeatedly as the conversation evolves — it only changes the fields you pass, leaving everything else intact. Examples:
-- "Quote a sofa from Ocala to Wilmington" → call update_quote with originZip (look up Ocala = 34470 area), destZip, and an item with commodity "sofa" and freightClass 175 (sofas are class 175). Infer sensible defaults: a sofa is roughly 1 piece, ~150 lbs, 90x40x40. Tell the customer what you set and that they can adjust anything.
-- "The weight is actually 250" → call update_quote with items:[{weight:250}] — only the weight changes.
+When a customer wants to ship something or get a rate, use update_quote to open the quote form and fill in what you actually know. You can call it repeatedly as the conversation evolves — it only changes the fields you pass, leaving everything else intact.
+
+NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class; let the form auto-calculate it. So when they say "quote a sofa from Ocala to Wilmington":
+- Fill what you genuinely know once locations are unambiguous: originZip (look up Ocala = 34470), destZip, commodity "sofa". If the destination city is ambiguous (like "Wilmington"), ask which state before filling it.
+- Do NOT fill in a weight, dimensions, or freight class. Leave them blank.
+- ASK the customer: "What's the weight, and roughly the dimensions (length x width x height)?"
+- As they give you real numbers, call update_quote to fill weight and dimensions — the class fills itself.
+
+NEVER GUESS AN AMBIGUOUS CITY. Many city names exist in multiple states — Wilmington (CA, DE, NC), Springfield, Columbus, Portland, Kansas City, and many more. If a customer gives a city with no state and the name is ambiguous, do NOT pick a ZIP and fill it — ask which state first ("Which Wilmington — California, Delaware, or North Carolina?"). Sending freight to the wrong city is as costly as a wrong weight. Only fill the ZIP once the city is unambiguous.
+
+Examples:
+- "Quote a sofa from Ocala to Wilmington" → update_quote with originZip "34470", destZip "90744", items:[{commodity:"sofa"}]. Then ask for the real weight and dimensions. Do NOT set weight, dims, or class.
+- "It's about 200 lbs, 80 by 36 by 38" → update_quote items:[{weight:200, length:80, width:36, height:38}]. (Class auto-calculates.)
 - "Make the length 96" → update_quote items:[{length:96}].
 - "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "NAD".
-- "Pull the rates" / "get me prices" → update_quote getRates:true.
 Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, NAD limited access, LAD appointment. Other: INS insurance.
-Infer freight class from the commodity (furniture 125-175, sofas/upholstered 175, mattresses 250, appliances 92.5-125, electronics 92.5). Always tell the customer what you filled in and invite them to correct anything.
 
 PULLING RATES — act like a real broker, never rush it:
-Inferred defaults (weight, dimensions) are a STARTING POINT to confirm, not values to quote on. Do NOT call update_quote with getRates:true until you have confirmed the real weight and dimensions with the customer AND asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill, so a good broker always nails these down first. Only set getRates:true once the customer has confirmed the details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When details are still assumed, ask the confirming questions instead of quoting.
+Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
@@ -8859,7 +8867,6 @@ async function aiConverse(userText) {
                         length: { type: 'number', description: 'Length in inches' },
                         width: { type: 'number', description: 'Width in inches' },
                         height: { type: 'number', description: 'Height in inches' },
-                        freightClass: { type: 'number' },
                         commodity: { type: 'string' },
                         type: { type: 'string', description: 'PLT, BOX, CRT, etc.' }
                       }
@@ -10110,6 +10117,16 @@ async function handleInput(text) {
 
   // (Old carrier/terminal handler removed — aiConverse handles all carrier questions with web_search)
 
+  // ── Quote in progress — conversational follow-ups go to aiConverse/update_quote ──
+  // While the quote form is open, edits like "make the length 96" or "add liftgate at pickup"
+  // belong to the quote. Route to the AI before any shipment/quote regex can grab them.
+  // Exception: let the user explicitly leave via navigation words.
+  if (window._quoteFormOpen && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)) {
+    removeTyping();
+    await aiConverse(t);
+    return;
+  }
+
 
   // ── Knowledge/question bypass — skip ALL form handlers for educational questions ──
   // These go straight to the AI regardless of form state
@@ -10601,14 +10618,7 @@ async function handleInput(text) {
     // Has quote signals but parseQuoteChat didn't extract enough — fall through to AI
   }
 
-  // ── Quote in progress — conversational follow-ups go to aiConverse/update_quote ──
-  // While the quote form is open, short edits like "make the length 96" or "add liftgate"
-  // belong to the quote, not the shipment search. Let the AI handle them.
-  if (window._quoteFormOpen) {
-    removeTyping();
-    await aiConverse(t);
-    return;
-  }
+  // ── Quote in progress handled earlier (guard moved up near top of handleInput) ──
 
   // ── EDUCATIONAL / CONVERSATIONAL INTENT — goes to Claude, not shipment search ──
   const isEducational = /^(tell me|what is|what are|what's|explain|how does|how do|how is|how are|about|describe|define|why|when should|can you explain|help me understand|i want to know|i'd like to know|do you know|what do you think|give me info|info about|information about|learn about)/i.test(lower.trim())
