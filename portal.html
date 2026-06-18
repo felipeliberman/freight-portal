@@ -10637,7 +10637,7 @@ async function _handleInputFallback(text) {
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: SYSTEM_PROMPT, messages: [{ role: 'user', content: userMessage }] })
     }).catch(() => null);
     removeTyping();
-    const response = result && result.content && result.content.find(b => b.type === 'text') && result.content.find(b => b.type === 'text').text;
+    const response = result && result.content && result.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
     if (response) appendMessage('bot', response);
     else appendMessage('bot', 'Having trouble connecting. Try again or call (800) 687-3713.');
   } catch(e) {
