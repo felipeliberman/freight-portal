@@ -8676,6 +8676,94 @@ async function openDocsFor(id){
   appendMessage('bot','Here is '+(bol||id)+' — opening its documents:',{shipments:[s], singleResult:true});
   openDocsModal(String(bolId),String(bol));
 }
+// ── CONVERSATIONAL AI — Sonnet with web_search and a proper tool-use loop ──────
+// This is the natural-conversation brain. Claude decides when to search the web.
+// Handles multi-turn tool use: calls a tool, gets results, continues until done.
+const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
+
+You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
+
+For general freight questions (what is LTL, how does freight class work, what's a liftgate, accessorial costs, how claims work) just answer naturally from what you know. No need to search those.
+
+WHAT YOU KNOW:
+- We ship LTL, white glove residential (our specialty and biggest volume), truckload, drayage, small parcel, trade shows, and offer free TMS software and API integration.
+- Top carriers: Metro W&D is #1 by volume and Pilot is #2 for white glove and final-mile residential furniture. ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L, Forward Air, Southeastern and others for LTL.
+- Freight class runs 50-500 based on density, stowability, handling and liability. Furniture is typically 125-175.
+- Accessorials: liftgate delivery $75-150, residential delivery $50-100, limited access $50-100+, inside delivery, appointment, two-man.
+- Cargo insurance is roughly 1-2% of declared value. Standard LTL carrier liability is about $0.50/lb. R&L is always $1/lb for new furniture.
+- Linear foot rules vary by carrier; anything over 4 standard pallets needs verification.
+- Residential delivery is our bread and butter — always speak about it and every carrier positively.
+
+HOW TO TALK:
+- Natural conversation, usually 2-4 sentences. Sound like a real person, not a brochure.
+- Plain prose. No bullet lists, no markdown headers, no emojis.
+- Never say something is "outside our services" — we handle all freight types and all industries.
+- Never invent specific shipping rates.
+- For truckload, hazmat, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call.
+
+COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
+
+async function aiConverse(userText) {
+  showTyping();
+  const _apiKey = 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA';
+  const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
+
+  // Build message history (text-only for past turns, current message appended)
+  const msgs = chatHistory
+    .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(b => b && b.type === 'text').map(b => b.text).join(' ') : '') }))
+    .filter(m => m.content);
+  msgs.push({ role: 'user', content: userText });
+  chatHistory.push({ role: 'user', content: userText });
+  if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+
+  try {
+    let loops = 0;
+    let convo = msgs.slice();
+    while (loops < 4) {
+      loops++;
+      const data = await _call('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': _apiKey, 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1024,
+          system: _convoSysPrompt,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: convo
+        })
+      });
+
+      const content = data.content || [];
+      // web_search is a server-side tool — Anthropic runs it and returns final text in the same response.
+      // If stop_reason is tool_use for a client tool we'd loop, but for server tools the text is already here.
+      const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+
+      if (data.stop_reason === 'tool_use' && content.some(b => b.type === 'tool_use')) {
+        // Client-side tool requested (none yet, but future-proof). Echo assistant turn and continue.
+        convo.push({ role: 'assistant', content: content });
+        // No client tools defined yet, so break with whatever text we have.
+        if (textOut) { removeTyping(); chatHistory.push({ role: 'assistant', content: textOut }); appendMessage('bot', textOut); return; }
+        continue;
+      }
+
+      // Normal completion (includes server-side web_search results already resolved)
+      removeTyping();
+      const finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
+      chatHistory.push({ role: 'assistant', content: finalText });
+      appendMessage('bot', finalText);
+      return;
+    }
+    // Safety: ran out of loops
+    removeTyping();
+    appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.");
+  } catch (e) {
+    console.error('aiConverse error:', e);
+    chatHistory.pop();
+    removeTyping();
+    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+  }
+}
+
 async function aiFreightAnswer(t){
   showTyping();
   const sysPrompt = (function() {
@@ -10594,7 +10682,7 @@ async function handleInput(text) {
     startQuote();
     return;
   }
-  if (q.action === 'help')  { removeTyping(); await aiFreightAnswer(t); return; }
+  if (q.action === 'help')  { removeTyping(); await aiConverse(t); return; }
   if (q.action === 'documents') {
     removeTyping();
     const id = (q.bol || q.pro || '').toString().replace(/^#/, '');
@@ -10617,7 +10705,7 @@ async function handleInput(text) {
     return;
   }
   // No specific handler matched — ask the AI
-  await _handleInputFallback(text);
+  await aiConverse(text);
 }
 
 // ── FALLBACK: Anything not caught by earlier handlers goes to AI with web_search ────
