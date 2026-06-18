@@ -2135,12 +2135,17 @@ function showInvoices() {
   const payBtn = document.createElement('button');
   payBtn.textContent = 'Pay My Invoices';
   payBtn.style.cssText = 'background:var(--ac);border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-  payBtn.onclick = () => showLockedAction("pay invoices");
+  payBtn.onclick = () => showDemoPaymentModal(invs);
+  const dlSelBtn = document.createElement('button');
+  dlSelBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Selected';
+  dlSelBtn.style.cssText = 'display:flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);';
+  dlSelBtn.onclick = () => downloadSelectedInvoices();
   const xlBtn = document.createElement('button');
   xlBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Excel';
   xlBtn.style.cssText = 'display:flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);';
   xlBtn.onclick = () => downloadInvoicesExcel();
   btnGroup.appendChild(payBtn);
+  btnGroup.appendChild(dlSelBtn);
   btnGroup.appendChild(xlBtn);
   titleSection.appendChild(btnGroup);
   container.appendChild(titleSection);
@@ -2310,6 +2315,98 @@ function downloadInvoicesExcel() {
   a.href = URL.createObjectURL(blob);
   a.download = 'Freight_Logistics_Invoices_Sample.csv';
   a.click(); URL.revokeObjectURL(a.href);
+}
+
+function downloadSelectedInvoices() {
+  const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]:checked');
+  if (checkboxes.length === 0) {
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:12px 18px;box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:999;font-size:12px;color:var(--tx);';
+    toast.textContent = 'Please select at least one invoice';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+    return;
+  }
+  const selected = Array.from(checkboxes).map(cb => SAMPLE_INVOICES[Array.from(document.querySelectorAll('tbody input[type="checkbox"]')).indexOf(cb)]);
+  const headers = ['Invoice #','BOL #','Date','Due Date','Carrier','Service','Status','Amount'];
+  const rows = selected.map(i=>[i.inv,i.bol,i.date,i.due,i.carrier,i.service,i.status,'$'+i.amount.toFixed(2)]);
+  const csv = [headers,...rows].map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Freight_Logistics_Invoices_Selected_' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+function showDemoPaymentModal(invoices) {
+  const existing = document.getElementById('demo-pay-modal');
+  if (existing) existing.remove();
+  
+  const overlay = document.createElement('div');
+  overlay.id = 'demo-pay-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:16px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);display:flex;flex-direction:column;font-family:var(--font);position:relative;';
+  
+  // Demo warning banner
+  const warning = document.createElement('div');
+  warning.style.cssText = 'background:#fef3c7;border-bottom:1px solid #fde68a;padding:12px 16px;text-align:center;font-size:12px;color:#92400e;font-weight:600;';
+  warning.innerHTML = '⚠️ Demo Mode — This is not a live transaction';
+  box.appendChild(warning);
+  
+  // Header
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid #e5e2d9;flex-shrink:0;';
+  hdr.innerHTML = `<div style="font-size:17px;font-weight:700;color:#1a1a1a;">Pay Invoices</div><button onclick="document.getElementById('demo-pay-modal').remove()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px;line-height:1;padding:0;">&times;</button>`;
+  box.appendChild(hdr);
+  
+  // Invoice list
+  const invList = document.createElement('div');
+  invList.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
+  const subtotal = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  invoices.slice(0, 3).forEach(inv => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;';
+    row.innerHTML = `<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#${inv.inv}</strong></span><span style="font-weight:600;color:#1a1a1a;">$${Number(inv.amount||0).toFixed(2)}</span>`;
+    invList.appendChild(row);
+  });
+  if (invoices.length > 3) {
+    const more = document.createElement('div');
+    more.style.cssText = 'padding:6px 0;font-size:12px;color:#888;';
+    more.textContent = `...and ${invoices.length - 3} more`;
+    invList.appendChild(more);
+  }
+  const subRow = document.createElement('div');
+  subRow.style.cssText = 'display:flex;justify-content:space-between;padding:10px 0 0;border-top:1px solid #e5e2d9;margin-top:6px;font-size:13px;font-weight:600;color:#1a1a1a;';
+  subRow.innerHTML = `<span>Total</span><span>$${subtotal.toFixed(2)}</span>`;
+  invList.appendChild(subRow);
+  box.appendChild(invList);
+  
+  // Payment method section with warning
+  const methodSection = document.createElement('div');
+  methodSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
+  methodSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Payment Method</div>';
+  
+  const demoMsg = document.createElement('div');
+  demoMsg.style.cssText = 'background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px;text-align:center;font-size:12px;color:#92400e;';
+  demoMsg.innerHTML = '🔒 Demo Only — Live payments require a full account<br><a href="portal.html" style="color:#92400e;text-decoration:underline;font-weight:600;">Sign In to Pay</a> or <a href="index.html" style="color:#92400e;text-decoration:underline;font-weight:600;">Get Access</a>';
+  methodSection.appendChild(demoMsg);
+  box.appendChild(methodSection);
+  
+  // Footer with close button
+  const footer = document.createElement('div');
+  footer.style.cssText = 'padding:16px 24px;display:flex;gap:10px;flex-shrink:0;';
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Close';
+  closeBtn.style.cssText = 'flex:1;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px 16px;color:var(--tx);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+  closeBtn.onclick = () => overlay.remove();
+  footer.appendChild(closeBtn);
+  box.appendChild(footer);
+  
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 // ── QUOTE DEMO ────────────────────────────────────────────────────────────────
