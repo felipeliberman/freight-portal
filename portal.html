@@ -8697,7 +8697,7 @@ function _execUpdateQuote(input) {
       pf.length = it0.length; pf.width = it0.width; pf.height = it0.height;
     }
     if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = input.addAccessorials.slice();
-    showQuoteForm(pf);
+    showQuoteForm(pf, true);
     changed.push('opened the quote form');
     // Give the DOM a moment to render, then apply remaining field updates
     setTimeout(() => _applyQuoteFields(input), 350);
@@ -10116,9 +10116,8 @@ async function handleInput(text) {
     /^\s*(my shipment was|my freight was|my package was|2 boxes|boxes are missing|item.*missing|missing.*item)/i.test(t.trim())
   );
 
-  // ── Quote form sync — if form is open, try to fill it from chat ──
-  // If we're mid-conversation collecting specific fields, let those handlers run first
-  if (window._quoteFormOpen && document.querySelector('#right-panel #qt-origin') &&
+  // ── Quote form sync — DISABLED, update_quote tool handles form filling now ──
+  if (false && window._quoteFormOpen && document.querySelector('#right-panel #qt-origin') &&
       !window._awaitingDims && !window._awaitingWeight && !window._awaitingPackaging &&
       !window._awaitingAccessorial && !window._collectingItems && !_isKnowledgeQ) {
     const parsed = parseQuoteChat(t);
@@ -10198,7 +10197,7 @@ async function handleInput(text) {
   // If bot asked for dims (+weight), parse and fill them
   // ── Multi-item collection flow ──────────────────────────────────────────────
   // Triggered when customer says they have pallets with different sizes/weights
-  if (window._collectingItems && window._quoteFormOpen) {
+  if (false && window._collectingItems && window._quoteFormOpen) {
     const state = window._collectingItems;
     const parsed = parseQuoteChat(t);
     const wtMatch  = t.match(/(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?|lb)/i);
@@ -10272,7 +10271,7 @@ async function handleInput(text) {
     return;
   }
 
-  if (window._awaitingDims && window._quoteFormOpen) {
+  if (false && window._awaitingDims && window._quoteFormOpen) {
     // Strip any zip codes already in the form before parsing dims/weight
     const _originEl = document.querySelector('#right-panel #qt-origin');
     const _destEl   = document.querySelector('#right-panel #qt-dest');
@@ -10328,7 +10327,7 @@ async function handleInput(text) {
     return;
   }
 
-  if (window._awaitingWeight && window._quoteFormOpen) {
+  if (false && window._awaitingWeight && window._quoteFormOpen) {
     const wNum = t.match(/(\d+(?:\.\d+)?)/);
     if (wNum) {
       const firstRow = document.querySelector('.qt-line');
@@ -10352,7 +10351,7 @@ async function handleInput(text) {
   }
 
   // Packaging type prompt handler
-  if (window._awaitingPackaging && window._quoteFormOpen) {
+  if (false && window._awaitingPackaging && window._quoteFormOpen) {
     window._awaitingPackaging = false;
     // Trigger RDI check now that we have all freight details — zip may have been set before form opened
     const _destZipEl = document.querySelector('#right-panel #qt-dest');
@@ -10388,7 +10387,7 @@ async function handleInput(text) {
   if (wizardStep && wizardStep !== 'fetching' && pendingPicker === null) { handleWizardInput(t); return; }
 
   // ── Liftgate direction handler ────────────────────────────────────────────────
-  if (window._awaitingLiftgateDirection && window._quoteFormOpen) {
+  if (false && window._awaitingLiftgateDirection && window._quoteFormOpen) {
     window._awaitingLiftgateDirection = false;
     const codes = [];
     if (/pickup|origin|both/i.test(t)) codes.push('LFO');
@@ -10428,7 +10427,7 @@ async function handleInput(text) {
   }
 
   // If bot just asked about accessorials, treat next message as the answer
-  if (window._awaitingAccessorial && window._quoteFormOpen) {
+  if (false && window._awaitingAccessorial && window._quoteFormOpen) {
     // Check if customer is actually giving multi-item info instead of accessorials
     const _accParsed = parseQuoteChat(t);
     if (_accParsed._needsMultiItemFlow) {
@@ -10618,7 +10617,7 @@ async function handleInput(text) {
   // ─────────────────────────────────────────────────────────────────────────
 
   // New quote request (explicit)
-  if (/\b(get a quote|need a quote|i need a quote|want a quote|quote a|rate a shipment|how much to ship|cost to ship|price to ship|get rates|need rates|ship something|quote please|can you quote|give me a quote|i want to ship)\b/.test(lower)) { startQuote(); return; }
+  if (/\b(get a quote|need a quote|i need a quote|want a quote|quote a|rate a shipment|how much to ship|cost to ship|price to ship|get rates|need rates|ship something|quote please|can you quote|give me a quote|i want to ship)\b/.test(lower)) { removeTyping(); await aiConverse(t); return; }
 
   const educational = !/\b(show|my|list|find|how many|total|which|sort)\b/.test(lower);
   // Freight class education
@@ -10799,8 +10798,8 @@ async function handleInput(text) {
       }
       return;
     }
-    // Otherwise start the step-by-step wizard
-    startQuote();
+    // Otherwise let the conversational AI open and fill the form via update_quote
+    await aiConverse(t);
     return;
   }
   if (q.action === 'help')  { removeTyping(); await aiConverse(t); return; }
@@ -12443,8 +12442,9 @@ function showAddressBook() {
 
 function startQuote() { showQuoteForm(); }
 
-function showQuoteForm(prefill) {
+function showQuoteForm(prefill, silent) {
   window._quoteFormOpen = true;
+  window._quoteFormSilent = silent;
   showChatArea();
   addRecent('Get a Quote');
   setTimeout(() => { applyDefaultCommodity(); applyDefaultAccessorials(); }, 400);
@@ -12651,7 +12651,7 @@ function showQuoteForm(prefill) {
   openRightPanel(container, 'Get a Quote');
 
   // ── Chat message ─────────────────────────────────────────────────────────
-  appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
+  if (!window._quoteFormSilent) appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
 
   // ── Tab switching ────────────────────────────────────────────────────────
   function switchTab(tab) {
