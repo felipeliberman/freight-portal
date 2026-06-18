@@ -2114,7 +2114,7 @@ function showInvoices() {
 
   const totalCol = document.createElement('div');
   totalCol.style.cssText = 'padding-right:24px;border-right:1px solid var(--bdr);cursor:pointer;';
-  totalCol.innerHTML = `<div style="font-size:10px;font-weight:500;color:var(--fa);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">My Invoices</div><div style="font-size:32px;font-weight:500;color:var(--tx);line-height:1;">${invs.length}</div><div style="font-size:10px;color:var(--fa);margin-top:1px;">total</div>`;
+  totalCol.innerHTML = `<div style="font-size:22px;font-weight:500;color:var(--tx);line-height:1;">${invs.length}</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">Total</div>`;
   statsDiv.appendChild(totalCol);
 
   [{label:'Paid',count:paid,color:'var(--tx)'},{label:'Unpaid',count:unpaid,color:'var(--ac)'},{label:'Overdue',count:0,color:'var(--tx)'}].forEach(({label,count,color},idx,arr) => {
