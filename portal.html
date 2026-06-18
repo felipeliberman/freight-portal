@@ -2635,7 +2635,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   const dlBtn = document.createElement('button');
   dlBtn.id = 'inv-dl-btn';
   dlBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="dl-btn-label">Download Selected</span>`;
-  dlBtn.style.cssText = 'background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:none;align-items:center;white-space:nowrap;';
+  dlBtn.style.cssText = 'background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;';
   dlBtn.onmouseover = () => dlBtn.style.background = '#ede9e2';
   dlBtn.onmouseout  = () => dlBtn.style.background = '#f7f5f2';
   dlBtn.onclick = async () => {
@@ -8172,13 +8172,8 @@ function updateDownloadBtn() {
   const dlBtn = document.getElementById('inv-dl-btn');
   if (dlBtn) {
     const count = selectedInvoices.size;
-    if (count > 0) {
-      dlBtn.style.display = 'inline-flex';
-      const lbl = dlBtn.querySelector('.dl-btn-label');
-      if (lbl) lbl.textContent = 'Download Selected (' + count + ')';
-    } else {
-      dlBtn.style.display = 'none';
-    }
+    const lbl = dlBtn.querySelector('.dl-btn-label');
+    if (lbl) lbl.textContent = count > 0 ? 'Download Selected (' + count + ')' : 'Download Selected';
   }
   // Update Pay button
   const payBtn = document.getElementById('inv-pay-btn');
