@@ -2132,30 +2132,21 @@ function showInvoices() {
 
   const btnGroup = document.createElement('div');
   btnGroup.style.cssText = 'display:flex;align-items:center;gap:10px;flex-shrink:0;';
-
-  // Download Selected — hidden by default, shown when checkboxes checked
-  const dlSelBtn = document.createElement('button');
-  dlSelBtn.id = 'demo-inv-dl-btn';
-  dlSelBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span id="demo-dl-label">Download Selected</span>';
-  dlSelBtn.style.cssText = 'display:none;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);white-space:nowrap;';
-  dlSelBtn.onclick = () => showLockedAction('download selected invoices');
-
-  // Open Invoice Statement
-  const stmtBtn = document.createElement('button');
-  stmtBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Open Invoice Statement';
-  stmtBtn.style.cssText = 'display:inline-flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);white-space:nowrap;';
-  stmtBtn.onclick = () => showLockedAction('open invoice statement');
-
-  // Pay Invoices
   const payBtn = document.createElement('button');
-  payBtn.id = 'demo-inv-pay-btn';
-  payBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0;"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span id="demo-pay-label">Pay Invoices</span>';
-  payBtn.style.cssText = 'background:#bd27bc;border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;white-space:nowrap;';
+  payBtn.textContent = 'Pay My Invoices';
+  payBtn.style.cssText = 'background:var(--ac);border:none;border-radius:8px;padding:9px 18px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
   payBtn.onclick = () => showDemoPaymentModal(invs);
-
-  btnGroup.appendChild(dlSelBtn);
-  btnGroup.appendChild(stmtBtn);
+  const dlSelBtn = document.createElement('button');
+  dlSelBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Selected';
+  dlSelBtn.style.cssText = 'display:flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);';
+  dlSelBtn.onclick = () => downloadSelectedInvoices();
+  const xlBtn = document.createElement('button');
+  xlBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Excel';
+  xlBtn.style.cssText = 'display:flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);';
+  xlBtn.onclick = () => downloadInvoicesExcel();
   btnGroup.appendChild(payBtn);
+  btnGroup.appendChild(dlSelBtn);
+  btnGroup.appendChild(xlBtn);
   titleSection.appendChild(btnGroup);
   container.appendChild(titleSection);
 
@@ -2163,7 +2154,6 @@ function showInvoices() {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'overflow-x:auto;background:var(--card);flex:1;';
   const table = document.createElement('table');
-  table.id = 'demo-inv-tbl';
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
 
   const thead = document.createElement('thead');
@@ -2173,7 +2163,6 @@ function showInvoices() {
   cbTh2.style.cssText = 'padding:10px 10px 10px 14px;border-bottom:1px solid var(--bdr);width:28px;';
   const sa2 = document.createElement('input'); sa2.type='checkbox';
   sa2.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:var(--ac);';
-  sa2.onchange = () => { document.querySelectorAll('#demo-inv-tbl tbody input[type="checkbox"]').forEach(c => c.checked = sa2.checked); updateDemoDlBtn(); };
   cbTh2.appendChild(sa2); hrow.appendChild(cbTh2);
   ['Invoice #','BOL #','Date','Due Date','Shipper','Consignee','Amount','Status'].forEach(c => {
     const th = document.createElement('th');
@@ -2183,16 +2172,6 @@ function showInvoices() {
   thead.appendChild(hrow); table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  let demoCbCount = 0;
-  function updateDemoDlBtn() {
-    const checked = document.querySelectorAll('#demo-inv-tbl input[type="checkbox"]:checked').length;
-    const btn = document.getElementById('demo-inv-dl-btn');
-    const lbl = document.getElementById('demo-dl-label');
-    const payLbl = document.getElementById('demo-pay-label');
-    if (btn) btn.style.display = checked > 0 ? 'inline-flex' : 'none';
-    if (lbl) lbl.textContent = checked > 0 ? 'Download Selected (' + checked + ')' : 'Download Selected';
-    if (payLbl) payLbl.textContent = checked > 0 ? 'Pay Selected (' + checked + ')' : 'Pay Invoices';
-  }
   invs.forEach((inv, i) => {
     const tr = document.createElement('tr');
     tr.style.cssText = `border-bottom:1px solid var(--bdr);cursor:pointer;transition:background .1s;${i%2===1?'background:#faf9f6;':''}`;
@@ -2204,7 +2183,6 @@ function showInvoices() {
     cbTd.onclick = e=>e.stopPropagation();
     const cb = document.createElement('input'); cb.type='checkbox';
     cb.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:var(--ac);';
-    cb.onchange = updateDemoDlBtn;
     cbTd.appendChild(cb); tr.appendChild(cbTd);
     const shipper = (SAMPLE_SHIPS.find(s=>s.bol===inv.bol)||{shipper:'—'}).shipper;
     tr.insertAdjacentHTML('beforeend', `
@@ -2222,7 +2200,12 @@ function showInvoices() {
 
   const footer2 = document.createElement('div');
   footer2.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);background:#faf9f6;';
-  footer2.innerHTML = `<span style="font-size:12px;color:var(--mu);">Displaying <strong style="color:var(--tx);">1–${invs.length}</strong> of <strong style="color:var(--tx);">${invs.length}</strong> invoices</span>`;
+  footer2.innerHTML = '<span style="font-size:12px;color:var(--mu);">Displaying <strong style="color:var(--tx);">1–' + invs.length + '</strong> of <strong style="color:var(--tx);">' + invs.length + '</strong> invoices</span>' +
+    '<div style="position:relative;display:inline-block;" onmouseenter="this.querySelector(\'.demo-xl-tip\').style.opacity=\'1\'" onmouseleave="this.querySelector(\'.demo-xl-tip\').style.opacity=\'0\'">' +
+    '<button disabled style="background:#f7f5f2;border:1px solid #e5e2d9;border-radius:6px;padding:6px 14px;color:#b0ac9f;font-size:11px;font-weight:600;cursor:not-allowed;font-family:var(--font);display:inline-flex;align-items:center;gap:5px;opacity:.6;">' +
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Excel</button>' +
+    '<div class="demo-xl-tip" style="position:absolute;bottom:calc(100% + 6px);right:0;background:#1a1a1a;color:#fff;font-size:11px;padding:6px 10px;border-radius:7px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;">Available in your live account</div>' +
+    '</div>';
 
   wrap.appendChild(table);
   wrap.appendChild(footer2);
@@ -2375,7 +2358,7 @@ function showDemoPaymentModal(invoices) {
   // Header
   const hdr = document.createElement('div');
   hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid #e5e2d9;flex-shrink:0;';
-  hdr.innerHTML = `<div style="font-size:17px;font-weight:700;color:#1a1a1a;">Pay Invoices</div><button onclick="document.getElementById('demo-pay-modal').remove()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px;line-height:1;padding:0;">&times;</button>`;
+  hdr.innerHTML = '<div style="font-size:17px;font-weight:700;color:#1a1a1a;">Pay Invoices</div><button onclick="document.getElementById(\'demo-pay-modal\').remove()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px;line-height:1;padding:0;">&times;</button>';
   box.appendChild(hdr);
 
   // Invoice list
@@ -2385,7 +2368,7 @@ function showDemoPaymentModal(invoices) {
   invoices.slice(0, 3).forEach(inv => {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;';
-    row.innerHTML = `<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#${inv.inv}</strong> &mdash; ${inv.carrier || ''}</span><span style="font-weight:600;color:#1a1a1a;">$${Number(inv.amount||0).toFixed(2)}</span>`;
+    row.innerHTML = '<span style="color:#555;">Invoice <strong style="color:#bd27bc;">#' + inv.inv + '</strong> &mdash; ' + (inv.carrier||'') + '</span><span style="font-weight:600;color:#1a1a1a;">$' + Number(inv.amount||0).toFixed(2) + '</span>';
     invList.appendChild(row);
   });
   if (invoices.length > 3) {
@@ -2396,53 +2379,41 @@ function showDemoPaymentModal(invoices) {
   }
   const subRow = document.createElement('div');
   subRow.style.cssText = 'display:flex;justify-content:space-between;padding:10px 0 0;border-top:1px solid #e5e2d9;margin-top:6px;font-size:13px;font-weight:600;color:#1a1a1a;';
-  subRow.innerHTML = `<span>Subtotal</span><span>$${subtotal.toFixed(2)}</span>`;
+  subRow.innerHTML = '<span>Subtotal</span><span>$' + subtotal.toFixed(2) + '</span>';
   invList.appendChild(subRow);
   box.appendChild(invList);
 
   // Payment method toggle (visual only)
   const methodSection = document.createElement('div');
   methodSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
-  methodSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Payment Method</div>';
-  const toggleWrap = document.createElement('div');
-  toggleWrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;';
-  toggleWrap.innerHTML = `
-    <div style="border:2px solid #bd27bc;border-radius:10px;padding:10px 12px;background:#fdf0fd;cursor:default;">
-      <div style="font-size:12px;font-weight:700;color:#1a1a1a;">Pay by Bank</div>
-      <div style="font-size:10px;color:#888;margin-top:2px;">ACH transfer - No fee</div>
-    </div>
-    <div style="border:2px solid #e5e2d9;border-radius:10px;padding:10px 12px;background:#fff;cursor:default;">
-      <div style="font-size:12px;font-weight:700;color:#1a1a1a;">Pay by Card</div>
-      <div style="font-size:10px;color:#888;margin-top:2px;">2.9% + $0.30 convenience fee</div>
-    </div>`;
-  methodSection.appendChild(toggleWrap);
+  methodSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Payment Method</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+    '<div style="border:2px solid #bd27bc;border-radius:10px;padding:10px 12px;background:#fdf0fd;cursor:default;"><div style="font-size:12px;font-weight:700;color:#1a1a1a;">Pay by Bank</div><div style="font-size:10px;color:#888;margin-top:2px;">ACH transfer - No fee</div></div>' +
+    '<div style="border:2px solid #e5e2d9;border-radius:10px;padding:10px 12px;background:#fff;cursor:default;"><div style="font-size:12px;font-weight:700;color:#1a1a1a;">Pay by Card</div><div style="font-size:10px;color:#888;margin-top:2px;">2.9% + $0.30 convenience fee</div></div>' +
+    '</div>';
   box.appendChild(methodSection);
 
-  // Bank account section (demo — shows link button that triggers warning)
+  // Bank account section
   const achSection = document.createElement('div');
   achSection.style.cssText = 'padding:16px 24px;border-bottom:1px solid #e5e2d9;';
-  achSection.innerHTML = `
-    <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Bank Account</div>
-    <div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:16px;text-align:center;">
-      <div style="font-size:13px;color:#555;margin-bottom:12px;">Securely connect your bank account via Stripe. No account numbers to type.</div>
-      <button onclick="showDemoPayWarning()" style="background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Link Bank Account</button>
-    </div>`;
+  achSection.innerHTML = '<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Bank Account</div>' +
+    '<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:16px;text-align:center;">' +
+    '<div style="font-size:13px;color:#555;margin-bottom:12px;">Securely connect your bank account via Stripe. No account numbers to type.</div>' +
+    '<button onclick="showDemoPayWarning()" style="background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Link Bank Account</button>' +
+    '</div>';
   box.appendChild(achSection);
 
-  // Total section
+  // Total
   const totalSection = document.createElement('div');
   totalSection.style.cssText = 'padding:14px 24px;border-bottom:1px solid #e5e2d9;';
-  totalSection.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:700;color:#1a1a1a;"><span>Total</span><span>$${subtotal.toFixed(2)}</span></div>`;
+  totalSection.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:700;color:#1a1a1a;"><span>Total</span><span>$' + subtotal.toFixed(2) + '</span></div>';
   box.appendChild(totalSection);
 
-  // Pay button (triggers warning)
+  // Pay button
   const footerSection = document.createElement('div');
   footerSection.style.cssText = 'padding:16px 24px;flex-shrink:0;';
-  footerSection.innerHTML = `
-    <button onclick="showDemoPayWarning()" style="width:100%;background:#bd27bc;border:none;border-radius:10px;padding:14px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:var(--font);">Pay $${subtotal.toFixed(2)}</button>
-    <div style="text-align:center;margin-top:8px;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;gap:4px;">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Secured by Stripe
-    </div>`;
+  footerSection.innerHTML = '<button onclick="showDemoPayWarning()" style="width:100%;background:#bd27bc;border:none;border-radius:10px;padding:14px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:var(--font);">Pay $' + subtotal.toFixed(2) + '</button>' +
+    '<div style="text-align:center;margin-top:8px;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;gap:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Secured by Stripe</div>';
   box.appendChild(footerSection);
 
   overlay.appendChild(box);
@@ -2455,14 +2426,14 @@ function showDemoPayWarning() {
   const toast = document.createElement('div');
   toast.id = 'demo-pay-warning';
   toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:1px solid #e5e2d9;border-radius:14px;padding:24px 28px;box-shadow:0 8px 40px rgba(0,0,0,.2);z-index:9999;text-align:center;max-width:340px;font-family:var(--font);';
-  toast.innerHTML = `
-    <div style="font-size:28px;margin-bottom:12px;">🔒</div>
-    <div style="font-size:15px;font-weight:700;color:#1a1a1a;margin-bottom:8px;">Demo Mode</div>
-    <div style="font-size:13px;color:#706c63;margin-bottom:20px;line-height:1.5;">This is a live demo with sample data. Payments require a full account.</div>
-    <div style="display:flex;gap:10px;">
-      <a href="portal.html" style="flex:1;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-decoration:none;display:block;text-align:center;">Sign In to Pay</a>
-      <button onclick="this.closest('#demo-pay-warning').remove()" style="flex:1;background:#f7f5f2;border:1px solid #e5e2d9;border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">Close</button>
-    </div>`;
+  toast.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;background:#f9f8f5;border:1px solid #e5e2d9;border-radius:12px;margin:0 auto 14px;">' +
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#706c63" stroke-width="1.75"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>' +
+    '<div style="font-size:15px;font-weight:700;color:#1a1a1a;margin-bottom:8px;">Demo Mode</div>' +
+    '<div style="font-size:13px;color:#706c63;margin-bottom:20px;line-height:1.5;">This is a live demo with sample data. Payments require a full account.</div>' +
+    '<div style="display:flex;gap:10px;">' +
+    '<a href="portal.html" style="flex:1;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-decoration:none;display:block;text-align:center;">Sign In to Pay</a>' +
+    '<button onclick="document.getElementById(\'demo-pay-warning\').remove()" style="flex:1;background:#f7f5f2;border:1px solid #e5e2d9;border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">Close</button>' +
+    '</div>';
   document.body.appendChild(toast);
 }
 
