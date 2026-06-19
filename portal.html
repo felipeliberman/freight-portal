@@ -9220,6 +9220,7 @@ Examples:
 - "Make the length 96" → update_quote items:[{length:96}].
 - "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "NAD".
 Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, NAD limited access, LAD appointment. Other: INS insurance.
+ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone.
 
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
@@ -9333,7 +9334,7 @@ async function aiConverse(userText) {
                       }
                     }
                   },
-                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn ON: RSO/LFO/NAO (pickup), RSD/LFD/IND/NAD/LAD (delivery), INS' },
+                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, NAD limited access delivery, LAD appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, NAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
                   removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' }
                 }
