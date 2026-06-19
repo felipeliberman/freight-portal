@@ -8086,10 +8086,14 @@ async function submitBooking() {
     const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
     const docs      = result.documents || [];
 
-    // Dispatch — required to make BOL valid for tendering
+    // Dispatch — required to make BOL valid for tendering AND to send the electronic
+    // pickup request to the carrier. NOTE: v2 dispatch with makeEDI/forceDispatch can
+    // come back "User dispatched manually" (success, but NO electronic tender sent to the
+    // carrier). So after dispatch we ALWAYS fire the /API electronic-tender call to make
+    // sure the carrier actually receives the pickup request — not only when v2 fails.
     let dispResult = null, PRO = null, confirmation = null, dispatchedDocs = docs;
     try {
-      // Step 1: v2 dispatch (combines dispatch + EDI)
+      // Step 1: v2 dispatch
       const dispRes = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
@@ -8099,6 +8103,7 @@ async function submitBooking() {
       let dispData = {};
       try { dispData = JSON.parse(dispText); } catch(e) {}
       console.log('v2 dispatch status:', dispRes.status, dispText.slice(0,300));
+      const dispatchedManually = /dispatched manually/i.test(dispText);
 
       if (dispRes.ok) {
         dispResult = (dispData.data && dispData.data.results) || dispData.data || dispData;
@@ -8107,31 +8112,30 @@ async function submitBooking() {
         const dispDocs = (dispResult && dispResult.documents) || [];
         if (dispDocs.length) dispatchedDocs = [...(docs || []), ...dispDocs];
         if (dispData.success === false) dispResult = null;
-      } else {
-        // v2 failed — try v1 two-step flow
-        console.warn('v2 dispatch failed, trying v1...');
+      }
+
+      // Step 2: ALWAYS fire the electronic tender (/API) — this is what actually sends the
+      // pickup request to the carrier. Needed whether v2 failed OR returned "manually".
+      if (!dispRes.ok || dispatchedManually || !confirmation || confirmation === 'N/A') {
         try {
-          const d1 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId, {
+          const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: JSON.stringify({})
           });
-          console.log('v1 dispatch status:', d1.status);
-          if (d1.ok) {
-            // Now fire v1 EDI
-            const d2 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', {
-              method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-              body: JSON.stringify({})
-            });
-            const d2text = await d2.text();
-            console.log('v1 EDI status:', d2.status, d2text.slice(0,200));
-            let d2data = {}; try { d2data = JSON.parse(d2text); } catch(e) {}
-            if (d2.ok) {
-              dispResult = (d2data.data && d2data.data.results) || d2data.data || d2data;
-              confirmation = (dispResult && dispResult.confirmation) || null;
-              PRO = (dispResult && dispResult.PRO) || null;
+          const dApiText = await dApi.text();
+          console.log('electronic tender (/API) status:', dApi.status, dApiText.slice(0,200));
+          let dApiData = {}; try { dApiData = JSON.parse(dApiText); } catch(e) {}
+          if (dApi.ok) {
+            const apiRes = (dApiData.data && dApiData.data.results) || dApiData.data || dApiData;
+            if (apiRes) {
+              dispResult = dispResult || apiRes;
+              confirmation = (apiRes && apiRes.confirmation) || confirmation;
+              PRO = (apiRes && apiRes.PRO) || PRO;
+              const apiDocs = (apiRes && apiRes.documents) || [];
+              if (apiDocs.length) dispatchedDocs = [...(dispatchedDocs || []), ...apiDocs];
             }
           }
-        } catch(v1Err) { console.warn('v1 dispatch also failed:', v1Err); }
+        } catch(apiErr) { console.warn('electronic tender (/API) failed:', apiErr); }
       }
     } catch(dispErr) {
       console.warn('Dispatch error:', dispErr);
@@ -8974,64 +8978,38 @@ async function _execBookShipment(input) {
         message:'This shipment is already booked as BOL ' + lb.BOLNumber + '. It has not been dispatched yet — do NOT book again. To send it to the carrier, dispatch this existing BOL.' };
     }
 
-    // ── PANEL-DRIVEN BOOKING (preferred path) ──────────────────────────────────
-    // If the visible booking panel is open, fill any final fields and click the
-    // panel's own "Book & Dispatch" button — the SAME proven path the manual flow
-    // uses. One booking code path, no duplicate payload. We auto-handle the panel's
-    // RDI / limited-access confirmation modals since the AI already did the
-    // residential/liftgate safeguard in chat.
-    if (window._bookingPanelOpen && document.getElementById('bk-submit-btn')) {
-      _applyBookingFields(input); // fill any last details the AI passed on this call
-      // Validate required fields are present in the panel before clicking
+    // ── If the visible booking panel is open, HARVEST its filled field values into the
+    // input, then book via the PROVEN chat path below (_execBookShipment → /applet/v1/book).
+    // We do NOT click the panel's own "Book & Dispatch" button — that path dispatches
+    // "manually" and never sends the electronic pickup request to the carrier. The chat
+    // path (this function + _execDispatchShipment) is the one that tendered correctly.
+    if (window._bookingPanelOpen && document.getElementById('bk-pu-name')) {
+      _applyBookingFields(input); // ensure details from this call are in the panel first
       const _g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-      const _missing = [];
-      if (!_g('bk-pu-name')) _missing.push('pickup name');
-      if (!_g('bk-pu-street')) _missing.push('pickup street');
-      if (!_g('bk-pu-phone')) _missing.push('pickup phone');
-      if (!_g('bk-pu-date')) _missing.push('pickup date');
-      if (!_g('bk-dl-name')) _missing.push('delivery name');
-      if (!_g('bk-dl-street')) _missing.push('delivery street');
-      if (_missing.length) return { ok:false, error:'Still need these before booking: ' + _missing.join(', ') + '. Ask the customer for them.' };
-
-      // Auto-proceed past any RDI / limited-access confirmation modal the panel raises
-      // (the AI already handled the residential/liftgate conversation).
-      const _autoProceedModals = () => {
-        const ids = ['bk-rdi-proceed','bk-la-proceed'];
-        let tries = 0;
-        const iv = setInterval(() => {
-          tries++;
-          ids.forEach(id => { const b = document.getElementById(id); if (b) b.click(); });
-          if (tries > 40) clearInterval(iv); // ~10s safety
-        }, 250);
-        return iv;
-      };
-      const modalWatcher = _autoProceedModals();
-
-      // Click the real Book & Dispatch button — runs the proven submit + dispatch path
-      const submitBtn = document.getElementById('bk-submit-btn');
-      submitBtn.click();
-
-      // Wait for the panel flow to complete: it sets window._lastBooked on success
-      const start = Date.now();
-      await new Promise(res => {
-        const poll = setInterval(() => {
-          if (window._lastBooked && window._lastBooked.BOLId) { clearInterval(poll); clearInterval(modalWatcher); res(); }
-          else if (Date.now() - start > 45000) { clearInterval(poll); clearInterval(modalWatcher); res(); }
-        }, 300);
+      input.shipper = Object.assign({}, input.shipper, {
+        name:    _g('bk-pu-name')    || (input.shipper&&input.shipper.name),
+        address: _g('bk-pu-street')  || (input.shipper&&input.shipper.address),
+        suite:   _g('bk-pu-suite')   || (input.shipper&&input.shipper.suite),
+        contact: _g('bk-pu-contact') || (input.shipper&&input.shipper.contact),
+        phone:   _g('bk-pu-phone')   || (input.shipper&&input.shipper.phone)
       });
-
-      if (window._lastBooked && window._lastBooked.BOLId) {
-        const lb = window._lastBooked;
-        window._bookingPanelOpen = false;
-        return { ok:true, viaPanel:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
-          dispatched: !!lb.dispatched,
-          message: lb.dispatched
-            ? 'Booked and dispatched via the booking panel. BOL ' + lb.BOLNumber + '.'
-            : 'Booked via the booking panel as BOL ' + lb.BOLNumber + '.' };
-      }
-      return { ok:false, error:'The booking panel did not confirm in time. The shipment may still be processing — check My Shipments or call (800) 687-3713.' };
+      input.consignee = Object.assign({}, input.consignee, {
+        name:    _g('bk-dl-name')    || (input.consignee&&input.consignee.name),
+        address: _g('bk-dl-street')  || (input.consignee&&input.consignee.address),
+        suite:   _g('bk-dl-suite')   || (input.consignee&&input.consignee.suite),
+        contact: _g('bk-dl-contact') || (input.consignee&&input.consignee.contact),
+        phone:   _g('bk-dl-phone')   || (input.consignee&&input.consignee.phone)
+      });
+      input.referenceNumber = input.referenceNumber || _g('bk-pu-ref');
+      input.pickupDate = input.pickupDate || _g('bk-pu-date');
+      input.pickupOpen = input.pickupOpen || _g('bk-pu-open');
+      input.pickupClose = input.pickupClose || _g('bk-pu-close');
+      const _si = document.getElementById('bk-special-instructions');
+      input.specialInstructions = input.specialInstructions || (_si ? _si.value.trim() : '');
+      window._bookingPanelOpen = false; // values harvested — proceed via proven chat path below
+      // fall through to the proven booking path
     }
-    // ── end panel-driven path; fall through to the legacy API path if no panel ──
+    // ── proceed with the proven chat booking path ──────────────────────────────
 
     // If a booking is already in progress, reuse the FROZEN rate+shipment snapshot.
     // This prevents a mid-booking rate re-pull from churning the record and causing
@@ -9145,19 +9123,26 @@ async function _execDispatchShipment(input) {
     });
     const drText = await dr.text();
     let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
+    const dispatchedManually = /dispatched manually/i.test(drText);
     if (dr.ok && drData.success !== false) {
       dispResult = (drData.data&&drData.data.results)||drData.data||drData;
       confirmation = (dispResult&&dispResult.confirmation)||null;
       PRO = (dispResult&&dispResult.PRO)||null;
       docs = (dispResult&&dispResult.documents)||[];
-    } else {
-      // Fallback: V1 then V1/API
-      const d1 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId, { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-      if (d1.ok) {
-        const d2 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-        const d2Data = await d2.json().catch(()=>({}));
-        if (d2.ok) { dispResult = (d2Data.data&&d2Data.data.results)||d2Data.data||d2Data; confirmation=(dispResult&&dispResult.confirmation)||null; PRO=(dispResult&&dispResult.PRO)||null; docs=(dispResult&&dispResult.documents)||[]; }
-      }
+    }
+    // ALWAYS fire the electronic tender (/API) if v2 failed OR came back "manually" / with no
+    // confirmation — this is what actually sends the pickup request to the carrier.
+    if (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A') {
+      try {
+        const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
+        const dApiText = await dApi.text();
+        console.log('electronic tender (/API) status:', dApi.status, dApiText.slice(0,200));
+        let dApiData = {}; try { dApiData = JSON.parse(dApiText); } catch(e) {}
+        if (dApi.ok) {
+          const apiRes = (dApiData.data&&dApiData.data.results)||dApiData.data||dApiData;
+          if (apiRes) { dispResult = dispResult || apiRes; confirmation = (apiRes&&apiRes.confirmation)||confirmation; PRO = (apiRes&&apiRes.PRO)||PRO; const ad=(apiRes&&apiRes.documents)||[]; if (ad.length) docs=[...(docs||[]),...ad]; }
+        }
+      } catch(apiErr) { console.warn('electronic tender (/API) failed:', apiErr); }
     }
 
     // Fetch docs if dispatch didn't return them
@@ -9260,8 +9245,8 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
-6. When they confirm ("yes," "lock it in," "go"), call book_shipment. IMPORTANT: book_shipment clicks the panel's "Book & Dispatch" button, which BOOKS AND DISPATCHES in ONE action. So a single book_shipment call both creates the BOL and dispatches it to the carrier — you do NOT need a separate dispatch step. When it returns ok, it has already booked AND dispatched. Report it all together: "Done — booked and dispatched with [carrier]. BOL [number], pickup confirmation [confirmation], PRO [PRO]. Your BOL and shipping label are ready to download." The shipping docs open automatically.
-7. Because booking and dispatch happen together via the panel, do NOT ask "want me to dispatch?" as a separate step, and do NOT call dispatch_shipment separately — book_shipment already did it. Only use dispatch_shipment as a fallback if book_shipment reports it booked but did NOT dispatch (dispatched:false) — in that case tell the customer it's booked and our team will dispatch, or call dispatch_shipment to retry. NEVER call book_shipment more than once for the same shipment.
+6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
+7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). dispatch_shipment sends the pickup request to the carrier and returns the confirmation, PRO, and downloadable docs. Report: "Done — dispatched to [carrier], pickup confirmation [confirmation], PRO [PRO]. Your BOL and label are ready to download." If dispatch errors, say it's booked and our team will complete dispatch, give the phone line. NEVER call book_shipment more than once for the same shipment.
 Never call book_shipment until the panel is filled, the customer has confirmed the carrier, and you've read the details back.
 
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
