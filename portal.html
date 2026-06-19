@@ -8724,12 +8724,12 @@ function _execUpdateQuote(input) {
     // Details — rates only fire on a later, dedicated call.
     const _openInput = Object.assign({}, input); _openInput.getRates = false;
     setTimeout(() => _applyQuoteFields(_openInput), 350);
-    return { ok: true, summary: 'Quote form opened on the Quote Details tab' + (changed.length ? ' with ' + describeQuoteInput(input) : '') + '. Fields are filling in. (Rates not pulled yet — fill details and confirm accessorials first.)' };
+    return { ok: true, summary: 'Quote form opened on the Quote Details tab' + (changed.length ? ' with ' + describeQuoteInput(input) : '') + '. Fields are filling in. (Rates not pulled yet — fill details and confirm accessorials first.)', formState: _quoteFormState() };
   }
 
   // Form already open — apply surgical updates
   _applyQuoteFields(input);
-  return { ok: true, summary: 'Updated: ' + (describeQuoteInput(input) || 'quote') };
+  return { ok: true, summary: 'Updated: ' + (describeQuoteInput(input) || 'quote'), formState: _quoteFormState() };
 }
 
 function describeQuoteInput(input) {
@@ -8844,6 +8844,48 @@ function _quoteSignature() {
   } catch(e) { return null; }
 }
 
+// Snapshot of what's CURRENTLY on the quote form, so the AI knows what's already filled
+// and never re-asks for or re-narrates fields that are already there.
+function _quoteFormState() {
+  try {
+    const panel = document.getElementById('right-panel');
+    if (!panel || !panel.querySelector('#qt-origin')) return { quoteFormOpen: false };
+    const g = sel => { const el = panel.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
+    const row = panel.querySelector('.qt-line');
+    const rg = sel => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
+    const accs = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code);
+    return {
+      quoteFormOpen: true,
+      origin: g('#qt-origin'),
+      destination: g('#qt-dest'),
+      pickupDate: g('#qt-date'),
+      weight: rg('.li-weight'),
+      length: rg('.li-len'), width: rg('.li-wid'), height: rg('.li-hgt'),
+      pieces: rg('.li-qty'),
+      commodity: rg('.li-commodity'),
+      accessorials: accs,
+      ratesPulled: !!(window._lastRates && window._lastRates.count)
+    };
+  } catch(e) { return { quoteFormOpen: false }; }
+}
+
+// Snapshot of the booking panel state — whether it's actually open and what's filled.
+function _bookingPanelState() {
+  try {
+    const open = !!document.getElementById('bk-pu-name');
+    if (!open) return { bookingPanelOpen: false };
+    const g = id => { const el = document.getElementById(id); return el ? String(el.value||'').trim() : ''; };
+    return {
+      bookingPanelOpen: true,
+      shipper: { name:g('bk-pu-name'), street:g('bk-pu-street'), contact:g('bk-pu-contact'), phone:g('bk-pu-phone') },
+      consignee: { name:g('bk-dl-name'), street:g('bk-dl-street'), contact:g('bk-dl-contact'), phone:g('bk-dl-phone') },
+      pickupDate: g('bk-pu-date'), pickupOpen: g('bk-pu-open'), pickupClose: g('bk-pu-close'),
+      referenceNumber: g('bk-pu-ref'),
+      specialInstructions: (document.getElementById('bk-special-instructions')||{}).value || ''
+    };
+  } catch(e) { return { bookingPanelOpen: false }; }
+}
+
 // ── Publish the current quoted rates in a clean shape the AI can read ──────────
 function _publishRatesForAI(rates, shipment) {
   try {
@@ -8893,7 +8935,9 @@ function _execUpdateBooking(input) {
       window._bookingLock = { rate: rate, shipment: s };
     }
 
-    if (!window._bookingPanelOpen) {
+    // Reality-based open check: look at the actual DOM, not just a flag that can desync.
+    const panelActuallyOpen = !!document.getElementById('bk-pu-name');
+    if (!panelActuallyOpen) {
       const name = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
       const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
       const _its = (s && s.items && s.items.length) ? s.items : [{}];
@@ -8908,12 +8952,15 @@ function _execUpdateBooking(input) {
       const rateWithMeta = Object.assign({}, rate, { _name: name, _price: Number(price) });
       if (typeof showBookingPanel === 'function') showBookingPanel(rateWithMeta, shipData);
       window._bookingPanelOpen = true;
+      // Fill provided fields after the panel renders, then report real state
       setTimeout(() => _applyBookingFields(input), 400);
-      return { ok:true, summary:'Booking panel opened for ' + name + ' — Pickup and Delivery sections are visible and filling in.' };
+      return { ok:true, summary:'Booking panel is now open for ' + name + '. The Pickup and Delivery sections are visible.', bookingState: _bookingPanelState() };
     }
 
+    // Panel is genuinely open — fill provided fields and report the real current state
+    window._bookingPanelOpen = true;
     _applyBookingFields(input);
-    return { ok:true, summary:'Booking panel updated: ' + _describeBookingInput(input) };
+    return { ok:true, summary:'Booking panel updated: ' + _describeBookingInput(input), bookingState: _bookingPanelState() };
   } catch(e) {
     console.error('update_booking error:', e);
     return { ok:false, error:'Could not update the booking panel: ' + (e.message||'unknown') };
@@ -9481,6 +9528,9 @@ async function aiFreightAnswer(t){
 
 RESPONSE RULES - MUST FOLLOW:
 - Maximum 3 sentences. Never more unless customer asks for detail.
+- NEVER NARRATE TOOL ACTIONS. Do not say "let me get that filled in," "let me open the panel," "let me update the form," "let me pull that up," or any play-by-play of what you're doing. The form-filling and panel-opening happen silently in the background. Your visible message is ONLY the real question or confirmation. The customer should see one clean message — the substantive content — never a description of your internal steps. WRONG: "Let me get those details filled in — what's the origin?" RIGHT: "What's the origin and destination?" WRONG: "Let me open the booking panel." RIGHT: just open it (call the tool) and ask the next real question.
+- TRUST THE FORM STATE, NOT YOUR ASSUMPTIONS. The update_quote and update_booking tools return a formState / bookingState snapshot showing exactly what's currently filled on the form and whether the panel is open. ALWAYS believe that snapshot over your own memory. If formState shows origin and destination are filled, they ARE filled — do NOT say "I don't see the ZIPs" or ask for them again. If bookingState shows bookingPanelOpen:true, the panel IS open — don't claim you're opening it again. Never claim something is "done" or "open" or "filled" unless the snapshot confirms it; never claim a field is missing if the snapshot shows it present.
+- DON'T RE-ASK FOR FILLED FIELDS. Before asking the customer for anything, check the latest formState/bookingState. Only ask for what's genuinely still blank. If they push back ("I already gave you that," "it's filled in on the form"), check the snapshot — they're almost certainly right; apologize briefly and move on with what's there, do not ask again.
 - Plain prose only. Zero markdown. Zero bullets. Zero headers. Zero bold. ABSOLUTELY ZERO EMOJIS — never use any emoji or pictographic character anywhere, including in friendly sign-offs or closings. No 🚛, no 👍, no 😊, none. A real broker types plain text. If you feel the urge to add an emoji at the end of a warm message, don't — just use the words.
 - Never start with "I". Never say "honestly", "look", "fair warning", "certainly", "great question", "of course", "please note", "it is important to understand", "I apologize".
 - Never end with "Is there anything else I can help you with."
