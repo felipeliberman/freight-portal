@@ -8774,6 +8774,26 @@ function _applyQuoteFields(input) {
   }
 }
 
+// ── Publish the current quoted rates in a clean shape the AI can read ──────────
+function _publishRatesForAI(rates, shipment) {
+  try {
+    if (!rates || !rates.length) { window._lastRates = null; return; }
+    // rates already arrive sorted cheapest-first from fetchRates
+    window._lastRates = {
+      lane: shipment ? ((shipment.originCity||shipment.originZip||'') + ' -> ' + (shipment.destinationCity||shipment.destinationZip||'')) : '',
+      count: rates.length,
+      options: rates.map((r, i) => ({
+        rank: i + 1,
+        carrier: (r.name || r.carrier || r.SCAC || 'Carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D'),
+        price: Number((r.billTo && r.billTo.total) || r.total || r.cost || 0),
+        transitDays: r.transitDays || r.transitTime || null,
+        service: r.serviceLevel || r.service || '',
+        note: r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
+      }))
+    };
+  } catch (e) { console.error('publishRatesForAI error', e); window._lastRates = null; }
+}
+
 const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
 
 You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
@@ -8819,6 +8839,9 @@ Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access.
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
+
+READING RATES BACK — you have a read_rates tool:
+Once rates are pulled, you can SEE them. When the customer asks anything about the rates — "what's the cheapest," "who's fastest," "what's next," "how long is the Estes one," "compare the top three," "what are my options" — call read_rates to get the live list (sorted cheapest-first with carrier, price, transit days, service, and any note). Then answer like a sharp broker: CONCISE by default — give what they asked plus the natural next step. Example: "Cheapest is Estes at $441, 4 days. Want me to book it?" For a follow-up like "what's next," give the next option: "TForce at $467, 3 days — a day faster for $26 more." You have the full list, so you can answer any follow-up about price, speed, carrier, or service. Never invent a price or transit time — only state what read_rates returns. For info that isn't in the rate data — like a carrier's terminal address or phone — use web_search. If read_rates comes back empty, tell them you need to pull rates first.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -8879,6 +8902,11 @@ async function aiConverse(userText) {
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' }
                 }
               }
+            },
+            {
+              name: 'read_rates',
+              description: 'Read the live carrier rates currently shown on the quote form. Call this whenever the customer asks anything about the rates — cheapest, fastest, next option, transit time, a specific carrier, comparing options, etc. Returns the current rates sorted cheapest-first. Returns empty if no rates have been pulled yet.',
+              input_schema: { type: 'object', properties: {} }
             }
           ],
           messages: convo
@@ -8888,17 +8916,23 @@ async function aiConverse(userText) {
       const content = data.content || [];
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
-      // Check for a client-side tool call (update_quote)
-      const toolUse = content.find(b => b.type === 'tool_use' && b.name === 'update_quote');
+      // Check for a client-side tool call (update_quote or read_rates)
+      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates'));
 
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
         removeTyping();
         if (textOut) appendMessage('bot', textOut);
-        // Execute the quote update
+        // Execute the requested tool
         let result;
-        try { result = _execUpdateQuote(toolUse.input); }
-        catch (err) { console.error('update_quote exec error:', err); result = { ok: false, summary: 'form update failed' }; }
+        try {
+          if (toolUse.name === 'update_quote') {
+            result = _execUpdateQuote(toolUse.input);
+          } else if (toolUse.name === 'read_rates') {
+            result = window._lastRates ? window._lastRates : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' };
+          }
+        }
+        catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
         // Feed the result back so Claude can continue naturally
         convo.push({ role: 'assistant', content: content });
         convo.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }] });
@@ -13199,6 +13233,7 @@ function showQuoteForm(prefill, silent) {
       };
       const rates = await fetchRates(shipment);
       currentRates = rates;
+      _publishRatesForAI(rates, shipment);
 
       clearInterval(_loadTimer);
       container.querySelector('#qt-rates-loading').style.display='none';
@@ -13228,6 +13263,7 @@ function showQuoteForm(prefill, silent) {
   // Expose function so chat can push rates directly into this panel
   window._showRatesInPanel = function(rates) {
     currentRates = rates;
+    _publishRatesForAI(rates, null);
     switchTab('rates');
     container.querySelector('#qt-rates-loading').style.display = 'none';
     container.querySelector('#qt-rates-empty').style.display = 'none';
