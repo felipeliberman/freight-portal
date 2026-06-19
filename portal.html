@@ -8695,6 +8695,8 @@ function _execUpdateQuote(input) {
 
   // Open the quote form if it's not already open
   if (!window._quoteFormOpen) {
+    // Fresh quote = fresh shipment — clear any prior booking so it's not treated as a duplicate
+    window._lastBooked = null;
     const pf = {};
     if (input.originZip) pf.originZip = String(input.originZip);
     if (input.destZip) pf.destZip = String(input.destZip);
@@ -8844,6 +8846,16 @@ window._residentialStatus = null; // { residential:bool, liftgateRecommended:boo
 async function _execBookShipment(input) {
   input = input || {};
   try {
+    // GUARD AGAINST DUPLICATE BOOKING. If we already booked this shipment and it hasn't
+    // been dispatched yet, do NOT create a second shipment in Primus. Return the existing
+    // BOL. This prevents the AI from accidentally re-booking (e.g. when the customer says
+    // "yes" to dispatch, the AI must dispatch the existing BOL, not book a duplicate).
+    if (window._lastBooked && window._lastBooked.BOLId && !window._lastBooked.dispatched) {
+      const lb = window._lastBooked;
+      return { ok:true, alreadyBooked:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
+        message:'This shipment is already booked as BOL ' + lb.BOLNumber + '. It has not been dispatched yet — do NOT book again. To send it to the carrier, dispatch this existing BOL.' };
+    }
+
     // If a booking is already in progress, reuse the FROZEN rate+shipment snapshot.
     // This prevents a mid-booking rate re-pull from churning the record and causing
     // a quote/consignee mismatch when the customer finally confirms "lock it in".
@@ -9067,11 +9079,11 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    - Consignee (delivery): company/name, street address, contact person, phone.
    - Pickup date and pickup window — ALWAYS ask for these. If the customer doesn't have a preference, default the pickup window to 12:00 to 16:00 (noon to 4pm) and the date to the next business day. Pass pickupDate, pickupOpen, and pickupClose to book_shipment.
    Ask for these in a natural, grouped way — not as a rigid checklist. The city/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end.
-3. Offer the two optional-but-handy extras: a PO or reference number ("got a PO or reference number you want on this? helps the carrier at pickup") and any special instructions for the driver ("anything the driver should know — call ahead, dock in the rear, etc.?"). Never block booking if they don't have these.
+3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
 5. READ IT BACK before booking: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" When they confirm, call book_shipment with rank or carrier plus the shipper/consignee details and any reference/instructions.
 6. After book_shipment returns ok, give them the BOL number, then offer to dispatch: the shipment is now set up in our system and ready to go — ask if they want you to dispatch it to the carrier and pull their shipping docs. Word it naturally, like: "You're all set in our system with BOL [number] — it's ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
-7. DISPATCHING — you have a dispatch_shipment tool. When the customer says yes to dispatching, call dispatch_shipment (it uses the last booked shipment automatically). On success it returns the carrier pickup confirmation number, the PRO number if available, and downloadable shipping documents. Give the customer the confirmation number and let them know the docs are ready: "Done — dispatched to [carrier], your pickup confirmation is [confirmation]. Your BOL and label are ready to download." If dispatch returns an error, tell them the shipment is booked but our team will dispatch it, and give the phone line.
+7. DISPATCHING — you have a dispatch_shipment tool. When the customer says yes to dispatching, call dispatch_shipment ONLY (it uses the last booked shipment automatically) — do NOT call book_shipment again. The shipment is already booked; calling book_shipment a second time would create a duplicate shipment in the system. Dispatch acts on the BOL you already created. On success it returns the carrier pickup confirmation number, the PRO number if available, and downloadable shipping documents. Give the customer the confirmation number and let them know the docs are ready: "Done — dispatched to [carrier], your pickup confirmation is [confirmation]. Your BOL and label are ready to download." If dispatch returns an error, tell them the shipment is booked but our team will dispatch it, and give the phone line. NEVER call book_shipment more than once for the same shipment — book once, then dispatch that same BOL.
 Never call book_shipment until the customer has confirmed the carrier and you've read the details back. Never call dispatch_shipment until the shipment is booked and the customer has confirmed they want to dispatch.
 
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
@@ -10973,6 +10985,8 @@ async function handleInput(text) {
   // or bare, like "yo I need a quot" or "quote") never leak into the shipment fuzzy search.
   const _wantsQuote =
        /\b(quote|quotes|quot|qoute|quoute)\b/i.test(lower)            // quote / common misspellings
+    || /\b\w?(quote|qoute|quoute)\b/i.test(lower)                     // glued typos like "aquote", "thequote"
+    || /\bneed\s*a?\s*q[uo]{1,3}te?\b/i.test(lower)                   // "need aquote", "need a quot", spacing slips
     || /\b(get|need|want|gimme|give me|lookin['g]? for|like)\b.{0,15}\b(rate|rates|price|pricing|estimate)\b/i.test(lower)
     || /\b(how much|cost|price)\b.{0,20}\b(ship|send|move|freight|deliver)/i.test(lower)
     || /\b(ship|send|move)\b.{0,20}\b(from|to)\b.{0,20}\b(from|to)\b/i.test(lower)
@@ -14863,6 +14877,7 @@ function closeRightPanel() {
   window._inQuoteConvo = false;
   window._bookingLock = null;
   window._lastPulledSig = null;
+  window._lastBooked = null;
   const chatBtn = document.getElementById('chat-get-rates-btn');
   if (chatBtn) chatBtn.remove();
   const panel = document.getElementById('right-panel');
