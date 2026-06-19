@@ -8776,10 +8776,39 @@ function _applyQuoteFields(input) {
   if (input.addAccessorials) input.addAccessorials.forEach(c => toggleAcc(c, true));
   if (input.removeAccessorials) input.removeAccessorials.forEach(c => toggleAcc(c, false));
 
-  // Pull rates if requested
+  // Pull rates if requested — but GUARD against redundant pulls that churn the form.
+  // Only actually pull if the shipment signature changed since the last pull.
   if (input.getRates) {
-    setTimeout(() => { if (window._doGetRates) window._doGetRates(); else { const b = document.querySelector('#qt-get-rates'); if (b) b.click(); } }, 400);
+    setTimeout(() => {
+      try {
+        const sig = _quoteSignature();
+        if (sig && sig === window._lastPulledSig) {
+          // Nothing changed since last pull — don't re-fire (prevents flicker / "why did you run rates again")
+          return;
+        }
+        window._lastPulledSig = sig;
+      } catch(e) {}
+      if (window._doGetRates) window._doGetRates(); else { const b = document.querySelector('#qt-get-rates'); if (b) b.click(); }
+    }, 450);
   }
+}
+
+// Build a signature of the current quote form state so we can detect real changes
+function _quoteSignature() {
+  try {
+    const panel = document.getElementById('right-panel') || document;
+    const o = (panel.querySelector('#qt-origin')||{}).value || '';
+    const d = (panel.querySelector('#qt-dest')||{}).value || '';
+    const rows = [...panel.querySelectorAll('.qt-line')].map(r => [
+      (r.querySelector('.li-qty')||{}).value||'',
+      (r.querySelector('.li-weight')||{}).value||'',
+      (r.querySelector('.li-len')||{}).value||'',
+      (r.querySelector('.li-wid')||{}).value||'',
+      (r.querySelector('.li-hgt')||{}).value||''
+    ].join('x')).join('|');
+    const acc = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code).sort().join(',');
+    return [o, d, rows, acc].join('::');
+  } catch(e) { return null; }
 }
 
 // ── Publish the current quoted rates in a clean shape the AI can read ──────────
@@ -9009,6 +9038,9 @@ Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access.
 
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
+
+FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull ONLY when the shipment genuinely changes (new weight, dims, accessorial, origin, or destination). Repeatedly pulling rates churns the form and confuses the customer.
+
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
 
 READING RATES BACK — you have a read_rates tool:
@@ -14819,6 +14851,7 @@ function closeRightPanel() {
   window._quoteFormOpen = false;
   window._inQuoteConvo = false;
   window._bookingLock = null;
+  window._lastPulledSig = null;
   const chatBtn = document.getElementById('chat-get-rates-btn');
   if (chatBtn) chatBtn.remove();
   const panel = document.getElementById('right-panel');
