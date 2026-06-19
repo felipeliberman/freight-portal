@@ -8877,10 +8877,71 @@ async function _execBookShipment(input) {
     const carrierName = (rate.name||rate.carrier||rate.SCAC||'').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D');
     const price = Number((rate.billTo&&rate.billTo.total)||rate.total||0);
 
-    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked.' };
+    // Stash for the dispatch step
+    window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false };
+
+    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked and set up in our system, ready to dispatch.' };
   } catch (e) {
     console.error('book_shipment error:', e);
     return { ok:false, error: 'Booking error: ' + (e.message||'unknown') + '. Please try again or call (800) 687-3713.' };
+  }
+}
+
+// ── TOOL: dispatch_shipment — dispatch a booked shipment to the carrier ────────
+async function _execDispatchShipment(input) {
+  input = input || {};
+  try {
+    const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
+    if (!BOLId) return { ok:false, error:'No booked shipment to dispatch. Book the shipment first.' };
+    const token = await getToken();
+
+    let dispResult = null, confirmation = null, PRO = null, docs = [];
+
+    // Primary: V2 dispatch
+    const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body:JSON.stringify({ makeEDI:true, forceDispatch:true })
+    });
+    const drText = await dr.text();
+    let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
+    if (dr.ok && drData.success !== false) {
+      dispResult = (drData.data&&drData.data.results)||drData.data||drData;
+      confirmation = (dispResult&&dispResult.confirmation)||null;
+      PRO = (dispResult&&dispResult.PRO)||null;
+      docs = (dispResult&&dispResult.documents)||[];
+    } else {
+      // Fallback: V1 then V1/API
+      const d1 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId, { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
+      if (d1.ok) {
+        const d2 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
+        const d2Data = await d2.json().catch(()=>({}));
+        if (d2.ok) { dispResult = (d2Data.data&&d2Data.data.results)||d2Data.data||d2Data; confirmation=(dispResult&&dispResult.confirmation)||null; PRO=(dispResult&&dispResult.PRO)||null; docs=(dispResult&&dispResult.documents)||[]; }
+      }
+    }
+
+    // Fetch docs if dispatch didn't return them
+    if (!docs.length) {
+      try {
+        const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + BOLId, { headers:{'Authorization':'Bearer '+token} });
+        if (docRes.ok) { const docData = await docRes.json(); docs = (docData.data&&docData.data.results)||[]; }
+      } catch(e) {}
+    }
+
+    const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', url: d.url }));
+    if (window._lastBooked) window._lastBooked.dispatched = true;
+
+    if (!dispResult) {
+      return { ok:false, error:'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
+    }
+    // Surface the downloadable shipping docs in the standard docs modal
+    try {
+      const _bolNum = (window._lastBooked && window._lastBooked.BOLNumber) || BOLId;
+      if (typeof openDocsModal === 'function') setTimeout(() => openDocsModal(BOLId, _bolNum, true), 600);
+    } catch(e) {}
+    return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
+  } catch (e) {
+    console.error('dispatch_shipment error:', e);
+    return { ok:false, error:'Dispatch error: ' + (e.message||'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
   }
 }
 
@@ -8941,13 +9002,14 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 2. Collect what booking needs, conversationally and naturally:
    - Shipper (pickup): company/name, street address, contact person, phone.
    - Consignee (delivery): company/name, street address, contact person, phone.
-   - Pickup date and a time window if they have one (otherwise a standard daytime window is fine).
+   - Pickup date and pickup window — ALWAYS ask for these. If the customer doesn't have a preference, default the pickup window to 12:00 to 16:00 (noon to 4pm) and the date to the next business day. Pass pickupDate, pickupOpen, and pickupClose to book_shipment.
    Ask for these in a natural, grouped way — not as a rigid checklist. The city/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end.
 3. Offer the two optional-but-handy extras: a PO or reference number ("got a PO or reference number you want on this? helps the carrier at pickup") and any special instructions for the driver ("anything the driver should know — call ahead, dock in the rear, etc.?"). Never block booking if they don't have these.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
 5. READ IT BACK before booking: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" When they confirm, call book_shipment with rank or carrier plus the shipper/consignee details and any reference/instructions.
-6. After book_shipment returns ok, give them the BOL number and confirm it's booked. If it returns an error, tell them plainly and offer the phone line (800) 687-3713.
-Never call book_shipment until the customer has confirmed the carrier and you've read the details back.
+6. After book_shipment returns ok, give them the BOL number, then offer to dispatch: the shipment is now set up in our system and ready to go — ask if they want you to dispatch it to the carrier and pull their shipping docs. Word it naturally, like: "You're all set in our system with BOL [number] — it's ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
+7. DISPATCHING — you have a dispatch_shipment tool. When the customer says yes to dispatching, call dispatch_shipment (it uses the last booked shipment automatically). On success it returns the carrier pickup confirmation number, the PRO number if available, and downloadable shipping documents. Give the customer the confirmation number and let them know the docs are ready: "Done — dispatched to [carrier], your pickup confirmation is [confirmation]. Your BOL and label are ready to download." If dispatch returns an error, tell them the shipment is booked but our team will dispatch it, and give the phone line.
+Never call book_shipment until the customer has confirmed the carrier and you've read the details back. Never call dispatch_shipment until the shipment is booked and the customer has confirmed they want to dispatch.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -9065,6 +9127,11 @@ async function aiConverse(userText) {
                   specialInstructions: { type: 'string', description: 'Optional special instructions for the driver/BOL' }
                 }
               }
+            },
+            {
+              name: 'dispatch_shipment',
+              description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
+              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' } } }
             }
           ],
           messages: convo
@@ -9074,8 +9141,8 @@ async function aiConverse(userText) {
       const content = data.content || [];
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
-      // Check for a client-side tool call (update_quote, read_rates, or book_shipment)
-      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment'));
+      // Check for a client-side tool call
+      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment'));
 
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
@@ -9092,6 +9159,8 @@ async function aiConverse(userText) {
             result = _rr;
           } else if (toolUse.name === 'book_shipment') {
             result = await _execBookShipment(toolUse.input);
+          } else if (toolUse.name === 'dispatch_shipment') {
+            result = await _execDispatchShipment(toolUse.input);
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
