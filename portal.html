@@ -8145,6 +8145,11 @@ async function submitBooking() {
     const carrierPrice = bookingRate ? Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0) : 0;
     const pickupDateStr = bookingData.pickupDate || getTomorrow();
 
+    // Record the booking so an AI-driven panel booking can detect completion and report
+    // the BOL/dispatch result. dispatched reflects whether dispatch actually confirmed.
+    window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: carrierPrice,
+      PRO: PRO || null, confirmation: confirmation || null, dispatched: !!(dispResult && dispResult.success !== false) };
+
     // Only show modal if dispatch succeeded AND confirmation received
     const hasRealConfirmation = confirmation && confirmation !== 'N/A' && confirmation !== 'n/a' && confirmation.trim() !== '';
     if (dispResult && hasRealConfirmation) {
@@ -8697,6 +8702,7 @@ function _execUpdateQuote(input) {
   if (!window._quoteFormOpen) {
     // Fresh quote = fresh shipment — clear any prior booking so it's not treated as a duplicate
     window._lastBooked = null;
+    window._bookingPanelOpen = false;
     const pf = {};
     if (input.originZip) pf.originZip = String(input.originZip);
     if (input.destZip) pf.destZip = String(input.destZip);
@@ -8860,6 +8866,100 @@ function _publishRatesForAI(rates, shipment) {
 // The quote form's RDI check sets these so the chat can ask "just like the pop-up."
 window._residentialStatus = null; // { residential:bool, liftgateRecommended:bool, weight:n }
 
+// ── TOOL: update_booking — open the REAL booking panel and fill fields visibly ──
+// Mirrors update_quote: opens showBookingPanel for the frozen rate so the customer
+// watches the Pickup/Delivery sections populate live, then book_shipment clicks the
+// panel's own Book & Dispatch button (one proven path, no duplicate payload).
+function _execUpdateBooking(input) {
+  input = input || {};
+  try {
+    let rate = (window._bookingLock && window._bookingLock.rate) || null;
+    let s = (window._bookingLock && window._bookingLock.shipment) || window._lastRatesShipment || lastQuotedShipment;
+
+    if (!rate) {
+      const raw = window._lastRatesRaw;
+      if (!raw || !raw.length) return { ok:false, error:'No rates pulled yet — pull rates and pick a carrier first.' };
+      if (input.rank && raw[input.rank - 1]) rate = raw[input.rank - 1];
+      else if (input.carrier) {
+        const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
+        rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
+            || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
+      }
+      if (!rate) return { ok:false, error:'Could not match that carrier. Ask which carrier by name or rank.' };
+      window._bookingLock = { rate: rate, shipment: s };
+    }
+
+    if (!window._bookingPanelOpen) {
+      const name = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
+      const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
+      const _its = (s && s.items && s.items.length) ? s.items : [{}];
+      const shipData = {
+        originZip: s.originZip || '', destZip: s.destinationZip || s.destZip || '',
+        weight: (_its[0]&&_its[0].weight) || 0, pieces: (_its[0]&&_its[0].pieces) || 1,
+        accessorials: (s.accessorials||[]).map(a=>({'Residential Delivery':'RSD','Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Pickup':'RSO','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'}[a]||a)),
+        pickupDate: s.pickupDate || (typeof getTomorrow==='function'?getTomorrow():''),
+        lineItems: _its.map(it=>({ qty:Number(it.pieces)||1, weight:Number(it.weight)||0, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.packageType||'PLT', freightClass:it.freightClass||'70', commodity:it.description||it.commodity||'Freight', nmfc:it.nmfc||'' })),
+        length:Number(_its[0]&&_its[0].length)||48, width:Number(_its[0]&&_its[0].width)||40, height:Number(_its[0]&&_its[0].height)||48,
+      };
+      const rateWithMeta = Object.assign({}, rate, { _name: name, _price: Number(price) });
+      if (typeof showBookingPanel === 'function') showBookingPanel(rateWithMeta, shipData);
+      window._bookingPanelOpen = true;
+      setTimeout(() => _applyBookingFields(input), 400);
+      return { ok:true, summary:'Booking panel opened for ' + name + ' — Pickup and Delivery sections are visible and filling in.' };
+    }
+
+    _applyBookingFields(input);
+    return { ok:true, summary:'Booking panel updated: ' + _describeBookingInput(input) };
+  } catch(e) {
+    console.error('update_booking error:', e);
+    return { ok:false, error:'Could not update the booking panel: ' + (e.message||'unknown') };
+  }
+}
+
+function _setBkField(id, val, evt) {
+  if (val === undefined || val === null || val === '') return false;
+  const el = document.getElementById(id);
+  if (!el) return false;
+  el.value = String(val);
+  el.dispatchEvent(new Event(evt || 'input', { bubbles:true }));
+  if (typeof flashField === 'function') flashField(el);
+  return true;
+}
+
+function _applyBookingFields(input) {
+  input = input || {};
+  const sp = input.shipper || {};
+  const cn = input.consignee || {};
+  _setBkField('bk-pu-name', sp.name);
+  _setBkField('bk-pu-street', sp.address || sp.street);
+  _setBkField('bk-pu-suite', sp.suite);
+  _setBkField('bk-pu-contact', sp.contact);
+  _setBkField('bk-pu-phone', sp.phone);
+  _setBkField('bk-pu-ref', input.referenceNumber || sp.referenceNumber);
+  if (input.pickupDate) _setBkField('bk-pu-date', input.pickupDate, 'change');
+  if (input.pickupOpen) _setBkField('bk-pu-open', input.pickupOpen, 'change');
+  if (input.pickupClose) _setBkField('bk-pu-close', input.pickupClose, 'change');
+  _setBkField('bk-dl-name', cn.name);
+  _setBkField('bk-dl-street', cn.address || cn.street);
+  _setBkField('bk-dl-suite', cn.suite);
+  _setBkField('bk-dl-contact', cn.contact);
+  _setBkField('bk-dl-phone', cn.phone);
+  if (input.specialInstructions) {
+    const si = document.getElementById('bk-special-instructions');
+    if (si) { si.value = String(input.specialInstructions); si.dispatchEvent(new Event('input',{bubbles:true})); if (typeof flashField==='function') flashField(si); }
+  }
+}
+
+function _describeBookingInput(input) {
+  const parts = [];
+  if (input.shipper) parts.push('shipper');
+  if (input.consignee) parts.push('consignee');
+  if (input.pickupDate || input.pickupOpen || input.pickupClose) parts.push('pickup window');
+  if (input.referenceNumber) parts.push('PO');
+  if (input.specialInstructions) parts.push('instructions');
+  return parts.join(', ') || 'details';
+}
+
 // ── TOOL: book_shipment — conversational booking via Primus ────────────────────
 async function _execBookShipment(input) {
   input = input || {};
@@ -8873,6 +8973,65 @@ async function _execBookShipment(input) {
       return { ok:true, alreadyBooked:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
         message:'This shipment is already booked as BOL ' + lb.BOLNumber + '. It has not been dispatched yet — do NOT book again. To send it to the carrier, dispatch this existing BOL.' };
     }
+
+    // ── PANEL-DRIVEN BOOKING (preferred path) ──────────────────────────────────
+    // If the visible booking panel is open, fill any final fields and click the
+    // panel's own "Book & Dispatch" button — the SAME proven path the manual flow
+    // uses. One booking code path, no duplicate payload. We auto-handle the panel's
+    // RDI / limited-access confirmation modals since the AI already did the
+    // residential/liftgate safeguard in chat.
+    if (window._bookingPanelOpen && document.getElementById('bk-submit-btn')) {
+      _applyBookingFields(input); // fill any last details the AI passed on this call
+      // Validate required fields are present in the panel before clicking
+      const _g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+      const _missing = [];
+      if (!_g('bk-pu-name')) _missing.push('pickup name');
+      if (!_g('bk-pu-street')) _missing.push('pickup street');
+      if (!_g('bk-pu-phone')) _missing.push('pickup phone');
+      if (!_g('bk-pu-date')) _missing.push('pickup date');
+      if (!_g('bk-dl-name')) _missing.push('delivery name');
+      if (!_g('bk-dl-street')) _missing.push('delivery street');
+      if (_missing.length) return { ok:false, error:'Still need these before booking: ' + _missing.join(', ') + '. Ask the customer for them.' };
+
+      // Auto-proceed past any RDI / limited-access confirmation modal the panel raises
+      // (the AI already handled the residential/liftgate conversation).
+      const _autoProceedModals = () => {
+        const ids = ['bk-rdi-proceed','bk-la-proceed'];
+        let tries = 0;
+        const iv = setInterval(() => {
+          tries++;
+          ids.forEach(id => { const b = document.getElementById(id); if (b) b.click(); });
+          if (tries > 40) clearInterval(iv); // ~10s safety
+        }, 250);
+        return iv;
+      };
+      const modalWatcher = _autoProceedModals();
+
+      // Click the real Book & Dispatch button — runs the proven submit + dispatch path
+      const submitBtn = document.getElementById('bk-submit-btn');
+      submitBtn.click();
+
+      // Wait for the panel flow to complete: it sets window._lastBooked on success
+      const start = Date.now();
+      await new Promise(res => {
+        const poll = setInterval(() => {
+          if (window._lastBooked && window._lastBooked.BOLId) { clearInterval(poll); clearInterval(modalWatcher); res(); }
+          else if (Date.now() - start > 45000) { clearInterval(poll); clearInterval(modalWatcher); res(); }
+        }, 300);
+      });
+
+      if (window._lastBooked && window._lastBooked.BOLId) {
+        const lb = window._lastBooked;
+        window._bookingPanelOpen = false;
+        return { ok:true, viaPanel:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
+          dispatched: !!lb.dispatched,
+          message: lb.dispatched
+            ? 'Booked and dispatched via the booking panel. BOL ' + lb.BOLNumber + '.'
+            : 'Booked via the booking panel as BOL ' + lb.BOLNumber + '.' };
+      }
+      return { ok:false, error:'The booking panel did not confirm in time. The shipment may still be processing — check My Shipments or call (800) 687-3713.' };
+    }
+    // ── end panel-driven path; fall through to the legacy API path if no panel ──
 
     // If a booking is already in progress, reuse the FROZEN rate+shipment snapshot.
     // This prevents a mid-booking rate re-pull from churning the record and causing
@@ -9089,20 +9248,21 @@ Once rates are pulled, you can SEE them. When the customer asks anything about t
 
 READ_RATES IS READ-ONLY — NEVER RE-PULL TO ANSWER A QUESTION. This is critical: read_rates just looks at the rates already on the screen. When the customer asks about rates that are already pulled ("what's the cheapest," "who's next," "transit time," "what about Saia"), call read_rates ONLY. Do NOT call update_quote with getRates:true — that re-pulls and refreshes the rates the customer is already looking at, which is jarring and wrong. The customer will notice and be annoyed ("you just refreshed the rates"). Only ever re-pull rates (getRates:true) when something about the SHIPMENT actually changed — a new weight, new dimensions, a new accessorial, a different origin or destination. If nothing about the shipment changed and they're just asking about the options on screen, it is read_rates and nothing else. Also do not narrate "let me pull/grab/refresh those" when you are only reading — just answer.
 
-BOOKING A SHIPMENT — you have a book_shipment tool:
-When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in Estes"), you book it conversationally. Booking creates a real BOL, so gather the details first, then read them back, then book. Steps:
+BOOKING A SHIPMENT — you have update_booking and book_shipment tools:
+When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in Estes"), you book it conversationally with a VISIBLE booking panel the customer watches fill in — just like the quote form. Steps:
 1. Confirm which carrier (by name or rank — read_rates first if you need to map "the cheapest" to a carrier).
-2. Collect what booking needs, conversationally and naturally:
-   - Shipper (pickup): company/name, street address, contact person, phone.
-   - Consignee (delivery): company/name, street address, contact person, phone.
-   - Pickup date and pickup window — ALWAYS ask for these. If the customer doesn't have a preference, default the pickup window to 12:00 to 16:00 (noon to 4pm) and the date to the next business day. Pass pickupDate, pickupOpen, and pickupClose to book_shipment.
-   Ask for these in a natural, grouped way — not as a rigid checklist. The city/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end.
+2. OPEN THE BOOKING PANEL with update_booking (pass the carrier by rank or name) the moment the carrier is chosen — this shows the customer the booking page with Pickup and Delivery sections. Then call update_booking again as you gather each detail, so the customer watches the fields fill in live. Fill it the same eager way you fill the quote form.
+3. Collect what booking needs, conversationally and naturally, passing each piece to update_booking as you get it:
+   - Shipper (pickup): company/name, street address, contact person, phone → pass as shipper:{name,address,contact,phone}.
+   - Consignee (delivery): company/name, street address, contact person, phone → pass as consignee:{name,address,contact,phone}.
+   - Pickup date and pickup window — ALWAYS ask. If no preference, default window to 12:00–16:00 and date to next business day. Pass pickupDate, pickupOpen, pickupClose.
+   Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
-5. READ IT BACK before booking: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" When they confirm, call book_shipment with rank or carrier plus the shipper/consignee details and any reference/instructions.
-6. After book_shipment returns ok, give them the BOL number, then offer to dispatch: the shipment is now set up in our system and ready to go — ask if they want you to dispatch it to the carrier and pull their shipping docs. Word it naturally, like: "You're all set in our system with BOL [number] — it's ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
-7. DISPATCHING — you have a dispatch_shipment tool. When the customer says yes to dispatching, call dispatch_shipment ONLY (it uses the last booked shipment automatically) — do NOT call book_shipment again. The shipment is already booked; calling book_shipment a second time would create a duplicate shipment in the system. Dispatch acts on the BOL you already created. On success it returns the carrier pickup confirmation number, the PRO number if available, and downloadable shipping documents. Give the customer the confirmation number and let them know the docs are ready: "Done — dispatched to [carrier], your pickup confirmation is [confirmation]. Your BOL and label are ready to download." If dispatch returns an error, tell them the shipment is booked but our team will dispatch it, and give the phone line. NEVER call book_shipment more than once for the same shipment — book once, then dispatch that same BOL.
-Never call book_shipment until the customer has confirmed the carrier and you've read the details back. Never call dispatch_shipment until the shipment is booked and the customer has confirmed they want to dispatch.
+5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
+6. When they confirm ("yes," "lock it in," "go"), call book_shipment. IMPORTANT: book_shipment clicks the panel's "Book & Dispatch" button, which BOOKS AND DISPATCHES in ONE action. So a single book_shipment call both creates the BOL and dispatches it to the carrier — you do NOT need a separate dispatch step. When it returns ok, it has already booked AND dispatched. Report it all together: "Done — booked and dispatched with [carrier]. BOL [number], pickup confirmation [confirmation], PRO [PRO]. Your BOL and shipping label are ready to download." The shipping docs open automatically.
+7. Because booking and dispatch happen together via the panel, do NOT ask "want me to dispatch?" as a separate step, and do NOT call dispatch_shipment separately — book_shipment already did it. Only use dispatch_shipment as a fallback if book_shipment reports it booked but did NOT dispatch (dispatched:false) — in that case tell the customer it's booked and our team will dispatch, or call dispatch_shipment to retry. NEVER call book_shipment more than once for the same shipment.
+Never call book_shipment until the panel is filled, the customer has confirmed the carrier, and you've read the details back.
 
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
 
@@ -9227,6 +9387,24 @@ async function aiConverse(userText) {
               name: 'dispatch_shipment',
               description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
               input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' } } }
+            },
+            {
+              name: 'update_booking',
+              description: 'Open the visible booking panel for the chosen carrier and fill in pickup/delivery details so the customer watches it populate live. Call this when the customer has chosen a carrier and you are collecting booking info. Call it repeatedly as you gather details (shipper, consignee, pickup window, PO, instructions) — it only fills the fields you pass. Open it first (with the carrier by rank or name), then fill fields as the customer provides them. This is the booking equivalent of update_quote.',
+              input_schema: {
+                type: 'object',
+                properties: {
+                  rank: { type: 'integer', description: 'Rate rank to book (1=cheapest), to identify the carrier when first opening' },
+                  carrier: { type: 'string', description: 'Carrier name to book, alternative to rank' },
+                  shipper: { type: 'object', description: 'Pickup details', properties: { name:{type:'string'}, address:{type:'string'}, suite:{type:'string'}, contact:{type:'string'}, phone:{type:'string'} } },
+                  consignee: { type: 'object', description: 'Delivery details', properties: { name:{type:'string'}, address:{type:'string'}, suite:{type:'string'}, contact:{type:'string'}, phone:{type:'string'} } },
+                  pickupDate: { type: 'string', description: 'Pickup date YYYY-MM-DD' },
+                  pickupOpen: { type: 'string', description: 'Pickup window open time HH:MM (default 12:00)' },
+                  pickupClose: { type: 'string', description: 'Pickup window close time HH:MM (default 16:00)' },
+                  referenceNumber: { type: 'string', description: 'PO or reference number' },
+                  specialInstructions: { type: 'string', description: 'Special instructions for the driver/BOL' }
+                }
+              }
             }
           ],
           messages: convo
@@ -9237,7 +9415,7 @@ async function aiConverse(userText) {
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
       // Check for a client-side tool call
-      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment'));
+      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment' || b.name === 'update_booking'));
 
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
@@ -9266,6 +9444,8 @@ async function aiConverse(userText) {
             result = await _execBookShipment(toolUse.input);
           } else if (toolUse.name === 'dispatch_shipment') {
             result = await _execDispatchShipment(toolUse.input);
+          } else if (toolUse.name === 'update_booking') {
+            result = _execUpdateBooking(toolUse.input);
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
@@ -14910,6 +15090,7 @@ function closeRightPanel() {
   window._bookingLock = null;
   window._lastPulledSig = null;
   window._lastBooked = null;
+  window._bookingPanelOpen = false;
   const chatBtn = document.getElementById('chat-get-rates-btn');
   if (chatBtn) chatBtn.remove();
   const panel = document.getElementById('right-panel');
