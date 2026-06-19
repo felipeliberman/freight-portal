@@ -10648,7 +10648,12 @@ async function handleInput(text) {
   // ─────────────────────────────────────────────────────────────────────────
 
   // New quote request (explicit)
-  if (/\b(get a quote|need a quote|i need a quote|want a quote|quote a|rate a shipment|how much to ship|cost to ship|price to ship|get rates|need rates|ship something|quote please|can you quote|give me a quote|i want to ship)\b/.test(lower)) { window._inQuoteConvo = true; removeTyping(); await aiConverse(t); return; }
+  if (/\b(get a quote|need a quote|i need a quote|want a quote|quote a|quote from|quote me|quote on|rate a shipment|how much to ship|cost to ship|price to ship|get rates|need rates|ship something|quote please|can you quote|give me a quote|i want to ship)\b/.test(lower)
+      || /\bquote\b.*\bto\b/.test(lower)            // "quote ... to ..." (e.g. "quote from wilmington to ocala")
+      || /\bship\b.*\bfrom\b.*\bto\b/.test(lower)    // "ship X from A to B"
+      || /\bfrom\b.*\bto\b.*\b(quote|rate|ship|freight)\b/.test(lower)) {
+    window._inQuoteConvo = true; removeTyping(); await aiConverse(t); return;
+  }
 
   const educational = !/\b(show|my|list|find|how many|total|which|sort)\b/.test(lower);
   // Freight class education
