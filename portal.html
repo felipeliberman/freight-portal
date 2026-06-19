@@ -11018,7 +11018,9 @@ async function handleInput(text) {
     || /\b(get|need|want|gimme|give me|lookin['g]? for|like)\b.{0,15}\b(rate|rates|price|pricing|estimate)\b/i.test(lower)
     || /\b(how much|cost|price)\b.{0,20}\b(ship|send|move|freight|deliver)/i.test(lower)
     || /\b(ship|send|move)\b.{0,20}\b(from|to)\b.{0,20}\b(from|to)\b/i.test(lower)
-    || /\b(rate a shipment|get rates|need rates|i want to ship|ship something)\b/i.test(lower);
+    || /\b(rate a shipment|get rates|need rates|i want to ship|ship something)\b/i.test(lower)
+    || /\bbook\b.{0,12}\b(a |an |my )?(shipment|load|freight|quote|order|pickup|delivery|sofa|furniture|pallet|skid|box|crate)/i.test(lower)  // "book a shipment/load/freight"
+    || /\b(set up|start|create|new)\b.{0,12}\b(shipment|quote|booking|order|pickup)\b/i.test(lower);                                           // "set up a shipment", "start a quote"
   // Don't treat clear shipment-lookup phrasing as a quote
   const _isShipmentLookup = /\b(show|list|track|find|where('?s| is)|status of|my)\b.{0,20}\b(shipment|order|bol|pro|delivery|invoice)/i.test(lower);
   if (_wantsQuote && !_isShipmentLookup) {
