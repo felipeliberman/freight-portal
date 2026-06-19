@@ -8793,8 +8793,26 @@ function _applyQuoteFields(input) {
         }
         window._lastPulledSig = sig;
       } catch(e) {}
+      // Mark a pull as in-flight so read_rates will WAIT for it instead of reporting "no rates"
+      // while it's still loading. Primus takes ~5s; the flag clears when rates publish (or on timeout).
+      window._ratePullInFlight = true;
+      window._ratePullStartedAt = Date.now();
       if (window._doGetRates) window._doGetRates(); else { const b = document.querySelector('#qt-get-rates'); if (b) b.click(); }
     }, 450);
+  }
+}
+
+// read_rates waits for an in-flight pull to finish before reporting, so the AI never
+// says "no rates came back" while Primus is still responding (~5s). Resolves once rates
+// publish, or after a safety timeout.
+async function _awaitRatePull(maxWaitMs) {
+  maxWaitMs = maxWaitMs || 20000;
+  const start = Date.now();
+  // If a pull was just requested but hasn't even set the flag yet, give it a beat.
+  await new Promise(r => setTimeout(r, 700));
+  while (window._ratePullInFlight) {
+    if (Date.now() - start > maxWaitMs) { window._ratePullInFlight = false; break; }
+    await new Promise(r => setTimeout(r, 250));
   }
 }
 
@@ -9230,7 +9248,17 @@ async function aiConverse(userText) {
         try {
           if (toolUse.name === 'update_quote') {
             result = _execUpdateQuote(toolUse.input);
+            // If this call pulled rates, WAIT for the pull to finish before returning the
+            // result, so the AI doesn't narrate "no rates" while Primus is still responding.
+            if (toolUse.input && toolUse.input.getRates) {
+              await _awaitRatePull();
+              if (window._lastRates) { result = Object.assign({}, result, { ratesReady:true, rateCount: window._lastRates.count }); }
+              else { result = Object.assign({}, result, { ratesReady:true, rateCount: 0, note:'Pull complete — no carriers returned for this lane.' }); }
+            }
           } else if (toolUse.name === 'read_rates') {
+            // Wait for any in-flight rate pull to finish before reading, so we never
+            // report "no rates came back" while Primus is still responding (~5s).
+            if (window._ratePullInFlight) { await _awaitRatePull(); }
             const _rr = window._lastRates ? Object.assign({}, window._lastRates) : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' };
             if (window._residentialStatus) _rr.residentialStatus = window._residentialStatus;
             result = _rr;
@@ -9287,7 +9315,7 @@ async function aiFreightAnswer(t){
 
 RESPONSE RULES - MUST FOLLOW:
 - Maximum 3 sentences. Never more unless customer asks for detail.
-- Plain prose only. Zero markdown. Zero bullets. Zero headers. Zero bold. Zero emojis.
+- Plain prose only. Zero markdown. Zero bullets. Zero headers. Zero bold. ABSOLUTELY ZERO EMOJIS — never use any emoji or pictographic character anywhere, including in friendly sign-offs or closings. No 🚛, no 👍, no 😊, none. A real broker types plain text. If you feel the urge to add an emoji at the end of a warm message, don't — just use the words.
 - Never start with "I". Never say "honestly", "look", "fair warning", "certainly", "great question", "of course", "please note", "it is important to understand", "I apologize".
 - Never end with "Is there anything else I can help you with."
 - Direct confident broker voice. Just answer. No hedging.
@@ -13564,6 +13592,7 @@ function showQuoteForm(prefill, silent) {
       const rates = await fetchRates(shipment);
       currentRates = rates;
       _publishRatesForAI(rates, shipment);
+      window._ratePullInFlight = false; // pull complete — read_rates may now report accurately
 
       clearInterval(_loadTimer);
       container.querySelector('#qt-rates-loading').style.display='none';
@@ -13579,6 +13608,7 @@ function showQuoteForm(prefill, silent) {
       }
     } catch(e) {
       clearInterval(_loadTimer);
+      window._ratePullInFlight = false; // pull failed — clear so read_rates doesn't hang
       container.querySelector('#qt-rates-loading').style.display='none';
       const errEl = container.querySelector('#qt-rates-error');
       errEl.textContent = 'Could not retrieve rates — ' + (e.message||'please try again') + '. Call (800) 687-3713.';
