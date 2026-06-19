@@ -10904,6 +10904,20 @@ async function handleInput(text) {
     // Falls through to main AI handler — skip clientSideSearch
   } else {
 
+  // ── Quote intent — catch BEFORE shipment search so quote requests (even misspelled
+  // or bare, like "yo I need a quot" or "quote") never leak into the shipment fuzzy search.
+  const _wantsQuote =
+       /\b(quote|quotes|quot|qoute|quoute)\b/i.test(lower)            // quote / common misspellings
+    || /\b(get|need|want|gimme|give me|lookin['g]? for|like)\b.{0,15}\b(rate|rates|price|pricing|estimate)\b/i.test(lower)
+    || /\b(how much|cost|price)\b.{0,20}\b(ship|send|move|freight|deliver)/i.test(lower)
+    || /\b(ship|send|move)\b.{0,20}\b(from|to)\b.{0,20}\b(from|to)\b/i.test(lower)
+    || /\b(rate a shipment|get rates|need rates|i want to ship|ship something)\b/i.test(lower);
+  // Don't treat clear shipment-lookup phrasing as a quote
+  const _isShipmentLookup = /\b(show|list|track|find|where('?s| is)|status of|my)\b.{0,20}\b(shipment|order|bol|pro|delivery|invoice)/i.test(lower);
+  if (_wantsQuote && !_isShipmentLookup) {
+    window._inQuoteConvo = true; removeTyping(); await aiConverse(t); return;
+  }
+
   // ── CLIENT-SIDE SMART SEARCH ──────────────────────────────────────────────
   if (currentCustomer) {
     const result = await clientSideSearch(t, lower);
