@@ -8707,9 +8707,12 @@ function _execUpdateQuote(input) {
     if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = input.addAccessorials.slice();
     showQuoteForm(pf, true);
     changed.push('opened the quote form');
-    // Give the DOM a moment to render, then apply remaining field updates
-    setTimeout(() => _applyQuoteFields(input), 350);
-    return { ok: true, summary: 'Quote form opened' + (changed.length ? ' with ' + describeQuoteInput(input) : '') };
+    // GUARD: never pull rates on the same call that OPENS the form. The customer must
+    // see the form open and fill in first. Strip getRates so the panel stays on Quote
+    // Details — rates only fire on a later, dedicated call.
+    const _openInput = Object.assign({}, input); _openInput.getRates = false;
+    setTimeout(() => _applyQuoteFields(_openInput), 350);
+    return { ok: true, summary: 'Quote form opened on the Quote Details tab' + (changed.length ? ' with ' + describeQuoteInput(input) : '') + '. Fields are filling in. (Rates not pulled yet — fill details and confirm accessorials first.)' };
   }
 
   // Form already open — apply surgical updates
@@ -9027,6 +9030,12 @@ NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical
 
 NEVER GUESS AN AMBIGUOUS CITY. Many city names exist in multiple states — Wilmington (CA, DE, NC), Springfield, Columbus, Portland, Kansas City, and many more. If a customer gives a city with no state and the name is ambiguous, do NOT pick a ZIP and fill it — ask which state first ("Which Wilmington — California, Delaware, or North Carolina?"). Sending freight to the wrong city is as costly as a wrong weight. Only fill the ZIP once the city is unambiguous.
 
+VERIFY THE ZIP FOR ANY CITY — NEVER QUOTE ON A GUESSED ZIP. When a customer gives a city instead of a ZIP, verify the actual ZIP before using it (use web_search to confirm). Many cities map to MULTIPLE ZIP codes — not just big cities like Los Angeles or New York, but plenty of smaller ones too — and the ZIP affects the rate. Handle it like a sharp broker:
+- If the city resolves to a single, unambiguous ZIP, just use it silently — no need to bother the customer.
+- If the city has multiple ZIPs, tell them and ask for the specific one: "Los Angeles has a bunch of ZIP codes and they price differently — what's the destination ZIP, or the street address so I can pin it down?"
+- NEVER pull rates (getRates:true) until both the origin and destination are confirmed 5-digit ZIPs. A rate on a guessed ZIP is a wrong quote. Keep the conversation flowing — fill what you can, gather weight and dims — but the rate does not fire until the ZIPs are nailed down.
+Do this quietly and competently: the goal is the customer feels like you just handle it, only asking when the city genuinely doesn't determine the ZIP.
+
 ALWAYS ASK FOR EXACT NUMBERS. A real freight broker never says "roughly," "approximately," "about," or "ballpark" when asking for weight or dimensions — vague numbers produce wrong freight class and wrong rates. Ask for the exact weight and exact dimensions every time. Word it like a pro: "What's the weight, and what are the exact dimensions (L x W x H in inches)?"
 
 Examples:
@@ -9039,7 +9048,7 @@ Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access.
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
 
-FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull ONLY when the shipment genuinely changes (new weight, dims, accessorial, origin, or destination). Repeatedly pulling rates churns the form and confuses the customer.
+FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull ONLY when the shipment genuinely changes (new weight, dims, accessorial, origin, or destination). Repeatedly pulling rates churns the form and confuses the customer.
 
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
 
