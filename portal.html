@@ -8685,6 +8685,14 @@ function _execUpdateQuote(input) {
   input = input || {};
   const changed = [];
 
+  // If the shipment is materially changing (location, weight, dims, accessorials, or a re-pull),
+  // release any frozen booking rate so a fresh rate is locked against the new shipment.
+  const _materialChange = input.originZip || input.destZip || input.getRates ||
+    (input.items && input.items.some(it => it && (it.weight || it.length || it.width || it.height || it.pieces))) ||
+    (input.addAccessorials && input.addAccessorials.length) ||
+    (input.removeAccessorials && input.removeAccessorials.length);
+  if (_materialChange && window._bookingLock) window._bookingLock = null;
+
   // Open the quote form if it's not already open
   if (!window._quoteFormOpen) {
     const pf = {};
@@ -8804,26 +8812,37 @@ window._residentialStatus = null; // { residential:bool, liftgateRecommended:boo
 async function _execBookShipment(input) {
   input = input || {};
   try {
-    const raw = window._lastRatesRaw;
-    const s = window._lastRatesShipment || lastQuotedShipment;
-    if (!raw || !raw.length) return { ok:false, error:'No rates are pulled yet. Pull rates first, then pick a carrier to book.' };
-    if (!s) return { ok:false, error:'No shipment on file. Build the quote and pull rates first.' };
+    // If a booking is already in progress, reuse the FROZEN rate+shipment snapshot.
+    // This prevents a mid-booking rate re-pull from churning the record and causing
+    // a quote/consignee mismatch when the customer finally confirms "lock it in".
+    let raw, s, rate;
+    if (window._bookingLock && window._bookingLock.rate && window._bookingLock.shipment) {
+      raw = [window._bookingLock.rate];
+      s = window._bookingLock.shipment;
+      rate = window._bookingLock.rate;
+    } else {
+      raw = window._lastRatesRaw;
+      s = window._lastRatesShipment || lastQuotedShipment;
+      if (!raw || !raw.length) return { ok:false, error:'No rates are pulled yet. Pull rates first, then pick a carrier to book.' };
+      if (!s) return { ok:false, error:'No shipment on file. Build the quote and pull rates first.' };
 
-    // Identify the chosen rate — by rank (1-based) or by carrier name match
-    let rate = null;
-    if (input.rank && raw[input.rank - 1]) {
-      rate = raw[input.rank - 1];
-    } else if (input.carrier) {
-      const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
-      rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
-          || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
+      // Identify the chosen rate — by rank (1-based) or by carrier name match
+      if (input.rank && raw[input.rank - 1]) {
+        rate = raw[input.rank - 1];
+      } else if (input.carrier) {
+        const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
+        rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
+            || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
+      }
+      if (!rate) return { ok:false, error:'Could not match that carrier to the pulled rates. Ask the customer which carrier by name or rank.' };
+      // FREEZE this rate + shipment for the rest of the booking
+      window._bookingLock = { rate: rate, shipment: s };
     }
-    if (!rate) return { ok:false, error:'Could not match that carrier to the pulled rates. Ask the customer which carrier by name or rank.' };
 
     const rateId = rate.id || rate.rateId;
     const token = await getToken();
 
-    // Reserve the rate to get a quoteNumber
+    // Reserve the rate to get a quoteNumber (fresh, so it matches what we book)
     let quoteNumber = null;
     try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
 
@@ -8879,6 +8898,7 @@ async function _execBookShipment(input) {
 
     // Stash for the dispatch step
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false };
+    window._bookingLock = null; // booking complete — release the frozen rate
 
     return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked and set up in our system, ready to dispatch.' };
   } catch (e) {
@@ -9010,6 +9030,8 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 6. After book_shipment returns ok, give them the BOL number, then offer to dispatch: the shipment is now set up in our system and ready to go — ask if they want you to dispatch it to the carrier and pull their shipping docs. Word it naturally, like: "You're all set in our system with BOL [number] — it's ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — you have a dispatch_shipment tool. When the customer says yes to dispatching, call dispatch_shipment (it uses the last booked shipment automatically). On success it returns the carrier pickup confirmation number, the PRO number if available, and downloadable shipping documents. Give the customer the confirmation number and let them know the docs are ready: "Done — dispatched to [carrier], your pickup confirmation is [confirmation]. Your BOL and label are ready to download." If dispatch returns an error, tell them the shipment is booked but our team will dispatch it, and give the phone line.
 Never call book_shipment until the customer has confirmed the carrier and you've read the details back. Never call dispatch_shipment until the shipment is booked and the customer has confirmed they want to dispatch.
+
+DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -14796,6 +14818,7 @@ function closeTab(id) {
 function closeRightPanel() {
   window._quoteFormOpen = false;
   window._inQuoteConvo = false;
+  window._bookingLock = null;
   const chatBtn = document.getElementById('chat-get-rates-btn');
   if (chatBtn) chatBtn.remove();
   const panel = document.getElementById('right-panel');
