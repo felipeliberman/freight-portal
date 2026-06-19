@@ -8777,8 +8777,10 @@ function _applyQuoteFields(input) {
 // ── Publish the current quoted rates in a clean shape the AI can read ──────────
 function _publishRatesForAI(rates, shipment) {
   try {
-    if (!rates || !rates.length) { window._lastRates = null; return; }
+    if (!rates || !rates.length) { window._lastRates = null; window._lastRatesRaw = null; return; }
     // rates already arrive sorted cheapest-first from fetchRates
+    window._lastRatesRaw = rates;          // full rate objects, for booking
+    window._lastRatesShipment = shipment;  // shipment used for these rates
     window._lastRates = {
       lane: shipment ? ((shipment.originCity||shipment.originZip||'') + ' -> ' + (shipment.destinationCity||shipment.destinationZip||'')) : '',
       count: rates.length,
@@ -8791,7 +8793,95 @@ function _publishRatesForAI(rates, shipment) {
         note: r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
       }))
     };
-  } catch (e) { console.error('publishRatesForAI error', e); window._lastRates = null; }
+  } catch (e) { console.error('publishRatesForAI error', e); window._lastRates = null; window._lastRatesRaw = null; }
+}
+
+// ── Expose residential/liftgate detection result for the AI ────────────────────
+// The quote form's RDI check sets these so the chat can ask "just like the pop-up."
+window._residentialStatus = null; // { residential:bool, liftgateRecommended:bool, weight:n }
+
+// ── TOOL: book_shipment — conversational booking via Primus ────────────────────
+async function _execBookShipment(input) {
+  input = input || {};
+  try {
+    const raw = window._lastRatesRaw;
+    const s = window._lastRatesShipment || lastQuotedShipment;
+    if (!raw || !raw.length) return { ok:false, error:'No rates are pulled yet. Pull rates first, then pick a carrier to book.' };
+    if (!s) return { ok:false, error:'No shipment on file. Build the quote and pull rates first.' };
+
+    // Identify the chosen rate — by rank (1-based) or by carrier name match
+    let rate = null;
+    if (input.rank && raw[input.rank - 1]) {
+      rate = raw[input.rank - 1];
+    } else if (input.carrier) {
+      const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
+      rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
+          || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
+    }
+    if (!rate) return { ok:false, error:'Could not match that carrier to the pulled rates. Ask the customer which carrier by name or rank.' };
+
+    const rateId = rate.id || rate.rateId;
+    const token = await getToken();
+
+    // Reserve the rate to get a quoteNumber
+    let quoteNumber = null;
+    try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
+
+    // Accessorial codes from the shipment
+    const accCodes = [];
+    (s.accessorials || []).forEach(a => { if (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) accCodes.push(ACC_MAP[a]); else accCodes.push(a); });
+    const hasResPU = accCodes.includes('RSO');
+    const hasResDL = accCodes.includes('RSD');
+
+    const sp = input.shipper || {};
+    const cn = input.consignee || {};
+    const items = (s.items && s.items.length) ? s.items : [];
+
+    const payload = {
+      quoteNumber: quoteNumber, rateId: rateId,
+      thirdPartyReferenceNumber: input.referenceNumber || '',
+      shipper: {
+        name: sp.name || '', address1: sp.address || '', city: sp.city || s.originCity || '', state: sp.state || s.originState || '',
+        zipCode: s.originZip || '', country:'US', contact: sp.contact || sp.name || '', contactPhone: sp.phone || '', phone: sp.phone || '',
+        referenceNumber: input.referenceNumber || '', residentialPickup: hasResPU
+      },
+      consignee: {
+        name: cn.name || '', address1: cn.address || '', city: cn.city || s.destinationCity || '', state: cn.state || s.destinationState || '',
+        zipCode: s.destinationZip || '', country:'US', contact: cn.contact || cn.name || '', contactPhone: cn.phone || '', phone: cn.phone || '',
+        residentialDelivery: hasResDL
+      },
+      lineItems: items.map(it => ({
+        qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each',
+        length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48),
+        dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||calcFreightClass(Number(it.weight||0),Number(it.length||48),Number(it.width||40),Number(it.height||48),Number(it.qty||it.pieces||1))||70),
+        hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
+        commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
+      })),
+      UOM:'US', BOLInstructions: input.specialInstructions || '',
+      accessorialsList: accCodes,
+      pickupInformation:{ date: input.pickupDate || (s.pickupDate||getTomorrow()), type:'PO', timeFrom: input.pickupOpen || '09:00', timeTo: input.pickupClose || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
+    };
+
+    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
+    });
+    const bookText = await bookRes.text();
+    if (!bookRes.ok) return { ok:false, error:'Booking failed (' + bookRes.status + '): ' + bookText.slice(0,200) };
+    const bookData = JSON.parse(bookText);
+    const result = bookData.data && bookData.data.results && bookData.data.results[0];
+    if (!result) return { ok:false, error:'No booking confirmation returned. Please try again or call (800) 687-3713.' };
+
+    const BOLId = result.BOLId;
+    const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
+    const carrierName = (rate.name||rate.carrier||rate.SCAC||'').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D');
+    const price = Number((rate.billTo&&rate.billTo.total)||rate.total||0);
+
+    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked.' };
+  } catch (e) {
+    console.error('book_shipment error:', e);
+    return { ok:false, error: 'Booking error: ' + (e.message||'unknown') + '. Please try again or call (800) 687-3713.' };
+  }
 }
 
 const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
@@ -8844,6 +8934,20 @@ READING RATES BACK — you have a read_rates tool:
 Once rates are pulled, you can SEE them. When the customer asks anything about the rates — "what's the cheapest," "who's fastest," "what's next," "how long is the Estes one," "compare the top three," "what are my options" — call read_rates to get the live list (sorted cheapest-first with carrier, price, transit days, service, and any note). Then answer like a sharp broker: CONCISE by default — give what they asked plus the natural next step. Example: "Cheapest is Estes at $441, 4 days. Want me to book it?" For a follow-up like "what's next," give the next option: "TForce at $467, 3 days — a day faster for $26 more." You have the full list, so you can answer any follow-up about price, speed, carrier, or service. Never invent a price or transit time — only state what read_rates returns. For info that isn't in the rate data — like a carrier's terminal address or phone — use web_search. If read_rates comes back empty, tell them you need to pull rates first.
 
 READ_RATES IS READ-ONLY — NEVER RE-PULL TO ANSWER A QUESTION. This is critical: read_rates just looks at the rates already on the screen. When the customer asks about rates that are already pulled ("what's the cheapest," "who's next," "transit time," "what about Saia"), call read_rates ONLY. Do NOT call update_quote with getRates:true — that re-pulls and refreshes the rates the customer is already looking at, which is jarring and wrong. The customer will notice and be annoyed ("you just refreshed the rates"). Only ever re-pull rates (getRates:true) when something about the SHIPMENT actually changed — a new weight, new dimensions, a new accessorial, a different origin or destination. If nothing about the shipment changed and they're just asking about the options on screen, it is read_rates and nothing else. Also do not narrate "let me pull/grab/refresh those" when you are only reading — just answer.
+
+BOOKING A SHIPMENT — you have a book_shipment tool:
+When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in Estes"), you book it conversationally. Booking creates a real BOL, so gather the details first, then read them back, then book. Steps:
+1. Confirm which carrier (by name or rank — read_rates first if you need to map "the cheapest" to a carrier).
+2. Collect what booking needs, conversationally and naturally:
+   - Shipper (pickup): company/name, street address, contact person, phone.
+   - Consignee (delivery): company/name, street address, contact person, phone.
+   - Pickup date and a time window if they have one (otherwise a standard daytime window is fine).
+   Ask for these in a natural, grouped way — not as a rigid checklist. The city/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end.
+3. Offer the two optional-but-handy extras: a PO or reference number ("got a PO or reference number you want on this? helps the carrier at pickup") and any special instructions for the driver ("anything the driver should know — call ahead, dock in the rear, etc.?"). Never block booking if they don't have these.
+4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
+5. READ IT BACK before booking: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" When they confirm, call book_shipment with rank or carrier plus the shipper/consignee details and any reference/instructions.
+6. After book_shipment returns ok, give them the BOL number and confirm it's booked. If it returns an error, tell them plainly and offer the phone line (800) 687-3713.
+Never call book_shipment until the customer has confirmed the carrier and you've read the details back.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -8937,6 +9041,30 @@ async function aiConverse(userText) {
               name: 'read_rates',
               description: 'Read the live carrier rates currently shown on the quote form. Call this whenever the customer asks anything about the rates — cheapest, fastest, next option, transit time, a specific carrier, comparing options, etc. Returns the current rates sorted cheapest-first. Returns empty if no rates have been pulled yet.',
               input_schema: { type: 'object', properties: {} }
+            },
+            {
+              name: 'book_shipment',
+              description: 'Book the shipment with a chosen carrier. Only call this AFTER the customer has confirmed they want to book a specific carrier AND you have read back the full details (carrier, price, pickup date, shipper and consignee name/address/contact/phone). Identify the carrier by rank (1=cheapest) or carrier name. Collect shipper and consignee details conversationally first.',
+              input_schema: {
+                type: 'object',
+                properties: {
+                  rank: { type: 'number', description: 'Which rate to book by rank (1=cheapest). Use this or carrier.' },
+                  carrier: { type: 'string', description: 'Carrier name to book (e.g. "WARP", "Estes"). Use this or rank.' },
+                  shipper: { type: 'object', description: 'Pickup party', properties: {
+                    name: { type: 'string' }, address: { type: 'string', description: 'Street address' },
+                    city: { type: 'string' }, state: { type: 'string' },
+                    contact: { type: 'string' }, phone: { type: 'string' } } },
+                  consignee: { type: 'object', description: 'Delivery party', properties: {
+                    name: { type: 'string' }, address: { type: 'string', description: 'Street address' },
+                    city: { type: 'string' }, state: { type: 'string' },
+                    contact: { type: 'string' }, phone: { type: 'string' } } },
+                  pickupDate: { type: 'string', description: 'YYYY-MM-DD' },
+                  pickupOpen: { type: 'string', description: 'Pickup window open time HH:MM' },
+                  pickupClose: { type: 'string', description: 'Pickup window close time HH:MM' },
+                  referenceNumber: { type: 'string', description: 'Optional PO or reference number for the carrier' },
+                  specialInstructions: { type: 'string', description: 'Optional special instructions for the driver/BOL' }
+                }
+              }
             }
           ],
           messages: convo
@@ -8946,8 +9074,8 @@ async function aiConverse(userText) {
       const content = data.content || [];
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
-      // Check for a client-side tool call (update_quote or read_rates)
-      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates'));
+      // Check for a client-side tool call (update_quote, read_rates, or book_shipment)
+      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment'));
 
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
@@ -8959,7 +9087,11 @@ async function aiConverse(userText) {
           if (toolUse.name === 'update_quote') {
             result = _execUpdateQuote(toolUse.input);
           } else if (toolUse.name === 'read_rates') {
-            result = window._lastRates ? window._lastRates : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' };
+            const _rr = window._lastRates ? Object.assign({}, window._lastRates) : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' };
+            if (window._residentialStatus) _rr.residentialStatus = window._residentialStatus;
+            result = _rr;
+          } else if (toolUse.name === 'book_shipment') {
+            result = await _execBookShipment(toolUse.input);
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
@@ -12864,6 +12996,12 @@ function showQuoteForm(prefill, silent) {
       const d = await r.json();
       const result = d.results && d.results[0];
       const _isRes2 = result && result.fields && result.fields.zip4 && result.fields.zip4.residential === true;
+      // Publish detection result for the AI (so chat can ask "just like the pop-up")
+      try {
+        const _wtEl = container.querySelector('.li-weight');
+        const _wt = _wtEl ? Number(_wtEl.value)||0 : 0;
+        window._residentialStatus = { residential: !!_isRes2, weight: _wt, liftgateRecommended: !!_isRes2 && _wt >= 100 };
+      } catch(e) {}
       if (_isRes2) {
         showRDIBanner('residential');
       } else {
