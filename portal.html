@@ -2181,6 +2181,12 @@ function isPastPickup(dateStr) {
     return d < today;
   } catch(e) { return false; }
 }
+function parseMoney(v) {
+  // Parse a money value that may be a number or a formatted string ("$1,145.00"). Returns NaN if not parseable.
+  if (v == null) return NaN;
+  if (typeof v === 'number') return v;
+  return parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+}
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
 const zipCache = {};
@@ -5293,7 +5299,9 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   const originZip = s.originZip || s.originZipcode || shp.zipCode || shp.zipcode || '';
   const destZip   = s.destinationZip || s.destinationZipcode || con.zipCode || con.zipcode || '';
   const carrierName = ven.name || ven.companyName || s.carrierName || ti.carrierName || '';
-  const price = Number(s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount || 0);
+  const _acct = s.accountingInformation || {};
+  const _pNum = parseMoney(_acct.invoiceAmount || _acct.customerQuoteAmount || s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount);
+  const price = (!isNaN(_pNum) && _pNum > 0) ? _pNum : 0;
   const accCodes = (s.accessorials || s.accessorialsList || []).map(a => {
     const m = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
     return m[a] || (typeof a === 'string' && a.length <= 5 ? a : null);
@@ -5332,7 +5340,7 @@ function editSavedShipment(s, BOLId, BOLNumber) {
         _note.innerHTML = `Editing this saved shipment — update addresses, contacts, pickup, and instructions, then Save. The lane and freight are locked to this rate; to change those, <a href="#" id="bk-requote-link" style="color:var(--ac);font-weight:600;text-decoration:none;">requote</a>.`;
         _fb.parentNode.insertBefore(_note, _fb);
         const _rl = document.getElementById('bk-requote-link');
-        if (_rl) _rl.onclick = (e) => { e.preventDefault(); window._editingBOLId = null; window._editingShipment = null; if (typeof showSavedShipmentDispatchModal === 'function') showSavedShipmentDispatchModal({ s: s, BOLId: BOLId, BOLNumber: BOLNumber, openEdit: true }); };
+        if (_rl) _rl.onclick = (e) => { e.preventDefault(); window._editingBOLId = null; window._editingShipment = null; if (typeof requoteSavedShipment === 'function') requoteSavedShipment(s, originZip, destZip, shipData.pickupDate); };
       }
     } catch(e) {}
     const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') { el.value = v; try { el.dispatchEvent(new Event('input')); } catch(e){} } };
@@ -5380,7 +5388,7 @@ function editSavedShipment(s, BOLId, BOLNumber) {
         const reqBtn = mkBtn('Requote', 'ghost');
         const savBtn = mkBtn('Save', 'secondary'); savBtn.id = 'bk-submit-btn';
         const dspBtn = mkBtn('Ready to Dispatch', 'primary');
-        reqBtn.onclick = () => { window._editingBOLId = null; window._editingShipment = null; if (typeof showSavedShipmentDispatchModal === 'function') showSavedShipmentDispatchModal({ s: s, BOLId: BOLId, BOLNumber: BOLNumber, openEdit: true }); };
+        reqBtn.onclick = () => { window._editingBOLId = null; window._editingShipment = null; if (typeof requoteSavedShipment === 'function') requoteSavedShipment(s, originZip, destZip, shipData.pickupDate); };
         savBtn.onclick = () => { submitBookingOnly(); };
         dspBtn.onclick = async () => {
           const _d = document.getElementById('bk-pu-date'); const _puVal = _d ? _d.value : '';
@@ -5731,6 +5739,34 @@ function fmtDate(d) {
 
 
 
+function requoteSavedShipment(s, originZip, destZip, pickupDate) {
+  s = s || {};
+  const accCodes = (s.accessorials||s.accessorialsList||[]).map(a => {
+    const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
+    return map2[a] || (typeof a==='string'&&a.length<=5?a:null);
+  }).filter(Boolean);
+  const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
+  const editShipData = {
+    originZip: originZip, destinationZip: destZip,
+    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required'}[cd]||cd)),
+    items: freightItems.length ? freightItems.map(it=>({
+      pieces: Number(it.qty||it.pieces||1), weight: Number(it.weight||0),
+      length: Number(it.length||48), width: Number(it.width||40), height: Number(it.height||48),
+      packageType: it.dimType||it.packageType||'PLT', freightClass: String(it.class||it.freightClass||'70'),
+      description: it.commodity||it.description||'Freight', hazmat: it.hazmat||false, stack: it.stackAmount > 1
+    })) : [{ pieces:Number(s.pieces||1), weight:Number(s.weight||s.totalWeight||0), length:48, width:40, height:48, packageType:'PLT', freightClass:'70', description:'Freight' }]
+  };
+  if(typeof showQuoteForm==='function') showQuoteForm();
+  setTimeout(() => {
+    const oEl = document.getElementById('qt-origin'); if(oEl) { oEl.value = originZip; oEl.dispatchEvent(new Event('input')); }
+    const dEl = document.getElementById('qt-dest');   if(dEl) { dEl.value = destZip;   dEl.dispatchEvent(new Event('input')); }
+    const dtEl = document.getElementById('qt-date'); if(dtEl) dtEl.value = pickupDate || getTomorrow();
+    if(accCodes.length && typeof applyRequoteAccessorials==='function') applyRequoteAccessorials(accCodes);
+    lastQuotedShipment = editShipData;
+    setTimeout(() => { if(window._doGetRates) window._doGetRates(); else { const rb = document.getElementById('qt-get-rates'); if(rb) rb.click(); } }, 300);
+  }, 500);
+}
+
 async function showShipmentDetail(s) {
   const bolId = s.BOLId || s.bolId || '';
 
@@ -5768,7 +5804,8 @@ async function showShipmentDetail(s) {
   }
   const acct = detail.accountingInformation || {};
   const rawTotalModal = acct.invoiceAmount || acct.customerQuoteAmount || detail.totalDue || detail.invoiceAmount || ven.cost || ven.totalCharges || detail.totalCharges || detail.amount;
-  const total = rawTotalModal != null && rawTotalModal !== 0 ? '$'+Number(rawTotalModal).toFixed(2) : '';
+  const _nTotalModal = parseMoney(rawTotalModal);
+  const total = (!isNaN(_nTotalModal) && _nTotalModal !== 0) ? '$'+_nTotalModal.toFixed(2) : '';
   const transit = detail.transitDays || ven.transitDays || ti.transitDays || '';
   const quoteNum = (detail.accountingInformation && detail.accountingInformation.customerQuoteNumber) || detail.customerQuoteNumber || detail.quoteNumber || detail.priceSheetId || '';
   const _calcWeight = Array.isArray(items) && items.length ? items.reduce(function(s,it){return s+((parseFloat(it.weight)||0)*(parseInt(it.qty||it.quantity)||1));},0) : 0;
@@ -5814,10 +5851,10 @@ async function showShipmentDetail(s) {
   // For saved shipments show quoted rate instead of invoice total (avoids $NaN)
   const modalTotalDisplay = (function() {
     if (total) return total;
-    const qAmt = acct.customerQuoteAmount || 0;
-    if (qAmt) return '$' + Number(qAmt).toFixed(2);
-    const qRate = Number(ven.cost || ven.totalCharges || detail.totalCharges || 0);
-    if (qRate > 0) return '$' + qRate.toFixed(2);
+    const qAmt = parseMoney(acct.customerQuoteAmount);
+    if (!isNaN(qAmt) && qAmt > 0) return '$' + qAmt.toFixed(2);
+    const qRate = parseMoney(ven.cost || ven.totalCharges || detail.totalCharges);
+    if (!isNaN(qRate) && qRate > 0) return '$' + qRate.toFixed(2);
     return '\u2014';
   })();
 
@@ -5947,9 +5984,9 @@ async function showShipmentDetail(s) {
       <div style="display:flex;gap:8px;${_isMob ? 'flex-direction:column;' : 'flex-wrap:wrap;'};padding-top:14px;border-top:1px solid var(--bdr);">
         ${!isShipmentDispatched(detail) ? '<button id="ship-modal-dispatch-btn" style="background:var(--ac);border:none;border-radius:8px;padding:9px 16px;color:#fff;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg> Ready to Dispatch</button>' : ''}
         <button onclick="openDocsModal('${bolId}','${bol}',${isShipmentDispatched(detail)})" style="${isShipmentDispatched(detail)?'background:var(--ac);color:#fff;border:none;':'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);'}border-radius:8px;padding:9px 16px;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> Documents</button>
-        <button id="ship-modal-track-btn" style="background:#ede9fe;border:none;border-radius:8px;padding:9px 16px;color:#6d28d9;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Track</button>
         ${!isShipmentDispatched(detail) ? '' : '<button id="ship-modal-inv-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;opacity:.4;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/></svg> View Invoice</button>'}
         ${!isShipmentDispatched(detail) ? '<button id="ship-modal-edit-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Edit</button><button id="ship-modal-cancel-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:#dc2626;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg> Cancel Shipment</button>' : '<button id="ship-modal-rebook-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Rebook</button>'}
+        <button id="ship-modal-track-btn" style="background:#ede9fe;border:none;border-radius:8px;padding:9px 16px;color:#6d28d9;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Track</button>
         <button onclick="document.getElementById('ship-modal-overlay').remove()" style="background:transparent;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);margin-left:auto;">Close</button>
       </div>
 
