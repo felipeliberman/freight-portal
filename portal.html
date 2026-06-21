@@ -5251,6 +5251,73 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
   onProceed();
 }
 
+// Reopen the FULL booking form pre-filled from a saved shipment so the customer can complete/edit
+// it and Save. While _editingBOLId is set, Save updates that existing BOL (PUT) instead of POSTing a new one.
+function editSavedShipment(s, BOLId, BOLNumber) {
+  s = s || {};
+  const shp = s.shipper || {};
+  const con = s.consignee || {};
+  const ti  = s.trackingInformation || {};
+  const ven = s.vendor || {};
+  const originZip = s.originZip || s.originZipcode || shp.zipCode || shp.zipcode || '';
+  const destZip   = s.destinationZip || s.destinationZipcode || con.zipCode || con.zipcode || '';
+  const carrierName = ven.name || ven.companyName || s.carrierName || ti.carrierName || '';
+  const price = Number(s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount || 0);
+  const accCodes = (s.accessorials || s.accessorialsList || []).map(a => {
+    const m = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
+    return m[a] || (typeof a === 'string' && a.length <= 5 ? a : null);
+  }).filter(Boolean);
+  const fItems = (s.freightInfo || s.lineItems || s.items || []);
+  const lineItems = fItems.length ? fItems.map(it => ({
+    pieces: Number(it.qty || it.pieces || 1), weight: Number(it.weight || 0),
+    length: Number(it.length || 48), width: Number(it.width || 40), height: Number(it.height || 48),
+    packageType: it.dimType || it.packageType || 'PLT', freightClass: String(it.class || it.freightClass || '70'),
+    description: it.commodity || it.description || 'Freight', stc: it.STC || it.stc || ''
+  })) : [{ pieces: Number(s.pieces || 1), weight: Number(s.weight || s.totalWeight || 0), length: 48, width: 40, height: 48, packageType: 'PLT', freightClass: '70', description: 'Freight' }];
+  const shipData = {
+    originZip: originZip, destZip: destZip, destinationZip: destZip,
+    weight: lineItems.reduce((a,i)=>a+(i.weight||0)*(i.pieces||1),0),
+    pieces: lineItems.reduce((a,i)=>a+(i.pieces||1),0),
+    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required'}[cd]||cd)),
+    pickupDate: s.estimatedPickupDate || s.actualPickupDate || ti.dispatchDate || getTomorrow(),
+    lineItems: lineItems, items: lineItems,
+    length: lineItems[0].length, width: lineItems[0].width, height: lineItems[0].height,
+    packageType: lineItems[0].packageType, freightClass: lineItems[0].freightClass
+  };
+  const rate = { _name: carrierName, name: carrierName, carrierName: carrierName, _price: price, total: price };
+  lastQuotedShipment = shipData;
+  if (typeof showBookingPanel === 'function') showBookingPanel(rate, shipData);
+  // Mark edit mode AFTER opening the panel so Save updates this BOL instead of creating a new one.
+  window._editingBOLId = BOLId;
+  // Pre-fill shipper / consignee / pickup from the saved shipment once the panel has rendered.
+  setTimeout(() => {
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') { el.value = v; try { el.dispatchEvent(new Event('input')); } catch(e){} } };
+    const pInfo = s.pickupInformation || {};
+    set('bk-pu-name', shp.name || shp.companyName || s.shipperName || '');
+    set('bk-pu-street', shp.address1 || shp.address || '');
+    set('bk-pu-suite', shp.address2 || '');
+    set('bk-pu-city', shp.city || s.originCity || '');
+    set('bk-pu-state', shp.state || s.originState || '');
+    set('bk-pu-zip', shp.zipCode || shp.zipcode || originZip);
+    set('bk-pu-contact', shp.contact || '');
+    set('bk-pu-phone', shp.contactPhone || shp.phone || '');
+    set('bk-pu-ref', s.shipperReferenceNumber || s.referenceNumber || (shp.referenceNumber) || '');
+    set('bk-pu-date', pInfo.date || shipData.pickupDate || '');
+    set('bk-pu-open', pInfo.timeFrom || '12:00');
+    set('bk-pu-close', pInfo.timeTo || '16:00');
+    set('bk-dl-name', con.name || con.companyName || s.consigneeName || '');
+    set('bk-dl-street', con.address1 || con.address || '');
+    set('bk-dl-suite', con.address2 || '');
+    set('bk-dl-city', con.city || s.destinationCity || '');
+    set('bk-dl-state', con.state || s.destinationState || '');
+    set('bk-dl-zip', con.zipCode || con.zipcode || destZip);
+    set('bk-dl-contact', con.contact || '');
+    set('bk-dl-phone', con.contactPhone || con.phone || '');
+    const si = document.getElementById('bk-special-instructions');
+    if (si) si.value = s.BOLInstructions || s.specialInstructions || '';
+  }, 500);
+}
+
 function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   // Popup that lets user dispatch + download docs from the My Shipments table
   // Styled like the residential accessorial warning modal
@@ -5812,7 +5879,7 @@ async function showShipmentDetail(s) {
   if (modalEditBtn) {
     modalEditBtn.onclick = () => {
       overlay.remove();
-      showSavedShipmentDispatchModal({ s: detail, BOLId: bolId, BOLNumber: bol, openEdit: true });
+      editSavedShipment(detail, bolId, bol);
     };
   }
 
@@ -7932,11 +7999,13 @@ async function submitBookingOnly() {
       pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:bookingData.pickupOpen, timeTo:bookingData.pickupClose, appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
-    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book', {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
+    const _editBolId = window._editingBOLId || null;
+    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book' + (_editBolId ? ('/' + _editBolId) : ''), {
+      method: _editBolId ? 'PUT' : 'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
     });
+    window._editingBOLId = null;
     const bookText = await bookRes.text();
-    if (!bookRes.ok) throw new Error('Save failed ' + bookRes.status + ': ' + bookText.slice(0,300));
+    if (!bookRes.ok) { try { console.error('[SAVE ' + (_editBolId?'PUT':'POST') + ' ERROR]', bookRes.status, bookText, JSON.stringify(payload)); } catch(e){} throw new Error('Save failed ' + bookRes.status + ': ' + bookText.slice(0,300)); }
     const bookData = JSON.parse(bookText);
     const result = bookData.data && bookData.data.results && bookData.data.results[0];
     if (!result) throw new Error('No booking result returned');
@@ -8725,6 +8794,7 @@ function _execUpdateQuote(input) {
     // Fresh quote = fresh shipment — clear any prior booking so it's not treated as a duplicate
     window._lastBooked = null;
     window._resWarnShown = false;
+    window._editingBOLId = null;
     window._bookingPanelOpen = false;
     const pf = {};
     if (input.originZip) pf.originZip = String(input.originZip);
