@@ -5292,6 +5292,9 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
 // it and Save. While _editingBOLId is set, Save updates that existing BOL (PUT) instead of POSTing a new one.
 function editSavedShipment(s, BOLId, BOLNumber) {
   s = s || {};
+  // Close any open shipment pop-up (detail or dispatch) so the edit page isn't left under one.
+  const _closeShipOverlays = () => { try { document.querySelectorAll('#ship-modal-overlay, #row-dispatch-overlay').forEach(o => o.remove()); } catch(e){} };
+  _closeShipOverlays(); setTimeout(_closeShipOverlays, 120);
   const shp = s.shipper || {};
   const con = s.consignee || {};
   const ti  = s.trackingInformation || {};
@@ -5764,7 +5767,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
     });
     if(accCodes.length && typeof applyRequoteAccessorials==='function') applyRequoteAccessorials(accCodes);
     lastQuotedShipment = editShipData;
-    setTimeout(() => { if(window._doGetRates) window._doGetRates(); else { const rb = document.getElementById('qt-get-rates'); if(rb) rb.click(); } }, 400);
+    // Don't auto-run rates — let the customer adjust anything and click Get Rates themselves.
   }, 500);
 }
 
