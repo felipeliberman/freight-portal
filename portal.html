@@ -2400,7 +2400,7 @@ async function fetchRates(shipment) {
     '&destinationCountry=US' +
     '&freightInfo='       + encodeURIComponent(JSON.stringify(freightInfo)) +
     '&UOM=US&rateTypesList[]=LTL' +
-    '&pickupDate='        + getTomorrow() +
+    '&pickupDate='        + (shipment.pickupDate || getTomorrow()) +
     (currentCustomer && currentCustomer.primusCustomerId ? '&customerId=' + currentCustomer.primusCustomerId : '') +
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
     (vendorIds ? vendorIds.map(id => '&vendorIdList[]=' + id).join('') : '');
@@ -4470,7 +4470,7 @@ function isShipmentDispatched(s) {
   const raw = (s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '').toUpperCase();
   return raw.includes('DISPATCH') || raw.includes('PICKED UP') || raw.includes('IN TRANSIT') ||
     raw.includes('DELIVERED') || raw.includes('POD') || raw.includes('CONFIRMED') ||
-    raw.includes('TENDERED') || raw.includes('BOOKED');
+    raw.includes('TENDERED');
 }
 
 function renderShipmentRows(shipments, tbody, limit, offset) {
@@ -5164,6 +5164,10 @@ function showShipmentSavedModal(bc) {
   dispBtn.style.cssText = 'width:100%;background:var(--ac);color:#fff;border:none;border-radius:9px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;gap:7px;';
   dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Dispatch Now';
   dispBtn.onclick = async () => {
+    if (pickupDate && typeof isPastPickup === 'function' && isPastPickup(pickupDate)) {
+      appendMessage('bot', "That pickup date has passed — please edit the shipment and set a new pickup date before dispatching.");
+      return;
+    }
     dispBtn.textContent = 'Dispatching...'; dispBtn.disabled = true;
     try {
       const token = await getToken();
@@ -5233,8 +5237,6 @@ function showShipmentSavedModal(bc) {
   box.appendChild(body);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  // If opened from Edit & Requote button, trigger it automatically
-  if (openEdit) setTimeout(() => { if (editBtn) editBtn.click(); }, 100);
 }
 
 
@@ -5243,7 +5245,7 @@ function showShipmentSavedModal(bc) {
 async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
   // Same residential/liftgate check as booking panel
   const hasRSD = (accessorials||[]).some(a => /rsd|residential/i.test(a));
-  if (hasRSD || !consigneeStreet) { onProceed(); return; }
+  if (hasRSD || !consigneeStreet) { onProceed(); return; }  // skip geocodio if already flagged or no address to check
   const fullAddr = [consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip].filter(Boolean).join(' ');
   try {
     const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
@@ -5307,7 +5309,7 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   const _pNum = parseMoney(_acct.invoiceAmount || _acct.customerQuoteAmount || s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount);
   const price = (!isNaN(_pNum) && _pNum > 0) ? _pNum : 0;
   const accCodes = (s.accessorials || s.accessorialsList || []).map(a => {
-    const m = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
+    const m = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT','Appointment':'APT','NAD':'LAD'};
     return m[a] || (typeof a === 'string' && a.length <= 5 ? a : null);
   }).filter(Boolean);
   const fItems = (s.freightInfo || s.lineItems || s.items || []);
@@ -5321,8 +5323,8 @@ function editSavedShipment(s, BOLId, BOLNumber) {
     originZip: originZip, destZip: destZip, destinationZip: destZip,
     weight: lineItems.reduce((a,i)=>a+(i.weight||0)*(i.pieces||1),0),
     pieces: lineItems.reduce((a,i)=>a+(i.pieces||1),0),
-    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required'}[cd]||cd)),
-    pickupDate: s.estimatedPickupDate || s.actualPickupDate || ti.dispatchDate || getTomorrow(),
+    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','IND':'Inside Delivery','LAD':'Limited Access Delivery','NAO':'Limited Access Pickup','APT':'Appointment Required','NAD':'Limited Access Delivery'}[cd]||cd)),
+    pickupDate: (d => (!d || isPastPickup(d) ? getTomorrow() : d))(s.estimatedPickupDate || s.actualPickupDate || ti.dispatchDate),
     lineItems: lineItems, items: lineItems,
     length: lineItems[0].length, width: lineItems[0].width, height: lineItems[0].height,
     packageType: lineItems[0].packageType, freightClass: lineItems[0].freightClass
@@ -5393,7 +5395,15 @@ function editSavedShipment(s, BOLId, BOLNumber) {
         const savBtn = mkBtn('Save', 'secondary'); savBtn.id = 'bk-submit-btn';
         const dspBtn = mkBtn('Ready to Dispatch', 'primary');
         reqBtn.onclick = () => { window._editingBOLId = null; window._editingShipment = null; if (typeof requoteSavedShipment === 'function') requoteSavedShipment(s, originZip, destZip, shipData.pickupDate); };
-        savBtn.onclick = () => { submitBookingOnly(); };
+        savBtn.onclick = async () => {
+          savBtn.disabled = true; savBtn.textContent = 'Saving...';
+          await submitBookingOnly();
+          if (!window._lastBooked || !window._lastBooked.BOLId) {
+            savBtn.disabled = false; savBtn.textContent = 'Save';
+          } else {
+            savBtn.textContent = 'Saved!';
+          }
+        };
         dspBtn.onclick = async () => {
           const _d = document.getElementById('bk-pu-date'); const _puVal = _d ? _d.value : '';
           if (isPastPickup(_puVal)) { if (_d) { _d.style.borderColor = '#dc2626'; try { _d.focus(); } catch(e){} } appendMessage('bot', "That pickup date has passed — pick a date that isn't in the past before dispatching."); return; }
@@ -5408,8 +5418,9 @@ function editSavedShipment(s, BOLId, BOLNumber) {
               dspBtn.textContent = 'Dispatching...';
               try {
                 await submitBookingOnly({ thenDispatch: true });
-                const _bolId = (window._lastBooked && window._lastBooked.BOLId) || BOLId;
-                if (_bolId && typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
+                const _bolId = window._lastBooked && window._lastBooked.BOLId;
+                if (!_bolId) throw new Error('Save failed — check the chat for details');
+                if (typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
               } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
             },
             (toAdd) => {
@@ -5438,7 +5449,8 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   const shp = s.shipper || {};
   const carrierName = ven.name || ven.companyName || s.carrierName || ti.carrierName || '';
   const rawTotal = s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount;
-  const total = rawTotal != null && rawTotal !== 0 ? '$' + Number(rawTotal).toFixed(2) : '—';
+  const _totalNum = parseMoney(rawTotal);
+  const total = (!isNaN(_totalNum) && _totalNum > 0) ? '$' + _totalNum.toFixed(2) : '—';
   const originZip = s.originZip || s.originZipcode || (shp && (shp.zipCode||shp.zipcode)) || '';
   const destZip = s.destinationZip || s.destinationZipcode || (con && (con.zipCode||con.zipcode)) || '';
   const pickupDate = s.actualPickupDate || s.estimatedPickupDate || ti.dispatchDate || '';
@@ -5783,7 +5795,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   if(typeof showQuoteForm==='function') showQuoteForm();
   setTimeout(() => {
     if (typeof _applyQuoteFields === 'function') _applyQuoteFields({
-      originZip: originZip, destZip: destZip, pickupDate: pickupDate || getTomorrow(),
+      originZip: originZip, destZip: destZip, pickupDate: (!pickupDate || isPastPickup(pickupDate)) ? getTomorrow() : pickupDate,
       items: editShipData.items.map(it => ({ pieces: it.pieces, weight: it.weight, length: it.length, width: it.width, height: it.height, freightClass: it.freightClass, commodity: it.description }))
     });
     if(accCodes.length && typeof applyRequoteAccessorials==='function') applyRequoteAccessorials(accCodes);
@@ -8117,10 +8129,12 @@ async function submitBookingOnly(opts) {
     };
     const accMap = {
       'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD',
-      'Inside Delivery':'IND','Inside Pickup':'INO','Limited Access Delivery':'NAD',
-      'Limited Access Pickup':'NAO','Limited Access':'NAD',
+      'Inside Delivery':'IND','Inside Pickup':'INO',
+      'Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Limited Access':'LAD',
+      'Appointment Required':'APT','Appointment':'APT',
+      'NAD':'LAD',
     };
-    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAD','NAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
     const accCodes = (s.accessorials || []).map(a => {
       if (VALID_CODES.has(a)) return a;
       return accMap[a] || null;
@@ -8222,10 +8236,12 @@ async function submitBooking() {
       'Liftgate Delivery':'LFD', 'Liftgate Pickup':'LFO',
       'Residential Delivery':'RSD',
       'Inside Delivery':'IND', 'Inside Pickup':'INO',
-      'Limited Access Delivery':'NAD', 'Limited Access Pickup':'NAO',
-      'Limited Access':'NAD',
+      'Limited Access Delivery':'LAD', 'Limited Access Pickup':'NAO',
+      'Limited Access':'LAD',
+      'Appointment Required':'APT', 'Appointment':'APT',
+      'NAD':'LAD',
     };
-    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAD','NAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
     const accCodes = (s.accessorials || []).map(a => {
       if (VALID_CODES.has(a)) return a; // already a raw code string
       return accMap[a] || null;
@@ -12277,7 +12293,7 @@ function showBookingPanel(rate, shipmentData) {
   backBar.style.cssText = 'padding:8px 18px;border-bottom:1px solid var(--bdr);background:#faf9f6;flex-shrink:0;';
   backBar.innerHTML = '<button id="bk-back-btn" style="background:none;border:none;font-size:12px;font-weight:600;color:var(--ac);cursor:pointer;font-family:var(--font);display:flex;align-items:center;gap:5px;padding:0;">' +
     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>' +
-    (window._editingBOLId ? 'Back to Shipment' : 'Back to Rates') + '</button>';
+    ((window._editingBOLId || (window._requoteContext && window._requoteContext.bolId)) ? 'Back to Shipment' : 'Back to Rates') + '</button>';
   c.insertBefore(backBar, body);
   setTimeout(() => {
     const backBtn = document.getElementById('bk-back-btn');
@@ -12332,6 +12348,7 @@ function showBookingPanel(rate, shipmentData) {
       _rset('bk-dl-phone',   _rcon.contactPhone || _rcon.phone || '');
       const _rsi = document.getElementById('bk-special-instructions');
       if (_rsi) _rsi.value = _rs.BOLInstructions || _rs.specialInstructions || '';
+      window._requoteContext = null;
     }
   }, 200);
 
@@ -12425,13 +12442,6 @@ function showBookingPanel(rate, shipmentData) {
     bookingData.consigneePhone   = g('bk-dl-phone');
     const siEl2 = document.getElementById('bk-special-instructions');
     bookingData.specialInstructions = siEl2 ? siEl2.value.trim() : '';
-    const missing2 = [];
-    if (!bookingData.shipperName)     missing2.push('Pickup business name');
-    if (!bookingData.shipperStreet)   missing2.push('Pickup street address');
-    if (!bookingData.pickupDate)      missing2.push('Pickup date');
-    if (!bookingData.consigneeName)   missing2.push('Delivery business name');
-    if (!bookingData.consigneeStreet) missing2.push('Delivery street address');
-    if (missing2.length) { errEl.textContent = 'Please fill in: ' + missing2.join(', '); errEl.style.display = 'block'; return; }
     errEl.style.display = 'none';
     saveBtn.textContent = 'Saving...'; saveBtn.disabled = true;
     const formBodySave = document.getElementById('bk-form-body');
@@ -12442,6 +12452,8 @@ function showBookingPanel(rate, shipmentData) {
   };
 
   btn.onclick = async () => {
+    if (btn.disabled) return;
+    btn.disabled = true;
     const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
     const buildAddr = (pre) => {
       const street = g(pre+'-street'), suite = g(pre+'-suite');
@@ -12619,6 +12631,7 @@ function showBookingPanel(rate, shipmentData) {
               bookingStep = 'confirm'; showChatArea(); await submitBookingOnly({ thenDispatch: true });
               if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
               bookingStep = null; window._bookingPanelContainer = null;
+              if (!window._lastBooked || !window._lastBooked.BOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; }
             };
             document.getElementById('bk-rdi-requote').onclick = () => {
               warnOverlay.remove();
@@ -12662,12 +12675,16 @@ function showBookingPanel(rate, shipmentData) {
     const _dlAddr = (bookingData.consigneeStreet||'') + ' ' + (bookingData.consigneeName||'');
     const _puIsLA = LIMITED_ACCESS_KEYWORDS.test(_puAddr);
     const _dlIsLA = LIMITED_ACCESS_KEYWORDS.test(_dlAddr);
-    const _hasNAO = (bookingData.accessorials||[]).includes('NAO');
-    const _hasNAD = (bookingData.accessorials||[]).includes('NAD');
-    if ((_puIsLA && !_hasNAO) || (_dlIsLA && !_hasNAD)) {
-      const _laLoc = _puIsLA ? 'pickup' : 'delivery';
-      const _laAddr = (_puIsLA ? _puAddr : _dlAddr).trim().slice(0,50);
-      const _laCode = _puIsLA ? 'NAO' : 'NAD';
+    const _allAcc = ((lastQuotedShipment && lastQuotedShipment.accessorials) || bookingData.accessorials || []);
+    const _hasNAO = _allAcc.some(a => /limited.*access.*pickup|nao/i.test(a));
+    const _hasLAD = _allAcc.some(a => /limited.*access.*del|^lad$|^nad$/i.test(a));
+    const _puNeedsLA = _puIsLA && !_hasNAO;
+    const _dlNeedsLA = _dlIsLA && !_hasLAD;
+    if (_puNeedsLA || _dlNeedsLA) {
+      const _bothLA = _puNeedsLA && _dlNeedsLA;
+      const _laLoc = _bothLA ? 'pickup and delivery' : (_puNeedsLA ? 'pickup' : 'delivery');
+      const _laAddr = (_puNeedsLA ? _puAddr : _dlAddr).trim().slice(0,50);
+      const _laCode = _puNeedsLA ? 'NAO' : 'LAD';
       btn.textContent = 'Save Shipment'; btn.disabled = false;
       const laOv = document.createElement('div');
       laOv.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;';
@@ -12690,6 +12707,7 @@ function showBookingPanel(rate, shipmentData) {
         bookingStep = 'confirm'; showChatArea(); await submitBookingOnly();
         if (fbLA) { fbLA.style.opacity=''; fbLA.style.pointerEvents=''; }
         bookingStep = null; window._bookingPanelContainer = null;
+        if (!window._lastBooked || !window._lastBooked.BOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; }
       };
       return;
     }
@@ -12707,6 +12725,7 @@ function showBookingPanel(rate, shipmentData) {
     if (formBody) { formBody.style.opacity = ''; formBody.style.pointerEvents = ''; }
     bookingStep = null;
     window._bookingPanelContainer = null;
+    if (!window._lastBooked || !window._lastBooked.BOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; }
   };
 
   // Restore saved booking data from previous booking attempt (requote flow)
