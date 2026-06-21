@@ -2135,8 +2135,19 @@ async function getToken() {
 }
 
 function getTomorrow() {
+  // Next valid PICKUP day: tomorrow, skipping weekends (carriers don't run weekend LTL pickups).
   const d = new Date(); d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1); // 0=Sun, 6=Sat
   return d.toISOString().split('T')[0];
+}
+function bumpToBusinessDay(dateStr) {
+  // Normalize a YYYY-MM-DD pickup date off the weekend onto the following Monday.
+  if (!dateStr) return dateStr;
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  } catch(e) { return dateStr; }
 }
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
@@ -7918,7 +7929,7 @@ async function submitBookingOnly() {
       lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
       UOM:'US', BOLInstructions:bookingData.specialInstructions||'',
       accessorialsList:accCodes,
-      pickupInformation:{ date:bookingData.pickupDate, type:'PO', timeFrom:bookingData.pickupOpen, timeTo:bookingData.pickupClose, appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
+      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:bookingData.pickupOpen, timeTo:bookingData.pickupClose, appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book', {
@@ -7946,10 +7957,15 @@ async function submitBookingOnly() {
 }
 
 async function submitBooking() {
+  // Re-book guard: a fresh panel button reads "Book & Dispatch"; once a shipment is booked
+  // (via chat or a prior click) it reads "Booked!" — never create a duplicate in that case.
+  const _bkBtn = document.getElementById('bk-submit-btn');
+  if (_bkBtn && /booked/i.test(_bkBtn.textContent || '')) {
+    appendMessage('bot', 'That shipment is already booked — I will not create a duplicate.');
+    return;
+  }
   appendMessage('bot', 'Submitting booking...');
   showTyping();
-  // Reset the Book Shipment button on the panel
-  const _bkBtn = document.getElementById('bk-submit-btn');
   try {
     const token = await getToken();
     const s     = lastQuotedShipment || {};
@@ -8142,7 +8158,7 @@ async function submitBooking() {
     }
 
     removeTyping();
-    if (_bkBtn) { _bkBtn.textContent = 'Booked!'; _bkBtn.disabled = false; _bkBtn.style.background = 'var(--ac)'; }
+    if (_bkBtn) { _bkBtn.textContent = 'Booked!'; _bkBtn.disabled = true; _bkBtn.style.background = 'var(--ac)'; _bkBtn.style.opacity = '0.7'; _bkBtn.style.cursor = 'default'; }
 
     // Get carrier details from rate
     const carrierName = (bookingRate && (bookingRate._name || bookingRate.name || bookingRate.carrierName)) || '';
@@ -9175,7 +9191,7 @@ async function _execBookShipment(input) {
       })),
       UOM:'US', BOLInstructions: input.specialInstructions || '',
       accessorialsList: accCodes,
-      pickupInformation:{ date: input.pickupDate || (s.pickupDate||getTomorrow()), type:'PO', timeFrom: input.pickupOpen || '09:00', timeTo: input.pickupClose || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: input.pickupOpen || '09:00', timeTo: input.pickupClose || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
     };
 
@@ -9199,6 +9215,8 @@ async function _execBookShipment(input) {
     // Stash for the dispatch step
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false };
     window._bookingLock = null; // booking complete — release the frozen rate
+    // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
+    try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
 
     return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked and set up in our system, ready to dispatch.' };
   } catch (e) {
@@ -9254,16 +9272,27 @@ async function _execDispatchShipment(input) {
       } catch(e) {}
     }
 
-    const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', url: d.url }));
+    const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
     if (window._lastBooked) window._lastBooked.dispatched = true;
 
     if (!dispResult) {
       return { ok:false, error:'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
     }
-    // Surface the downloadable shipping docs in the standard docs modal
+    // Show the SAME complete confirmation modal the form path uses (not the generic docs viewer).
     try {
-      const _bolNum = (window._lastBooked && window._lastBooked.BOLNumber) || BOLId;
-      if (typeof openDocsModal === 'function') setTimeout(() => openDocsModal(BOLId, _bolNum, true), 600);
+      const lb = window._lastBooked || {};
+      let _pickupDate = '';
+      try { _pickupDate = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
+      if (typeof showBookingConfirmedModal === 'function') setTimeout(() => showBookingConfirmedModal({
+        BOLNumber: lb.BOLNumber || BOLId,
+        carrierName: lb.carrier || '',
+        PRO: PRO || lb.PRO || null,
+        confirmation: confirmation || null,
+        carrierPrice: lb.price || 0,
+        pickupDate: _pickupDate || '',
+        docs: validDocs,
+        dispatchOk: true
+      }), 500);
     } catch(e) {}
     return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
   } catch (e) {
@@ -9350,7 +9379,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 3. Collect what booking needs, conversationally and naturally, passing each piece to update_booking as you get it:
    - Shipper (pickup): company/name, street address, contact person, phone → pass as shipper:{name,address,contact,phone}.
    - Consignee (delivery): company/name, street address, contact person, phone → pass as consignee:{name,address,contact,phone}.
-   - Pickup date and pickup window — ALWAYS ask. If no preference, default window to 12:00–16:00 and date to next business day. Pass pickupDate, pickupOpen, pickupClose.
+   - Pickup date and pickup window — ALWAYS ASK, and never skip it. Before you read the booking back, you must have asked the customer which day they want the pickup and what time window, and gotten an answer (or an explicit "use the default"). Treat this exactly like the PO question: do not silently default without asking. PICKUPS ARE MONDAY–FRIDAY ONLY — carriers do not run weekend LTL pickups, so never schedule or confirm a Saturday or Sunday pickup; if the customer asks for a weekend, move it to the next business day (Monday) and tell them. If they have no preference, default the date to the next business day and the window to 12:00–16:00. Pass pickupDate, pickupOpen, pickupClose.
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
