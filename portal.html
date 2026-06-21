@@ -4495,7 +4495,8 @@ function renderShipmentRows(shipments, tbody, limit, offset) {
       .replace('Less Than Truckload','').trim();
     const pro    = s.carrierPRO || ven.PRO || ti.PRO || ven.pickupNumber || ti.proNumber || s.proNumber || '';
     const rawTotal = s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount;
-    const total  = rawTotal != null && rawTotal !== 0 ? '$' + Number(rawTotal).toFixed(2) : '—';
+    const _totalNum = parseMoney(rawTotal);
+    const total  = (!isNaN(_totalNum) && _totalNum > 0) ? '$' + _totalNum.toFixed(2) : '—';
     const rawSt  = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '';
     const status = rawSt.replace(/_/g,' ').toUpperCase().trim()
     const bolId  = s.BOLId || s.bolId || s.BOLNumber || '';
@@ -5607,7 +5608,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     overlay.remove();
     // Pre-fill quote form with saved shipment data and auto-run rates
     const accCodes = (s.accessorials||s.accessorialsList||[]).map(a => {
-      const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
+      const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT','NAD':'LAD'};
       return map2[a] || (typeof a==='string'&&a.length<=5?a:null);
     }).filter(Boolean);
     const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
@@ -5778,7 +5779,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
   window._requoteContext = { bolId: s.BOLId || s.bolId || '', shipment: s };
   const accCodes = (s.accessorials||s.accessorialsList||[]).map(a => {
-    const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
+    const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT','NAD':'LAD'};
     return map2[a] || (typeof a==='string'&&a.length<=5?a:null);
   }).filter(Boolean);
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
@@ -7260,7 +7261,8 @@ function showSettings() {
     { code:'LFD', label:'Liftgate Delivery',      hint:'No dock at destination' },
     { code:'LFO', label:'Liftgate Pickup',         hint:'No dock at origin' },
     { code:'IND', label:'Inside Delivery',         hint:'Move freight past the threshold' },
-    { code:'LAD', label:'Appointment Delivery',    hint:'Scheduled delivery window required' },
+    { code:'LAD', label:'Limited Access Delivery',  hint:'School, church, farm, hotel, strip mall' },
+    { code:'APT', label:'Appointment Required',    hint:'Scheduled delivery window required' },
   ];
   accOpts.forEach((opt, idx) => {
     const toggle = document.createElement('label');
@@ -9666,7 +9668,7 @@ Examples:
 - "It's about 200 lbs, 80 by 36 by 38" → update_quote items:[{weight:200, length:80, width:36, height:38}]. (Class auto-calculates.)
 - "Make the length 96" → update_quote items:[{length:96}].
 - "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "NAD".
-Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, NAD limited access, LAD appointment. Other: INS insurance.
+Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, LAD limited access, APT appointment. Other: INS insurance.
 ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone.
 
 PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
@@ -9706,6 +9708,13 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 Never call book_shipment until the panel is filled, the customer has confirmed the carrier, and you've read the details back.
 
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
+
+SAVING A SHIPMENT — you have a save_shipment tool:
+Booking has TWO steps: Save and Dispatch. A customer can save a shipment now and come back later to dispatch. When a customer says "save this for now," "book it but don't dispatch yet," or "I'll dispatch later," call save_shipment (NOT dispatch_shipment). It creates or updates the BOL in the system without scheduling pickup. When it returns ok, tell them the BOL number and that it's saved in My Shipments whenever they're ready to dispatch. To update an existing saved shipment, pass bol_id.
+Never pressure a customer to dispatch immediately — if they want to save and come back, that's the right flow.
+
+REQUOTING A SAVED SHIPMENT — you have a requote_shipment tool:
+When a customer wants to get new rates for a shipment they already saved (e.g. "requote BOL 12345," "re-rate my saved shipment," "I want a different carrier on that order"), call requote_shipment with the bol_id. It reopens the quote form pre-filled with the original freight details and contacts so the customer can adjust and get fresh rates. After calling it, tell the customer the form is open and ask them to confirm the pickup date or anything they want to change before you pull rates. Do NOT call update_quote with getRates:true until they've confirmed the details.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -9792,7 +9801,7 @@ async function aiConverse(userText) {
                       }
                     }
                   },
-                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, NAD limited access delivery, LAD appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, NAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
+                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APT appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, NAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
                   removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' }
                 }
@@ -10899,8 +10908,8 @@ function parseQuoteChat(text) {
   else if (/(liftgate pickup|lift gate pickup|\blfo\b)/i.test(t)) { if(!acc.includes('LFO')) acc.push('LFO'); }
   else if (/(liftgate|lift gate)/i.test(t)) { if (hasPickup && !hasDeliv) acc.push('LFO'); else acc.push('LFD'); }
   if (/\binside\b|\bind\b/i.test(t)) acc.push('IND');
-  if (/\bappointment\b|\bappt\b|\blad\b/i.test(t)) acc.push('LAD');
-  if (/limited access/i.test(t)) acc.push('NAD');
+  if (/\bappointment\b|\bappt\b/i.test(t)) acc.push('APT');
+  if (/limited access/i.test(t)) acc.push('LAD');
   if (/\binsurance\b|cargo ins/i.test(t)) acc.push('INS');
   if (acc.length) result.accessorials = acc;
   return result;
@@ -11182,7 +11191,7 @@ async function handleInput(text) {
         filled.length = 0; _nonEmpty.forEach(f => filled.push(f));
       } else if (parsed.length) filled.push('dims ' + parsed.length + 'x' + parsed.width + 'x' + parsed.height);
       if (parsed.accessorials) {
-        const accReadable = parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',NAD:'Limited Access',LAD:'Appointment',INS:'Cargo Insurance'}[c]||c));
+        const accReadable = parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',NAD:'Limited Access Delivery',INS:'Cargo Insurance'}[c]||c));
         filled.push(accReadable.join(', '));
       }
       setTimeout(() => {
@@ -11602,7 +11611,7 @@ async function handleInput(text) {
       if (parsed.weight)        filled.push(parsed.weight + ' lbs');
       if (parsed.pieces)        filled.push(parsed.pieces + ' piece' + (parsed.pieces !== '1' ? 's' : ''));
       if (parsed.length)        filled.push('dims ' + parsed.length + 'x' + parsed.width + 'x' + parsed.height);
-      if (parsed.accessorials)  filled.push(parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',NAD:'Limited Access',LAD:'Appointment',INS:'Cargo Insurance'}[c]||c)).join(', '));
+      if (parsed.accessorials)  filled.push(parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',NAD:'Limited Access Delivery',INS:'Cargo Insurance'}[c]||c)).join(', '));
       // Delay fill+check to allow quote form DOM to fully render
       setTimeout(() => {
         fillQuoteForm(parsed);
@@ -13626,7 +13635,8 @@ function showQuoteForm(prefill, silent) {
     'RSD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
     'RSO': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
     'IND': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>',
-    'LAD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    'LAD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    'APT': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
     'NAD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     'NAO': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     'INS': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
@@ -13638,8 +13648,8 @@ function showQuoteForm(prefill, silent) {
     { code:'RSD', label:'Residential', group:'del' },
     { code:'LFD', label:'Liftgate',    group:'del' },
     { code:'IND', label:'Inside',      group:'del' },
-    { code:'NAD', label:'Limited Access', group:'del' },
-    { code:'LAD', label:'Appointment', group:'del' },
+    { code:'LAD', label:'Limited Access', group:'del' },
+    { code:'APT', label:'Appointment', group:'del' },
     { code:'INS', label:'Cargo Insurance', group:'other' },
   ];
 
@@ -13870,7 +13880,7 @@ function showQuoteForm(prefill, silent) {
       : (type === 'liftgate' ? '100+ lbs to a residence — liftgate recommended' : 'Limited access location detected');
 
     const addLabel = type === 'residential' ? 'Add Residential' : (type === 'liftgate' ? 'Add Liftgate' : 'Add Limited Access');
-    const addCode  = type === 'residential' ? 'RSD' : (type === 'liftgate' ? 'LFD' : 'NAD');
+    const addCode  = type === 'residential' ? 'RSD' : (type === 'liftgate' ? 'LFD' : 'LAD');
 
     banner.innerHTML = icon +
       '<span style="font-size:11px;color:var(--mu);flex:1;">' + txt + '</span>' +
