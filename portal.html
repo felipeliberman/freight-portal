@@ -2110,6 +2110,7 @@ function resetShipmentState(wipeConversation) {
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     lastQuotedShipment = null;
+    bookingRate = null; bookingStep = null; bookingData = {};
     if (wipeConversation) {
       chatHistory = [];
       try {
@@ -4544,19 +4545,6 @@ function renderShipmentRows(shipments, tbody, limit, offset) {
           style="background:none;border:none;cursor:pointer;color:var(--ac);font-size:15px;padding:2px;line-height:1;opacity:.7;transition:opacity .12s;"
           onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.7"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="vertical-align:middle;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
       </td>`);
-    // Wire Dispatch button for saved (un-dispatched) shipments
-    if (!isShipmentDispatched(s)) {
-      const dispRowBtn = tr.querySelector('.row-dispatch-btn');
-      if (dispRowBtn) {
-        const _sBolId = s.BOLId || s.bolId || '';
-        const _sBolNum = s.BOLNumber || s.bolNumber || _sBolId;
-        dispRowBtn.onclick = (e) => {
-          e.stopPropagation();
-          showSavedShipmentDispatchModal({ s, BOLId: _sBolId, BOLNumber: _sBolNum });
-        };
-      }
-    }
-
     // Add track button via DOM
     const actTd = tr.querySelector('td:last-child');
     if (actTd) {
@@ -5586,7 +5574,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       dispBtn.style.background = '#16a34a';
       dispBtn.disabled = true;
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      const priceAmt = rawTotal != null ? Number(rawTotal) : 0;
+      const priceAmt = parseMoney(rawTotal) || 0;
       showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf) });
       overlay.remove();
     } catch(e) {
@@ -5617,7 +5605,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     const editShipData = {
       originZip: originZip,
       destinationZip: destZip,
-      accessorials: accCodes.map(c=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required'}[c]||c)),
+      accessorials: accCodes.map(c=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required'}[c]||c)),
       items: freightItems.length ? freightItems.map(it=>({
         pieces: Number(it.qty||it.pieces||1),
         weight: Number(it.weight||0),
@@ -5785,7 +5773,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
   const editShipData = {
     originZip: originZip, destinationZip: destZip,
-    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required'}[cd]||cd)),
+    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required'}[cd]||cd)),
     items: freightItems.length ? freightItems.map(it=>({
       pieces: Number(it.qty||it.pieces||1), weight: Number(it.weight||0),
       length: Number(it.length||48), width: Number(it.width||40), height: Number(it.height||48),
@@ -5835,11 +5823,6 @@ async function showShipmentDetail(s) {
   const acc   = detail.accessorials || detail.accessorialsList || [];
   const accStr= acc;
   const carrierName = ven.name || ven.companyName || detail.carrierName || ti.carrierName || '';
-  // Debug log for Metro W&D logo investigation
-  if (carrierName && (carrierName.includes('Metro') || carrierName.includes('Metropolitan'))) {
-    console.log('[METRO VEN OBJECT]', JSON.stringify(ven));
-    console.log('[METRO DETAIL KEYS]', Object.keys(detail).join(', '));
-  }
   const acct = detail.accountingInformation || {};
   const rawTotalModal = acct.invoiceAmount || acct.customerQuoteAmount || detail.totalDue || detail.invoiceAmount || ven.cost || ven.totalCharges || detail.totalCharges || detail.amount;
   const _nTotalModal = parseMoney(rawTotalModal);
@@ -5999,7 +5982,7 @@ async function showShipmentDetail(s) {
           <div style="font-size:9px;font-weight:700;color:var(--ac);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Carrier</div>
           <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:3px;">${carrierName||'—'}</div>
           <div style="font-size:12px;color:var(--mu);">${[ven.serviceLevel||'LTL', transit?'Transit: '+transit+' days':null, quoteNum?'Quote #'+quoteNum:null].filter(Boolean).join(' · ')}</div>
-          ${accStr && accStr.length ? `<div style="font-size:11px;color:var(--mu);margin-top:4px;"><span style="font-weight:600;color:var(--tx);">Accessorials:</span> ${(Array.isArray(accStr)?accStr:[accStr]).map(a=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','INO':'Inside Pickup','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Appointment Required','INS':'Cargo Insurance','HZM':'Hazmat','OVL':'Overlength','SOR':'Sort & Segregate','TWO':'Two-Man Delivery','NBD':'Notify Before Delivery'}[a]||a)).join(', ')}</div>` : ''}
+          ${accStr && accStr.length ? `<div style="font-size:11px;color:var(--mu);margin-top:4px;"><span style="font-weight:600;color:var(--tx);">Accessorials:</span> ${(Array.isArray(accStr)?accStr:[accStr]).map(a=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','INO':'Inside Pickup','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required','INS':'Cargo Insurance','HZM':'Hazmat','OVL':'Overlength','SOR':'Sort & Segregate','TWO':'Two-Man Delivery','NBD':'Notify Before Delivery'}[a]||a)).join(', ')}</div>` : ''}
         </div>
       </div>
 
@@ -6008,7 +5991,7 @@ async function showShipmentDetail(s) {
         <div style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px;">Freight Details</div>
         <div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:8px;">
           <table style="width:100%;border-collapse:collapse;font-size:11px;">
-            <thead><tr style="background:var(--bg);">${['QTY','Type','STC','Commodity','Weight','Unit','L','W','H','Class','NMFC'].map(h=>`<th style="text-align:left;padding:6px 8px;color:var(--ac);font-weight:700;border-bottom:1px solid var(--bdr);white-space:nowrap;">${h}</th>`).join('')}</tr></thead>
+            <thead><tr style="background:var(--bg);">${['QTY','Type','STC','Commodity','Weight','Unit','L','W','H','Class','NMFC','UN#'].map(h=>`<th style="text-align:left;padding:6px 8px;color:var(--ac);font-weight:700;border-bottom:1px solid var(--bdr);white-space:nowrap;">${h}</th>`).join('')}</tr></thead>
             <tbody>${freightRows||'<tr><td colspan="11" style="padding:10px 8px;color:var(--mu);">No freight items</td></tr>'}</tbody>
           </table>
         </div>
@@ -6063,7 +6046,6 @@ async function showShipmentDetail(s) {
   const trackBtn = overlay.querySelector('#ship-modal-track-btn');
   const scac = detail.carrierSCAC || detail.scac || ven.scac || ven.carrierSCAC || ti.carrierSCAC || s.carrierSCAC || '';
   const proNum = pro || '';
-  console.log('[TRACKING DEBUG] scac:', scac, '| pro:', proNum, '| carrierName:', carrierName, '| ven keys:', Object.keys(ven).join(', '));
   // Try SCAC first, then fall back to carrier name matching
   let trackUrl = getCarrierTrackingUrl(scac, proNum);
   if (!trackUrl && carrierName && proNum) {
@@ -6143,7 +6125,7 @@ async function showShipmentDetail(s) {
   }
   const invBtn = overlay.querySelector('#ship-modal-inv-btn');
   const bolNum2 = detail.BOLNumber || detail.bolNumber || '';
-  if (bolNum2) {
+  if (invBtn && bolNum2) {
     invBtn.style.opacity = '1';
     invBtn.onclick = async () => {
       overlay.remove();
@@ -6303,7 +6285,7 @@ const ACC_LABELS = {
   'LFD': 'Liftgate Delivery',    'LFO': 'Liftgate Pickup',     'LFP': 'Liftgate Pickup',
   'RSD': 'Residential Delivery', 'RSO': 'Residential Pickup',  'RSP': 'Residential Pickup',
   'IND': 'Inside Delivery',      'INO': 'Inside Pickup',       'INP': 'Inside Pickup',
-  'LAD': 'Delivery Appointment', 'LAO': 'Pickup Appointment',  'APP': 'Appointment Required',
+  'LAD': 'Limited Access Delivery','APT': 'Appointment Required','APP': 'Appointment Required',
   'NAS': 'No-Freeze Service',    'HZM': 'Hazmat',              'OVL': 'Overlength',
   'SOR': 'Sort & Segregate',     'COD': 'COD',                 'SIG': 'Signature Required',
   'TWO': 'Two-Man Delivery',     'HVY': 'Heavyweight',         'EXP': 'Expedited',
@@ -9631,7 +9613,7 @@ WHAT YOU KNOW:
 - Top carriers: Metro W&D is #1 by volume and Pilot is #2 for white glove and final-mile residential furniture. ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L, Forward Air, Southeastern and others for LTL.
 - Freight class runs 50-500 based on density, stowability, handling and liability. Furniture is typically 125-175.
 - Accessorials: liftgate delivery $75-150, residential delivery $50-100, limited access $50-100+, inside delivery, appointment, two-man.
-- Cargo insurance is roughly 1-2% of declared value. Standard LTL carrier liability is about $0.50/lb. R&L is always $1/lb for new furniture.
+- Cargo insurance is priced off the declared value by our system. Standard LTL carrier liability is about $0.50/lb. R&L is always $1/lb for new furniture.
 - Linear foot rules vary by carrier; anything over 4 standard pallets needs verification.
 - Residential delivery is our bread and butter — always speak about it and every carrier positively.
 
@@ -9667,7 +9649,7 @@ Examples:
 - "Quote a sofa from Ocala to Wilmington" → update_quote with originZip "34470", destZip "90744", items:[{commodity:"sofa"}]. Then ask for the real weight and dimensions. Do NOT set weight, dims, or class.
 - "It's about 200 lbs, 80 by 36 by 38" → update_quote items:[{weight:200, length:80, width:36, height:38}]. (Class auto-calculates.)
 - "Make the length 96" → update_quote items:[{length:96}].
-- "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "NAD".
+- "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "LAD".
 Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, LAD limited access, APT appointment. Other: INS insurance.
 ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone.
 
@@ -12048,7 +12030,7 @@ function showSavedQuotes() {
     const savedDate = new Date(q.savedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
     const ageDays = q.savedAt ? Math.floor((Date.now() - q.savedAt) / (1000*60*60*24)) : 0;
     const isStale = ageDays >= 3;
-    const acc = (q.accessorials || []).map(c=>({'RSO':'Residential Pickup','LFO':'Liftgate Pickup','NAO':'Limited Access Pickup','RSD':'Residential Delivery','LFD':'Liftgate Delivery','IND':'Inside Delivery','NAD':'Limited Access Delivery','LAD':'Appointment','INS':'Insurance'}[c]||c)).join(', ') || 'Dock to Dock';
+    const acc = (q.accessorials || []).map(c=>({'RSO':'Residential Pickup','LFO':'Liftgate Pickup','NAO':'Limited Access Pickup','RSD':'Residential Delivery','LFD':'Liftgate Delivery','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment','INS':'Insurance'}[c]||c)).join(', ') || 'Dock to Dock';
     const displayPrice = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0));
     const carrierName  = q.carrierName || (q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name)) || '';
     const carrierLogo  = q.carrierLogo || (q.rates&&q.rates[0]&&(q.rates[0]._iconUrl||q.rates[0].iconUrl)) || '';
