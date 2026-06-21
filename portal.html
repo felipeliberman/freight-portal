@@ -5309,11 +5309,24 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   };
   const rate = { _name: carrierName, name: carrierName, carrierName: carrierName, _price: price, total: price };
   lastQuotedShipment = shipData;
-  if (typeof showBookingPanel === 'function') showBookingPanel(rate, shipData);
-  // Mark edit mode AFTER opening the panel so Save updates this BOL instead of creating a new one.
+  // Mark edit mode BEFORE opening the panel so the panel's Back button returns to the shipment.
   window._editingBOLId = BOLId;
+  window._editingShipment = s;
+  if (typeof showBookingPanel === 'function') showBookingPanel(rate, shipData);
   // Pre-fill shipper / consignee / pickup from the saved shipment once the panel has rendered.
   setTimeout(() => {
+    try {
+      const _fb = document.getElementById('bk-form-body');
+      if (_fb && _fb.parentNode && !document.getElementById('bk-edit-note')) {
+        const _note = document.createElement('div');
+        _note.id = 'bk-edit-note';
+        _note.style.cssText = 'margin:10px 16px 0;padding:10px 12px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;font-size:12px;color:var(--mu);line-height:1.5;';
+        _note.innerHTML = `Editing this saved shipment — update addresses, contacts, pickup, and instructions, then Save. The lane and freight are locked to this rate; to change those, <a href="#" id="bk-requote-link" style="color:var(--ac);font-weight:600;text-decoration:none;">requote</a>.`;
+        _fb.parentNode.insertBefore(_note, _fb);
+        const _rl = document.getElementById('bk-requote-link');
+        if (_rl) _rl.onclick = (e) => { e.preventDefault(); window._editingBOLId = null; window._editingShipment = null; if (typeof showSavedShipmentDispatchModal === 'function') showSavedShipmentDispatchModal({ s: s, BOLId: BOLId, BOLNumber: BOLNumber, openEdit: true }); };
+      }
+    } catch(e) {}
     const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') { el.value = v; try { el.dispatchEvent(new Event('input')); } catch(e){} } };
     const pInfo = s.pickupInformation || {};
     set('bk-pu-name', shp.name || shp.companyName || s.shipperName || '');
@@ -5491,7 +5504,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   // Edit button — re-opens the quoting flow for this shipment
   const editBtn = document.createElement('button');
   editBtn.style.cssText = 'width:100%;background:none;border:none;color:var(--mu);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);padding:4px;';
-  editBtn.textContent = 'Edit & Requote';
+  editBtn.textContent = 'Requote';
   editBtn.onclick = () => {
     overlay.remove();
     // Pre-fill quote form with saved shipment data and auto-run rates
@@ -5880,7 +5893,7 @@ async function showShipmentDetail(s) {
         <button onclick="openDocsModal('${bolId}','${bol}',${isShipmentDispatched(detail)})" style="${isShipmentDispatched(detail)?'background:var(--ac);color:#fff;border:none;':'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);'}border-radius:8px;padding:9px 16px;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> Documents</button>
         <button id="ship-modal-track-btn" style="background:#ede9fe;border:none;border-radius:8px;padding:9px 16px;color:#6d28d9;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Track</button>
         ${!isShipmentDispatched(detail) ? '' : '<button id="ship-modal-inv-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;opacity:.4;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/></svg> View Invoice</button>'}
-        ${!isShipmentDispatched(detail) ? '<button id="ship-modal-edit-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Edit &amp; Requote</button><button id="ship-modal-cancel-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:#dc2626;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg> Cancel Shipment</button>' : '<button id="ship-modal-rebook-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Rebook</button>'}
+        ${!isShipmentDispatched(detail) ? '<button id="ship-modal-edit-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Edit</button><button id="ship-modal-cancel-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:#dc2626;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg> Cancel Shipment</button>' : '<button id="ship-modal-rebook-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Rebook</button>'}
         <button onclick="document.getElementById('ship-modal-overlay').remove()" style="background:transparent;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);margin-left:auto;">Close</button>
       </div>
 
@@ -12144,12 +12157,19 @@ function showBookingPanel(rate, shipmentData) {
   backBar.style.cssText = 'padding:8px 18px;border-bottom:1px solid var(--bdr);background:#faf9f6;flex-shrink:0;';
   backBar.innerHTML = '<button id="bk-back-btn" style="background:none;border:none;font-size:12px;font-weight:600;color:var(--ac);cursor:pointer;font-family:var(--font);display:flex;align-items:center;gap:5px;padding:0;">' +
     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>' +
-    'Back to Rates</button>';
+    (window._editingBOLId ? 'Back to Shipment' : 'Back to Rates') + '</button>';
   c.insertBefore(backBar, body);
   setTimeout(() => {
     const backBtn = document.getElementById('bk-back-btn');
     if (backBtn) backBtn.onclick = () => {
       window._bookingPanelContainer = null;
+      // Editing a saved shipment: there's no rates list to return to — go back to the shipment.
+      if (window._editingBOLId && window._editingShipment) {
+        const _es = window._editingShipment;
+        window._editingBOLId = null; window._editingShipment = null;
+        if (typeof showShipmentDetail === 'function') showShipmentDetail(_es);
+        return;
+      }
       if (window._showRatesInPanel && window._quoteFormOpen) {
         if (typeof switchTab === 'function') switchTab('rates');
         else if (window._doGetRates) { /* stay */ }
