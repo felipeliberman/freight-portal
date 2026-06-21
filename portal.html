@@ -8152,7 +8152,7 @@ async function submitBookingOnly(opts) {
       lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
       UOM:'US', BOLInstructions:bookingData.specialInstructions||'',
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:bookingData.pickupOpen, timeTo:bookingData.pickupClose, appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
+      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen), timeTo:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose), appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
@@ -8303,8 +8303,8 @@ async function submitBooking() {
       pickupInformation: {
         date:               bookingData.pickupDate,
         type:               'PO',
-        timeFrom:           bookingData.pickupOpen,
-        timeTo:             bookingData.pickupClose,
+        timeFrom:           (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen),
+        timeTo:             (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose),
         appointmentNeeded:  (bookingData.accessorials || []).includes('LAD')
       },
       deliveryInformation: {
@@ -9440,7 +9440,7 @@ async function _execBookShipment(input) {
       })),
       UOM:'US', BOLInstructions: input.specialInstructions || '',
       accessorialsList: accCodes,
-      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: input.pickupOpen || '09:00', timeTo: input.pickupClose || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupOpen) || '9:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
     };
 
