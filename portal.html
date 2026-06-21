@@ -9566,6 +9566,58 @@ async function _execDispatchShipment(input) {
   }
 }
 
+// ── TOOL: save_shipment — save/update a BOL without dispatching ──────────────
+async function _execSaveShipment(input) {
+  input = input || {};
+  try {
+    const bolRef = input.bol_id || input.BOLId;
+    // If a specific BOL is given, wire the PUT; otherwise falls through to a fresh POST
+    if (bolRef) {
+      const want = String(bolRef).trim();
+      // Accept raw BOLId or BOLNumber — if it looks numeric and short it may be a BOLId;
+      // try a direct fetch first so we get the canonical BOLId for the PUT.
+      let resolvedBOLId = want;
+      try {
+        const s = await fetchBookingByBOL(want);
+        if (s && (s.BOLId || s.bolId)) resolvedBOLId = s.BOLId || s.bolId;
+      } catch(e) {}
+      window._editingBOLId = resolvedBOLId;
+    }
+    await submitBookingOnly();
+    const saved = window._lastBooked;
+    if (!saved || !saved.BOLId) {
+      return { ok: false, error: 'Save failed — see the error message in the chat panel.' };
+    }
+    return { ok: true, BOLId: saved.BOLId, BOLNumber: saved.BOLNumber,
+      message: 'Shipment saved. BOL ' + saved.BOLNumber + ' is in My Shipments — dispatch when ready.' };
+  } catch(e) {
+    return { ok: false, error: 'Save error: ' + (e.message || 'unknown') };
+  }
+}
+
+// ── TOOL: requote_shipment — re-open the quote form for an existing saved BOL ─
+async function _execRequoteShipment(input) {
+  input = input || {};
+  try {
+    const bolRef = input.bol_id || input.BOLId;
+    if (!bolRef) return { ok: false, error: 'bol_id is required to requote a shipment.' };
+    const s = await fetchBookingByBOL(String(bolRef).trim());
+    if (!s) return { ok: false, error: 'Shipment not found: ' + bolRef + '. Check the BOL number and try again.' };
+    const shp = s.shipper || {};
+    const con = s.consignee || {};
+    const originZip = s.originZip || s.originZipcode || shp.zipCode || shp.zipcode || '';
+    const destZip   = s.destinationZip || s.destinationZipcode || con.zipCode || con.zipcode || '';
+    const pInfo = s.pickupInformation || {};
+    const pickupDate = pInfo.date || s.estimatedPickupDate || s.actualPickupDate || '';
+    if (typeof requoteSavedShipment !== 'function') return { ok: false, error: 'requoteSavedShipment not available.' };
+    requoteSavedShipment(s, originZip, destZip, pickupDate);
+    const bolNum = s.BOLNumber || s.bolNumber || s.BOLId || bolRef;
+    return { ok: true, message: 'Requote form opened for BOL ' + bolNum + '. The original shipper, consignee, and freight details are pre-filled. Ask the customer to confirm the pickup date and click Get Rates.' };
+  } catch(e) {
+    return { ok: false, error: 'Requote error: ' + (e.message || 'unknown') };
+  }
+}
+
 const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
 
 You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
@@ -9781,6 +9833,16 @@ async function aiConverse(userText) {
               input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' } } }
             },
             {
+              name: 'save_shipment',
+              description: 'Save the current booking form as a Primus BOL without dispatching. Use when the customer wants to save and come back later. If bol_id is provided, updates (PUT) that existing BOL with the current form data; otherwise creates a new one (POST). Call update_booking first to fill in any details the customer wants to change.',
+              input_schema: { type: 'object', properties: { bol_id: { type: 'string', description: 'BOL ID or BOL number of an existing saved shipment to update. Omit to create a new BOL.' } } }
+            },
+            {
+              name: 'requote_shipment',
+              description: 'Re-open the quote form for an existing saved shipment so the customer can get fresh rates. Pre-fills all original shipper, consignee, freight, and accessorial details. Use when the customer says "requote BOL 123", "re-rate my shipment", or wants to change the carrier on a saved shipment.',
+              input_schema: { type: 'object', required: ['bol_id'], properties: { bol_id: { type: 'string', description: 'BOL ID or BOL number of the saved shipment to requote' } } }
+            },
+            {
               name: 'update_booking',
               description: 'Open the visible booking panel for the chosen carrier and fill in pickup/delivery details so the customer watches it populate live. Call this when the customer has chosen a carrier and you are collecting booking info. Call it repeatedly as you gather details (shipper, consignee, pickup window, PO, instructions) — it only fills the fields you pass. Open it first (with the carrier by rank or name), then fill fields as the customer provides them. This is the booking equivalent of update_quote.',
               input_schema: {
@@ -9807,7 +9869,7 @@ async function aiConverse(userText) {
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 
       // Check for a client-side tool call
-      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment' || b.name === 'update_booking'));
+      const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment' || b.name === 'update_booking' || b.name === 'save_shipment' || b.name === 'requote_shipment'));
 
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
@@ -9837,6 +9899,10 @@ async function aiConverse(userText) {
             result = await _execBookShipment(toolUse.input);
           } else if (toolUse.name === 'dispatch_shipment') {
             result = await _execDispatchShipment(toolUse.input);
+          } else if (toolUse.name === 'save_shipment') {
+            result = await _execSaveShipment(toolUse.input);
+          } else if (toolUse.name === 'requote_shipment') {
+            result = await _execRequoteShipment(toolUse.input);
           } else if (toolUse.name === 'update_booking') {
             result = _execUpdateBooking(toolUse.input);
           }
