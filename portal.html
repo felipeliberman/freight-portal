@@ -8997,7 +8997,7 @@ function describeQuoteInput(input) {
       if (d.length) parts.push((input.items.length > 1 ? 'item ' + (i+1) + ' ' : '') + d.join(' '));
     });
   }
-  const accMap = { RSO:'residential pickup', LFO:'liftgate pickup', NAO:'limited access pickup', RSD:'residential delivery', LFD:'liftgate delivery', IND:'inside delivery', NAD:'limited access delivery', LAD:'appointment', INS:'insurance' };
+  const accMap = { RSO:'residential pickup', LFO:'liftgate pickup', NAO:'limited access pickup', RSD:'residential delivery', LFD:'liftgate delivery', IND:'inside delivery', LAD:'limited access delivery', APT:'appointment', INS:'insurance' };
   if (input.addAccessorials && input.addAccessorials.length) parts.push('added ' + input.addAccessorials.map(c=>accMap[c]||c).join(', '));
   if (input.removeAccessorials && input.removeAccessorials.length) parts.push('removed ' + input.removeAccessorials.map(c=>accMap[c]||c).join(', '));
   return parts.join('; ');
@@ -9027,7 +9027,8 @@ function _applyQuoteFields(input) {
       if (it.freightClass) { const _clsEl = row.querySelector('.li-class'); if (_clsEl) _clsEl.dataset.prefilled = '1'; }
       setF('.li-commodity', it.commodity);
       if (it.type) setF('.li-type', it.type, 'change');
-      if (it.stc) setF('.li-stc', it.stc);
+      if (it.stc)  setF('.li-stc',  it.stc);
+      if (it.nmfc) setF('.li-nmfc', it.nmfc);
     });
   }
 
@@ -9636,7 +9637,16 @@ When a customer wants to ship something or get a rate, use update_quote to open 
 
 OPEN THE FORM IMMEDIATELY when you recognize a quote — on your very first quote response, even before you have any details. The moment you say something like "I'd love to help you get a quote, where's it shipping from?", you should ALSO call update_quote (with whatever you have, or with nothing — an empty call just opens the blank form). This makes the quote form appear on the Quote Details tab right away, so the customer sees it and watches every answer fill in live as they talk. Do NOT wait until you have the ZIPs or weight to open it — open it on turn one, then fill fields as the details come in. Filling the form is EAGER and EARLY (open immediately, populate each detail as you get it). Only PULLING RATES is deliberate and late (after details + accessorials confirmed, when the customer asks).
 
-NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class; let the form auto-calculate it. NMFC IS OPTIONAL — Primus does not require an NMFC code. You may ask once if the customer has an NMFC they'd like on the BOL, but never require it and never hold up a quote or booking over it; if they don't have one or don't want to give one, that's completely fine, just move on. So when they say "quote a sofa from Ocala to Wilmington":
+PACKING SLIPS AND COMPLETE BOL COPIES — extract everything in one shot. When a customer pastes a complete packing slip, BOL copy, or order form that already contains weight, dimensions, piece count, freight class, and NMFC, do NOT ask for fields that are plainly stated. Read the document and call update_quote with every field you can extract. Critical parsing rules:
+- PIECE COUNT comes from labels like "Total Pallet Count:", "Total Boxes:", "Qty:", "Pieces:", or the count of "PALLET #" sections. Never use a PO number as pieces.
+- PO NUMBERS are labeled "PO #", "PO:", "Purchase Order:", "Ref #" etc. They go in referenceNumber at booking, NOT in pieces. A PO # of 32620 is not 32620 pieces.
+- DIMENSIONS labeled "Dimensions: 55"L x 38"W x 43"H" or "L x W x H" are exact — extract them.
+- FREIGHT CLASS labeled "Freight Class: 250" on the customer's own document is their stated class — you may pass it as freightClass. This is not inventing it; it is what the customer provided.
+- NMFC labeled "NMFC: 79300" — pass it as nmfc.
+- ACCESSORIALS at the bottom of a packing slip ("Need liftgate on residential delivery") should be mapped to the correct codes (LFD + RSD in this case).
+After extracting, still ask about pickup date and window if not stated.
+
+NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class you invented; let the form auto-calculate it. Exception: if the customer's own document explicitly states a freight class (a packing slip, BOL copy, or they typed it), you may pass it as-is. NMFC IS OPTIONAL — Primus does not require an NMFC code. You may ask once if the customer has an NMFC they'd like on the BOL, but never require it and never hold up a quote or booking over it; if they don't have one or don't want to give one, that's completely fine, just move on. So when they say "quote a sofa from Ocala to Wilmington":
 - Fill what you genuinely know once locations are unambiguous: originZip (look up Ocala = 34470), destZip, commodity "sofa". If the destination city is ambiguous (like "Wilmington"), ask which state before filling it.
 - Do NOT fill in a weight, dimensions, or freight class. Leave them blank.
 - ASK the customer: "What's the weight, and what are the exact dimensions (length x width x height in inches)?"
@@ -9786,7 +9796,9 @@ async function aiConverse(userText) {
                         height: { type: 'number', description: 'Height in inches' },
                         commodity: { type: 'string' },
                         type: { type: 'string', description: 'Packaging type code. Map what the customer says: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Always set this from what the customer tells you, never default it.' },
-                        stc: { type: 'number', description: 'Said To Contain: number of boxes/pieces riding on a pallet. Only set for pallet (PLT) or skid (SKD). Leave blank for a single piece, a plain box, or a crate. For several identical pallets on one line, set this to the TOTAL boxes across them.' }
+                        stc: { type: 'number', description: 'Said To Contain: number of boxes/pieces riding on a pallet. Only set for pallet (PLT) or skid (SKD). Leave blank for a single piece, a plain box, or a crate. For several identical pallets on one line, set this to the TOTAL boxes across them.' },
+                        freightClass: { type: 'string', description: 'Freight class as a string (e.g. "70", "125", "250"). Only pass this when the customer explicitly states a freight class from their own documentation — never invent or guess it.' },
+                        nmfc: { type: 'string', description: 'NMFC item number (optional). Pass when the customer provides it on a packing slip or BOL.' }
                       }
                     }
                   },
