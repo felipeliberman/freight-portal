@@ -1949,6 +1949,12 @@ document.addEventListener('DOMContentLoaded',()=>{
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
         </button>
       </div>
+      <div style="padding:3px 0 1px;display:flex;gap:6px;">
+        <button onclick="showSmartPastePanel()" title="Paste or upload a packing slip, email, or BOL — we'll extract everything" style="display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--bdr);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:600;color:var(--mu);cursor:pointer;font-family:var(--font);white-space:nowrap;transition:border-color .15s,color .15s;" onmouseover="this.style.borderColor='#bd27bc';this.style.color='#bd27bc';" onmouseout="this.style.borderColor='';this.style.color='';">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+          Paste Shipment Info
+        </button>
+      </div>
       <div class="inp-label">Freight &amp; Logistics, Inc. &nbsp;-&nbsp; AI Assistant</div>
     </div>
   </div>
@@ -2109,6 +2115,7 @@ function resetShipmentState(wipeConversation) {
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
+    window._smartPasteBookingData = null;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
     if (wipeConversation) {
@@ -12803,6 +12810,26 @@ function showBookingPanel(rate, shipmentData) {
     window._savedBookingData = null; // clear after restore
   }
 
+  // SmartPaste: pre-fill booking form from extracted shipment data
+  if (window._smartPasteBookingData) {
+    const _sp = window._smartPasteBookingData;
+    const _spset = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    _spset('bk-pu-name',    _sp.shipperName);
+    _spset('bk-pu-street',  _sp.shipperStreet);
+    _spset('bk-pu-city',    _sp.shipperCity);
+    _spset('bk-pu-state',   _sp.shipperState);
+    _spset('bk-pu-phone',   _sp.shipperPhone);
+    _spset('bk-dl-name',    _sp.consigneeName);
+    _spset('bk-dl-street',  _sp.consigneeStreet);
+    _spset('bk-dl-city',    _sp.consigneeCity);
+    _spset('bk-dl-state',   _sp.consigneeState);
+    _spset('bk-dl-phone',   _sp.consigneePhone);
+    _spset('bk-pu-ref',     _sp.poNumber);
+    const _spsi = document.getElementById('bk-special-instructions');
+    if (_spsi && _sp.specialInstructions) _spsi.value = _sp.specialInstructions;
+    window._smartPasteBookingData = null;
+  }
+
   window._bookingPanelContainer = c;
 
   // Helper: show requote toast then auto-get rates
@@ -16178,6 +16205,361 @@ function mobShipsAsk() {
   showChatArea();
   if (typeof handleInput === 'function') handleInput(q);
 }
+
+// ── SmartPaste ───────────────────────────────────────────────────────────────
+
+function showSmartPastePanel() {
+  const existing = document.getElementById('sp-overlay');
+  if (existing) { existing.remove(); return; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'sp-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--card);border-radius:18px 18px 0 0;padding:0;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp .2s ease;';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'padding:14px 18px 12px;border-bottom:1px solid #e5e2d9;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;';
+  hdr.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;">' +
+    '<div style="width:30px;height:30px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' +
+    '</div>' +
+    '<div><div style="font-size:13px;font-weight:700;color:var(--tx);">SmartPaste</div>' +
+    '<div style="font-size:11px;color:var(--mu);margin-top:1px;">Paste or upload — extract every field instantly</div></div>' +
+    '</div>' +
+    '<button id="sp-close-x" style="background:none;border:none;color:var(--mu);cursor:pointer;font-size:22px;line-height:1;padding:2px 6px;">&times;</button>';
+  panel.appendChild(hdr);
+
+  const tabBar = document.createElement('div');
+  tabBar.style.cssText = 'display:flex;border-bottom:1px solid #e5e2d9;flex-shrink:0;';
+  tabBar.innerHTML =
+    '<button id="sp-tab-text" style="flex:1;padding:9px;border:none;border-bottom:2px solid #bd27bc;background:none;font-family:var(--font);font-size:11px;font-weight:700;color:#bd27bc;cursor:pointer;letter-spacing:.04em;">PASTE TEXT</button>' +
+    '<button id="sp-tab-file" style="flex:1;padding:9px;border:none;border-bottom:2px solid transparent;background:none;font-family:var(--font);font-size:11px;font-weight:700;color:var(--mu);cursor:pointer;letter-spacing:.04em;">UPLOAD FILE</button>';
+  panel.appendChild(tabBar);
+
+  const content = document.createElement('div');
+  content.style.cssText = 'flex:1;overflow-y:auto;padding:16px 18px 18px;';
+
+  const textPane = document.createElement('div');
+  textPane.id = 'sp-text-pane';
+  textPane.innerHTML =
+    '<textarea id="sp-text-input" rows="7" placeholder="Paste anything — a forwarded email, packing slip, customer order, rate request. Any format." style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid #e5e2d9;border-radius:10px;padding:11px 12px;font-size:13px;font-family:var(--font);color:var(--tx);resize:vertical;outline:none;line-height:1.5;"></textarea>' +
+    '<button id="sp-text-go" style="margin-top:10px;width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);">Extract &amp; Get Rates</button>';
+  content.appendChild(textPane);
+
+  const filePane = document.createElement('div');
+  filePane.id = 'sp-file-pane';
+  filePane.style.display = 'none';
+  filePane.innerHTML =
+    '<div id="sp-drop" style="border:2px dashed #c8c4bc;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:border-color .15s;">' +
+    '<input type="file" id="sp-file-in" accept="image/jpeg,image/jpg,image/png,.pdf" style="display:none;">' +
+    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#c8c4bc" stroke-width="1.5" style="margin:0 auto 8px;display:block;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+    '<div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:3px;">Drop a file or click to browse</div>' +
+    '<div style="font-size:11px;color:var(--mu);">PDF, JPG, or PNG — including photos of handwritten packing slips or BOLs</div>' +
+    '</div>' +
+    '<div id="sp-file-chip" style="display:none;margin-top:10px;padding:8px 12px;background:var(--bg);border-radius:8px;align-items:center;gap:8px;">' +
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+    '<span id="sp-file-name" style="font-size:12px;color:var(--tx);flex:1;"></span>' +
+    '<button id="sp-file-clear" style="background:none;border:none;color:var(--mu);cursor:pointer;font-size:18px;padding:0;line-height:1;">&times;</button>' +
+    '</div>' +
+    '<button id="sp-file-go" style="display:none;margin-top:10px;width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);">Extract &amp; Get Rates</button>';
+  content.appendChild(filePane);
+
+  const resultsPane = document.createElement('div');
+  resultsPane.id = 'sp-results-pane';
+  resultsPane.style.display = 'none';
+  content.appendChild(resultsPane);
+
+  panel.appendChild(content);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  hdr.querySelector('#sp-close-x').onclick = () => overlay.remove();
+
+  function _spShowTab(which) {
+    textPane.style.display = which === 'text' ? '' : 'none';
+    filePane.style.display = which === 'file' ? '' : 'none';
+    resultsPane.style.display = 'none';
+    document.getElementById('sp-tab-text').style.color        = which === 'text' ? '#bd27bc' : 'var(--mu)';
+    document.getElementById('sp-tab-text').style.borderBottom = which === 'text' ? '2px solid #bd27bc' : '2px solid transparent';
+    document.getElementById('sp-tab-file').style.color        = which === 'file' ? '#bd27bc' : 'var(--mu)';
+    document.getElementById('sp-tab-file').style.borderBottom = which === 'file' ? '2px solid #bd27bc' : '2px solid transparent';
+  }
+  document.getElementById('sp-tab-text').onclick = () => _spShowTab('text');
+  document.getElementById('sp-tab-file').onclick = () => _spShowTab('file');
+
+  let _spSelectedFile = null;
+  const dropZone = document.getElementById('sp-drop');
+  const fileIn   = document.getElementById('sp-file-in');
+
+  dropZone.onclick    = () => fileIn.click();
+  dropZone.ondragover = e => { e.preventDefault(); dropZone.style.borderColor='#bd27bc'; dropZone.style.background='#fdf4ff'; };
+  dropZone.ondragleave = () => { dropZone.style.borderColor=''; dropZone.style.background=''; };
+  dropZone.ondrop = e => {
+    e.preventDefault(); dropZone.style.borderColor=''; dropZone.style.background='';
+    const f = e.dataTransfer.files[0]; if (f) _spPickFile(f);
+  };
+  fileIn.onchange = () => { if (fileIn.files[0]) _spPickFile(fileIn.files[0]); };
+
+  function _spPickFile(f) {
+    if (!/^(image\/jpeg|image\/jpg|image\/png|application\/pdf)$/i.test(f.type)) {
+      alert('Please choose a PDF, JPG, or PNG file.'); return;
+    }
+    _spSelectedFile = f;
+    document.getElementById('sp-file-name').textContent = f.name;
+    document.getElementById('sp-file-chip').style.display = 'flex';
+    document.getElementById('sp-file-go').style.display   = 'block';
+    dropZone.style.display = 'none';
+  }
+
+  document.getElementById('sp-file-clear').onclick = () => {
+    _spSelectedFile = null; fileIn.value = '';
+    document.getElementById('sp-file-chip').style.display = 'none';
+    document.getElementById('sp-file-go').style.display   = 'none';
+    dropZone.style.display = '';
+  };
+
+  document.getElementById('sp-text-go').onclick = async () => {
+    const txt = document.getElementById('sp-text-input').value.trim();
+    if (!txt) { document.getElementById('sp-text-input').style.borderColor='#dc2626'; return; }
+    document.getElementById('sp-text-input').style.borderColor='';
+    await _spExtract({ type:'text', text:txt }, resultsPane, textPane, filePane);
+  };
+
+  document.getElementById('sp-file-go').onclick = async () => {
+    if (!_spSelectedFile) return;
+    await _spExtract({ type:'file', file:_spSelectedFile }, resultsPane, textPane, filePane);
+  };
+}
+
+async function _spExtract(src, resultsPane, textPane, filePane) {
+  textPane.style.display = 'none';
+  filePane.style.display = 'none';
+  resultsPane.style.display = '';
+  resultsPane.innerHTML =
+    '<div style="text-align:center;padding:36px 0;">' +
+    '<div style="width:24px;height:24px;border:2px solid #e5e2d9;border-top-color:#bd27bc;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px;"></div>' +
+    '<div style="font-size:13px;color:var(--mu);">Reading your shipment info…</div></div>';
+
+  try {
+    let userContent;
+    if (src.type === 'text') {
+      userContent = [{ type:'text', text:src.text }];
+    } else {
+      const b64 = await _spToBase64(src.file);
+      if (src.file.type === 'application/pdf') {
+        userContent = [
+          { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 } },
+          { type:'text', text:'Extract all shipment information from this document.' }
+        ];
+      } else {
+        userContent = [
+          { type:'image', source:{ type:'base64', media_type:src.file.type, data:b64 } },
+          { type:'text', text:'Extract all shipment information from this image.' }
+        ];
+      }
+    }
+
+    const sysPrompt = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (null for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+
+    const extraHdrs = (src.type === 'file' && src.file.type === 'application/pdf')
+      ? { 'anthropic-beta':'pdfs-2024-09-25' } : {};
+
+    const resp = await (window.parent.flAnthropic || window.flAnthropic)(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type':'application/json' }, extraHdrs),
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1024,
+          system: sysPrompt,
+          messages: [{ role:'user', content:userContent }]
+        })
+      }
+    );
+
+    const rawText = (resp.content && resp.content[0] && resp.content[0].text) || '';
+    let extracted;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
+      extracted = JSON.parse(cleaned);
+    } catch(e2) {
+      throw new Error('Could not parse the extracted data. Please try again.');
+    }
+
+    _spShowResults(extracted, resultsPane);
+
+  } catch(err) {
+    resultsPane.innerHTML =
+      '<div style="padding:24px;text-align:center;">' +
+      '<div style="font-size:13px;font-weight:600;color:#dc2626;margin-bottom:6px;">Extraction failed</div>' +
+      '<div style="font-size:12px;color:var(--mu);margin-bottom:16px;">' + ((err.message||'Unknown error').slice(0,200)) + '</div>' +
+      '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Close</button>' +
+      '</div>';
+  }
+}
+
+function _spShowResults(data, resultsPane) {
+  const sh  = data.shipper   || {};
+  const co  = data.consignee || {};
+  const it  = (data.items && data.items[0]) || {};
+  const unc = data.unclear   || [];
+
+  const needsWeight  = unc.includes('weight')  || !it.weight;
+  const needsDestZip = unc.includes('destZip') || !co.zip;
+
+  function _spInp(id, label, val, type, warn) {
+    const ws = warn ? 'background:#fffbeb;border-color:#f59e0b;' : '';
+    return '<div style="margin-bottom:7px;"><label style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
+      label + (warn ? ' <span style="color:#f59e0b;font-size:9px;">⚠</span>' : '') + '</label>' +
+      '<input id="' + id + '" type="' + (type||'text') + '" value="' + ((val||'')+'').replace(/"/g,'&quot;') + '" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid #c8c4bc;border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:var(--tx);outline:none;' + ws + '"></div>';
+  }
+  function _spCol(id, label, val, maxlen, warn) {
+    const ws = warn ? 'background:#fffbeb;border-color:#f59e0b;' : '';
+    return '<div><label style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
+      label + (warn ? ' <span style="color:#f59e0b;">⚠</span>' : '') + '</label>' +
+      '<input id="' + id + '" value="' + ((val||'')+'').replace(/"/g,'&quot;') + '" ' + (maxlen ? 'maxlength="'+maxlen+'"' : '') +
+      ' style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid ' + (warn?'#f59e0b':'#c8c4bc') + ';border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:var(--tx);outline:none;' + ws + '"></div>';
+  }
+  function _spSec(title, html) {
+    return '<div style="margin-bottom:14px;"><div style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px;">' + title + '</div>' + html + '</div>';
+  }
+  function _spGrid(cols) {
+    var cells = Array.prototype.slice.call(arguments, 1);
+    return '<div style="display:grid;grid-template-columns:' + cols + ';gap:6px;margin-bottom:7px;">' + cells.join('') + '</div>';
+  }
+
+  const warnBox = (needsWeight || needsDestZip)
+    ? '<div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#92400e;">⚠ Fields marked above are unclear or missing — please fill them in before getting rates.</div>'
+    : '';
+
+  resultsPane.innerHTML =
+    '<div style="font-size:12px;color:var(--mu);margin-bottom:12px;">Review the extracted info — edit anything that looks off, then click Use This Info.</div>' +
+    _spSec('Shipper (Pickup)',
+      _spInp('sp-sh-name',   'Company Name', sh.name,   'text') +
+      _spInp('sp-sh-street', 'Street',       sh.street, 'text') +
+      _spGrid('2fr 1fr 1fr',
+        _spCol('sp-sh-city',  'City',  sh.city),
+        _spCol('sp-sh-state', 'State', sh.state, 2, unc.includes('originZip')),
+        _spCol('sp-sh-zip',   'ZIP',   sh.zip,   5, unc.includes('originZip'))
+      ) +
+      _spInp('sp-sh-phone', 'Phone', sh.phone, 'tel')
+    ) +
+    _spSec('Consignee (Delivery)',
+      _spInp('sp-co-name',   'Company Name', co.name,   'text') +
+      _spInp('sp-co-street', 'Street',       co.street, 'text') +
+      _spGrid('2fr 1fr 1fr',
+        _spCol('sp-co-city',  'City',  co.city),
+        _spCol('sp-co-state', 'State', co.state, 2),
+        _spCol('sp-co-zip',   'ZIP',   co.zip,   5, needsDestZip)
+      ) +
+      _spInp('sp-co-phone', 'Phone', co.phone, 'tel')
+    ) +
+    _spSec('Freight Details',
+      _spGrid('1fr 1fr 1fr 1fr 1fr',
+        _spCol('sp-pcs', 'Pieces',       it.pieces),
+        _spCol('sp-wgt', 'Weight (lbs)', it.weight, null, needsWeight),
+        _spCol('sp-len', 'L (in)',        it.length),
+        _spCol('sp-wid', 'W (in)',        it.width),
+        _spCol('sp-hgt', 'H (in)',        it.height)
+      ) +
+      _spGrid('1fr 1fr 1fr',
+        _spCol('sp-cls',  'Freight Class', it.freightClass),
+        _spCol('sp-nmfc', 'NMFC',          it.nmfc),
+        _spCol('sp-po',   'PO Number',     data.poNumber)
+      ) +
+      _spInp('sp-comm', 'Commodity Description', it.commodity, 'text')
+    ) +
+    warnBox +
+    '<button id="sp-use-btn" style="width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);margin-bottom:8px;">Use This Info — Get Rates</button>' +
+    '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="width:100%;background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:4px;">Cancel</button>';
+
+  document.getElementById('sp-use-btn').onclick = () => _spApply(data);
+}
+
+function _spApply(rawData) {
+  const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+  const originZip = g('sp-sh-zip');
+  const destZip   = g('sp-co-zip');
+  const weight    = parseFloat(g('sp-wgt')) || 0;
+
+  if (!destZip || destZip.length < 5) {
+    const el = document.getElementById('sp-co-zip');
+    if (el) { el.style.borderColor='#dc2626'; el.style.background='#fff1f2'; el.focus(); } return;
+  }
+  if (!weight) {
+    const el = document.getElementById('sp-wgt');
+    if (el) { el.style.borderColor='#dc2626'; el.style.background='#fff1f2'; el.focus(); } return;
+  }
+
+  window._smartPasteBookingData = {
+    shipperName:         g('sp-sh-name'),
+    shipperStreet:       g('sp-sh-street'),
+    shipperCity:         g('sp-sh-city'),
+    shipperState:        g('sp-sh-state'),
+    shipperPhone:        g('sp-sh-phone'),
+    consigneeName:       g('sp-co-name'),
+    consigneeStreet:     g('sp-co-street'),
+    consigneeCity:       g('sp-co-city'),
+    consigneeState:      g('sp-co-state'),
+    consigneePhone:      g('sp-co-phone'),
+    poNumber:            g('sp-po'),
+    specialInstructions: rawData.specialInstructions || ''
+  };
+
+  const ov = document.getElementById('sp-overlay');
+  if (ov) ov.remove();
+
+  if (typeof rpState !== 'undefined' && rpState.tabs) {
+    const qTab = rpState.tabs.find(t => t.title === 'Get a Quote');
+    if (qTab) { rpState.activeId = qTab.id; if (typeof renderPanel === 'function') renderPanel(); }
+  }
+
+  const it = (rawData.items && rawData.items[0]) || {};
+
+  setTimeout(function() {
+    if (typeof _applyQuoteFields === 'function') {
+      _applyQuoteFields({
+        originZip:  originZip,
+        destZip:    destZip,
+        pickupDate: rawData.pickupDate || '',
+        items: [{
+          pieces:       parseInt(g('sp-pcs'))   || 1,
+          weight:       weight,
+          length:       parseFloat(g('sp-len')) || 48,
+          width:        parseFloat(g('sp-wid')) || 40,
+          height:       parseFloat(g('sp-hgt')) || 48,
+          freightClass: g('sp-cls')  || '',
+          commodity:    g('sp-comm') || '',
+          type:         it.packageType || 'PLT',
+          stc:          g('sp-nmfc') || ''
+        }],
+        getRates: true
+      });
+    }
+    if (typeof appendMsg === 'function') {
+      const from = g('sp-sh-name') || originZip || 'shipper';
+      const to   = g('sp-co-name') || destZip;
+      appendMsg('bot', 'Got it — pulling rates for ' + weight + ' lbs from ' + from + ' to ' + to + '. Once you pick a carrier, the booking form will be pre-filled with all the address and contact details.');
+    }
+  }, 300);
+}
+
+async function _spToBase64(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── End SmartPaste ───────────────────────────────────────────────────────────
 
 // Patch setLoggedIn to show/hide tab bar appropriately
 var _origSetLoggedIn = window.setLoggedIn;
