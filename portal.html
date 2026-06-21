@@ -9017,6 +9017,7 @@ function _applyQuoteFields(input) {
       setF('.li-wid', it.width);
       setF('.li-hgt', it.height);
       setF('.li-class', it.freightClass, 'change');
+      if (it.freightClass) { const _clsEl = row.querySelector('.li-class'); if (_clsEl) _clsEl.dataset.prefilled = '1'; }
       setF('.li-commodity', it.commodity);
       if (it.type) setF('.li-type', it.type, 'change');
       if (it.stc) setF('.li-stc', it.stc);
@@ -13923,7 +13924,7 @@ function showQuoteForm(prefill, silent) {
       const row = el.closest('.qt-line');
       if (!row) return;
       const clsSel = row.querySelector('.li-class');
-      if (!clsSel || clsSel.value) return; // don't override manual selection
+      if (!clsSel || (clsSel.value && !clsSel.dataset.prefilled)) return; // don't override manual selection
       const wt  = parseFloat(row.querySelector('.li-weight').value)||0;
       const qty = parseFloat(row.querySelector('.li-qty').value)||1;
       const L   = parseFloat(row.querySelector('.li-len').value)||0;
@@ -13936,8 +13937,14 @@ function showQuoteForm(prefill, silent) {
           // Show auto class as placeholder in the Auto option
           const autoOpt = clsSel.querySelector('option[value=""]');
           if (autoOpt) autoOpt.textContent = auto;
+          // If the class was prefilled by requote, update the displayed value too
+          if (clsSel.dataset.prefilled) clsSel.value = String(auto);
         }
       }
+    }));
+    // Clear prefilled flag when the user genuinely picks a class from the dropdown
+    tbody.querySelectorAll('.li-class').forEach(sel => sel.addEventListener('change', e => {
+      if (e.isTrusted) delete sel.dataset.prefilled;
     }));
     tbody.querySelectorAll('.li-del').forEach(btn => btn.onclick = () => { btn.closest('tr').remove(); wireRows(); updateTotals(); });
   }
