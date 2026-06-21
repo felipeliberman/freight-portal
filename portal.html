@@ -2172,6 +2172,15 @@ function bumpToBusinessDay(dateStr) {
     return d.toISOString().split('T')[0];
   } catch(e) { return dateStr; }
 }
+function isPastPickup(dateStr) {
+  // True if a YYYY-MM-DD pickup date is before today (local), or missing — i.e. not valid to dispatch.
+  if (!dateStr) return true;
+  try {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const d = new Date(dateStr + 'T12:00:00');
+    return d < today;
+  } catch(e) { return false; }
+}
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
 const zipCache = {};
@@ -4523,7 +4532,6 @@ function renderShipmentRows(shipments, tbody, limit, offset) {
       <td data-col="9" data-priority="2" style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);">${pro||'—'}</td>
       <td data-col="10" data-priority="0" style="padding:9px 12px;font-weight:600;white-space:nowrap;font-size:12px;">${total}</td>
       <td data-col="11" data-priority="0" style="padding:9px 8px;white-space:nowrap;" onclick="event.stopPropagation();">
-        ${!isShipmentDispatched(s) ? '<button class="row-dispatch-btn" title="Dispatch Shipment" style="background:var(--ac);color:#fff;border:none;border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--font);margin-right:4px;">Dispatch</button>' : ''}
         <button onclick="openDocsModal('${bolId}','${bol}')" title="Documents"
           style="background:none;border:none;cursor:pointer;color:var(--ac);font-size:15px;padding:2px;line-height:1;opacity:.7;transition:opacity .12s;"
           onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.7"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="vertical-align:middle;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
@@ -5338,7 +5346,12 @@ function editSavedShipment(s, BOLId, BOLNumber) {
     set('bk-pu-contact', shp.contact || '');
     set('bk-pu-phone', shp.contactPhone || shp.phone || '');
     set('bk-pu-ref', s.shipperReferenceNumber || s.referenceNumber || (shp.referenceNumber) || '');
-    set('bk-pu-date', pInfo.date || shipData.pickupDate || '');
+    let _pu = pInfo.date || shipData.pickupDate || '';
+    if (isPastPickup(_pu)) {
+      _pu = getTomorrow();
+      try { const _n = document.getElementById('bk-edit-note'); if (_n) _n.innerHTML += ' <span style="color:#b45309;font-weight:600;">The original pickup date had passed, so I set it to ' + _pu + ' — change it if needed.</span>'; } catch(e){}
+    }
+    set('bk-pu-date', _pu);
     set('bk-pu-open', pInfo.timeFrom || '12:00');
     set('bk-pu-close', pInfo.timeTo || '16:00');
     set('bk-dl-name', con.name || con.companyName || s.consigneeName || '');
