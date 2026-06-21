@@ -10123,6 +10123,9 @@ function shipmentMatchesQuery(s, query) {
 }
 
 async function clientSideSearch(t, lower) {
+  // ── Pure greeting guard — never intercept greetings with shipment search ──
+  if (/^\s*(hello|hi|hey|howdy|greetings|sup|yo|hiya|good morning|good afternoon|good evening|what's up|whats up|how are you|how's it going|hows it going|what can you do|what do you do|help me|help)\s*[?!.]*\s*$/i.test(t.trim())) return false;
+
   // ── General knowledge guard ────────────────────────────────────────────────
   // If this looks like an educational/hypothetical question, skip ALL client-side
   // handlers and let the AI answer it directly
