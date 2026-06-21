@@ -11085,6 +11085,29 @@ async function handleInput(text) {
   const lower = t.toLowerCase();
   if (!currentSession && t) { startSession(t.slice(0, 60)); } else if (currentSession && t) { updateSessionTitle(t.slice(0, 60)); }
 
+  // ── Packing slip / BOL copy — auto-route to SmartPaste extraction ───────────────
+  // When a customer pastes a full packing slip, structured extraction via SmartPaste
+  // is far more reliable than asking the chat agent to parse it conversationally.
+  {
+    const _spMarkers = ['total weight', 'freight class', 'dimensions:', 'pallet #', 'nmfc',
+                        'total boxes', 'total pallet', 'product description', 'weight:'];
+    const _spHits = _spMarkers.filter(m => lower.includes(m)).length;
+    if (_spHits >= 3 && t.length > 100) {
+      removeTyping();
+      appendMsg('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
+      setTimeout(function() {
+        showSmartPastePanel();
+        setTimeout(function() {
+          const _ta = document.getElementById('sp-text-input');
+          if (_ta) _ta.value = t;
+          const _go = document.getElementById('sp-text-go');
+          if (_go) _go.click();
+        }, 80);
+      }, 250);
+      return;
+    }
+  }
+
   // ── Support mode bypass — skip ALL pre-AI handlers, go straight to AI ──────────
   if (window._supModeActive) {
     // If draft is showing and user is giving edit instructions, update draft directly
