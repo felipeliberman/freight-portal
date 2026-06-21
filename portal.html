@@ -7945,6 +7945,8 @@ async function submitBookingOnly() {
     const docs = result.documents || [];
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
+    try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
+    window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
     showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow() });
     bookingRate = null; bookingData = {};
@@ -12037,9 +12039,9 @@ function showBookingPanel(rate, shipmentData) {
   saveBtn.textContent = 'Save Shipment';
   const btn = document.createElement('button');
   btn.id = 'bk-submit-btn';
-  btn.style.cssText = 'flex:2;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);white-space:nowrap;';
-  btn.textContent = 'Book & Dispatch — ' + priceStr;
-  btnRow.appendChild(saveBtn); btnRow.appendChild(btn);
+  btn.style.cssText = 'flex:1;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);white-space:nowrap;';
+  btn.textContent = 'Save Shipment';
+  btnRow.appendChild(btn);
   const errEl = document.createElement('div');
   errEl.id = 'bk-error';
   errEl.style.cssText = 'display:none;margin-top:8px;color:#dc2626;font-size:11px;text-align:center;';
@@ -12216,11 +12218,7 @@ function showBookingPanel(rate, shipmentData) {
     if (!bookingData.consigneeName) missing.push('Delivery business name');
     if (!bookingData.consigneeStreet) missing.push('Delivery street address');
 
-    if (missing.length) {
-      errEl.textContent = 'Please fill in: ' + missing.join(', ');
-      errEl.style.display = 'block';
-      return;
-    }
+    // Partial saves allowed — Primus stores incomplete shipments; never block Save on missing fields.
     errEl.style.display = 'none';
 
     // ── Geocodio RDI check on full delivery address ───────────────────────────
@@ -12243,7 +12241,7 @@ function showBookingPanel(rate, shipmentData) {
           const isResidential = res0 && res0.fields && res0.fields.zip4 && res0.fields.zip4.residential === true;
           if (isResidential) {
             // Build smart combined modal — check all conditions at once
-            btn.textContent = 'Book Shipment — ' + priceStr;
+            btn.textContent = 'Save Shipment';
             btn.disabled = false;
             const hasLFD = (bookingData.accessorials || []).includes('LFD') ||
               ((lastQuotedShipment&&lastQuotedShipment.accessorials)||[]).some(a=>/liftgate/i.test(a));
@@ -12302,7 +12300,7 @@ function showBookingPanel(rate, shipmentData) {
               btn.textContent = 'Submitting...'; btn.disabled = true;
               const formBody2 = document.getElementById('bk-form-body');
               if (formBody2) { formBody2.style.opacity = '0.4'; formBody2.style.pointerEvents = 'none'; }
-              bookingStep = 'confirm'; showChatArea(); await submitBooking();
+              bookingStep = 'confirm'; showChatArea(); await submitBookingOnly();
               if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
               bookingStep = null; window._bookingPanelContainer = null;
             };
@@ -12338,7 +12336,7 @@ function showBookingPanel(rate, shipmentData) {
       } catch(e) {
         // Geocodio failed silently — just proceed
       }
-      btn.textContent = 'Book Shipment — ' + priceStr;
+      btn.textContent = 'Save Shipment';
       btn.disabled = false;
     }
 
@@ -12354,7 +12352,7 @@ function showBookingPanel(rate, shipmentData) {
       const _laLoc = _puIsLA ? 'pickup' : 'delivery';
       const _laAddr = (_puIsLA ? _puAddr : _dlAddr).trim().slice(0,50);
       const _laCode = _puIsLA ? 'NAO' : 'NAD';
-      btn.textContent = 'Book Shipment \u2014 ' + priceStr; btn.disabled = false;
+      btn.textContent = 'Save Shipment'; btn.disabled = false;
       const laOv = document.createElement('div');
       laOv.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;';
       const laBox = document.createElement('div');
@@ -12373,7 +12371,7 @@ function showBookingPanel(rate, shipmentData) {
       document.getElementById('bk-la-proceed').onclick = async () => {
         laOv.remove(); btn.textContent = 'Submitting...'; btn.disabled = true;
         const fbLA = document.getElementById('bk-form-body'); if (fbLA) { fbLA.style.opacity='0.4'; fbLA.style.pointerEvents='none'; }
-        bookingStep = 'confirm'; showChatArea(); await submitBooking();
+        bookingStep = 'confirm'; showChatArea(); await submitBookingOnly();
         if (fbLA) { fbLA.style.opacity=''; fbLA.style.pointerEvents=''; }
         bookingStep = null; window._bookingPanelContainer = null;
       };
@@ -12389,7 +12387,7 @@ function showBookingPanel(rate, shipmentData) {
 
     bookingStep = 'confirm';
     showChatArea();
-    await submitBooking();
+    await submitBookingOnly();
     if (formBody) { formBody.style.opacity = ''; formBody.style.pointerEvents = ''; }
     bookingStep = null;
     window._bookingPanelContainer = null;
