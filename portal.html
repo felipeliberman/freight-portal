@@ -5364,6 +5364,37 @@ function editSavedShipment(s, BOLId, BOLNumber) {
     set('bk-dl-phone', con.contactPhone || con.phone || '');
     const si = document.getElementById('bk-special-instructions');
     if (si) si.value = s.BOLInstructions || s.specialInstructions || '';
+    // Reopened shipment gets three actions: Requote / Save / Ready to Dispatch.
+    try {
+      const _sb = document.getElementById('bk-submit-btn');
+      if (_sb && _sb.parentNode) {
+        const _row = _sb.parentNode;
+        _row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+        _row.innerHTML = '';
+        const mkBtn = (label, kind) => {
+          const b = document.createElement('button');
+          const base = 'flex:1;min-width:92px;border-radius:8px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);white-space:nowrap;';
+          b.style.cssText = base + (kind === 'primary' ? 'background:var(--ac);color:#fff;border:none;' : kind === 'ghost' ? 'background:none;color:var(--ac);border:1px solid var(--ac);' : 'background:#f7f5f2;color:var(--tx);border:1px solid var(--bdr);');
+          b.textContent = label; return b;
+        };
+        const reqBtn = mkBtn('Requote', 'ghost');
+        const savBtn = mkBtn('Save', 'secondary'); savBtn.id = 'bk-submit-btn';
+        const dspBtn = mkBtn('Ready to Dispatch', 'primary');
+        reqBtn.onclick = () => { window._editingBOLId = null; window._editingShipment = null; if (typeof showSavedShipmentDispatchModal === 'function') showSavedShipmentDispatchModal({ s: s, BOLId: BOLId, BOLNumber: BOLNumber, openEdit: true }); };
+        savBtn.onclick = () => { submitBookingOnly(); };
+        dspBtn.onclick = async () => {
+          const _d = document.getElementById('bk-pu-date'); const _puVal = _d ? _d.value : '';
+          if (isPastPickup(_puVal)) { if (_d) { _d.style.borderColor = '#dc2626'; try { _d.focus(); } catch(e){} } appendMessage('bot', "That pickup date has passed — pick a date that isn't in the past before dispatching."); return; }
+          dspBtn.disabled = true; dspBtn.textContent = 'Dispatching...';
+          try {
+            await submitBookingOnly({ thenDispatch: true });
+            const _bolId = (window._lastBooked && window._lastBooked.BOLId) || BOLId;
+            if (_bolId && typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
+          } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
+        };
+        _row.appendChild(reqBtn); _row.appendChild(savBtn); _row.appendChild(dspBtn);
+      }
+    } catch(e) {}
   }, 500);
 }
 
@@ -5443,6 +5474,18 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   let _dispatchedDocs = [];
 
   dispBtn.onclick = async () => {
+    // Block dispatching into the past — Primus rejects past pickup dates.
+    const _pu = (s.pickupInformation && s.pickupInformation.date) || s.estimatedPickupDate || s.actualPickupDate || '';
+    if (isPastPickup(_pu)) {
+      if (dispBtn.parentNode && !dispBtn.parentNode.querySelector('.past-date-warn')) {
+        const _w = document.createElement('div');
+        _w.className = 'past-date-warn';
+        _w.style.cssText = 'margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#b91c1c;';
+        _w.textContent = 'The pickup date has passed. Open the shipment, set a new pickup date, then dispatch.';
+        dispBtn.parentNode.insertBefore(_w, dispBtn);
+      }
+      return;
+    }
     // Run RDI check first
     const conAcc = s.accessorials || s.accessorialsList || [];
     const conStreet = (s.consignee && (s.consignee.address1||s.consignee.address)) || '';
@@ -7975,7 +8018,8 @@ function parseAddrParts(addrStr, fallbackZip) {
   };
 }
 
-async function submitBookingOnly() {
+async function submitBookingOnly(opts) {
+  opts = opts || {};
   // Creates the BOL in Primus but does NOT dispatch — "Save Shipment" flow
   appendMessage('bot', 'Saving shipment...');
   showTyping();
@@ -8067,7 +8111,7 @@ async function submitBookingOnly() {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
-    showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow() });
+    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow() });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
   } catch(e) {
