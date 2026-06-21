@@ -2108,6 +2108,7 @@ function resetShipmentState(wipeConversation) {
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
+    window._requoteContext = null;
     lastQuotedShipment = null;
     if (wipeConversation) {
       chatHistory = [];
@@ -5573,6 +5574,8 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   editBtn.style.cssText = 'width:100%;background:none;border:none;color:var(--mu);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);padding:4px;';
   editBtn.textContent = 'Requote';
   editBtn.onclick = () => {
+    // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
+    window._requoteContext = { bolId: BOLId, shipment: s };
     overlay.remove();
     // Pre-fill quote form with saved shipment data and auto-run rates
     const accCodes = (s.accessorials||s.accessorialsList||[]).map(a => {
@@ -5744,6 +5747,8 @@ function fmtDate(d) {
 
 function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   s = s || {};
+  // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
+  window._requoteContext = { bolId: s.BOLId || s.bolId || '', shipment: s };
   const accCodes = (s.accessorials||s.accessorialsList||[]).map(a => {
     const map2 = {'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'};
     return map2[a] || (typeof a==='string'&&a.length<=5?a:null);
@@ -12279,7 +12284,39 @@ function showBookingPanel(rate, shipmentData) {
   }, 100);
 
   openRightPanel(c, 'Book Shipment');
-  setTimeout(() => applyDefaultShipper(), 200);
+  setTimeout(() => {
+    applyDefaultShipper();
+    const _rqCtx = window._requoteContext;
+    if (_rqCtx && _rqCtx.bolId) {
+      // Requote flow: update the original BOL (PUT) instead of creating a new one.
+      window._editingBOLId = _rqCtx.bolId;
+      const _rs = _rqCtx.shipment || {};
+      const _rshp = _rs.shipper   || {};
+      const _rcon = _rs.consignee || {};
+      const _rpi  = _rs.pickupInformation || {};
+      // Override any default-shipper fill with the original shipment's addresses.
+      const _rset = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') { el.value = v; try { el.dispatchEvent(new Event('input')); } catch(e){} } };
+      _rset('bk-pu-name',    _rshp.name || _rshp.companyName || _rs.shipperName || '');
+      _rset('bk-pu-street',  _rshp.address1 || _rshp.address || '');
+      _rset('bk-pu-suite',   _rshp.address2 || '');
+      _rset('bk-pu-city',    _rshp.city || _rs.originCity || '');
+      _rset('bk-pu-contact', _rshp.contact || '');
+      _rset('bk-pu-phone',   _rshp.contactPhone || _rshp.phone || '');
+      _rset('bk-pu-ref',     _rs.shipperReferenceNumber || _rs.referenceNumber || _rshp.referenceNumber || '');
+      const _rPuDate = _rpi.date || _rs.estimatedPickupDate || '';
+      if (_rPuDate && !isPastPickup(_rPuDate)) _rset('bk-pu-date', _rPuDate);
+      _rset('bk-pu-open',  _rpi.timeFrom || '');
+      _rset('bk-pu-close', _rpi.timeTo   || '');
+      _rset('bk-dl-name',    _rcon.name || _rcon.companyName || _rs.consigneeName || '');
+      _rset('bk-dl-street',  _rcon.address1 || _rcon.address || '');
+      _rset('bk-dl-suite',   _rcon.address2 || '');
+      _rset('bk-dl-city',    _rcon.city || _rs.destinationCity || '');
+      _rset('bk-dl-contact', _rcon.contact || '');
+      _rset('bk-dl-phone',   _rcon.contactPhone || _rcon.phone || '');
+      const _rsi = document.getElementById('bk-special-instructions');
+      if (_rsi) _rsi.value = _rs.BOLInstructions || _rs.specialInstructions || '';
+    }
+  }, 200);
 
   // Wire address book selectors
   setTimeout(() => {
