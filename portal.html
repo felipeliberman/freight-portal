@@ -9171,7 +9171,7 @@ async function _execBookShipment(input) {
         length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48),
         dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||calcFreightClass(Number(it.weight||0),Number(it.length||48),Number(it.width||40),Number(it.height||48),Number(it.qty||it.pieces||1))||70),
         hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
-        STC:(it.stc||it.STC||''), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
+        STC:((it.stc||it.STC)?String(it.stc||it.STC):undefined), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
       })),
       UOM:'US', BOLInstructions: input.specialInstructions || '',
       accessorialsList: accCodes,
@@ -9183,7 +9183,10 @@ async function _execBookShipment(input) {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
     });
     const bookText = await bookRes.text();
-    if (!bookRes.ok) return { ok:false, error:'Booking failed (' + bookRes.status + '): ' + bookText.slice(0,200) };
+    if (!bookRes.ok) {
+      try { console.error('[BOOK 400] status:', bookRes.status, '\nresponse:', bookText, '\npayload:', JSON.stringify(payload)); } catch(e) {}
+      return { ok:false, error:'Booking failed (' + bookRes.status + '): ' + bookText.slice(0,500) };
+    }
     const bookData = JSON.parse(bookText);
     const result = bookData.data && bookData.data.results && bookData.data.results[0];
     if (!result) return { ok:false, error:'No booking confirmation returned. Please try again or call (800) 687-3713.' };
@@ -9323,6 +9326,10 @@ ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or
 PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
 
 STC (SAID TO CONTAIN) — PALLETS ONLY. When the packaging is a pallet or skid, ask how many boxes or pieces are on it and pass that number as the item stc. If it is a single box or one piece, leave stc blank — do not ask and do not set it. For ONE pallet with several boxes, set pieces to 1 and stc to the box count. For SEVERAL IDENTICAL pallets (same weight and same dimensions), keep them on ONE line: set pieces to the number of pallets and stc to the TOTAL boxes across all of them — for example 3 pallets with 10 boxes each is pieces 3, stc 30. If the pallets DIFFER in weight or dimensions, do not combine them: pass a SEPARATE item per pallet in the items array, each with its own weight, dimensions and its own stc, and confirm the box count on each. For a plain box or crate shipped as the unit itself, never set stc.
+
+INSURANCE — NEVER QUOTE A RATE, PERCENTAGE, OR COST. Cargo insurance is priced off the declared value by our system, not by you. Never state an insurance cost, percentage, or rule of thumb — no "about 1 to 2 percent," no dollar estimate, nothing. If a customer wants insurance, ask for the declared value, add it, and let the system price it. If they ask what it costs, say it is based on the declared value and gets calculated once you add it. Do not invent a number.
+
+READING WEIGHT AND DIMENSIONS — NEVER MISMAP THE NUMBERS. When a customer rattles off numbers like "100, 48 40 40" or "furniture 100 x 48 40 40," do not assume which number is the weight and which are the dimensions. Dimensions are a set of THREE (length, width, height); the weight is a SINGLE separate number in pounds. If a customer gives four or more numbers, or it is at all unclear which is the weight versus the three dimensions, do NOT guess and fill — confirm it back first: "Just to confirm, that is 100 lbs with dimensions 48 by 40 by 40 — right?" Only fill weight and dimensions once you are sure which is which.
 
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
@@ -9511,7 +9518,8 @@ async function aiConverse(userText) {
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
         removeTyping();
-        if (textOut) _showBot(textOut);
+        // Pre-tool narration intentionally NOT rendered: only the final message shows per
+        // turn, so the agent never double-asks (a narration line plus a reworded final line).
         // Execute the requested tool
         let result;
         try {
@@ -13684,7 +13692,7 @@ function showQuoteForm(prefill, silent) {
           accessorials: [...container.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code),
           pickupDate:   container.querySelector('#qt-date').value,
           // Pass full items so booking has exact dims from the quote
-          lineItems: _its.map(it=>({ qty:Number(it.qty)||1, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight', nmfc:it.nmfc||'', STC:it.stc||'', hazmat:it.hazmat||false, stackAmount:it.stack==='Y'?2:1 })),
+          lineItems: _its.map(it=>({ qty:Number(it.qty)||1, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight', nmfc:it.nmfc||'', STC:(it.stc?String(it.stc):undefined), hazmat:it.hazmat||false, stackAmount:it.stack==='Y'?2:1 })),
           length: Number(_its[0]&&_its[0].length)||48,
           width:  Number(_its[0]&&_its[0].width)||40,
           height: Number(_its[0]&&_its[0].height)||48,
