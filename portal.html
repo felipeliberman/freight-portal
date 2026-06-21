@@ -11095,15 +11095,7 @@ async function handleInput(text) {
     if (_spHits >= 3 && t.length > 100) {
       removeTyping();
       appendMsg('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
-      setTimeout(function() {
-        showSmartPastePanel();
-        setTimeout(function() {
-          const _ta = document.getElementById('sp-text-input');
-          if (_ta) _ta.value = t;
-          const _go = document.getElementById('sp-text-go');
-          if (_go) _go.click();
-        }, 80);
-      }, 250);
+      setTimeout(function() { showSmartPastePanel(t); }, 250);
       return;
     }
   }
@@ -16243,9 +16235,9 @@ function mobShipsAsk() {
 
 // ── SmartPaste ───────────────────────────────────────────────────────────────
 
-function showSmartPastePanel() {
+function showSmartPastePanel(autoText) {
   const existing = document.getElementById('sp-overlay');
-  if (existing) { existing.remove(); return; }
+  if (existing) { existing.remove(); if (!autoText) return; }
 
   const overlay = document.createElement('div');
   overlay.id = 'sp-overlay';
@@ -16253,7 +16245,7 @@ function showSmartPastePanel() {
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
 
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--card);border-radius:18px 18px 0 0;padding:0;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp .2s ease;';
+  panel.style.cssText = 'background:#ffffff;border-radius:18px 18px 0 0;padding:0;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp .2s ease;';
 
   const hdr = document.createElement('div');
   hdr.style.cssText = 'padding:14px 18px 12px;border-bottom:1px solid #e5e2d9;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;';
@@ -16262,17 +16254,17 @@ function showSmartPastePanel() {
     '<div style="width:30px;height:30px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' +
     '</div>' +
-    '<div><div style="font-size:13px;font-weight:700;color:var(--tx);">SmartPaste</div>' +
-    '<div style="font-size:11px;color:var(--mu);margin-top:1px;">Paste or upload — extract every field instantly</div></div>' +
+    '<div><div style="font-size:13px;font-weight:700;color:#111111;">SmartPaste</div>' +
+    '<div style="font-size:11px;color:#706c63;margin-top:1px;">Paste or upload — extract every field instantly</div></div>' +
     '</div>' +
-    '<button id="sp-close-x" style="background:none;border:none;color:var(--mu);cursor:pointer;font-size:22px;line-height:1;padding:2px 6px;">&times;</button>';
+    '<button id="sp-close-x" style="background:none;border:none;color:#706c63;cursor:pointer;font-size:22px;line-height:1;padding:2px 6px;">&times;</button>';
   panel.appendChild(hdr);
 
   const tabBar = document.createElement('div');
   tabBar.style.cssText = 'display:flex;border-bottom:1px solid #e5e2d9;flex-shrink:0;';
   tabBar.innerHTML =
     '<button id="sp-tab-text" style="flex:1;padding:9px;border:none;border-bottom:2px solid #bd27bc;background:none;font-family:var(--font);font-size:11px;font-weight:700;color:#bd27bc;cursor:pointer;letter-spacing:.04em;">PASTE TEXT</button>' +
-    '<button id="sp-tab-file" style="flex:1;padding:9px;border:none;border-bottom:2px solid transparent;background:none;font-family:var(--font);font-size:11px;font-weight:700;color:var(--mu);cursor:pointer;letter-spacing:.04em;">UPLOAD FILE</button>';
+    '<button id="sp-tab-file" style="flex:1;padding:9px;border:none;border-bottom:2px solid transparent;background:none;font-family:var(--font);font-size:11px;font-weight:700;color:#706c63;cursor:pointer;letter-spacing:.04em;">UPLOAD FILE</button>';
   panel.appendChild(tabBar);
 
   const content = document.createElement('div');
@@ -16281,7 +16273,7 @@ function showSmartPastePanel() {
   const textPane = document.createElement('div');
   textPane.id = 'sp-text-pane';
   textPane.innerHTML =
-    '<textarea id="sp-text-input" rows="7" placeholder="Paste anything — a forwarded email, packing slip, customer order, rate request. Any format." style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid #e5e2d9;border-radius:10px;padding:11px 12px;font-size:13px;font-family:var(--font);color:var(--tx);resize:vertical;outline:none;line-height:1.5;"></textarea>' +
+    '<textarea id="sp-text-input" rows="7" placeholder="Paste anything — a forwarded email, packing slip, customer order, rate request. Any format." style="width:100%;box-sizing:border-box;background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:11px 12px;font-size:13px;font-family:var(--font);color:#111111;resize:vertical;outline:none;line-height:1.5;"></textarea>' +
     '<button id="sp-text-go" style="margin-top:10px;width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);">Extract &amp; Get Rates</button>';
   content.appendChild(textPane);
 
@@ -16292,13 +16284,13 @@ function showSmartPastePanel() {
     '<div id="sp-drop" style="border:2px dashed #c8c4bc;border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:border-color .15s;">' +
     '<input type="file" id="sp-file-in" accept="image/jpeg,image/jpg,image/png,.pdf" style="display:none;">' +
     '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#c8c4bc" stroke-width="1.5" style="margin:0 auto 8px;display:block;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
-    '<div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:3px;">Drop a file or click to browse</div>' +
-    '<div style="font-size:11px;color:var(--mu);">PDF, JPG, or PNG — including photos of handwritten packing slips or BOLs</div>' +
+    '<div style="font-size:13px;font-weight:600;color:#111111;margin-bottom:3px;">Drop a file or click to browse</div>' +
+    '<div style="font-size:11px;color:#706c63;">PDF, JPG, or PNG — including photos of handwritten packing slips or BOLs</div>' +
     '</div>' +
-    '<div id="sp-file-chip" style="display:none;margin-top:10px;padding:8px 12px;background:var(--bg);border-radius:8px;align-items:center;gap:8px;">' +
+    '<div id="sp-file-chip" style="display:none;margin-top:10px;padding:8px 12px;background:#f9f8f5;border-radius:8px;align-items:center;gap:8px;">' +
     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
-    '<span id="sp-file-name" style="font-size:12px;color:var(--tx);flex:1;"></span>' +
-    '<button id="sp-file-clear" style="background:none;border:none;color:var(--mu);cursor:pointer;font-size:18px;padding:0;line-height:1;">&times;</button>' +
+    '<span id="sp-file-name" style="font-size:12px;color:#111111;flex:1;"></span>' +
+    '<button id="sp-file-clear" style="background:none;border:none;color:#706c63;cursor:pointer;font-size:18px;padding:0;line-height:1;">&times;</button>' +
     '</div>' +
     '<button id="sp-file-go" style="display:none;margin-top:10px;width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);">Extract &amp; Get Rates</button>';
   content.appendChild(filePane);
@@ -16318,9 +16310,9 @@ function showSmartPastePanel() {
     textPane.style.display = which === 'text' ? '' : 'none';
     filePane.style.display = which === 'file' ? '' : 'none';
     resultsPane.style.display = 'none';
-    document.getElementById('sp-tab-text').style.color        = which === 'text' ? '#bd27bc' : 'var(--mu)';
+    document.getElementById('sp-tab-text').style.color        = which === 'text' ? '#bd27bc' : '#706c63';
     document.getElementById('sp-tab-text').style.borderBottom = which === 'text' ? '2px solid #bd27bc' : '2px solid transparent';
-    document.getElementById('sp-tab-file').style.color        = which === 'file' ? '#bd27bc' : 'var(--mu)';
+    document.getElementById('sp-tab-file').style.color        = which === 'file' ? '#bd27bc' : '#706c63';
     document.getElementById('sp-tab-file').style.borderBottom = which === 'file' ? '2px solid #bd27bc' : '2px solid transparent';
   }
   document.getElementById('sp-tab-text').onclick = () => _spShowTab('text');
@@ -16368,6 +16360,12 @@ function showSmartPastePanel() {
     if (!_spSelectedFile) return;
     await _spExtract({ type:'file', file:_spSelectedFile }, resultsPane, textPane, filePane);
   };
+
+  if (autoText) {
+    setTimeout(function() {
+      _spExtract({ type:'text', text:autoText }, resultsPane, textPane, filePane);
+    }, 0);
+  }
 }
 
 async function _spExtract(src, resultsPane, textPane, filePane) {
@@ -16377,7 +16375,7 @@ async function _spExtract(src, resultsPane, textPane, filePane) {
   resultsPane.innerHTML =
     '<div style="text-align:center;padding:36px 0;">' +
     '<div style="width:24px;height:24px;border:2px solid #e5e2d9;border-top-color:#bd27bc;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px;"></div>' +
-    '<div style="font-size:13px;color:var(--mu);">Reading your shipment info…</div></div>';
+    '<div style="font-size:13px;color:#706c63;">Reading your shipment info…</div></div>';
 
   try {
     let userContent;
@@ -16432,7 +16430,7 @@ async function _spExtract(src, resultsPane, textPane, filePane) {
     resultsPane.innerHTML =
       '<div style="padding:24px;text-align:center;">' +
       '<div style="font-size:13px;font-weight:600;color:#dc2626;margin-bottom:6px;">Extraction failed</div>' +
-      '<div style="font-size:12px;color:var(--mu);margin-bottom:16px;">' + ((err.message||'Unknown error').slice(0,200)) + '</div>' +
+      '<div style="font-size:12px;color:#706c63;margin-bottom:16px;">' + ((err.message||'Unknown error').slice(0,200)) + '</div>' +
       '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Close</button>' +
       '</div>';
   }
@@ -16449,19 +16447,19 @@ function _spShowResults(data, resultsPane) {
 
   function _spInp(id, label, val, type, warn) {
     const ws = warn ? 'background:#fffbeb;border-color:#f59e0b;' : '';
-    return '<div style="margin-bottom:7px;"><label style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
+    return '<div style="margin-bottom:7px;"><label style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
       label + (warn ? ' <span style="color:#f59e0b;font-size:9px;">⚠</span>' : '') + '</label>' +
-      '<input id="' + id + '" type="' + (type||'text') + '" value="' + ((val||'')+'').replace(/"/g,'&quot;') + '" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid #c8c4bc;border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:var(--tx);outline:none;' + ws + '"></div>';
+      '<input id="' + id + '" type="' + (type||'text') + '" value="' + ((val||'')+'').replace(/"/g,'&quot;') + '" style="width:100%;box-sizing:border-box;background:#f9f8f5;border:1px solid #c8c4bc;border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:#111111;outline:none;' + ws + '"></div>';
   }
   function _spCol(id, label, val, maxlen, warn) {
     const ws = warn ? 'background:#fffbeb;border-color:#f59e0b;' : '';
-    return '<div><label style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
+    return '<div><label style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;">' +
       label + (warn ? ' <span style="color:#f59e0b;">⚠</span>' : '') + '</label>' +
       '<input id="' + id + '" value="' + ((val||'')+'').replace(/"/g,'&quot;') + '" ' + (maxlen ? 'maxlength="'+maxlen+'"' : '') +
-      ' style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid ' + (warn?'#f59e0b':'#c8c4bc') + ';border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:var(--tx);outline:none;' + ws + '"></div>';
+      ' style="width:100%;box-sizing:border-box;background:#f9f8f5;border:1px solid ' + (warn?'#f59e0b':'#c8c4bc') + ';border-radius:7px;padding:6px 9px;font-size:12px;font-family:var(--font);color:#111111;outline:none;' + ws + '"></div>';
   }
   function _spSec(title, html) {
-    return '<div style="margin-bottom:14px;"><div style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px;">' + title + '</div>' + html + '</div>';
+    return '<div style="margin-bottom:14px;"><div style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px;">' + title + '</div>' + html + '</div>';
   }
   function _spGrid(cols) {
     var cells = Array.prototype.slice.call(arguments, 1);
@@ -16473,7 +16471,7 @@ function _spShowResults(data, resultsPane) {
     : '';
 
   resultsPane.innerHTML =
-    '<div style="font-size:12px;color:var(--mu);margin-bottom:12px;">Review the extracted info — edit anything that looks off, then click Use This Info.</div>' +
+    '<div style="font-size:12px;color:#706c63;margin-bottom:12px;">Review the extracted info — edit anything that looks off, then click Use This Info.</div>' +
     _spSec('Shipper (Pickup)',
       _spInp('sp-sh-name',   'Company Name', sh.name,   'text') +
       _spInp('sp-sh-street', 'Street',       sh.street, 'text') +
@@ -16511,7 +16509,7 @@ function _spShowResults(data, resultsPane) {
     ) +
     warnBox +
     '<button id="sp-use-btn" style="width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);margin-bottom:8px;">Use This Info — Get Rates</button>' +
-    '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="width:100%;background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:4px;">Cancel</button>';
+    '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="width:100%;background:none;border:none;color:#706c63;font-size:12px;cursor:pointer;font-family:var(--font);padding:4px;">Cancel</button>';
 
   document.getElementById('sp-use-btn').onclick = () => _spApply(data);
 }
