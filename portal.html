@@ -5397,12 +5397,28 @@ function editSavedShipment(s, BOLId, BOLNumber) {
         dspBtn.onclick = async () => {
           const _d = document.getElementById('bk-pu-date'); const _puVal = _d ? _d.value : '';
           if (isPastPickup(_puVal)) { if (_d) { _d.style.borderColor = '#dc2626'; try { _d.focus(); } catch(e){} } appendMessage('bot', "That pickup date has passed — pick a date that isn't in the past before dispatching."); return; }
-          dspBtn.disabled = true; dspBtn.textContent = 'Dispatching...';
-          try {
-            await submitBookingOnly({ thenDispatch: true });
-            const _bolId = (window._lastBooked && window._lastBooked.BOLId) || BOLId;
-            if (_bolId && typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
-          } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
+          // RDI check: if accessorials were never updated to include residential, warn before dispatch.
+          const _dg = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+          const _dlAcc = (lastQuotedShipment && lastQuotedShipment.accessorials) || shipData.accessorials || [];
+          dspBtn.disabled = true; dspBtn.textContent = 'Checking...';
+          await checkRDIBeforeDispatch(
+            _dg('bk-dl-street'), _dg('bk-dl-suite'), _dg('bk-dl-city'), _dg('bk-dl-state'), _dg('bk-dl-zip') || destZip,
+            _dlAcc,
+            async () => {
+              dspBtn.textContent = 'Dispatching...';
+              try {
+                await submitBookingOnly({ thenDispatch: true });
+                const _bolId = (window._lastBooked && window._lastBooked.BOLId) || BOLId;
+                if (_bolId && typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
+              } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
+            },
+            (toAdd) => {
+              dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch';
+              window._editingBOLId = null; window._editingShipment = null;
+              if (typeof requoteSavedShipment === 'function') requoteSavedShipment(s, originZip, destZip, shipData.pickupDate);
+              if (toAdd && toAdd.length && typeof applyRequoteAccessorials === 'function') setTimeout(() => applyRequoteAccessorials(toAdd), 600);
+            }
+          );
         };
         _row.appendChild(reqBtn); _row.appendChild(savBtn); _row.appendChild(dspBtn);
       }
@@ -12535,18 +12551,59 @@ function showBookingPanel(rate, shipmentData) {
               issuesHtml +
               '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">' +
                 '<button id="bk-rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>' +
-                '<button id="bk-rdi-proceed" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Book Anyway &mdash; I Understand the Risk</button>' +
+                '<button id="bk-rdi-save" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Save Shipment</button>' +
+                '<button id="bk-rdi-proceed" style="background:none;border:none;border-radius:8px;padding:8px;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font);color:var(--mu);">Book Anyway</button>' +
               '</div>';
             warnOverlay.appendChild(warnBox);
             c.style.position = 'relative';
             c.appendChild(warnOverlay);
 
+            // Save as-is, close the saved modal, then reopen as an editable shipment
+            // so the customer sees Requote / Save / Ready to Dispatch.
+            document.getElementById('bk-rdi-save').onclick = async () => {
+              warnOverlay.remove();
+              btn.textContent = 'Saving...'; btn.disabled = true;
+              const formBody2 = document.getElementById('bk-form-body');
+              if (formBody2) { formBody2.style.opacity = '0.4'; formBody2.style.pointerEvents = 'none'; }
+              bookingStep = 'confirm'; showChatArea();
+              const _snapBR = bookingRate ? Object.assign({}, bookingRate) : {};
+              const _snapBD = Object.assign({}, bookingData);
+              const _snapLQS = lastQuotedShipment ? Object.assign({}, lastQuotedShipment) : {};
+              try { await submitBookingOnly(); } catch(e) {
+                if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
+                btn.textContent = 'Save Shipment'; btn.disabled = false; bookingStep = null; return;
+              }
+              if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
+              bookingStep = null; window._bookingPanelContainer = null;
+              const _savedBOLId = window._lastBooked && window._lastBooked.BOLId;
+              const _savedBOLNum = window._lastBooked && window._lastBooked.BOLNumber;
+              const _savedOverlay = document.getElementById('bk-saved-overlay');
+              if (_savedOverlay) _savedOverlay.remove();
+              if (_savedBOLId && typeof editSavedShipment === 'function') {
+                editSavedShipment({
+                  BOLId: _savedBOLId, bolId: _savedBOLId, BOLNumber: _savedBOLNum,
+                  carrierName: _snapBR._name || _snapBR.name || _snapBR.carrierName || '',
+                  vendor: { name: _snapBR._name || _snapBR.name || _snapBR.carrierName || '', cost: Number((_snapBR.billTo&&_snapBR.billTo.total)||_snapBR.total||_snapBR._price||0) },
+                  accountingInformation: { invoiceAmount: Number((_snapBR.billTo&&_snapBR.billTo.total)||_snapBR.total||_snapBR._price||0) },
+                  shipper: { name: _snapBD.shipperName||'', address1: _snapBD.shipperStreet||'', address2: _snapBD.shipperSuite||'', city: _snapBD.shipperCity||'', state: _snapBD.shipperState||'', zipCode: _snapBD.shipperZip||_snapLQS.originZip||'', contact: _snapBD.shipperContact||'', contactPhone: _snapBD.shipperPhone||'' },
+                  consignee: { name: _snapBD.consigneeName||'', address1: _snapBD.consigneeStreet||'', address2: _snapBD.consigneeSuite||'', city: _snapBD.consigneeCity||'', state: _snapBD.consigneeState||'', zipCode: _snapBD.consigneeZip||_snapLQS.destinationZip||'', contact: _snapBD.consigneeContact||'', contactPhone: _snapBD.consigneePhone||'' },
+                  accessorials: _snapLQS.accessorials || [],
+                  freightInfo: (_snapLQS.items||[]).map(it=>({ qty:it.pieces||1, weight:it.weight||0, length:it.length||48, width:it.width||40, height:it.height||48, dimType:it.packageType||'PLT', class:it.freightClass||'70', commodity:it.description||'Freight' })),
+                  originZip: _snapLQS.originZip||'', destinationZip: _snapLQS.destinationZip||_snapLQS.destZip||'',
+                  estimatedPickupDate: _snapBD.pickupDate||'',
+                  pickupInformation: { date: _snapBD.pickupDate||'', timeFrom: _snapBD.pickupOpen||'', timeTo: _snapBD.pickupClose||'' },
+                  BOLInstructions: _snapBD.specialInstructions||''
+                }, _savedBOLId, _savedBOLNum);
+              }
+            };
+
+            // Book Anyway: skip the warning and dispatch immediately.
             document.getElementById('bk-rdi-proceed').onclick = async () => {
               warnOverlay.remove();
               btn.textContent = 'Submitting...'; btn.disabled = true;
               const formBody2 = document.getElementById('bk-form-body');
               if (formBody2) { formBody2.style.opacity = '0.4'; formBody2.style.pointerEvents = 'none'; }
-              bookingStep = 'confirm'; showChatArea(); await submitBookingOnly();
+              bookingStep = 'confirm'; showChatArea(); await submitBookingOnly({ thenDispatch: true });
               if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
               bookingStep = null; window._bookingPanelContainer = null;
             };
