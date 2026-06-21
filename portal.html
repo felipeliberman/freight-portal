@@ -2097,6 +2097,29 @@ let quoteData       = {};
 let pendingPicker   = null;
 let lastQuotedShipment = null;
 var chatHistory = []; // global conversation history for AI responses
+
+// ── SINGLE OWNER of conversation-scoped shipment/rate/booking state ────────────
+// Call at every boundary that should start clean (new chat, switching chats, fresh quote)
+// so a session never inherits a prior shipment's rates, form, or context.
+// wipeConversation=true also clears the agent's history and closes the quote/booking panel.
+function resetShipmentState(wipeConversation) {
+  try {
+    window._lastRates = null; window._lastRatesRaw = null; window._lastRatesShipment = null;
+    window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
+    window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false;
+    window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
+    lastQuotedShipment = null;
+    if (wipeConversation) {
+      chatHistory = [];
+      try {
+        if (typeof rpState !== 'undefined' && rpState.tabs) {
+          rpState.tabs.filter(t => t.title === 'Get a Quote' || t.title === 'Book Shipment')
+            .map(t => t.id).forEach(id => { if (typeof closeTab === 'function') closeTab(id); });
+        }
+      } catch(e) {}
+    }
+  } catch(e) {}
+}
 let bookingRate    = null;
 let chatSessions   = [];   // [{id, title, ts, customer, messages:[]}]
 let currentSession = null; // active session id   // rate object being booked
@@ -6436,6 +6459,7 @@ function restoreSession(id) {
   const sess = chatSessions.find(s => s.id === id);
   if (!sess) return;
   currentSession = id;
+  resetShipmentState(true);
   showChatArea();
   const msgs = document.getElementById('messages');
   if (!msgs) return;
@@ -6546,7 +6570,7 @@ async function updatePlaceholder() {
   setTimeout(() => { if (tipEl) tipEl.style.opacity = '0'; }, 7000);
 }
 
-function newChat() { snapshotCurrentSession(); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; setTimeout(applyGreeting, 50); updatePlaceholder(); }
+function newChat() { snapshotCurrentSession(); resetShipmentState(true); currentSession = null; document.getElementById('messages').innerHTML=''; document.getElementById('welcome').style.display='flex'; document.getElementById('chat-area').style.display='none'; setTimeout(applyGreeting, 50); updatePlaceholder(); }
 
 
 function openTermsPanel() {
@@ -8791,11 +8815,8 @@ function _execUpdateQuote(input) {
 
   // Open the quote form if it's not already open
   if (!window._quoteFormOpen) {
-    // Fresh quote = fresh shipment — clear any prior booking so it's not treated as a duplicate
-    window._lastBooked = null;
-    window._resWarnShown = false;
-    window._editingBOLId = null;
-    window._bookingPanelOpen = false;
+    // Fresh quote = fresh shipment — clear prior shipment/rate/booking state (keep the conversation).
+    resetShipmentState(false);
     const pf = {};
     if (input.originZip) pf.originZip = String(input.originZip);
     if (input.destZip) pf.destZip = String(input.destZip);
