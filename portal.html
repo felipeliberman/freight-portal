@@ -8777,6 +8777,7 @@ function _applyQuoteFields(input) {
       setF('.li-class', it.freightClass, 'change');
       setF('.li-commodity', it.commodity);
       if (it.type) setF('.li-type', it.type, 'change');
+      if (it.stc) setF('.li-stc', it.stc);
     });
   }
 
@@ -8851,18 +8852,30 @@ function _quoteFormState() {
     const panel = document.getElementById('right-panel');
     if (!panel || !panel.querySelector('#qt-origin')) return { quoteFormOpen: false };
     const g = sel => { const el = panel.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
-    const row = panel.querySelector('.qt-line');
-    const rg = sel => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
+    const rgv = (row, sel) => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
+    const rows = [...panel.querySelectorAll('.qt-line')];
+    const items = rows.map(row => ({
+      pieces: rgv(row,'.li-qty'),
+      type: rgv(row,'.li-type'),
+      stc: rgv(row,'.li-stc'),
+      weight: rgv(row,'.li-weight'),
+      length: rgv(row,'.li-len'), width: rgv(row,'.li-wid'), height: rgv(row,'.li-hgt'),
+      commodity: rgv(row,'.li-commodity')
+    }));
+    const first = items[0] || {};
     const accs = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code);
     return {
       quoteFormOpen: true,
       origin: g('#qt-origin'),
       destination: g('#qt-dest'),
       pickupDate: g('#qt-date'),
-      weight: rg('.li-weight'),
-      length: rg('.li-len'), width: rg('.li-wid'), height: rg('.li-hgt'),
-      pieces: rg('.li-qty'),
-      commodity: rg('.li-commodity'),
+      weight: first.weight,
+      length: first.length, width: first.width, height: first.height,
+      pieces: first.pieces,
+      commodity: first.commodity,
+      type: first.type,
+      stc: first.stc,
+      items: items,
       accessorials: accs,
       ratesPulled: !!(window._lastRates && window._lastRates.count)
     };
@@ -8875,8 +8888,25 @@ function _bookingPanelState() {
     const open = !!document.getElementById('bk-pu-name');
     if (!open) return { bookingPanelOpen: false };
     const g = id => { const el = document.getElementById(id); return el ? String(el.value||'').trim() : ''; };
+    // Surface the freight being booked so read-back never guesses (e.g. "pallet").
+    let freight = [];
+    try {
+      const s = (window._bookingLock && window._bookingLock.shipment) || window._lastRatesShipment || (typeof lastQuotedShipment!=='undefined'?lastQuotedShipment:null);
+      const its = (s && s.items && s.items.length) ? s.items : [];
+      freight = its.map(it => ({
+        pieces: Number(it.pieces||it.qty)||1,
+        type: it.packageType || it.dimType || it.type || 'PLT',
+        stc: it.stc || it.STC || '',
+        weight: Number(it.weight)||0,
+        length: Number(it.length)||0, width: Number(it.width)||0, height: Number(it.height)||0,
+        commodity: it.description || it.commodity || 'Freight'
+      }));
+    } catch(e) {}
+    const lockRate = (window._bookingLock && window._bookingLock.rate) || null;
     return {
       bookingPanelOpen: true,
+      carrier: lockRate ? (lockRate._name || lockRate.name || lockRate.carrier || '') : '',
+      freight: freight,
       shipper: { name:g('bk-pu-name'), street:g('bk-pu-street'), contact:g('bk-pu-contact'), phone:g('bk-pu-phone') },
       consignee: { name:g('bk-dl-name'), street:g('bk-dl-street'), contact:g('bk-dl-contact'), phone:g('bk-dl-phone') },
       pickupDate: g('bk-pu-date'), pickupOpen: g('bk-pu-open'), pickupClose: g('bk-pu-close'),
@@ -8884,6 +8914,27 @@ function _bookingPanelState() {
       specialInstructions: (document.getElementById('bk-special-instructions')||{}).value || ''
     };
   } catch(e) { return { bookingPanelOpen: false }; }
+}
+
+// Compact live-state block injected into the agent's system prompt every turn.
+// Gives the model an always-on view of the form, rates, and booking panel so it never
+// re-asks for filled fields or offers to pull rates that are already on screen.
+function _liveStateBlock() {
+  try {
+    const q = _quoteFormState();
+    const b = _bookingPanelState();
+    const r = window._lastRates;
+    const lines = [];
+    lines.push('\n\n=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory. Never re-ask for anything shown here. Never say a field is missing, the form is not open, or rates are not pulled if this shows otherwise.) ===');
+    lines.push('quoteForm: ' + JSON.stringify(q));
+    if (r && r.count) {
+      lines.push('ratesOnScreen: ' + r.count + ' option(s)' + (r.lane ? (' for ' + r.lane) : '') + '. Top: ' + (r.options||[]).slice(0,3).map(function(o){ return o.rank + ') ' + o.carrier + ' $' + o.price + (o.transitDays ? (' ' + o.transitDays + 'd') : ''); }).join('  |  '));
+    } else {
+      lines.push('ratesOnScreen: none pulled yet');
+    }
+    lines.push('bookingPanel: ' + JSON.stringify(b));
+    return lines.join('\n');
+  } catch(e) { return ''; }
 }
 
 // ── Publish the current quoted rates in a clean shape the AI can read ──────────
@@ -9120,7 +9171,7 @@ async function _execBookShipment(input) {
         length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48),
         dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||calcFreightClass(Number(it.weight||0),Number(it.length||48),Number(it.width||40),Number(it.height||48),Number(it.qty||it.pieces||1))||70),
         hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
-        commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
+        STC:(it.stc||it.STC||''), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
       })),
       UOM:'US', BOLInstructions: input.specialInstructions || '',
       accessorialsList: accCodes,
@@ -9269,6 +9320,10 @@ Examples:
 Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, NAD limited access, LAD appointment. Other: INS insurance.
 ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone.
 
+PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
+
+STC (SAID TO CONTAIN) — PALLETS ONLY. When the packaging is a pallet or skid, ask how many boxes or pieces are on it and pass that number as the item stc. If it is a single box or one piece, leave stc blank — do not ask and do not set it. For ONE pallet with several boxes, set pieces to 1 and stc to the box count. For SEVERAL IDENTICAL pallets (same weight and same dimensions), keep them on ONE line: set pieces to the number of pallets and stc to the TOTAL boxes across all of them — for example 3 pallets with 10 boxes each is pieces 3, stc 30. If the pallets DIFFER in weight or dimensions, do not combine them: pass a SEPARATE item per pallet in the items array, each with its own weight, dimensions and its own stc, and confirm the box count on each. For a plain box or crate shipped as the unit itself, never set stc.
+
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
 
@@ -9303,6 +9358,8 @@ COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freighta
 
 async function aiConverse(userText) {
   showTyping();
+  let _lastBotShown = '';
+  const _showBot = (t) => { const n = (t||'').toString().trim(); if (n && n !== _lastBotShown) { appendMessage('bot', n); _lastBotShown = n; } };
   const _apiKey = 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA';
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
 
@@ -9353,7 +9410,7 @@ async function aiConverse(userText) {
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 1024,
-          system: _convoSysPrompt,
+          system: _convoSysPrompt + _liveStateBlock(),
           tools: [
             { type: 'web_search_20250305', name: 'web_search' },
             {
@@ -9377,7 +9434,8 @@ async function aiConverse(userText) {
                         width: { type: 'number', description: 'Width in inches' },
                         height: { type: 'number', description: 'Height in inches' },
                         commodity: { type: 'string' },
-                        type: { type: 'string', description: 'PLT, BOX, CRT, etc.' }
+                        type: { type: 'string', description: 'Packaging type code. Map what the customer says: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Always set this from what the customer tells you, never default it.' },
+                        stc: { type: 'number', description: 'Said To Contain: number of boxes/pieces riding on a pallet. Only set for pallet (PLT) or skid (SKD). Leave blank for a single piece, a plain box, or a crate. For several identical pallets on one line, set this to the TOTAL boxes across them.' }
                       }
                     }
                   },
@@ -9453,7 +9511,7 @@ async function aiConverse(userText) {
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
         removeTyping();
-        if (textOut) appendMessage('bot', textOut);
+        if (textOut) _showBot(textOut);
         // Execute the requested tool
         let result;
         try {
@@ -9493,7 +9551,7 @@ async function aiConverse(userText) {
       removeTyping();
       const finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
       chatHistory.push({ role: 'assistant', content: finalText });
-      appendMessage('bot', finalText);
+      _showBot(finalText);
       return;
     }
     // Ran out of loops — show whatever we have
@@ -13626,7 +13684,7 @@ function showQuoteForm(prefill, silent) {
           accessorials: [...container.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code),
           pickupDate:   container.querySelector('#qt-date').value,
           // Pass full items so booking has exact dims from the quote
-          lineItems: _its.map(it=>({ qty:Number(it.qty)||1, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight', nmfc:it.nmfc||'', stc:it.stc||0, hazmat:it.hazmat||false, stackAmount:it.stack==='Y'?2:1 })),
+          lineItems: _its.map(it=>({ qty:Number(it.qty)||1, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight', nmfc:it.nmfc||'', STC:it.stc||'', hazmat:it.hazmat||false, stackAmount:it.stack==='Y'?2:1 })),
           length: Number(_its[0]&&_its[0].length)||48,
           width:  Number(_its[0]&&_its[0].width)||40,
           height: Number(_its[0]&&_its[0].height)||48,
@@ -13801,6 +13859,7 @@ function showQuoteForm(prefill, silent) {
           pieces: it.qty||1, weight: it.weight||0,
           length: Number(it.length||48), width: Number(it.width||40), height: Number(it.height||48),
           packageType: it.type||'PLT',
+          stc: it.stc||'',
           freightClass: it.freightClass || String(calcFC(it.weight||0,it.qty||1,Number(it.length||48),Number(it.width||40),Number(it.height||48))||''),
           description: it.commodity||'Freight',
           nmfc: it.nmfc||'',
