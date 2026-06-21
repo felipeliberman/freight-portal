@@ -8722,6 +8722,7 @@ function _execUpdateQuote(input) {
   if (!window._quoteFormOpen) {
     // Fresh quote = fresh shipment — clear any prior booking so it's not treated as a duplicate
     window._lastBooked = null;
+    window._resWarnShown = false;
     window._bookingPanelOpen = false;
     const pf = {};
     if (input.originZip) pf.originZip = String(input.originZip);
@@ -9168,6 +9169,28 @@ async function _execBookShipment(input) {
     const sp = input.shipper || {};
     const cn = input.consignee || {};
     const items = (s.items && s.items.length) ? s.items : [];
+
+    // Residential safeguard (mirrors the form's RDI pop-up): verify the delivery STREET address.
+    // If it comes back residential and residential delivery isn't already on, surface it ONCE so the
+    // agent confirms with the customer before booking — adding residential changes the rate.
+    if (!window._resWarnShown && !accCodes.includes('RSD')) {
+      try {
+        const _cnAddr = [cn.address, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip].filter(Boolean).join(' ').trim();
+        if (_cnAddr) {
+          const _gr = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_cnAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+          if (_gr.ok) {
+            const _gd = await _gr.json();
+            const _r0 = _gd.results && _gd.results[0];
+            const _isRes = _r0 && _r0.fields && _r0.fields.zip4 && _r0.fields.zip4.residential === true;
+            if (_isRes) {
+              window._resWarnShown = true;
+              return { ok:false, residentialWarning:true, address:(_r0.formatted_address || _cnAddr),
+                message:'Before booking: the delivery address ' + (_r0.formatted_address || _cnAddr) + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service, plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to requote with residential delivery (and a liftgate) or proceed and book as-is at their own risk. Do NOT book until they decide.' };
+            }
+          }
+        }
+      } catch(e) { /* geocodio failed — proceed */ }
+    }
 
     const payload = {
       quoteNumber: quoteNumber, rateId: rateId,
