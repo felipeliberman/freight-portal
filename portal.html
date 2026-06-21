@@ -12567,6 +12567,12 @@ function showBookingPanel(rate, shipmentData) {
               const formBody2 = document.getElementById('bk-form-body');
               if (formBody2) { formBody2.style.opacity = '0.4'; formBody2.style.pointerEvents = 'none'; }
               bookingStep = 'confirm'; showChatArea();
+              // If this is a requote, ensure _editingBOLId is set so submitBookingOnly does a PUT.
+              // showBookingPanel sets it via a 200ms setTimeout; re-apply from _requoteContext as
+              // a fallback in case that timer raced or bolId was falsy at the time.
+              if (!window._editingBOLId && window._requoteContext && window._requoteContext.bolId) {
+                window._editingBOLId = window._requoteContext.bolId;
+              }
               const _snapBR = bookingRate ? Object.assign({}, bookingRate) : {};
               const _snapBD = Object.assign({}, bookingData);
               const _snapLQS = lastQuotedShipment ? Object.assign({}, lastQuotedShipment) : {};
@@ -12578,9 +12584,14 @@ function showBookingPanel(rate, shipmentData) {
               bookingStep = null; window._bookingPanelContainer = null;
               const _savedBOLId = window._lastBooked && window._lastBooked.BOLId;
               const _savedBOLNum = window._lastBooked && window._lastBooked.BOLNumber;
+              // submitBookingOnly catches its own errors without re-throwing — detect silent failure.
+              if (!_savedBOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; return; }
+              btn.textContent = 'Saved!';
               const _savedOverlay = document.getElementById('bk-saved-overlay');
               if (_savedOverlay) _savedOverlay.remove();
-              if (_savedBOLId && typeof editSavedShipment === 'function') {
+              // Delay the panel transition so "Saved!" has time to render before being replaced.
+              setTimeout(() => {
+              if (typeof editSavedShipment === 'function') {
                 editSavedShipment({
                   BOLId: _savedBOLId, bolId: _savedBOLId, BOLNumber: _savedBOLNum,
                   carrierName: _snapBR._name || _snapBR.name || _snapBR.carrierName || '',
@@ -12596,6 +12607,7 @@ function showBookingPanel(rate, shipmentData) {
                   BOLInstructions: _snapBD.specialInstructions||''
                 }, _savedBOLId, _savedBOLNum);
               }
+              }, 800);
             };
 
             // Book Anyway: skip the warning and dispatch immediately.
