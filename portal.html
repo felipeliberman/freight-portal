@@ -16612,7 +16612,6 @@ async function _spAutoExtractAndRate(text) {
     var sh  = data.shipper   || {};
     var co  = data.consignee || {};
     var it  = (data.items && data.items[0]) || {};
-    var unc = data.unclear   || [];
 
     var weight  = parseFloat(it.weight) || 0;
     var destZip = (co.zip || '').replace(/\D/g, '').slice(0, 5);
@@ -16621,26 +16620,35 @@ async function _spAutoExtractAndRate(text) {
 
     if (!destZip || destZip.length < 5 || !weight) {
       var missing = [];
-      if (!weight)               missing.push('total weight');
+      if (!weight)                        missing.push('total weight');
       if (!destZip || destZip.length < 5) missing.push('destination ZIP');
       if (typeof appendMessage === 'function')
         appendMessage('bot', 'I could read most of the packing slip but couldn\'t confirm the ' + missing.join(' and ') + '. Can you provide ' + (missing.length > 1 ? 'those' : 'that') + '?');
       return;
     }
 
-    // Store booking data so it pre-fills when the booking form opens
+    // Detect accessorials from packing slip text (liftgate + residential = LFD + RSD per domain rules)
+    var _accCodes = [];
+    var _tl = text.toLowerCase();
+    if (/liftgate/.test(_tl)) _accCodes.push('LFD');
+    if (/residential/.test(_tl) && _accCodes.indexOf('RSD') === -1) _accCodes.push('RSD');
+
+    // Reset stale quote/rate state (not the conversation).
+    // resetShipmentState also clears _smartPasteBookingData, so we re-assign it immediately after.
+    if (typeof resetShipmentState === 'function') resetShipmentState(false);
+
     window._smartPasteBookingData = {
-      shipperName:    sh.name   || '',
-      shipperStreet:  sh.street || '',
-      shipperCity:    sh.city   || '',
-      shipperState:   sh.state  || '',
-      shipperPhone:   sh.phone  || '',
-      consigneeName:  co.name   || '',
-      consigneeStreet:co.street || '',
-      consigneeCity:  co.city   || '',
-      consigneeState: co.state  || '',
-      consigneePhone: co.phone  || '',
-      poNumber:       data.poNumber || '',
+      shipperName:         sh.name   || '',
+      shipperStreet:       sh.street || '',
+      shipperCity:         sh.city   || '',
+      shipperState:        sh.state  || '',
+      shipperPhone:        sh.phone  || '',
+      consigneeName:       co.name   || '',
+      consigneeStreet:     co.street || '',
+      consigneeCity:       co.city   || '',
+      consigneeState:      co.state  || '',
+      consigneePhone:      co.phone  || '',
+      poNumber:            data.poNumber || '',
       specialInstructions: data.specialInstructions || ''
     };
 
@@ -16649,32 +16657,37 @@ async function _spAutoExtractAndRate(text) {
     if (typeof appendMessage === 'function')
       appendMessage('bot', 'Got it — ' + weight + ' lbs from ' + from + ' to ' + to + '. Pulling rates now…');
 
-    var _qInput = {
-      originZip:  sh.zip || '',
-      destZip:    destZip,
-      pickupDate: data.pickupDate || '',
-      items: [{
-        pieces:       parseInt(it.pieces) || 1,
+    // Build showQuoteForm prefill. Use lineItems (not pf.weight) so the 400ms auto-rate inside
+    // showQuoteForm doesn't fire before freight class is rendered. We fire rates at 700ms instead.
+    var _pf = {
+      originZip:   (sh.zip || '').replace(/\D/g, '').slice(0, 5),
+      destZip:     destZip,
+      pickupDate:  data.pickupDate || '',
+      accessorials: _accCodes,
+      lineItems: [{
+        qty:          parseInt(it.pieces) || 1,
+        type:         it.packageType || 'PLT',
         weight:       weight,
         length:       parseFloat(it.length) || 48,
         width:        parseFloat(it.width)  || 40,
         height:       parseFloat(it.height) || 48,
+        stack:        'N',
         freightClass: it.freightClass || '',
-        commodity:    it.commodity    || '',
-        type:         it.packageType  || 'PLT',
-        stc:          it.nmfc         || ''
-      }],
-      getRates: false
+        nmfc:         typeof it.nmfc === 'string' ? it.nmfc : (it.nmfc ? String(it.nmfc) : ''),
+        commodity:    it.commodity || ''
+      }]
     };
-    // _execUpdateQuote opens the panel if not already open, fills fields, then
-    // we fire getRates separately after the panel has rendered (~900ms).
-    if (typeof _execUpdateQuote === 'function') {
-      _execUpdateQuote(_qInput);
+
+    // Call showQuoteForm directly — _execUpdateQuote guards on _quoteFormOpen which can be stale.
+    // showQuoteForm always opens the panel regardless of prior state.
+    if (typeof showQuoteForm === 'function') {
+      showQuoteForm(_pf, true);
+      // Fire rates after the form DOM has settled (showQuoteForm won't auto-fire when weight is in lineItems)
       setTimeout(function() {
         if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ getRates: true });
-      }, 900);
+      }, 700);
     } else if (typeof _applyQuoteFields === 'function') {
-      _applyQuoteFields(Object.assign({}, _qInput, { getRates: true }));
+      _applyQuoteFields({ originZip: _pf.originZip, destZip: _pf.destZip, getRates: true });
     }
   } catch(e) {
     if (typeof removeTyping === 'function') removeTyping();
