@@ -2217,11 +2217,23 @@ const zipCache = {};
 async function lookupZip(zip) {
   if (zipCache[zip]) return zipCache[zip];
   try {
-    const r = await fetch('https://api.zippopotam.us/us/' + zip);
-    if (!r.ok) return { city: '', state: '' };
-    const d = await r.json();
-    const place = d.places && d.places[0];
-    const result = { city: place ? place['place name'] : '', state: place ? place['state abbreviation'] : '' };
+    let result;
+    if (_isCanadianPostal(zip)) {
+      // zippopotam.us is US-only; use Geocodio for Canadian postal codes
+      const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+        + encodeURIComponent(zip)
+        + '&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+      if (!r.ok) return { city: '', state: '' };
+      const d = await r.json();
+      const ac = d.results && d.results[0] && d.results[0].address_components;
+      result = { city: ac ? (ac.city || '') : '', state: ac ? (ac.state || '') : '' };
+    } else {
+      const r = await fetch('https://api.zippopotam.us/us/' + zip);
+      if (!r.ok) return { city: '', state: '' };
+      const d = await r.json();
+      const place = d.places && d.places[0];
+      result = { city: place ? place['place name'] : '', state: place ? place['state abbreviation'] : '' };
+    }
     zipCache[zip] = result;
     return result;
   } catch(e) {
@@ -13990,10 +14002,22 @@ function showQuoteForm(prefill, silent) {
 
   // ── ZIP lookup ───────────────────────────────────────────────────────────
   async function zipLookup(zip, elId) {
-    if (zip.length !== 5) { const el = container.querySelector('#' + elId); if (el) el.textContent = ''; return; }
+    const el = container.querySelector('#' + elId);
+    if (!zip || (!_isCanadianPostal(zip) && zip.length !== 5)) { if (el) el.textContent = ''; return; }
     try {
-      const r = await fetch('https://api.zippopotam.us/us/' + zip);
-      if (r.ok) { const d = await r.json(); const p = d.places && d.places[0]; if (p) { const el = container.querySelector('#' + elId); if (el) el.textContent = '📍 ' + p['place name'] + ', ' + p['state abbreviation']; } }
+      if (_isCanadianPostal(zip)) {
+        const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+          + encodeURIComponent(zip)
+          + '&api_key=' + GEOCODIO_KEY + '&limit=1');
+        if (r.ok) {
+          const d = await r.json();
+          const ac = d.results && d.results[0] && d.results[0].address_components;
+          if (ac && ac.city && el) el.textContent = '📍 ' + ac.city + ', ' + (ac.state || '');
+        }
+      } else {
+        const r = await fetch('https://api.zippopotam.us/us/' + zip);
+        if (r.ok) { const d = await r.json(); const p = d.places && d.places[0]; if (p && el) el.textContent = '📍 ' + p['place name'] + ', ' + p['state abbreviation']; }
+      }
     } catch(e) {}
   }
 
