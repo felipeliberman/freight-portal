@@ -13885,8 +13885,8 @@ function showQuoteForm(prefill, silent) {
   quotePane.innerHTML =
     // ZIPs
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-      '<div><label style="' + lS + '">Origin ZIP</label><input id="qt-origin" type="text" maxlength="5" placeholder="90660" value="' + (pf.originZip||'') + '" style="' + iS + '"><div id="qt-origin-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
-      '<div><label style="' + lS + '">Destination ZIP</label><input id="qt-dest" type="text" maxlength="5" placeholder="75001" value="' + (pf.destZip||'') + '" style="' + iS + '"><div id="qt-dest-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+      '<div><label style="' + lS + '">Origin ZIP</label><input id="qt-origin" type="text" maxlength="7" placeholder="90660" value="' + (pf.originZip||'') + '" style="' + iS + '"><div id="qt-origin-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+      '<div><label style="' + lS + '">Destination ZIP</label><input id="qt-dest" type="text" maxlength="7" placeholder="75001" value="' + (pf.destZip||'') + '" style="' + iS + '"><div id="qt-dest-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
     '</div>' +
     // Date + Name
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
