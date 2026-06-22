@@ -11097,7 +11097,7 @@ async function handleInput(text) {
     const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
     if (_spHits >= 3 && t.length > 100) {
       removeTyping();
-      appendMsg('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
+      appendMessage('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
       setTimeout(function() { showSmartPastePanel(t); }, 250);
       return;
     }
