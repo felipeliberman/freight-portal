@@ -6514,20 +6514,19 @@ function saveSessions() {
 
 function snapshotCurrentSession() {
   if (!currentSession) return;
-  const msgs = document.getElementById('messages');
-  if (!msgs || !msgs.children.length) return;
   const idx = chatSessions.findIndex(s => s.id === currentSession);
-  // Capture plain text snapshot (not DOM — just enough for display)
-  const textNodes = [];
-  msgs.querySelectorAll('.msg-bubble').forEach(b => {
-    textNodes.push(b.innerText || b.textContent || '');
-  });
-  const snapshot = textNodes.slice(0, 30); // keep up to 30 messages
-  if (idx >= 0) {
+  if (idx < 0) return;
+  // Build snapshot from chatHistory (role-aware) instead of DOM text.
+  // Filter to text-only turns — tool-use blocks (content arrays) have no displayable text.
+  const snapshot = chatHistory
+    .filter(m => typeof m.content === 'string' && m.content.trim())
+    .slice(-30)
+    .map(m => ({ role: m.role === 'assistant' ? 'bot' : m.role, text: m.content.trim() }));
+  if (snapshot.length) {
     chatSessions[idx].snapshot = snapshot;
     chatSessions[idx].ts = Date.now();
+    saveSessions();
   }
-  saveSessions();
 }
 
 function startSession(title) {
@@ -6609,11 +6608,17 @@ function restoreSession(id) {
   const msgs = document.getElementById('messages');
   if (!msgs) return;
   msgs.innerHTML = '';
-  // Re-render snapshot as plain bot messages
-  (sess.snapshot || []).forEach((txt, i) => {
-    if (!txt.trim()) return;
-    const role = i % 2 === 0 ? 'bot' : 'user'; // alternate; best approximation without full DOM storage
-    appendMessage(role, txt.trim());
+  // Re-render snapshot. New format: [{role, text}] objects — use explicit role.
+  // Old format: plain strings — fall back to i%2 best-effort (unchanged from before).
+  (sess.snapshot || []).forEach((entry, i) => {
+    if (entry && typeof entry === 'object' && entry.role) {
+      if (!entry.text.trim()) return;
+      appendMessage(entry.role, entry.text.trim());
+    } else {
+      const txt = String(entry || '').trim();
+      if (!txt) return;
+      appendMessage(i % 2 === 0 ? 'bot' : 'user', txt);
+    }
   });
   renderSessionList();
 }
