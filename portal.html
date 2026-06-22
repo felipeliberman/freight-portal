@@ -16715,10 +16715,12 @@ async function _spAutoExtractAndRate(text) {
     // negations ("no liftgate"), conditionals ("unless specifically requested"), and dock/forklift
     // facts ("commercial with loading dock"). The backstop flags below are a final hard override
     // so explicit doc instructions always win even if the extractor made a mistake.
+    console.log('[FP] SmartPaste extractor output — accessorials:', JSON.stringify(data.accessorials), '| noLiftgate:', data.noLiftgate, '| originHasDock:', data.originHasDock, '| destHasDock:', data.destHasDock, '| specialInstructions:', data.specialInstructions);
     var _accCodes = (data.accessorials && Array.isArray(data.accessorials)) ? data.accessorials.slice() : [];
     if (data.noLiftgate)    { _accCodes = _accCodes.filter(function(c) { return c !== 'LFD' && c !== 'LFO'; }); }
     if (data.originHasDock) { _accCodes = _accCodes.filter(function(c) { return c !== 'LFO'; }); }
     if (data.destHasDock)   { _accCodes = _accCodes.filter(function(c) { return c !== 'LFD'; }); }
+    console.log('[FP] SmartPaste after backstop — _accCodes:', JSON.stringify(_accCodes), '(noLiftgate:', !!data.noLiftgate, '| originHasDock:', !!data.originHasDock, '| destHasDock:', !!data.destHasDock, ')');
 
     // Reset stale quote/rate state (not the conversation).
     // resetShipmentState also clears _smartPasteBookingData, so we re-assign it immediately after.
