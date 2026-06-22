@@ -15880,9 +15880,18 @@ window.openRightPanel = function(contentEl, title) {
   saveTabState();
 };
 
-// ── CLEAR TABS ON BROWSER CLOSE ─────────────────────────────────────────────
+// ── SNAPSHOT + CLEAR TABS ON BROWSER CLOSE/HIDE ─────────────────────────────
+// Fix 1: snapshot current session on tab close / hard refresh so the last active
+// chat isn't saved with an empty messages array.
 window.addEventListener('beforeunload', () => {
+  try { if (typeof snapshotCurrentSession === 'function') snapshotCurrentSession(); } catch(e) {}
   try { localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {}
+});
+// Fix 2: visibilitychange covers Safari and mobile where beforeunload is suppressed.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    try { if (typeof snapshotCurrentSession === 'function') snapshotCurrentSession(); } catch(e) {}
+  }
 });
 
 // ── KEYBOARD SHORTCUTS ────────────────────────────────────────────────────────
