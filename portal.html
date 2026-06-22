@@ -11097,8 +11097,8 @@ async function handleInput(text) {
     const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
     if (_spHits >= 3 && t.length > 100) {
       removeTyping();
-      appendMessage('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
-      setTimeout(function() { showSmartPastePanel(t); }, 250);
+      showTyping();
+      _spAutoExtractAndRate(t);
       return;
     }
   }
@@ -16593,6 +16593,86 @@ async function _spToBase64(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// ── SmartPaste auto-extract (chat auto-detect path — no popup) ───────────────
+async function _spAutoExtractAndRate(text) {
+  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (null for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+  try {
+    var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
+    var resp = await flCall('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, system: _SP_SYS,
+        messages: [{ role: 'user', content: [{ type: 'text', text: text }] }] })
+    });
+    var rawText = (resp.content && resp.content[0] && resp.content[0].text) || '';
+    var data = JSON.parse(rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim());
+
+    var sh  = data.shipper   || {};
+    var co  = data.consignee || {};
+    var it  = (data.items && data.items[0]) || {};
+    var unc = data.unclear   || [];
+
+    var weight  = parseFloat(it.weight) || 0;
+    var destZip = (co.zip || '').replace(/\D/g, '').slice(0, 5);
+
+    if (typeof removeTyping === 'function') removeTyping();
+
+    if (!destZip || destZip.length < 5 || !weight) {
+      var missing = [];
+      if (!weight)               missing.push('total weight');
+      if (!destZip || destZip.length < 5) missing.push('destination ZIP');
+      if (typeof appendMessage === 'function')
+        appendMessage('bot', 'I could read most of the packing slip but couldn\'t confirm the ' + missing.join(' and ') + '. Can you provide ' + (missing.length > 1 ? 'those' : 'that') + '?');
+      return;
+    }
+
+    // Store booking data so it pre-fills when the booking form opens
+    window._smartPasteBookingData = {
+      shipperName:    sh.name   || '',
+      shipperStreet:  sh.street || '',
+      shipperCity:    sh.city   || '',
+      shipperState:   sh.state  || '',
+      shipperPhone:   sh.phone  || '',
+      consigneeName:  co.name   || '',
+      consigneeStreet:co.street || '',
+      consigneeCity:  co.city   || '',
+      consigneeState: co.state  || '',
+      consigneePhone: co.phone  || '',
+      poNumber:       data.poNumber || '',
+      specialInstructions: data.specialInstructions || ''
+    };
+
+    var from = sh.name ? sh.name + (sh.city ? ' (' + sh.city + (sh.state ? ', ' + sh.state : '') + ')' : '') : (sh.zip || '');
+    var to   = co.name ? co.name + (co.city ? ', ' + co.city + (co.state ? ' ' + co.state : '') : '') : destZip;
+    if (typeof appendMessage === 'function')
+      appendMessage('bot', 'Got it — ' + weight + ' lbs from ' + from + ' to ' + to + '. Pulling rates now…');
+
+    if (typeof _applyQuoteFields === 'function') {
+      _applyQuoteFields({
+        originZip:  sh.zip || '',
+        destZip:    destZip,
+        pickupDate: data.pickupDate || '',
+        items: [{
+          pieces:       parseInt(it.pieces) || 1,
+          weight:       weight,
+          length:       parseFloat(it.length) || 48,
+          width:        parseFloat(it.width)  || 40,
+          height:       parseFloat(it.height) || 48,
+          freightClass: it.freightClass || '',
+          commodity:    it.commodity    || '',
+          type:         it.packageType  || 'PLT',
+          stc:          it.nmfc         || ''
+        }],
+        getRates: true
+      });
+    }
+  } catch(e) {
+    if (typeof removeTyping === 'function') removeTyping();
+    if (typeof appendMessage === 'function')
+      appendMessage('bot', 'I had trouble reading that. Can you share the origin ZIP, destination ZIP, and total weight?');
+  }
 }
 
 // ── End SmartPaste ───────────────────────────────────────────────────────────
