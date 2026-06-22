@@ -7737,8 +7737,8 @@ async function handleWizardInput(text) {
   const tl = t.toLowerCase();
 
   if (wizardStep === 'origin_zip') {
-    const zip = (t.match(/\d{5}/) || [])[0];
-    if (!zip) { appendMessage('bot', 'Please enter a valid 5-digit origin ZIP code.'); return; }
+    const zip = (t.match(/[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d/) || t.match(/\d{5}/) || [])[0];
+    if (!zip) { appendMessage('bot', 'Please enter a valid origin ZIP or Canadian postal code (e.g. K1A 0B1).'); return; }
     quoteData.originZip = zip;
     wizardStep = 'dest_zip';
     appendMessage('bot', 'Got it. What is the destination ZIP code?');
@@ -7746,8 +7746,8 @@ async function handleWizardInput(text) {
   }
 
   if (wizardStep === 'dest_zip') {
-    const zip = (t.match(/\d{5}/) || [])[0];
-    if (!zip) { appendMessage('bot', 'Please enter a valid 5-digit destination ZIP code.'); return; }
+    const zip = (t.match(/[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d/) || t.match(/\d{5}/) || [])[0];
+    if (!zip) { appendMessage('bot', 'Please enter a valid destination ZIP or Canadian postal code (e.g. K1A 0B1).'); return; }
     quoteData.destinationZip = zip;
     quoteData._destZipText = t;  // save for accessorial parsing in pieces step
     quoteData.baseAccessorials = [];
@@ -9721,7 +9721,7 @@ NEVER GUESS AN AMBIGUOUS CITY. Many city names exist in multiple states — Wilm
 VERIFY THE ZIP FOR ANY CITY — NEVER QUOTE ON A GUESSED ZIP. When a customer gives a city instead of a ZIP, verify the actual ZIP before using it (use web_search to confirm). Many cities map to MULTIPLE ZIP codes — not just big cities like Los Angeles or New York, but plenty of smaller ones too — and the ZIP affects the rate. Handle it like a sharp broker:
 - If the city resolves to a single, unambiguous ZIP, just use it silently — no need to bother the customer.
 - If the city has multiple ZIPs, tell them and ask for the specific one: "Los Angeles has a bunch of ZIP codes and they price differently — what's the destination ZIP, or the street address so I can pin it down?"
-- NEVER pull rates (getRates:true) until both the origin and destination are confirmed 5-digit ZIPs. A rate on a guessed ZIP is a wrong quote. Keep the conversation flowing — fill what you can, gather weight and dims — but the rate does not fire until the ZIPs are nailed down.
+- NEVER pull rates (getRates:true) until both the origin and destination are confirmed 5-digit US ZIPs or Canadian postal codes (e.g. K1A 0B1). A rate on a guessed ZIP is a wrong quote. Keep the conversation flowing — fill what you can, gather weight and dims — but the rate does not fire until the ZIPs are nailed down.
 Do this quietly and competently: the goal is the customer feels like you just handle it, only asking when the city genuinely doesn't determine the ZIP.
 
 ALWAYS ASK FOR EXACT NUMBERS. A real freight broker never says "roughly," "approximately," "about," or "ballpark" when asking for weight or dimensions — vague numbers produce wrong freight class and wrong rates. Ask for the exact weight and exact dimensions every time. Word it like a pro: "What's the weight, and what are the exact dimensions (L x W x H in inches)?"
@@ -9847,8 +9847,8 @@ async function aiConverse(userText) {
               input_schema: {
                 type: 'object',
                 properties: {
-                  originZip: { type: 'string', description: '5-digit origin ZIP code' },
-                  destZip: { type: 'string', description: '5-digit destination ZIP code' },
+                  originZip: { type: 'string', description: '5-digit US ZIP or Canadian postal code (e.g. K1A 0B1)' },
+                  destZip: { type: 'string', description: '5-digit US ZIP or Canadian postal code (e.g. K1A 0B1)' },
                   pickupDate: { type: 'string', description: 'Pickup date YYYY-MM-DD' },
                   items: {
                     type: 'array',
@@ -14008,7 +14008,7 @@ function showQuoteForm(prefill, silent) {
       if (_isCanadianPostal(zip)) {
         const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
           + encodeURIComponent(zip)
-          + '&api_key=' + GEOCODIO_KEY + '&limit=1');
+          + '&country=CA&api_key=' + GEOCODIO_KEY + '&limit=1');
         if (r.ok) {
           const d = await r.json();
           const ac = d.results && d.results[0] && d.results[0].address_components;
@@ -16783,7 +16783,7 @@ async function _spToBase64(file) {
 async function _spAutoExtractAndRate(text) {
   if (window._spAutoExtractRunning) return;
   window._spAutoExtractRunning = true;
-  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, NAO limited access pickup, IND inside delivery, APT appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5-digit US ZIP or 6-char Canadian postal code (e.g. V5X3A6 — preserve all letters)\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, NAO limited access pickup, IND inside delivery, APT appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
     var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
     var resp = await flCall('https://api.anthropic.com/v1/messages', {
@@ -16801,7 +16801,10 @@ async function _spAutoExtractAndRate(text) {
     var it  = (data.items && data.items[0]) || {};
 
     var weight  = parseFloat(it.weight) || 0;
-    var destZip = (co.zip || '').replace(/\D/g, '').slice(0, 5);
+    var _coZip  = (co.zip || '').trim();
+    var destZip = _isCanadianPostal(_coZip)
+      ? _coZip.toUpperCase().replace(/\s/g, '').replace(/^([A-Z]\d[A-Z])(\d[A-Z]\d)$/, '$1 $2')
+      : _coZip.replace(/\D/g, '').slice(0, 5);
     console.log('[FP] SmartPaste extracted — originZip:', sh.zip, '| destZip:', destZip, '| weight:', weight, '| class:', it.freightClass, '| unclear:', data.unclear);
 
     if (typeof removeTyping === 'function') removeTyping();
@@ -16854,8 +16857,12 @@ async function _spAutoExtractAndRate(text) {
 
     // Build showQuoteForm prefill. Use lineItems (not pf.weight) so the 400ms auto-rate inside
     // showQuoteForm doesn't fire before freight class is rendered. We fire rates at 700ms instead.
+    var _shZip     = (sh.zip || '').trim();
+    var _originZip = _isCanadianPostal(_shZip)
+      ? _shZip.toUpperCase().replace(/\s/g, '').replace(/^([A-Z]\d[A-Z])(\d[A-Z]\d)$/, '$1 $2')
+      : _shZip.replace(/\D/g, '').slice(0, 5);
     var _pf = {
-      originZip:   (sh.zip || '').replace(/\D/g, '').slice(0, 5),
+      originZip:   _originZip,
       destZip:     destZip,
       pickupDate:  data.pickupDate || '',
       accessorials: _accCodes,
