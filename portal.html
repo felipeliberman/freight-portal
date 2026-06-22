@@ -2222,7 +2222,7 @@ async function lookupZip(zip) {
       // zippopotam.us is US-only; use Geocodio for Canadian postal codes
       const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
         + encodeURIComponent(zip)
-        + '&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+        + '&country=CA&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
       if (!r.ok) return { city: '', state: '' };
       const d = await r.json();
       const ac = d.results && d.results[0] && d.results[0].address_components;
