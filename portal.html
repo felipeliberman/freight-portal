@@ -9811,11 +9811,14 @@ async function aiConverse(userText) {
       loops++;
       const data = await _callWithRetry('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': _apiKey, 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'x-api-key': _apiKey, 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 1024,
-          system: _convoSysPrompt + _liveStateBlock(),
+          system: [
+            { type: 'text', text: _convoSysPrompt, cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: _liveStateBlock() }
+          ],
           tools: [
             { type: 'web_search_20250305', name: 'web_search' },
             {
@@ -9911,13 +9914,17 @@ async function aiConverse(userText) {
                   pickupClose: { type: 'string', description: 'Pickup window close time HH:MM (default 16:00)' },
                   referenceNumber: { type: 'string', description: 'PO or reference number' },
                   specialInstructions: { type: 'string', description: 'Special instructions for the driver/BOL' }
-                }
+                },
+                cache_control: { type: 'ephemeral' }
               }
             }
           ],
           messages: convo
         })
       });
+
+      const _u = data.usage || {};
+      console.log('[FP] API usage — input:', _u.input_tokens, '| cache_write:', _u.cache_creation_input_tokens||0, '| cache_read:', _u.cache_read_input_tokens||0, '| output:', _u.output_tokens);
 
       const content = data.content || [];
       const textOut = content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
@@ -16731,7 +16738,8 @@ async function _spAutoExtractAndRate(text) {
     var resp = await flCall('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, system: _SP_SYS,
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024,
+        system: [{ type: 'text', text: _SP_SYS, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: [{ type: 'text', text: text }] }] })
     });
     var rawText = (resp.content && resp.content[0] && resp.content[0].text) || '';
