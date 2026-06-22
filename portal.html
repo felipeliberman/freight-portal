@@ -2208,6 +2208,9 @@ function parseMoney(v) {
   if (typeof v === 'number') return v;
   return parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
 }
+function _isCanadianPostal(zip) {
+  return /^[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i.test((zip || '').trim());
+}
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
 const zipCache = {};
@@ -2413,11 +2416,11 @@ async function fetchRates(shipment) {
     'originCity='         + encodeURIComponent(shipment.originCity        || '') +
     '&originState='       + encodeURIComponent(shipment.originState       || '') +
     '&originZipcode='     + encodeURIComponent(shipment.originZip) +
-    '&originCountry=US' +
+    '&originCountry='     + encodeURIComponent(shipment.originCountry      || 'US') +
     '&destinationCity='   + encodeURIComponent(shipment.destinationCity   || '') +
     '&destinationState='  + encodeURIComponent(shipment.destinationState  || '') +
     '&destinationZipcode='+ encodeURIComponent(shipment.destinationZip) +
-    '&destinationCountry=US' +
+    '&destinationCountry='+ encodeURIComponent(shipment.destinationCountry || 'US') +
     '&freightInfo='       + encodeURIComponent(JSON.stringify(freightInfo)) +
     '&UOM=US&rateTypesList[]=LTL' +
     '&pickupDate='        + (shipment.pickupDate || getTomorrow()) +
@@ -8169,8 +8172,8 @@ async function submitBookingOnly(opts) {
     const payload = {
       quoteNumber: bookQuoteNumber, rateId,
       thirdPartyReferenceNumber: bookingData.shipperRef || '',
-      shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
-      consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
+      shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:s.originCountry||'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
+      consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:s.destinationCountry||'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
       lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
       UOM:'US', BOLInstructions:bookingData.specialInstructions||'',
       accessorialsList:accCodes,
@@ -8287,7 +8290,7 @@ async function submitBooking() {
         city:              shipperParts.city || s.originCity || '',
         state:             shipperParts.state || s.originState || '',
         zipCode:           s.originZip || '',
-        country:           'US',
+        country:           s.originCountry || 'US',
         contact:           bookingData.shipperContact,
         contactPhone:      bookingData.shipperPhone,
         phone:             bookingData.shipperPhone,
@@ -8300,7 +8303,7 @@ async function submitBooking() {
         city:                consParts.city || s.destinationCity || '',
         state:               consParts.state || s.destinationState || '',
         zipCode:             s.destinationZip || '',
-        country:             'US',
+        country:             s.destinationCountry || 'US',
         contact:             bookingData.consigneeContact,
         contactPhone:        bookingData.consigneePhone,
         phone:               bookingData.consigneePhone,
@@ -9480,12 +9483,12 @@ async function _execBookShipment(input) {
       thirdPartyReferenceNumber: input.referenceNumber || '',
       shipper: {
         name: sp.name || '', address1: sp.address || '', city: sp.city || s.originCity || '', state: sp.state || s.originState || '',
-        zipCode: s.originZip || '', country:'US', contact: sp.contact || sp.name || '', contactPhone: sp.phone || '', phone: sp.phone || '',
+        zipCode: s.originZip || '', country: s.originCountry || 'US', contact: sp.contact || sp.name || '', contactPhone: sp.phone || '', phone: sp.phone || '',
         referenceNumber: input.referenceNumber || '', residentialPickup: hasResPU
       },
       consignee: {
         name: cn.name || '', address1: cn.address || '', city: cn.city || s.destinationCity || '', state: cn.state || s.destinationState || '',
-        zipCode: s.destinationZip || '', country:'US', contact: cn.contact || cn.name || '', contactPhone: cn.phone || '', phone: cn.phone || '',
+        zipCode: s.destinationZip || '', country: s.destinationCountry || 'US', contact: cn.contact || cn.name || '', contactPhone: cn.phone || '', phone: cn.phone || '',
         residentialDelivery: hasResDL
       },
       lineItems: items.map(it => ({
@@ -12233,6 +12236,8 @@ function showBookingPanel(rate, shipmentData) {
   // This ensures dims match what was actually quoted/saved
   lastQuotedShipment = {
     originZip, destinationZip: destZip,
+    originCountry: (window._lastRatesShipment && window._lastRatesShipment.originCountry) || 'US',
+    destinationCountry: (window._lastRatesShipment && window._lastRatesShipment.destinationCountry) || 'US',
     accessorials: accList.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup'}[c]||c)),
     items: (shipmentData.lineItems && shipmentData.lineItems.length)
       ? shipmentData.lineItems.map(it => ({ pieces: Number(it.qty)||1, weight: Number(it.weight||weight)||0, length: Number(it.length)||_bkL||48, width: Number(it.width)||_bkW||40, height: Number(it.height)||_bkH||48, packageType: it.dimType||_bkType, freightClass: it.freightClass||_bkFC, description: it.commodity||_bkDesc, hazmat: it.hazmat||false, stack: it.stack||false, stackAmount: (it.stack||false) ? 2 : 1 }))
@@ -14094,11 +14099,25 @@ function showQuoteForm(prefill, silent) {
     } catch(e) { /* silent fail */ }
   }
 
-  container.querySelector('#qt-origin').oninput = e => { zipLookup(e.target.value, 'qt-origin-city'); updateProgress(); };
-  container.querySelector('#qt-dest').oninput   = e => { zipLookup(e.target.value, 'qt-dest-city'); updateProgress(); if (_rdiTimer) clearTimeout(_rdiTimer); _rdiTimer = setTimeout(() => checkResidential(e.target.value), 800); };
-  container.querySelector('#qt-date').oninput   = () => updateProgress();
+  container.querySelector('#qt-origin').oninput = e => {
+    const v = e.target.value.trim();
+    if (_isCanadianPostal(v)) { e.target.maxLength = 7; quoteData.originCountry = 'CA'; }
+    else { e.target.maxLength = 5; quoteData.originCountry = 'US'; }
+    zipLookup(v, 'qt-origin-city'); updateProgress();
+  };
+  container.querySelector('#qt-dest').oninput = e => {
+    const v = e.target.value.trim();
+    if (_isCanadianPostal(v)) { e.target.maxLength = 7; quoteData.destCountry = 'CA'; }
+    else { e.target.maxLength = 5; quoteData.destCountry = 'US'; }
+    zipLookup(v, 'qt-dest-city'); updateProgress();
+    if (_rdiTimer) clearTimeout(_rdiTimer); _rdiTimer = setTimeout(() => checkResidential(v), 800);
+  };
+  container.querySelector('#qt-date').oninput = () => updateProgress();
   if (pf.originZip) zipLookup(pf.originZip, 'qt-origin-city');
   if (pf.destZip)   { zipLookup(pf.destZip, 'qt-dest-city'); setTimeout(() => checkResidential(pf.destZip), 1000); }
+  // Initialize maxlength from prefill — catches agent update_quote before _applyQuoteFields fires.
+  if (_isCanadianPostal(pf.originZip || '')) { container.querySelector('#qt-origin').maxLength = 7; quoteData.originCountry = 'CA'; }
+  if (_isCanadianPostal(pf.destZip   || '')) { container.querySelector('#qt-dest').maxLength   = 7; quoteData.destCountry   = 'CA'; }
 
   // ── Accessorial toggles ──────────────────────────────────────────────────
   container.querySelectorAll('.qt-acc').forEach(btn => {
@@ -14437,8 +14456,8 @@ function showQuoteForm(prefill, silent) {
     const accessorials = [...container.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code);
     const pickupDate   = container.querySelector('#qt-date').value || getTomorrow();
 
-    if (!originZip||originZip.length!==5) { alert('Please enter a valid origin ZIP.'); return; }
-    if (!destZip||destZip.length!==5)     { alert('Please enter a valid destination ZIP.'); return; }
+    if (!originZip || (!_isCanadianPostal(originZip) && originZip.length !== 5)) { alert('Please enter a valid origin ZIP or Canadian postal code (e.g. K1A 0B1).'); return; }
+    if (!destZip   || (!_isCanadianPostal(destZip)   && destZip.length   !== 5)) { alert('Please enter a valid destination ZIP or Canadian postal code (e.g. K1A 0B1).'); return; }
     if (!items[0]||!items[0].weight)       { alert('Please enter weight for at least one line item.'); return; }
     if (!items[0]||!items[0].length||!items[0].width||!items[0].height) { alert('Dimensions are required (L×W×H). Carriers need dims to quote accurately.'); return; }
 
@@ -14483,7 +14502,10 @@ function showQuoteForm(prefill, silent) {
       const CODE_TO_LABEL = { LFD:'Liftgate Delivery', LFO:'Liftgate Pickup', RSD:'Residential Delivery', RSO:'Residential Pickup', IND:'Inside Delivery', NAD:'Limited Access', NAO:'Limited Access', INS:'Cargo Insurance' }; // LAD(Appointment) omitted — not a rateable accessorial in ShipPrimus
       const accLabels = accessorials.map(c=>CODE_TO_LABEL[c]).filter(Boolean);
       const shipment = {
-        originZip, destinationZip: destZip, accessorials: accLabels, pickupDate,
+        originZip, destinationZip: destZip,
+        originCountry: quoteData.originCountry || 'US',
+        destinationCountry: quoteData.destCountry || 'US',
+        accessorials: accLabels, pickupDate,
         items: items.map(it => ({
           pieces: it.qty||1, weight: it.weight||0,
           length: Number(it.length||48), width: Number(it.width||40), height: Number(it.height||48),
