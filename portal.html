@@ -2116,13 +2116,23 @@ function resetShipmentState(wipeConversation) {
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
+    window._quoteFormOpen = false;
+    window._spAutoExtractRunning = false;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
+    // Always close stale booking panel tab on any fresh-quote reset (not just full wipe).
+    // Prevents a stale bk-pu-name DOM element from making _bookingPanelState() report open prematurely.
+    try {
+      if (typeof rpState !== 'undefined' && rpState.tabs) {
+        rpState.tabs.filter(t => t.title === 'Book Shipment')
+          .map(t => t.id).forEach(id => { if (typeof closeTab === 'function') closeTab(id); });
+      }
+    } catch(e) {}
     if (wipeConversation) {
       chatHistory = [];
       try {
         if (typeof rpState !== 'undefined' && rpState.tabs) {
-          rpState.tabs.filter(t => t.title === 'Get a Quote' || t.title === 'Book Shipment')
+          rpState.tabs.filter(t => t.title === 'Get a Quote')
             .map(t => t.id).forEach(id => { if (typeof closeTab === 'function') closeTab(id); });
         }
       } catch(e) {}
@@ -10124,7 +10134,7 @@ function shipmentMatchesQuery(s, query) {
 
 async function clientSideSearch(t, lower) {
   // ── Pure greeting guard — never intercept greetings with shipment search ──
-  if (/^\s*(hello|hi|hey|howdy|greetings|sup|yo|hiya|good morning|good afternoon|good evening|what's up|whats up|how are you|how's it going|hows it going|what can you do|what do you do|help me|help)\s*[?!.]*\s*$/i.test(t.trim())) return false;
+  if (/^\s*(hello|hi|hey|howdy|greetings|sup|yo|hiya|good morning|good afternoon|good evening|what's up|whats up|how are you|how's it going|hows it going|what can you do|what do you do|help me|help|its all there|it's all there|all there|all filled|all good|looks good|all set|good to go|thats right|that's right|its there|it's there|yes correct|all done|filled in|yes all|all filled in)\s*[?!.]*\s*$/i.test(t.trim())) return false;
 
   // ── General knowledge guard ────────────────────────────────────────────────
   // If this looks like an educational/hypothetical question, skip ALL client-side
@@ -14249,6 +14259,8 @@ function showQuoteForm(prefill, silent) {
         };
         const rateWithMeta = Object.assign({}, rate, { _name: name, _price: Number(price) });
         showBookingPanel(rateWithMeta, shipData);
+        window._bookingLock = { rate: rateWithMeta, shipment: shipData };
+        window._bookingPanelOpen = true;
       };
 
       // Per-row save button
@@ -14296,6 +14308,8 @@ function showQuoteForm(prefill, silent) {
           const shipData2 = { originZip:originZip2, destZip:destZip2, weight:items2.reduce((s,it)=>s+(it.weight||0)*(it.qty||1),0), pieces:items2.reduce((s,it)=>s+(it.qty||1),0), accessorials:[...container.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code), pickupDate:container.querySelector('#qt-date').value, lineItems:items2.map(it=>({ length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight' })), length:Number(items2[0]&&items2[0].length)||48, width:Number(items2[0]&&items2[0].width)||40, height:Number(items2[0]&&items2[0].height)||48, packageType:items2[0]&&items2[0].type||'PLT', freightClass:items2[0]&&items2[0].freightClass||'70' };
           const rateWithMeta2 = Object.assign({}, rate, { _name:name, _price:Number(price) });
           showBookingPanel(rateWithMeta2, shipData2);
+          window._bookingLock = { rate: rateWithMeta2, shipment: shipData2 };
+          window._bookingPanelOpen = true;
           appendMessage('bot', 'Booking with ' + name + ' at $' + price + '. I need pickup info — business name, address, contact name, phone, reference or PO number, pickup hours, and pickup date.');
         };
         cbox.querySelector('#qt-conf-saved').onclick = () => { conf.remove(); showSavedQuotes(); };
@@ -16639,6 +16653,8 @@ async function _spToBase64(file) {
 
 // ── SmartPaste auto-extract (chat auto-detect path — no popup) ───────────────
 async function _spAutoExtractAndRate(text) {
+  if (window._spAutoExtractRunning) return;
+  window._spAutoExtractRunning = true;
   const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (null for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
     var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
@@ -16666,6 +16682,7 @@ async function _spAutoExtractAndRate(text) {
       if (!destZip || destZip.length < 5) missing.push('destination ZIP');
       if (typeof appendMessage === 'function')
         appendMessage('bot', 'I could read most of the packing slip but couldn\'t confirm the ' + missing.join(' and ') + '. Can you provide ' + (missing.length > 1 ? 'those' : 'that') + '?');
+      window._spAutoExtractRunning = false;
       return;
     }
 
@@ -16735,6 +16752,8 @@ async function _spAutoExtractAndRate(text) {
     if (typeof removeTyping === 'function') removeTyping();
     if (typeof appendMessage === 'function')
       appendMessage('bot', 'I had trouble reading that. Can you share the origin ZIP, destination ZIP, and total weight?');
+  } finally {
+    window._spAutoExtractRunning = false;
   }
 }
 
