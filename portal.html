@@ -8977,7 +8977,7 @@ function _execUpdateQuote(input) {
       pf.pieces = it0.pieces; pf.weight = it0.weight;
       pf.length = it0.length; pf.width = it0.width; pf.height = it0.height;
     }
-    if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = input.addAccessorials.slice();
+    if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = _filterLiftgateCodes(input.addAccessorials.slice());
     showQuoteForm(pf, true);
     changed.push('opened the quote form');
     // GUARD: never pull rates on the same call that OPENS the form. The customer must
@@ -9013,6 +9013,30 @@ function describeQuoteInput(input) {
   if (input.addAccessorials && input.addAccessorials.length) parts.push('added ' + input.addAccessorials.map(c=>accMap[c]||c).join(', '));
   if (input.removeAccessorials && input.removeAccessorials.length) parts.push('removed ' + input.removeAccessorials.map(c=>accMap[c]||c).join(', '));
   return parts.join('; ');
+}
+
+// Shared liftgate-suppression helper. Strips LFD/LFO from an accessorial code array
+// when the most recent user message contains explicit negation ("no liftgate required")
+// or a dock/forklift fact at origin ("commercial with loading dock"). Called from both
+// the form-open path (_execUpdateQuote) and the form-update path (_applyQuoteFields)
+// so the guard covers every path an agent update_quote call can take.
+function _filterLiftgateCodes(codes) {
+  if (!codes || !codes.length) return codes;
+  var _srcText = '';
+  try {
+    for (var _ci = chatHistory.length - 1; _ci >= Math.max(0, chatHistory.length - 6); _ci--) {
+      if (chatHistory[_ci] && chatHistory[_ci].role === 'user') {
+        _srcText = String(chatHistory[_ci].content || '').toLowerCase();
+        break;
+      }
+    }
+  } catch(e) {}
+  if (!_srcText) return codes;
+  var _noLg   = /no\s+liftgate|liftgate\s+(not\s+required|only\s+if|unless\b)|unless\s+specifically\s+requested/.test(_srcText);
+  var _hasDock = /commercial\s+with\s+(loading\s+)?dock|loading\s+dock|dock\s+(?:available|or\s+forklift)|has\s+(loading\s+)?dock|forklift\s+(?:on\s+site|available|on\s+premises)|commercial\s+with\s+forklift/.test(_srcText);
+  if (_noLg)    { codes = codes.filter(function(c) { return c !== 'LFD' && c !== 'LFO'; }); console.log('[FP] _filterLiftgateCodes — stripped LFD+LFO (no-liftgate phrase)'); }
+  if (_hasDock) { codes = codes.filter(function(c) { return c !== 'LFO'; });               console.log('[FP] _filterLiftgateCodes — stripped LFO (dock/forklift at origin)'); }
+  return codes;
 }
 
 function _applyQuoteFields(input) {
@@ -9052,6 +9076,12 @@ function _applyQuoteFields(input) {
     if (wantOn && !isOn) btn.click();
     if (!wantOn && isOn) btn.click();
   };
+
+  // Run the shared liftgate-suppression guard before applying codes to the form.
+  if (input.addAccessorials && input.addAccessorials.length) {
+    input.addAccessorials = _filterLiftgateCodes(input.addAccessorials);
+  }
+
   if (input.addAccessorials) input.addAccessorials.forEach(c => toggleAcc(c, true));
   if (input.removeAccessorials) input.removeAccessorials.forEach(c => toggleAcc(c, false));
 
@@ -9682,7 +9712,7 @@ Examples:
 - "Make the length 96" → update_quote items:[{length:96}].
 - "Add limited access at pickup" → update_quote addAccessorials:["NAO"]. At delivery it's "LAD".
 Accessorial codes — pickup: RSO residential, LFO liftgate, NAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, LAD limited access, APT appointment. Other: INS insurance.
-ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone.
+ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rare and many carriers reject them, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. If a carrier rejects an accessorial during booking, remove that accessorial and proceed — don't bail to the phone. NEGATION RULE: if the document or message says "no liftgate," "no liftgate required," "liftgate not required," "liftgate only if requested," "unless specifically requested," or any negated or conditional liftgate phrase — do NOT add LFD or LFO. The written instruction overrides any inference you might make from address type or shipment weight. DOCK RULE: if the origin is described as "commercial with loading dock," "has dock," "loading dock available," "forklift on site," or similar — do NOT add LFO. A dock or forklift at the pickup means the carrier can load without a liftgate.
 
 PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
 
@@ -9693,7 +9723,7 @@ INSURANCE — NEVER QUOTE A RATE, PERCENTAGE, OR COST. Cargo insurance is priced
 READING WEIGHT AND DIMENSIONS — NEVER MISMAP THE NUMBERS. When a customer rattles off numbers like "100, 48 40 40" or "furniture 100 x 48 40 40," do not assume which number is the weight and which are the dimensions. Dimensions are a set of THREE (length, width, height); the weight is a SINGLE separate number in pounds. If a customer gives four or more numbers, or it is at all unclear which is the weight versus the three dimensions, do NOT guess and fill — confirm it back first: "Just to confirm, that is 100 lbs with dimensions 48 by 40 by 40 — right?" Only fill weight and dimensions once you are sure which is which.
 
 PULLING RATES — act like a real broker, never rush it:
-Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting.
+Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting. PACKING SLIP EXCEPTION: when the customer's message is a packing slip or structured shipping document that already answers the accessorial questions — explicitly stating liftgate is not needed, identifying the facility type (commercial/dock/residential), or specifying limited access — do NOT re-ask those questions. The written document is the customer's answer. Extract the answers from the doc and apply them; asking again after the customer already provided a document is friction, not diligence.
 
 FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull ONLY when the shipment genuinely changes (new weight, dims, accessorial, origin, or destination). Repeatedly pulling rates churns the form and confuses the customer.
 
@@ -11106,10 +11136,18 @@ async function handleInput(text) {
   // When a customer pastes a full packing slip, structured extraction via SmartPaste
   // is far more reliable than asking the chat agent to parse it conversationally.
   {
-    const _spMarkers = [/total\s+weight/i, /freight\s+class/i, /dimensions:/i, /pallet\s*#/i, /nmfc/i,
-                        /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i];
+    const _spMarkers = [
+      // Formatted packing slip labels
+      /total\s+weight/i, /freight\s+class/i, /dimensions:/i, /pallet\s*#/i, /nmfc/i,
+      /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i,
+      // Informal / condensed doc formats (e.g. Jensen Swing style)
+      /\bship\s+from\b/i, /\bship\s+to\b/i, /\bpo\s*#/i,
+      /no\s+liftgate/i, /limited\s+access/i, /\b\d+\s*lbs\b/i,
+    ];
     const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
-    if (_spHits >= 3 && t.length > 100) {
+    // Lower threshold to 2 hits for longer messages — a 400+ char message with 2 freight
+    // markers is almost certainly a doc, not a short conversational phrase.
+    if ((_spHits >= 3 || (_spHits >= 2 && t.length > 400)) && t.length > 100) {
       console.log('[FP] SmartPaste detected — hits:', _spHits, '| len:', t.length);
       removeTyping();
       showTyping();
