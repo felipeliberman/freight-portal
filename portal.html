@@ -11092,9 +11092,9 @@ async function handleInput(text) {
   // When a customer pastes a full packing slip, structured extraction via SmartPaste
   // is far more reliable than asking the chat agent to parse it conversationally.
   {
-    const _spMarkers = ['total weight', 'freight class', 'dimensions:', 'pallet #', 'nmfc',
-                        'total boxes', 'total pallet', 'product description', 'weight:'];
-    const _spHits = _spMarkers.filter(m => lower.includes(m)).length;
+    const _spMarkers = [/total\s+weight/i, /freight\s+class/i, /dimensions:/i, /pallet\s*#/i, /nmfc/i,
+                        /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i];
+    const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
     if (_spHits >= 3 && t.length > 100) {
       removeTyping();
       appendMsg('bot', 'This looks like a packing slip — opening SmartPaste to extract it now. Review the fields and click Use This Info to pull rates.');
