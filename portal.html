@@ -16649,24 +16649,32 @@ async function _spAutoExtractAndRate(text) {
     if (typeof appendMessage === 'function')
       appendMessage('bot', 'Got it — ' + weight + ' lbs from ' + from + ' to ' + to + '. Pulling rates now…');
 
-    if (typeof _applyQuoteFields === 'function') {
-      _applyQuoteFields({
-        originZip:  sh.zip || '',
-        destZip:    destZip,
-        pickupDate: data.pickupDate || '',
-        items: [{
-          pieces:       parseInt(it.pieces) || 1,
-          weight:       weight,
-          length:       parseFloat(it.length) || 48,
-          width:        parseFloat(it.width)  || 40,
-          height:       parseFloat(it.height) || 48,
-          freightClass: it.freightClass || '',
-          commodity:    it.commodity    || '',
-          type:         it.packageType  || 'PLT',
-          stc:          it.nmfc         || ''
-        }],
-        getRates: true
-      });
+    var _qInput = {
+      originZip:  sh.zip || '',
+      destZip:    destZip,
+      pickupDate: data.pickupDate || '',
+      items: [{
+        pieces:       parseInt(it.pieces) || 1,
+        weight:       weight,
+        length:       parseFloat(it.length) || 48,
+        width:        parseFloat(it.width)  || 40,
+        height:       parseFloat(it.height) || 48,
+        freightClass: it.freightClass || '',
+        commodity:    it.commodity    || '',
+        type:         it.packageType  || 'PLT',
+        stc:          it.nmfc         || ''
+      }],
+      getRates: false
+    };
+    // _execUpdateQuote opens the panel if not already open, fills fields, then
+    // we fire getRates separately after the panel has rendered (~900ms).
+    if (typeof _execUpdateQuote === 'function') {
+      _execUpdateQuote(_qInput);
+      setTimeout(function() {
+        if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ getRates: true });
+      }, 900);
+    } else if (typeof _applyQuoteFields === 'function') {
+      _applyQuoteFields(Object.assign({}, _qInput, { getRates: true }));
     }
   } catch(e) {
     if (typeof removeTyping === 'function') removeTyping();
