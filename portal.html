@@ -16753,10 +16753,14 @@ async function _spAutoExtractAndRate(text) {
     if (typeof showQuoteForm === 'function') {
       console.log('[FP] SmartPaste opening quote form — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| accs:', _pf.accessorials);
       showQuoteForm(_pf, true);
+      // Capture _doGetRates immediately after showQuoteForm sets it — before any concurrent
+      // showQuoteForm call (another chat tab) can overwrite window._doGetRates.
+      var _spDoRates = window._doGetRates;
       // Fire rates after the form DOM has settled (showQuoteForm won't auto-fire when weight is in lineItems)
       setTimeout(function() {
-        console.log('[FP] SmartPaste firing getRates (700ms) — qt-origin:', (document.querySelector('#qt-origin')||{}).value, '| qt-dest:', (document.querySelector('#qt-dest')||{}).value);
-        if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ getRates: true });
+        console.log('[FP] SmartPaste firing getRates (700ms) — qt-origin:', (document.querySelector('#qt-origin')||{}).value, '| qt-dest:', (document.querySelector('#qt-dest')||{}).value, '| using captured closure:', typeof _spDoRates === 'function');
+        if (typeof _spDoRates === 'function') _spDoRates();
+        else if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ getRates: true });
       }, 700);
     } else if (typeof _applyQuoteFields === 'function') {
       _applyQuoteFields({ originZip: _pf.originZip, destZip: _pf.destZip, getRates: true });
