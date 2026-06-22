@@ -2332,7 +2332,7 @@ function parseAccessorials(text) {
   // Matches: appointment, appt, apt del, by appointment, scheduled delivery
   const apptRe = /appo?i?n?t?m?e?n?t|\bappt\b|\bapt\b|scheduled\s+del|by\s+appo?i?n?t/;
   if (apptRe.test(tl)) {
-    if (!acc.includes('Appointment Delivery')) acc.push('Appointment Delivery');
+    if (!acc.includes('Appointment Required')) acc.push('Appointment Required');
   }
 
   // ── Inside ───────────────────────────────────────────────────────────────────
@@ -9260,7 +9260,7 @@ function _execUpdateBooking(input) {
       const shipData = {
         originZip: s.originZip || '', destZip: s.destinationZip || s.destZip || '',
         weight: (_its[0]&&_its[0].weight) || 0, pieces: (_its[0]&&_its[0].pieces) || 1,
-        accessorials: (s.accessorials||[]).map(a=>({'Residential Delivery':'RSD','Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Pickup':'RSO','Inside Delivery':'IND','Limited Access Delivery':'NAD','Limited Access Pickup':'NAO','Appointment Required':'LAD'}[a]||a)),
+        accessorials: (s.accessorials||[]).map(a=>({'Residential Delivery':'RSD','Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Pickup':'RSO','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT'}[a]||a)),
         pickupDate: s.pickupDate || (typeof getTomorrow==='function'?getTomorrow():''),
         lineItems: _its.map(it=>({ qty:Number(it.pieces)||1, weight:Number(it.weight)||0, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.packageType||'PLT', freightClass:it.freightClass||'70', commodity:it.description||it.commodity||'Freight', nmfc:it.nmfc||'' })),
         length:Number(_its[0]&&_its[0].length)||48, width:Number(_its[0]&&_its[0].width)||40, height:Number(_its[0]&&_its[0].height)||48,
@@ -16678,7 +16678,7 @@ async function _spToBase64(file) {
 async function _spAutoExtractAndRate(text) {
   if (window._spAutoExtractRunning) return;
   window._spAutoExtractRunning = true;
-  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (null for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, NAO limited access pickup, IND inside delivery, APT appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
     var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
     var resp = await flCall('https://api.anthropic.com/v1/messages', {
@@ -16711,11 +16711,14 @@ async function _spAutoExtractAndRate(text) {
       return;
     }
 
-    // Detect accessorials from packing slip text (liftgate + residential = LFD + RSD per domain rules)
-    var _accCodes = [];
-    var _tl = text.toLowerCase();
-    if (/liftgate/.test(_tl)) _accCodes.push('LFD');
-    if (/residential/.test(_tl) && _accCodes.indexOf('RSD') === -1) _accCodes.push('RSD');
+    // Read accessorials from structured extractor output. The extractor was instructed to respect
+    // negations ("no liftgate"), conditionals ("unless specifically requested"), and dock/forklift
+    // facts ("commercial with loading dock"). The backstop flags below are a final hard override
+    // so explicit doc instructions always win even if the extractor made a mistake.
+    var _accCodes = (data.accessorials && Array.isArray(data.accessorials)) ? data.accessorials.slice() : [];
+    if (data.noLiftgate)    { _accCodes = _accCodes.filter(function(c) { return c !== 'LFD' && c !== 'LFO'; }); }
+    if (data.originHasDock) { _accCodes = _accCodes.filter(function(c) { return c !== 'LFO'; }); }
+    if (data.destHasDock)   { _accCodes = _accCodes.filter(function(c) { return c !== 'LFD'; }); }
 
     // Reset stale quote/rate state (not the conversation).
     // resetShipmentState also clears _smartPasteBookingData, so we re-assign it immediately after.
@@ -16774,7 +16777,8 @@ async function _spAutoExtractAndRate(text) {
       // narration path once rates (or an error) land. _lastRates is set by _publishRatesForAI
       // before this fires, so the agent sees the full rate state via _liveStateBlock().
       window._onRatesReady = function() {
-        if (typeof aiConverse === 'function') aiConverse('What are my options?');
+        if (typeof aiConverse === 'function')
+          aiConverse('[SmartPaste] Rates loaded from packing slip. Accessorials are pre-filled in the quote form — do not re-ask about accessorials, location type, or facility details already shown in form state. Present the rate options now.');
       };
       // Fire rates after the form DOM has settled (showQuoteForm won't auto-fire when weight is in lineItems)
       setTimeout(function() {
