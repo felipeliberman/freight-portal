@@ -2119,6 +2119,7 @@ function resetShipmentState(wipeConversation) {
     window._smartPasteBookingData = null;
     window._quoteFormOpen = false;
     window._spAutoExtractRunning = false;
+    window._onRatesReady = null;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
     // Always close stale booking panel tab on any fresh-quote reset (not just full wipe).
@@ -14449,6 +14450,12 @@ function showQuoteForm(prefill, silent) {
       console.log('[FP] doGetRates complete —', rates.length, 'rates | top:', rates[0] && (rates[0].name||rates[0].carrierName) + ' $' + ((rates[0].billTo&&rates[0].billTo.total)||rates[0].total));
       _publishRatesForAI(rates, shipment);
       window._ratePullInFlight = false; // pull complete — read_rates may now report accurately
+      // Fire SmartPaste narration callback if registered
+      if (typeof window._onRatesReady === 'function') {
+        var _rrcb = window._onRatesReady;
+        window._onRatesReady = null;
+        _rrcb(rates);
+      }
 
       clearInterval(_loadTimer);
       container.querySelector('#qt-rates-loading').style.display='none';
@@ -14469,6 +14476,13 @@ function showQuoteForm(prefill, silent) {
       const errEl = container.querySelector('#qt-rates-error');
       errEl.textContent = 'Could not retrieve rates — ' + (e.message||'please try again') + '. Call (800) 687-3713.';
       errEl.style.display='block';
+      // Fire SmartPaste narration callback even on error — agent will see no rates in state
+      // and tell the customer something went wrong.
+      if (typeof window._onRatesReady === 'function') {
+        var _rrcbErr = window._onRatesReady;
+        window._onRatesReady = null;
+        _rrcbErr();
+      }
     }
     if (getBtn) { getBtn.textContent='Get Rates'; getBtn.disabled=false; }
   }
@@ -16756,6 +16770,12 @@ async function _spAutoExtractAndRate(text) {
       // Capture _doGetRates immediately after showQuoteForm sets it — before any concurrent
       // showQuoteForm call (another chat tab) can overwrite window._doGetRates.
       var _spDoRates = window._doGetRates;
+      // Register one-time callback so doGetRates can trigger the agent's normal read_rates
+      // narration path once rates (or an error) land. _lastRates is set by _publishRatesForAI
+      // before this fires, so the agent sees the full rate state via _liveStateBlock().
+      window._onRatesReady = function() {
+        if (typeof aiConverse === 'function') aiConverse('What are my options?');
+      };
       // Fire rates after the form DOM has settled (showQuoteForm won't auto-fire when weight is in lineItems)
       setTimeout(function() {
         console.log('[FP] SmartPaste firing getRates (700ms) — qt-origin:', (document.querySelector('#qt-origin')||{}).value, '| qt-dest:', (document.querySelector('#qt-dest')||{}).value, '| using captured closure:', typeof _spDoRates === 'function');
