@@ -2109,6 +2109,7 @@ var chatHistory = []; // global conversation history for AI responses
 // so a session never inherits a prior shipment's rates, form, or context.
 // wipeConversation=true also clears the agent's history and closes the quote/booking panel.
 function resetShipmentState(wipeConversation) {
+  console.log('[FP] resetShipmentState — wipe:', !!wipeConversation, '| _quoteFormOpen was:', window._quoteFormOpen, '| _bookingLock was:', !!window._bookingLock);
   try {
     window._lastRates = null; window._lastRatesRaw = null; window._lastRatesShipment = null;
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
@@ -9245,10 +9246,12 @@ function _execUpdateBooking(input) {
       }
       if (!rate) return { ok:false, error:'Could not match that carrier. Ask which carrier by name or rank.' };
       window._bookingLock = { rate: rate, shipment: s };
+      console.log('[FP] _execUpdateBooking set _bookingLock — carrier:', rate._name||rate.name||rate.carrier);
     }
 
     // Reality-based open check: look at the actual DOM, not just a flag that can desync.
     const panelActuallyOpen = !!document.getElementById('bk-pu-name');
+    console.log('[FP] _execUpdateBooking — panelActuallyOpen:', panelActuallyOpen, '| _bookingLock carrier:', window._bookingLock&&(window._bookingLock.rate._name||window._bookingLock.rate.name));
     if (!panelActuallyOpen) {
       const name = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
       const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
@@ -11106,6 +11109,7 @@ async function handleInput(text) {
                         /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i];
     const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
     if (_spHits >= 3 && t.length > 100) {
+      console.log('[FP] SmartPaste detected — hits:', _spHits, '| len:', t.length);
       removeTyping();
       showTyping();
       _spAutoExtractAndRate(t);
@@ -12155,6 +12159,7 @@ function showBookingPanel(rate, shipmentData) {
   const logo      = rate._iconUrl || rate.iconUrl || rate.carrierLogo || '';
   const price     = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
   const originZip = shipmentData.originZip || '';
+  console.log('[FP] showBookingPanel — carrier:', name, '| price: $' + price, '| _bookingLock before:', !!window._bookingLock, '| _smartPasteBookingData:', !!window._smartPasteBookingData);
   const destZip   = shipmentData.destZip   || shipmentData.destinationZip || '';
   const weight    = shipmentData.weight    || 0;
   const pieces    = shipmentData.pieces    || 1;
@@ -13700,6 +13705,8 @@ function showAddressBook() {
 function startQuote() { showQuoteForm(); }
 
 function showQuoteForm(prefill, silent) {
+  const _pf = prefill || {};
+  console.log('[FP] showQuoteForm — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| weight:', _pf.weight, '| lineItems:', !!(_pf.lineItems&&_pf.lineItems.length), '| silent:', !!silent);
   window._quoteFormOpen = true;
   window._quoteFormSilent = silent;
   showChatArea();
@@ -14384,6 +14391,7 @@ function showQuoteForm(prefill, silent) {
     if (!items[0]||!items[0].weight)       { alert('Please enter weight for at least one line item.'); return; }
     if (!items[0]||!items[0].length||!items[0].width||!items[0].height) { alert('Dimensions are required (L×W×H). Carriers need dims to quote accurately.'); return; }
 
+    console.log('[FP] doGetRates start — origin:', originZip, '→ dest:', destZip, '| weight:', items[0]&&items[0].weight, '| class:', items[0]&&items[0].freightClass, '| accs:', accessorials);
     // Switch to Rates tab and show loading
     switchTab('rates');
     container.querySelector('#qt-rates-loading').style.display='block';
@@ -14438,6 +14446,7 @@ function showQuoteForm(prefill, silent) {
       };
       const rates = await fetchRates(shipment);
       currentRates = rates;
+      console.log('[FP] doGetRates complete —', rates.length, 'rates | top:', rates[0] && (rates[0].name||rates[0].carrierName) + ' $' + ((rates[0].billTo&&rates[0].billTo.total)||rates[0].total));
       _publishRatesForAI(rates, shipment);
       window._ratePullInFlight = false; // pull complete — read_rates may now report accurately
 
@@ -16673,6 +16682,7 @@ async function _spAutoExtractAndRate(text) {
 
     var weight  = parseFloat(it.weight) || 0;
     var destZip = (co.zip || '').replace(/\D/g, '').slice(0, 5);
+    console.log('[FP] SmartPaste extracted — originZip:', sh.zip, '| destZip:', destZip, '| weight:', weight, '| class:', it.freightClass, '| unclear:', data.unclear);
 
     if (typeof removeTyping === 'function') removeTyping();
 
@@ -16680,6 +16690,7 @@ async function _spAutoExtractAndRate(text) {
       var missing = [];
       if (!weight)                        missing.push('total weight');
       if (!destZip || destZip.length < 5) missing.push('destination ZIP');
+      console.warn('[FP] SmartPaste bail — missing:', missing.join(', '));
       if (typeof appendMessage === 'function')
         appendMessage('bot', 'I could read most of the packing slip but couldn\'t confirm the ' + missing.join(' and ') + '. Can you provide ' + (missing.length > 1 ? 'those' : 'that') + '?');
       window._spAutoExtractRunning = false;
@@ -16740,9 +16751,11 @@ async function _spAutoExtractAndRate(text) {
     // Call showQuoteForm directly — _execUpdateQuote guards on _quoteFormOpen which can be stale.
     // showQuoteForm always opens the panel regardless of prior state.
     if (typeof showQuoteForm === 'function') {
+      console.log('[FP] SmartPaste opening quote form — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| accs:', _pf.accessorials);
       showQuoteForm(_pf, true);
       // Fire rates after the form DOM has settled (showQuoteForm won't auto-fire when weight is in lineItems)
       setTimeout(function() {
+        console.log('[FP] SmartPaste firing getRates (700ms) — qt-origin:', (document.querySelector('#qt-origin')||{}).value, '| qt-dest:', (document.querySelector('#qt-dest')||{}).value);
         if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ getRates: true });
       }, 700);
     } else if (typeof _applyQuoteFields === 'function') {
