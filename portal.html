@@ -12857,7 +12857,49 @@ function showBookingPanel(rate, shipmentData) {
     _spset('bk-pu-ref',     _sp.poNumber);
     const _spsi = document.getElementById('bk-special-instructions');
     if (_spsi && _sp.specialInstructions) _spsi.value = _sp.specialInstructions;
+    // Also persist to bookingData so re-opens and the AI state snapshot both have phones/addresses
+    if (_sp.shipperName)   bookingData.shipperName   = _sp.shipperName;
+    if (_sp.shipperStreet) bookingData.shipperStreet = _sp.shipperStreet;
+    if (_sp.shipperCity)   bookingData.shipperCity   = _sp.shipperCity;
+    if (_sp.shipperState)  bookingData.shipperState  = _sp.shipperState;
+    if (_sp.shipperPhone)  bookingData.shipperPhone  = _sp.shipperPhone;
+    if (_sp.shipperStreet || _sp.shipperCity || _sp.shipperState)
+      bookingData.shipperAddr = [_sp.shipperStreet, _sp.shipperCity && _sp.shipperState ? _sp.shipperCity+', '+_sp.shipperState : (_sp.shipperCity||_sp.shipperState)].filter(Boolean).join(', ');
+    if (_sp.consigneeName)   bookingData.consigneeName   = _sp.consigneeName;
+    if (_sp.consigneeStreet) bookingData.consigneeStreet = _sp.consigneeStreet;
+    if (_sp.consigneeCity)   bookingData.consigneeCity   = _sp.consigneeCity;
+    if (_sp.consigneeState)  bookingData.consigneeState  = _sp.consigneeState;
+    if (_sp.consigneePhone)  bookingData.consigneePhone  = _sp.consigneePhone;
+    if (_sp.consigneeStreet || _sp.consigneeCity || _sp.consigneeState)
+      bookingData.consigneeAddr = [_sp.consigneeStreet, _sp.consigneeCity && _sp.consigneeState ? _sp.consigneeCity+', '+_sp.consigneeState : (_sp.consigneeCity||_sp.consigneeState)].filter(Boolean).join(', ');
+    if (_sp.poNumber)            bookingData.shipperRef          = _sp.poNumber;
+    if (_sp.specialInstructions) bookingData.specialInstructions = _sp.specialInstructions;
     window._smartPasteBookingData = null;
+  }
+
+  // Restore from bookingData into any still-empty form fields.
+  // Catches re-opens within the same booking flow (showBookingPanel rebuilds the form HTML each
+  // time, which clears the fields; bookingData persists across calls so phones/addresses survive).
+  {
+    const _bdr = (id, v) => { const el = document.getElementById(id); if (el && v && !el.value) el.value = v; };
+    _bdr('bk-pu-name',    bookingData.shipperName);
+    _bdr('bk-pu-street',  bookingData.shipperStreet);
+    _bdr('bk-pu-city',    bookingData.shipperCity);
+    _bdr('bk-pu-state',   bookingData.shipperState);
+    _bdr('bk-pu-phone',   bookingData.shipperPhone);
+    _bdr('bk-pu-contact', bookingData.shipperContact);
+    _bdr('bk-pu-ref',     bookingData.shipperRef);
+    _bdr('bk-pu-date',    bookingData.pickupDate);
+    _bdr('bk-pu-open',    bookingData.pickupOpen);
+    _bdr('bk-pu-close',   bookingData.pickupClose);
+    _bdr('bk-dl-name',    bookingData.consigneeName);
+    _bdr('bk-dl-street',  bookingData.consigneeStreet);
+    _bdr('bk-dl-city',    bookingData.consigneeCity);
+    _bdr('bk-dl-state',   bookingData.consigneeState);
+    _bdr('bk-dl-phone',   bookingData.consigneePhone);
+    _bdr('bk-dl-contact', bookingData.consigneeContact);
+    const _siEl3 = document.getElementById('bk-special-instructions');
+    if (_siEl3 && !_siEl3.value && bookingData.specialInstructions) _siEl3.value = bookingData.specialInstructions;
   }
 
   window._bookingPanelContainer = c;
