@@ -2219,9 +2219,10 @@ async function lookupZip(zip) {
   try {
     let result;
     if (_isCanadianPostal(zip)) {
-      // zippopotam.us is US-only; use Geocodio for Canadian postal codes
+      // Geocodio resolves at FSA (3-char prefix) level — full LDUs often 422
+      const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
       const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
-        + encodeURIComponent(zip)
+        + encodeURIComponent(fsa)
         + '&country=CA&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
       if (!r.ok) return { city: '', state: '' };
       const d = await r.json();
@@ -14006,8 +14007,9 @@ function showQuoteForm(prefill, silent) {
     if (!zip || (!_isCanadianPostal(zip) && zip.length !== 5)) { if (el) el.textContent = ''; return; }
     try {
       if (_isCanadianPostal(zip)) {
+        const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
         const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
-          + encodeURIComponent(zip)
+          + encodeURIComponent(fsa)
           + '&country=CA&api_key=' + GEOCODIO_KEY + '&limit=1');
         if (r.ok) {
           const d = await r.json();
