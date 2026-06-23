@@ -2428,11 +2428,11 @@ async function fetchRates(shipment) {
   let params =
     'originCity='         + encodeURIComponent(shipment.originCity        || '') +
     '&originState='       + encodeURIComponent(shipment.originState       || '') +
-    '&originZipcode='     + encodeURIComponent(shipment.originZip) +
+    '&originZipcode='     + encodeURIComponent((shipment.originZip      || '').replace(/\s/g, '')) +
     '&originCountry='     + encodeURIComponent(shipment.originCountry      || 'US') +
     '&destinationCity='   + encodeURIComponent(shipment.destinationCity   || '') +
     '&destinationState='  + encodeURIComponent(shipment.destinationState  || '') +
-    '&destinationZipcode='+ encodeURIComponent(shipment.destinationZip) +
+    '&destinationZipcode='+ encodeURIComponent((shipment.destinationZip   || '').replace(/\s/g, '')) +
     '&destinationCountry='+ encodeURIComponent(shipment.destinationCountry || 'US') +
     '&freightInfo='       + encodeURIComponent(JSON.stringify(freightInfo)) +
     '&UOM=US&rateTypesList[]=LTL' +
