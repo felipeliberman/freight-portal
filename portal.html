@@ -8190,9 +8190,11 @@ async function submitBookingOnly(opts) {
         bookQuoteNumber = qNum;
       }
     } else { bookQuoteNumber = qNum; }
-    // Build lineItems from lastQuotedShipment.items — these have the exact values sent to fetchRates
-    // Using rate.freightInfo can give stale dims; s.items is always current
-    const _allItems = (s.items && s.items.length) ? s.items : [item];
+    // Primus validates the booking against the freightInfo saved with the rate (saveRate).
+    // Use bookingRate.freightInfo as the source of truth so dims/class/hazmat/stackAmount match exactly.
+    // Fall back to s.items only if the rate has no freightInfo.
+    const _rateFI = (bookingRate && bookingRate.freightInfo && bookingRate.freightInfo.length) ? bookingRate.freightInfo : null;
+    const _allItems = _rateFI || (s.items && s.items.length ? s.items : [item]);
     const payload = {
       quoteNumber: bookQuoteNumber, rateId,
       thirdPartyReferenceNumber: bookingData.shipperRef || '',
