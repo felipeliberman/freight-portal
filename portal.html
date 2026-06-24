@@ -2420,6 +2420,7 @@ async function fetchRates(shipment) {
 
   const accCodes = [];
   (shipment.accessorials || []).forEach(a => { if (ACC_MAP[a]) accCodes.push(ACC_MAP[a]); });
+  if ((shipment.items || []).some(i => i.hazmat)) accCodes.push('HZM');
 
   const isBox       = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
   const isThreshold = (shipment.accessorials || []).includes('Threshold');
@@ -8188,7 +8189,7 @@ async function submitBookingOnly(opts) {
       shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:s.originCountry||'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
       consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:s.destinationCountry||'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
       lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
-      UOM:'US', BOLInstructions:bookingData.specialInstructions||'',
+      UOM:'US', BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList:accCodes,
       pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen), timeTo:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose), appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
@@ -8338,7 +8339,7 @@ async function submitBooking() {
         nmfc:       (document.getElementById('bk-nmfc') && document.getElementById('bk-nmfc').value.trim()) || item.nmfc || undefined,
       }],
       UOM: 'US',
-      BOLInstructions: bookingData.specialInstructions || '',
+      BOLInstructions: (bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList: accCodes,  // flat array of strings e.g. ["LFD","RSD"]
       pickupInformation: {
         date:               bookingData.pickupDate,
@@ -9511,7 +9512,7 @@ async function _execBookShipment(input) {
         hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
         STC:((it.stc||it.STC)?String(it.stc||it.STC):undefined), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
       })),
-      UOM:'US', BOLInstructions: input.specialInstructions || '',
+      UOM:'US', BOLInstructions: (input.isHazmat ? ('HAZMAT - UN#' + (input.hazUnNumber||'') + ' - Emergency Contact: ' + (input.hazContact||'') + ' ' + (input.hazPhone||'') + (input.specialInstructions ? ' | ' + input.specialInstructions : '')) : (input.specialInstructions || '')),
       accessorialsList: accCodes,
       pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupOpen) || '9:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
@@ -12430,6 +12431,20 @@ function showBookingPanel(rate, shipmentData) {
 
   // Delivery address book selector moved to top of delivery section (see dlAbRow above)
 
+  // Hazmat section (only when shipment is hazmat)
+  if (fHaz) {
+    const hazSec = document.createElement('div');
+    hazSec.style.marginBottom = '12px';
+    hazSec.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;">' +
+      '<div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:8px;">⚠ Hazardous Material</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+      '<div><label style="font-size:11px;font-weight:600;color:var(--mu);display:block;margin-bottom:3px;">UN Number</label><input id="bk-haz-un" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-family:var(--font);" placeholder="e.g. UN1234" value="' + (freightItem.unNumber||'') + '"></div>' +
+      '<div><label style="font-size:11px;font-weight:600;color:var(--mu);display:block;margin-bottom:3px;">Emergency Contact</label><input id="bk-haz-contact" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-family:var(--font);" placeholder="Contact name"></div>' +
+      '<div><label style="font-size:11px;font-weight:600;color:var(--mu);display:block;margin-bottom:3px;">Emergency Phone</label><input id="bk-haz-phone" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-family:var(--font);" placeholder="(800) 555-1234"></div>' +
+      '</div></div>';
+    body.appendChild(hazSec);
+  }
+
   // Special Instructions
   const siSec = document.createElement('div');
   siSec.style.marginBottom = '16px';
@@ -12620,6 +12635,10 @@ function showBookingPanel(rate, shipmentData) {
     bookingData.consigneePhone   = g('bk-dl-phone');
     const siEl2 = document.getElementById('bk-special-instructions');
     bookingData.specialInstructions = siEl2 ? siEl2.value.trim() : '';
+    const _hazUn2 = document.getElementById('bk-haz-un');
+    const _hazContact2 = document.getElementById('bk-haz-contact');
+    const _hazPhone2 = document.getElementById('bk-haz-phone');
+    if (_hazUn2) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn2.value.trim(); bookingData.hazContact = (_hazContact2&&_hazContact2.value.trim())||''; bookingData.hazPhone = (_hazPhone2&&_hazPhone2.value.trim())||''; }
     errEl.style.display = 'none';
     saveBtn.textContent = 'Saving...'; saveBtn.disabled = true;
     const formBodySave = document.getElementById('bk-form-body');
@@ -12662,6 +12681,10 @@ function showBookingPanel(rate, shipmentData) {
     bookingData.consigneePhone   = g('bk-dl-phone');
     const siEl = document.getElementById('bk-special-instructions');
     bookingData.specialInstructions = siEl ? siEl.value.trim() : '';
+    const _hazUn = document.getElementById('bk-haz-un');
+    const _hazContact = document.getElementById('bk-haz-contact');
+    const _hazPhone = document.getElementById('bk-haz-phone');
+    if (_hazUn) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn.value.trim(); bookingData.hazContact = (_hazContact&&_hazContact.value.trim())||''; bookingData.hazPhone = (_hazPhone&&_hazPhone.value.trim())||''; }
 
     const missing = [];
     if (!bookingData.shipperName)   missing.push('Pickup business name');
@@ -14177,6 +14200,7 @@ function showQuoteForm(prefill, silent) {
       '<td style="padding:3px 2px;"><select class="li-class" style="' + inS + 'width:54px;"><option value="">Auto</option>' + CLASSES.map(c=>'<option value="'+c+'"'+(String(item.freightClass)===String(c)?' selected':'')+'>'+c+'</option>').join('') + '</select></td>' +
       '<td style="padding:3px 2px;"><input class="li-nmfc" type="text" value="' + (item.nmfc||'') + '" style="' + inS + 'width:75px;" placeholder="80660-00"></td>' +
       '<td style="padding:3px 2px;text-align:center;"><input class="li-haz" type="checkbox"' + (item.hazmat?' checked':'') + ' style="width:13px;height:13px;accent-color:#dc2626;"></td>' +
+      '<td style="padding:3px 2px;"><input class="li-un" type="text" placeholder="UN#" maxlength="10" value="' + (item.unNumber||'') + '" style="width:52px;font-size:11px;padding:2px 4px;border:1px solid var(--bdr);border-radius:4px;font-family:var(--font);display:' + (item.hazmat?'block':'none') + ';"></td>' +
       '<td style="padding:3px 2px;">' + (idx>0?'<button class="li-del" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:13px;padding:0;">×</button>':'') + '</td>' +
     '</tr>';
   }
@@ -14187,7 +14211,7 @@ function showQuoteForm(prefill, silent) {
       stc:r.querySelector('.li-stc')&&r.querySelector('.li-stc').value*1||0, weight:r.querySelector('.li-weight').value*1||0, commodity:r.querySelector('.li-commodity').value,
       length:r.querySelector('.li-len').value*1||0, width:r.querySelector('.li-wid').value*1||0, height:r.querySelector('.li-hgt').value*1||0,
       stack:r.querySelector('.li-stack').value, freightClass:r.querySelector('.li-class').value,
-      nmfc:r.querySelector('.li-nmfc').value, hazmat:r.querySelector('.li-haz').checked,
+      nmfc:r.querySelector('.li-nmfc').value, hazmat:r.querySelector('.li-haz').checked, unNumber:r.querySelector('.li-un')?r.querySelector('.li-un').value.trim():'',
     }));
   }
 
@@ -14254,6 +14278,13 @@ function showQuoteForm(prefill, silent) {
   lineItems.forEach((it,i) => { const tr=document.createElement('tr'); tr.outerHTML; tbody.insertAdjacentHTML('beforeend', buildRow(it,i)); });
   wireRows();
   updateTotals();
+
+  container.addEventListener('change', function(e) {
+    if (e.target.classList.contains('li-haz')) {
+      const unInput = e.target.closest('tr').querySelector('.li-un');
+      if (unInput) unInput.style.display = e.target.checked ? 'block' : 'none';
+    }
+  });
 
   container.querySelector('#qt-add-line').onclick = () => {
     const rows = container.querySelectorAll('.qt-line');
