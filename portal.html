@@ -8199,7 +8199,10 @@ async function submitBookingOnly(opts) {
       shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:s.originCountry||'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
       consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:s.destinationCountry||'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
       lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
-      UOM:'US', BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
+      UOM:'US',
+      emergencyContact: (bookingData.isHazmat ? (bookingData.hazContact || '') : undefined),
+      emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
+      BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList:accCodes,
       pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen), timeTo:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose), appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
@@ -8349,6 +8352,8 @@ async function submitBooking() {
         nmfc:       (document.getElementById('bk-nmfc') && document.getElementById('bk-nmfc').value.trim()) || item.nmfc || undefined,
       }],
       UOM: 'US',
+      emergencyContact: (bookingData.isHazmat ? (bookingData.hazContact || '') : undefined),
+      emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
       BOLInstructions: (bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList: accCodes,  // flat array of strings e.g. ["LFD","RSD"]
       pickupInformation: {
@@ -9558,7 +9563,10 @@ async function _execBookShipment(input) {
         hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
         STC:((it.stc||it.STC)?String(it.stc||it.STC):undefined), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
       })),
-      UOM:'US', BOLInstructions: (input.isHazmat ? ('HAZMAT - UN#' + (input.hazUnNumber||'') + ' - Emergency Contact: ' + (input.hazContact||'') + ' ' + (input.hazPhone||'') + (input.specialInstructions ? ' | ' + input.specialInstructions : '')) : (input.specialInstructions || '')),
+      UOM:'US',
+      emergencyContact: (input.isHazmat ? (input.emergencyContact || input.hazContact || '') : undefined),
+      emergencyPhone:   (input.isHazmat ? (input.emergencyPhone   || input.hazPhone   || '') : undefined),
+      BOLInstructions: (input.isHazmat ? ('HAZMAT - UN#' + (input.hazUnNumber||'') + ' - Emergency Contact: ' + (input.hazContact||'') + ' ' + (input.hazPhone||'') + (input.specialInstructions ? ' | ' + input.specialInstructions : '')) : (input.specialInstructions || '')),
       accessorialsList: accCodes,
       pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupOpen) || '9:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
