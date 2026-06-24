@@ -84,6 +84,8 @@ Never scatter state resets — always go through this chokepoint. Adding a new p
 
 Key globals: `_lastRates`, `_lastRatesRaw`, `_lastRatesShipment`, `_lastBooked`, `_bookingLock`, `_lastPulledSig`, `_resWarnShown`, `_editingBOLId`, `_editingShipment`, `_requoteContext`, `lastQuotedShipment`.
 
+**STATE HANDOFF RULE (quote → rate → book):** Any freight field that flows through the quote→rate→book lifecycle (weight, dims, freightClass, packageType, hazmat, unNumber, nmfc, stc, accessorials) must be verified to survive EVERY handoff before a change is declared done. The handoff chain is: the quote form / `_applyQuoteFields` (form + agent paths) → `fetchRates` freightInfo builder → `_publishRatesForAI` → `lastQuotedShipment` → the booking payload builder (`s.items`) and the booking form's field reads (e.g. `fHaz` from `lastQuotedShipment.items[0].hazmat`). `lastQuotedShipment` is the shared chokepoint between rating and booking; if `_publishRatesForAI` does not sync it, the booking form and book call read stale data. When editing any lifecycle field, trace and confirm all readers AND writers of that field across this chain — do not fix only the one builder named in the task.
+
 ---
 
 ## Design rules

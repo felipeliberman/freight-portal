@@ -9273,6 +9273,38 @@ function _publishRatesForAI(rates, shipment) {
     // rates already arrive sorted cheapest-first from fetchRates
     window._lastRatesRaw = rates;          // full rate objects, for booking
     window._lastRatesShipment = shipment;  // shipment used for these rates
+    // Keep lastQuotedShipment.items in sync with the exact items that were rated,
+    // so the booking form (fHaz) and booking payload (s.items) see the real hazmat flag and dims.
+    try {
+      if (shipment && shipment.items && shipment.items.length) {
+        if (!lastQuotedShipment) lastQuotedShipment = {};
+        lastQuotedShipment.items = shipment.items.map(function(it){
+          return {
+            pieces: Number(it.pieces||it.qty||1),
+            weight: Number(it.weight||0),
+            length: Number(it.length||48),
+            width:  Number(it.width||40),
+            height: Number(it.height||48),
+            packageType: it.packageType||it.dimType||'PLT',
+            freightClass: String(it.freightClass||it.class||'70'),
+            description: it.description||it.commodity||'Freight',
+            nmfc: it.nmfc||'',
+            stc: it.stc||'',
+            hazmat: it.hazmat||false,
+            unNumber: it.unNumber||'',
+            stackAmount: it.stackAmount||1
+          };
+        });
+        lastQuotedShipment.originZip = shipment.originZip || lastQuotedShipment.originZip;
+        lastQuotedShipment.destinationZip = shipment.destinationZip || lastQuotedShipment.destinationZip;
+        lastQuotedShipment.originCity = shipment.originCity || lastQuotedShipment.originCity;
+        lastQuotedShipment.originState = shipment.originState || lastQuotedShipment.originState;
+        lastQuotedShipment.destinationCity = shipment.destinationCity || lastQuotedShipment.destinationCity;
+        lastQuotedShipment.destinationState = shipment.destinationState || lastQuotedShipment.destinationState;
+        lastQuotedShipment.originCountry = shipment.originCountry || lastQuotedShipment.originCountry;
+        lastQuotedShipment.destinationCountry = shipment.destinationCountry || lastQuotedShipment.destinationCountry;
+      }
+    } catch(e) { console.warn('[FP] lastQuotedShipment sync failed:', e); }
     window._lastRates = {
       lane: shipment ? ((shipment.originCity||shipment.originZip||'') + ' -> ' + (shipment.destinationCity||shipment.destinationZip||'')) : '',
       count: rates.length,
