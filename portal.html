@@ -2420,8 +2420,6 @@ async function fetchRates(shipment) {
 
   const accCodes = [];
   (shipment.accessorials || []).forEach(a => { if (ACC_MAP[a]) accCodes.push(ACC_MAP[a]); });
-  if ((shipment.items || []).some(i => i.hazmat)) accCodes.push('HZM');
-
   const isBox       = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
   const isThreshold = (shipment.accessorials || []).includes('Threshold');
   const vendorIds   = isThreshold ? THRESHOLD_VENDOR_IDS : isBox ? BOX_VENDOR_IDS : null;
@@ -2493,6 +2491,18 @@ async function fetchRates(shipment) {
     seen[dedupKey] = true;
     return true;
   });
+}
+
+async function searchUNTable(query) {
+  if (!query || query.length < 2) return [];
+  try {
+    const token = await getToken();
+    const url = PRIMUS_BASE + '/api/v1/database/untable?search=' + encodeURIComponent(query) + '&filterEmptyUNNumber=true&limit=8';
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.data && d.data.results) || [];
+  } catch (e) { console.warn('[FP] UN lookup failed:', e); return []; }
 }
 
 async function saveRate(rateId) {
@@ -12443,6 +12453,44 @@ function showBookingPanel(rate, shipmentData) {
       '<div><label style="font-size:11px;font-weight:600;color:var(--mu);display:block;margin-bottom:3px;">Emergency Phone</label><input id="bk-haz-phone" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-family:var(--font);" placeholder="(800) 555-1234"></div>' +
       '</div></div>';
     body.appendChild(hazSec);
+    (function wireUNTypeahead(){
+      const unEl = document.getElementById('bk-haz-un');
+      if (!unEl) return;
+      let dd = document.getElementById('bk-haz-un-dd');
+      if (!dd) {
+        dd = document.createElement('div');
+        dd.id = 'bk-haz-un-dd';
+        dd.style.cssText = 'position:absolute;z-index:9999;background:#fff;border:1px solid #fca5a5;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:240px;overflow-y:auto;display:none;font-family:var(--font);min-width:320px;';
+        unEl.parentNode.style.position = 'relative';
+        unEl.parentNode.appendChild(dd);
+      }
+      let t = null;
+      unEl.addEventListener('input', function(){
+        const q = unEl.value.trim();
+        clearTimeout(t);
+        if (q.length < 2) { dd.style.display = 'none'; return; }
+        t = setTimeout(async function(){
+          const rows = await searchUNTable(q);
+          if (!rows.length) { dd.style.display = 'none'; return; }
+          dd.innerHTML = rows.map(function(row){
+            return '<div class="un-opt" data-un="' + (row.UNNumber||'').replace(/"/g,'&quot;') + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:12px;">' +
+              '<span style="font-weight:700;color:#dc2626;">UN' + (row.UNNumber||'') + '</span> ' +
+              '<span style="color:var(--mu);">' + (row.HAZClass ? 'Class ' + row.HAZClass : '') + (row.PKGGroup ? ' · PG ' + row.PKGGroup : '') + '</span>' +
+              '<div style="color:var(--tx);margin-top:2px;">' + ((row.description||'').slice(0,80)) + '</div>' +
+            '</div>';
+          }).join('');
+          dd.style.display = 'block';
+          dd.querySelectorAll('.un-opt').forEach(function(opt){
+            opt.addEventListener('mousedown', function(ev){
+              ev.preventDefault();
+              unEl.value = opt.getAttribute('data-un');
+              dd.style.display = 'none';
+            });
+          });
+        }, 250);
+      });
+      unEl.addEventListener('blur', function(){ setTimeout(function(){ dd.style.display='none'; }, 150); });
+    })();
   }
 
   // Special Instructions
@@ -14200,7 +14248,6 @@ function showQuoteForm(prefill, silent) {
       '<td style="padding:3px 2px;"><select class="li-class" style="' + inS + 'width:54px;"><option value="">Auto</option>' + CLASSES.map(c=>'<option value="'+c+'"'+(String(item.freightClass)===String(c)?' selected':'')+'>'+c+'</option>').join('') + '</select></td>' +
       '<td style="padding:3px 2px;"><input class="li-nmfc" type="text" value="' + (item.nmfc||'') + '" style="' + inS + 'width:75px;" placeholder="80660-00"></td>' +
       '<td style="padding:3px 2px;text-align:center;"><input class="li-haz" type="checkbox"' + (item.hazmat?' checked':'') + ' style="width:13px;height:13px;accent-color:#dc2626;"></td>' +
-      '<td style="padding:3px 2px;"><input class="li-un" type="text" placeholder="UN#" maxlength="10" value="' + (item.unNumber||'') + '" style="width:52px;font-size:11px;padding:2px 4px;border:1px solid var(--bdr);border-radius:4px;font-family:var(--font);display:' + (item.hazmat?'block':'none') + ';"></td>' +
       '<td style="padding:3px 2px;">' + (idx>0?'<button class="li-del" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:13px;padding:0;">×</button>':'') + '</td>' +
     '</tr>';
   }
@@ -14211,7 +14258,7 @@ function showQuoteForm(prefill, silent) {
       stc:r.querySelector('.li-stc')&&r.querySelector('.li-stc').value*1||0, weight:r.querySelector('.li-weight').value*1||0, commodity:r.querySelector('.li-commodity').value,
       length:r.querySelector('.li-len').value*1||0, width:r.querySelector('.li-wid').value*1||0, height:r.querySelector('.li-hgt').value*1||0,
       stack:r.querySelector('.li-stack').value, freightClass:r.querySelector('.li-class').value,
-      nmfc:r.querySelector('.li-nmfc').value, hazmat:r.querySelector('.li-haz').checked, unNumber:r.querySelector('.li-un')?r.querySelector('.li-un').value.trim():'',
+      nmfc:r.querySelector('.li-nmfc').value, hazmat:r.querySelector('.li-haz').checked,
     }));
   }
 
@@ -14278,13 +14325,6 @@ function showQuoteForm(prefill, silent) {
   lineItems.forEach((it,i) => { const tr=document.createElement('tr'); tr.outerHTML; tbody.insertAdjacentHTML('beforeend', buildRow(it,i)); });
   wireRows();
   updateTotals();
-
-  container.addEventListener('change', function(e) {
-    if (e.target.classList.contains('li-haz')) {
-      const unInput = e.target.closest('tr').querySelector('.li-un');
-      if (unInput) unInput.style.display = e.target.checked ? 'block' : 'none';
-    }
-  });
 
   container.querySelector('#qt-add-line').onclick = () => {
     const rows = container.querySelectorAll('.qt-line');
