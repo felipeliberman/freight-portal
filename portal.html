@@ -2505,6 +2505,50 @@ async function searchUNTable(query) {
   } catch (e) { console.warn('[FP] UN lookup failed:', e); return []; }
 }
 
+function wireUNTypeahead() {
+  const unEl = document.getElementById('bk-haz-un');
+  if (!unEl) return;
+  if (unEl.dataset.unWired === '1') return;
+  unEl.dataset.unWired = '1';
+  let dd = document.getElementById('bk-haz-un-dd');
+  if (!dd) {
+    dd = document.createElement('div');
+    dd.id = 'bk-haz-un-dd';
+    dd.style.cssText = 'position:absolute;z-index:99999;background:#fff;border:1px solid #fca5a5;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:240px;overflow-y:auto;display:none;font-family:var(--font);min-width:320px;left:0;top:100%;margin-top:2px;';
+    unEl.parentNode.style.position = 'relative';
+    unEl.parentNode.appendChild(dd);
+  }
+  let t = null;
+  unEl.addEventListener('input', function(){
+    const q = unEl.value.trim();
+    clearTimeout(t);
+    if (q.length < 2) { dd.style.display='none'; return; }
+    t = setTimeout(async function(){
+      const rows = await searchUNTable(q);
+      if (!rows.length) { dd.style.display='none'; return; }
+      dd.innerHTML = rows.map(function(row){
+        return '<div class="un-opt" data-un="' + (row.UNNumber||'').replace(/"/g,'&quot;') + '" data-desc="' + (row.description||'').replace(/"/g,'&quot;') + '" data-class="' + (row.HAZClass||'').replace(/"/g,'&quot;') + '" data-pg="' + (row.PKGGroup||'').replace(/"/g,'&quot;') + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:12px;">' +
+          '<span style="font-weight:700;color:#dc2626;">UN' + (row.UNNumber||'') + '</span> ' +
+          '<span style="color:var(--mu);">' + (row.HAZClass ? 'Class ' + row.HAZClass : '') + (row.PKGGroup ? ' · PG ' + row.PKGGroup : '') + '</span>' +
+          '<div style="color:var(--tx);margin-top:2px;">' + ((row.description||'').slice(0,80)) + '</div>' +
+        '</div>';
+      }).join('');
+      dd.style.display='block';
+      dd.querySelectorAll('.un-opt').forEach(function(opt){
+        opt.addEventListener('mousedown', function(ev){
+          ev.preventDefault();
+          unEl.value = opt.getAttribute('data-un');
+          unEl.dataset.unDesc = opt.getAttribute('data-desc') || '';
+          unEl.dataset.unClass = opt.getAttribute('data-class') || '';
+          unEl.dataset.unPg = opt.getAttribute('data-pg') || '';
+          dd.style.display='none';
+        });
+      });
+    }, 250);
+  });
+  unEl.addEventListener('blur', function(){ setTimeout(function(){ dd.style.display='none'; }, 150); });
+}
+
 async function saveRate(rateId) {
   const token = await getToken();
   const r = await fetch(PRIMUS_BASE + '/applet/v1/rate/save', {
@@ -12501,44 +12545,6 @@ function showBookingPanel(rate, shipmentData) {
       '<div><label style="font-size:11px;font-weight:600;color:var(--mu);display:block;margin-bottom:3px;">Emergency Phone</label><input id="bk-haz-phone" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-family:var(--font);" placeholder="(800) 555-1234"></div>' +
       '</div></div>';
     body.appendChild(hazSec);
-    (function wireUNTypeahead(){
-      const unEl = document.getElementById('bk-haz-un');
-      if (!unEl) return;
-      let dd = document.getElementById('bk-haz-un-dd');
-      if (!dd) {
-        dd = document.createElement('div');
-        dd.id = 'bk-haz-un-dd';
-        dd.style.cssText = 'position:absolute;z-index:9999;background:#fff;border:1px solid #fca5a5;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:240px;overflow-y:auto;display:none;font-family:var(--font);min-width:320px;';
-        unEl.parentNode.style.position = 'relative';
-        unEl.parentNode.appendChild(dd);
-      }
-      let t = null;
-      unEl.addEventListener('input', function(){
-        const q = unEl.value.trim();
-        clearTimeout(t);
-        if (q.length < 2) { dd.style.display = 'none'; return; }
-        t = setTimeout(async function(){
-          const rows = await searchUNTable(q);
-          if (!rows.length) { dd.style.display = 'none'; return; }
-          dd.innerHTML = rows.map(function(row){
-            return '<div class="un-opt" data-un="' + (row.UNNumber||'').replace(/"/g,'&quot;') + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:12px;">' +
-              '<span style="font-weight:700;color:#dc2626;">UN' + (row.UNNumber||'') + '</span> ' +
-              '<span style="color:var(--mu);">' + (row.HAZClass ? 'Class ' + row.HAZClass : '') + (row.PKGGroup ? ' · PG ' + row.PKGGroup : '') + '</span>' +
-              '<div style="color:var(--tx);margin-top:2px;">' + ((row.description||'').slice(0,80)) + '</div>' +
-            '</div>';
-          }).join('');
-          dd.style.display = 'block';
-          dd.querySelectorAll('.un-opt').forEach(function(opt){
-            opt.addEventListener('mousedown', function(ev){
-              ev.preventDefault();
-              unEl.value = opt.getAttribute('data-un');
-              dd.style.display = 'none';
-            });
-          });
-        }, 250);
-      });
-      unEl.addEventListener('blur', function(){ setTimeout(function(){ dd.style.display='none'; }, 150); });
-    })();
   }
 
   // Special Instructions
@@ -12556,6 +12562,7 @@ function showBookingPanel(rate, shipmentData) {
     '<div style="font-size:11px;color:#6b21a8;">Paste all your pickup and delivery info in chat and I\'ll fill the form automatically.</div>';
   body.appendChild(hint);
   c.appendChild(body);
+  setTimeout(function(){ try { wireUNTypeahead(); } catch(e){ console.warn('[FP] wireUNTypeahead failed:', e); } }, 50);
 
   // Submit bar
   const bar = document.createElement('div');
