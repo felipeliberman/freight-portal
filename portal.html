@@ -8339,7 +8339,7 @@ async function submitBookingOnly(opts) {
       emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
       BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen), timeTo:(t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose), appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
+      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '9:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
@@ -8494,8 +8494,8 @@ async function submitBooking() {
       pickupInformation: {
         date:               bookingData.pickupDate,
         type:               'PO',
-        timeFrom:           (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen),
-        timeTo:             (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose),
+        timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '9:00',
+        timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00',
         appointmentNeeded:  (bookingData.accessorials || []).includes('LAD')
       },
       deliveryInformation: {
@@ -12731,8 +12731,8 @@ function showBookingPanel(rate, shipmentData) {
       _rset('bk-pu-ref',     _rs.shipperReferenceNumber || _rs.referenceNumber || _rshp.referenceNumber || '');
       const _rPuDate = _rpi.date || _rs.estimatedPickupDate || '';
       if (_rPuDate && !isPastPickup(_rPuDate)) _rset('bk-pu-date', _rPuDate);
-      _rset('bk-pu-open',  _rpi.timeFrom || '');
-      _rset('bk-pu-close', _rpi.timeTo   || '');
+      _rset('bk-pu-open',  _rpi.timeFrom || '09:00');
+      _rset('bk-pu-close', _rpi.timeTo   || '17:00');
       _rset('bk-dl-name',    _rcon.name || _rcon.companyName || _rs.consigneeName || '');
       _rset('bk-dl-street',  _rcon.address1 || _rcon.address || '');
       _rset('bk-dl-suite',   _rcon.address2 || '');
