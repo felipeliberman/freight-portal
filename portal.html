@@ -5333,17 +5333,17 @@ function showShipmentSavedModal(bc) {
         if (dDocs.length) dispatchedDocs = [...dispatchedDocs, ...dDocs];
         if (drData.success===false) dispResult = null;
       } else if (dr.status === 409) {
-        // 409 = already dispatched by Primus — parcel auto-dispatches on save; also fired on re-dispatch attempts. Treat as success.
-        dispResult = { alreadyDispatched: true };
+        // Already dispatched in Primus — fall through to doc fetch; CLBL presence determines dispatchOk
       } else {
-        // Real failure — surface error to user, do NOT show confirmed modal
+        // Real failure — surface error to user with API message
         overlay.remove();
         dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-        appendMessage('bot', 'Dispatch could not be completed (error ' + dr.status + '). Please try from My Shipments or contact support at (800) 687-3713.');
+        const _errMsg = (drData.error && drData.error.message) ? drData.error.message : ('error ' + dr.status);
+        appendMessage('bot', 'Dispatch could not be completed — ' + _errMsg + '. Please try from My Shipments or contact support at (800) 687-3713.');
         return;
       }
-      // Fetch docs: always for parcel, and whenever dispatch returned none
-      if (smallPackageHandling || !dispatchedDocs.length) {
+      // Fetch docs: always for parcel, on 409, and whenever dispatch returned none
+      if (smallPackageHandling || dr.status === 409 || !dispatchedDocs.length) {
         try {
           const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bc.BOLId, { headers:{'Authorization':'Bearer '+token} });
           if (docRes.ok) { const docData = await docRes.json(); const fetched=(docData.data&&docData.data.results)||[]; if(fetched.length) dispatchedDocs=fetched; }
@@ -5351,7 +5351,8 @@ function showShipmentSavedModal(bc) {
       }
       overlay.remove();
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult && (hasConf || dispResult.alreadyDispatched)), isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
+      const _hasClbl = dispatchedDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
+      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult && hasConf) || _hasClbl, isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
     } catch(e) {
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       appendMessage('bot', 'Dispatch error: ' + e.message);
@@ -9765,8 +9766,7 @@ async function _execDispatchShipment(input) {
       PRO = (dispResult&&dispResult.PRO)||null;
       docs = (dispResult&&dispResult.documents)||[];
     } else if (dr.status === 409) {
-      // Already dispatched by Primus — parcel auto-dispatches on save. Treat as success; docs fetched below.
-      dispResult = { alreadyDispatched: true };
+      // Already dispatched in Primus — fall through; CLBL presence determines success below
     }
     // LTL only: fire the electronic tender (/API) if v2 was not a 409 AND failed or came back "manually" / with no confirmation
     if (!_isParcel && dr.status !== 409 && (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A')) {
@@ -9793,12 +9793,14 @@ async function _execDispatchShipment(input) {
     const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
     if (window._lastBooked) window._lastBooked.dispatched = true;
 
-    if (!dispResult) {
+    const _hasClbl = validDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
+    if (!dispResult && !_hasClbl) {
       return { ok:false, error:'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
     }
     // Show the SAME complete confirmation modal the form path uses (not the generic docs viewer).
     try {
       const lb = window._lastBooked || {};
+      const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
       let _pickupDate = '';
       try { _pickupDate = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
       if (typeof showBookingConfirmedModal === 'function') setTimeout(() => showBookingConfirmedModal({
@@ -9809,7 +9811,7 @@ async function _execDispatchShipment(input) {
         carrierPrice: lb.price || 0,
         pickupDate: _pickupDate || '',
         docs: validDocs,
-        dispatchOk: true
+        dispatchOk: !!(dispResult && hasConf) || _hasClbl
       }), 500);
     } catch(e) {}
     return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
