@@ -5211,6 +5211,97 @@ function showBookingConfirmedModal(bc) {
 
 
 
+// ── CANONICAL DISPATCH ENGINE ──────────────────────────────────────────────────
+// Single source of truth for all dispatch calls. Every UI/agent path calls this.
+// Returns { ok, status, dispResult, confirmation, PRO, docs, hasClbl, dispatchOk, error }
+async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
+  if (window._dispatchingBOLId === BOLId)
+    return { ok: false, inFlight: true };
+  if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)
+    return { ok: true, alreadyDispatched: true, docs: [], hasClbl: false, dispatchOk: true };
+
+  window._dispatchingBOLId = BOLId;
+  try {
+    const token = await getToken();
+    const _isParcel = !!smallPackageHandling;
+    const dispBody = _isParcel
+      ? { smallPackageHandling, forceDispatch: true }
+      : { makeEDI: true, forceDispatch: true };
+
+    const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify(dispBody),
+    });
+    const drText = await dr.text();
+    let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
+    const dispatchedManually = /dispatched manually/i.test(drText);
+    let dispResult = null, confirmation = null, PRO = null, docs = [];
+
+    if (dr.ok && drData.success !== false) {
+      dispResult = (drData.data && drData.data.results) || drData.data || drData;
+      confirmation = (dispResult && dispResult.confirmation) || null;
+      PRO = (dispResult && dispResult.PRO) || null;
+      docs = (dispResult && dispResult.documents) || [];
+    } else if (dr.status === 409) {
+      // Already dispatched — fall through to doc fetch
+    } else if (!dr.ok) {
+      window._dispatchingBOLId = null;
+      const errMsg = (drData.error && drData.error.message) ? drData.error.message : ('error ' + dr.status);
+      return { ok: false, status: dr.status, error: errMsg };
+    }
+
+    // For LTL: fire electronic tender if v2 didn't confirm or returned "manually"
+    if (!_isParcel && dr.status !== 409 && (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A')) {
+      try {
+        const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: '{}',
+        });
+        const dApiText = await dApi.text();
+        let dApiData = {}; try { dApiData = JSON.parse(dApiText); } catch(e) {}
+        if (dApi.ok) {
+          const apiRes = (dApiData.data && dApiData.data.results) || dApiData.data || dApiData;
+          if (apiRes) {
+            dispResult = dispResult || apiRes;
+            confirmation = (apiRes && apiRes.confirmation) || confirmation;
+            PRO = (apiRes && apiRes.PRO) || PRO;
+            const ad = (apiRes && apiRes.documents) || [];
+            if (ad.length) docs = [...docs, ...ad];
+          }
+        }
+      } catch(apiErr) { console.warn('[_canonicalDispatch] /API tender failed:', apiErr); }
+    }
+
+    // Fetch docs: always for parcel (CLBL), or when dispatch returned none
+    if (_isParcel || !docs.length) {
+      try {
+        const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + BOLId, {
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (docRes.ok) {
+          const docData = await docRes.json();
+          const fetched = (docData.data && docData.data.results) || [];
+          if (fetched.length) docs = fetched;
+        }
+      } catch(e) {}
+    }
+
+    if (window._lastBooked && window._lastBooked.BOLId === BOLId) window._lastBooked.dispatched = true;
+    window._dispatchingBOLId = null;
+    const hasClbl = docs.some(d => (d.type || '').toUpperCase() === 'CLBL');
+    const hasConf = !!(confirmation && confirmation.trim() && confirmation !== 'N/A');
+    return {
+      ok: true, status: dr.status, dispResult, confirmation, PRO, docs,
+      hasClbl, dispatchOk: (hasConf && !!dispResult) || hasClbl,
+    };
+  } catch(e) {
+    window._dispatchingBOLId = null;
+    return { ok: false, error: e.message };
+  }
+}
+
 function showShipmentSavedModal(bc) {
   // Popup shown after "Save Shipment" — looks like the residential warning modal
   // Has: shipment summary, Dispatch button, Download Docs button
@@ -5271,100 +5362,52 @@ function showShipmentSavedModal(bc) {
 
   // Dispatch button
   const dispBtn = document.createElement('button');
-  dispBtn.id = 'saved-modal-dispatch-btn';
-  dispBtn.style.cssText = 'width:100%;background:var(--ac);color:#fff;border:none;border-radius:9px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;gap:7px;';
-  dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Dispatch Now';
-  dispBtn.onclick = async () => {
-    if (bc.pickupDate && typeof isPastPickup === 'function' && isPastPickup(bc.pickupDate)) {
-      appendMessage('bot', "That pickup date has passed — please edit the shipment and set a new pickup date before dispatching.");
-      return;
-    }
-    if (isParcelRate(bc)) {
-      dispBtn.style.display = 'none';
-      const _sphPicker = document.createElement('div');
-      _sphPicker.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
-      const _sphPrompt = document.createElement('div');
-      _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:2px;';
-      _sphPrompt.textContent = 'How will this ship?';
-      _sphPicker.appendChild(_sphPrompt);
-      [
-        { label:'Schedule Pickup',         value:'SCHEDULE PICKUP',           desc:'Carrier picks up from your location' },
-        { label:'Drop to Carrier',          value:'DROP TO CARRIER',           desc:'You drop it off at a carrier location' },
-        { label:'Pickup Already Scheduled', value:'PICKUP ALREADY SCHEDULED', desc:'A pickup is already confirmed' },
-      ].forEach(opt => {
-        const _b = document.createElement('button');
-        _b.type = 'button';
-        _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
-        _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
-        _b.onclick = () => { _sphPicker.remove(); doDispatch(opt.value); };
-        _sphPicker.appendChild(_b);
-      });
-      const _sphCancel = document.createElement('button');
-      _sphCancel.type = 'button';
-      _sphCancel.style.cssText = 'background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:2px;text-align:center;';
-      _sphCancel.textContent = 'Cancel';
-      _sphCancel.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; };
-      _sphPicker.appendChild(_sphCancel);
-      dispBtn.parentNode.insertBefore(_sphPicker, dispBtn.nextSibling);
-      return;
-    }
-    await doDispatch(null);
-  };
-  const doDispatch = async (smallPackageHandling) => {
-    if (window._dispatchingBOLId === bc.BOLId) return;
-    if (window._lastBooked && window._lastBooked.BOLId === bc.BOLId && window._lastBooked.dispatched) { overlay.remove(); return; }
-    window._dispatchingBOLId = bc.BOLId;
+  // For parcel: show pickup-method picker immediately; for LTL: show Dispatch Now button.
+  const _isParcalSaved = isParcelRate(bc);
+  const _runDispatch = async (smallPackageHandling) => {
     dispBtn.textContent = 'Dispatching...'; dispBtn.disabled = true;
-    try {
-      const token = await getToken();
-      let dispResult = null, PRO = null, confirmation = null, dispatchedDocs = bc.docs || [];
-      const dispBody = smallPackageHandling
-        ? { smallPackageHandling, forceDispatch:true }
-        : { makeEDI:true, forceDispatch:true };
-      // v2 dispatch
-      const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + bc.BOLId, {
-        method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify(dispBody)
-      });
-      const drText = await dr.text();
-      let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
-      if (dr.ok) {
-        dispResult = (drData.data&&drData.data.results)||drData.data||drData;
-        confirmation = (dispResult&&dispResult.confirmation)||null;
-        PRO = (dispResult&&dispResult.PRO)||null;
-        const dDocs = (dispResult&&dispResult.documents)||[];
-        if (dDocs.length) dispatchedDocs = [...dispatchedDocs, ...dDocs];
-        if (drData.success===false) dispResult = null;
-      } else if (dr.status === 409) {
-        // Already dispatched in Primus — fall through to doc fetch; CLBL presence determines dispatchOk
-      } else {
-        // Real failure — surface error to user with API message
-        overlay.remove();
-        dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-        const _errMsg = (drData.error && drData.error.message) ? drData.error.message : ('error ' + dr.status);
-        appendMessage('bot', 'Dispatch could not be completed — ' + _errMsg + '. Please try from My Shipments or contact support at (800) 687-3713.');
-        return;
-      }
-      // Fetch docs: always for parcel, on 409, and whenever dispatch returned none
-      if (smallPackageHandling || dr.status === 409 || !dispatchedDocs.length) {
-        try {
-          const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bc.BOLId, { headers:{'Authorization':'Bearer '+token} });
-          if (docRes.ok) { const docData = await docRes.json(); const fetched=(docData.data&&docData.data.results)||[]; if(fetched.length) dispatchedDocs=fetched; }
-        } catch(e3) {}
-      }
-      if (window._lastBooked && window._lastBooked.BOLId === bc.BOLId) window._lastBooked.dispatched = true;
-      window._dispatchingBOLId = null;
-      overlay.remove();
-      const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      const _hasClbl = dispatchedDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
-      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult && hasConf) || _hasClbl, isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
-    } catch(e) {
-      window._dispatchingBOLId = null;
+    if (bc.pickupDate && typeof isPastPickup === 'function' && isPastPickup(bc.pickupDate)) {
+      appendMessage('bot', 'That pickup date has passed — please edit the shipment and set a new pickup date before dispatching.');
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-      appendMessage('bot', 'Dispatch error: ' + e.message);
+      return;
     }
+    const dr = await _canonicalDispatch(bc.BOLId, { smallPackageHandling });
+    if (dr.inFlight) { dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false; return; }
+    if (dr.alreadyDispatched) { overlay.remove(); return; }
+    if (!dr.ok) {
+      overlay.remove();
+      dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
+      appendMessage('bot', 'Dispatch could not be completed — ' + (dr.error || 'unknown error') + '. Please try from My Shipments or call (800) 687-3713.');
+      return;
+    }
+    overlay.remove();
+    showBookingConfirmedModal({ BOLNumber: bc.BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: dr.docs, carrierName: bc.carrierName, carrierPrice: bc.carrierPrice, pickupDate: bc.pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl: bc.iconUrl || '' });
   };
-  btnCol.appendChild(dispBtn);
+  if (_isParcalSaved) {
+    // Parcel: show the three pickup-method options IMMEDIATELY — no pre-click required
+    const _sphPrompt = document.createElement('div');
+    _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:6px;';
+    _sphPrompt.textContent = 'How will this ship?';
+    btnCol.appendChild(_sphPrompt);
+    [
+      { label: 'Schedule Pickup',         value: 'SCHEDULE PICKUP',           desc: 'Carrier picks up from your location' },
+      { label: 'Drop to Carrier',          value: 'DROP TO CARRIER',           desc: 'You drop it off at a carrier location' },
+      { label: 'Pickup Already Scheduled', value: 'PICKUP ALREADY SCHEDULED', desc: 'A pickup is already confirmed' },
+    ].forEach(opt => {
+      const _b = document.createElement('button');
+      _b.type = 'button';
+      _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
+      _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
+      _b.onclick = () => _runDispatch(opt.value);
+      btnCol.appendChild(_b);
+    });
+  } else {
+    dispBtn.id = 'saved-modal-dispatch-btn';
+    dispBtn.style.cssText = 'width:100%;background:var(--ac);color:#fff;border:none;border-radius:9px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;gap:7px;';
+    dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Dispatch Now';
+    dispBtn.onclick = () => _runDispatch(null);
+    btnCol.appendChild(dispBtn);
+  }
 
   // Go to My Shipments
   const goBtn = document.createElement('button');
@@ -5664,122 +5707,75 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   dlBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download Documents';
   let _dispatchedDocs = [];
 
-  dispBtn.onclick = async () => {
-    // Block dispatching into the past — Primus rejects past pickup dates.
+  // Shared canonical dispatch handler for this shipment detail modal
+  const _runDetailDispatch = async (smallPackageHandling, activeBtn) => {
     const _pu = (s.pickupInformation && s.pickupInformation.date) || s.estimatedPickupDate || s.actualPickupDate || '';
     if (isPastPickup(_pu)) {
-      if (dispBtn.parentNode && !dispBtn.parentNode.querySelector('.past-date-warn')) {
+      if (btnCol && !btnCol.querySelector('.past-date-warn')) {
         const _w = document.createElement('div');
         _w.className = 'past-date-warn';
         _w.style.cssText = 'margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#b91c1c;';
         _w.textContent = 'The pickup date has passed. Open the shipment, set a new pickup date, then dispatch.';
-        dispBtn.parentNode.insertBefore(_w, dispBtn);
+        btnCol.insertBefore(_w, btnCol.firstChild);
       }
       return;
     }
-    if (isParcelRate(s)) {
-      // Parcel: skip RDI check, show inline handling picker
-      dispBtn.style.display = 'none';
-      const _sphPicker = document.createElement('div');
-      _sphPicker.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
-      const _sphPrompt = document.createElement('div');
-      _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:2px;';
-      _sphPrompt.textContent = 'How will this ship?';
-      _sphPicker.appendChild(_sphPrompt);
-      [
-        { label:'Schedule Pickup',         value:'SCHEDULE PICKUP',           desc:'Carrier picks up from your location' },
-        { label:'Drop to Carrier',          value:'DROP TO CARRIER',           desc:'You drop it off at a carrier location' },
-        { label:'Pickup Already Scheduled', value:'PICKUP ALREADY SCHEDULED', desc:'A pickup is already confirmed' },
-      ].forEach(opt => {
-        const _b = document.createElement('button');
-        _b.type = 'button';
-        _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
-        _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
-        _b.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...'; dispBtn.disabled = true; _doDispatch(opt.value); };
-        _sphPicker.appendChild(_b);
-      });
-      const _sphCancel = document.createElement('button');
-      _sphCancel.type = 'button';
-      _sphCancel.style.cssText = 'background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:2px;text-align:center;';
-      _sphCancel.textContent = 'Cancel';
-      _sphCancel.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; };
-      _sphPicker.appendChild(_sphCancel);
-      dispBtn.parentNode.insertBefore(_sphPicker, dispBtn.nextSibling);
+    if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...'; activeBtn.disabled = true; }
+    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling });
+    if (dr.inFlight || dr.alreadyDispatched) { if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; } return; }
+    if (!dr.ok) {
+      if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
+      appendMessage('bot', 'Dispatch error: ' + (dr.error || 'unknown') + '. Please call (800) 687-3713.');
       return;
     }
-    // LTL: run RDI check first
-    const conAcc = s.accessorials || s.accessorialsList || [];
-    const conStreet = (s.consignee && (s.consignee.address1||s.consignee.address)) || '';
-    const conSuite  = (s.consignee && s.consignee.address2) || '';
-    const conCity   = (s.consignee && (s.consignee.city||s.consignee.companyCity)) || s.destinationCity || '';
-    const conState  = (s.consignee && s.consignee.state) || s.destinationState || '';
-    const conZip    = (s.consignee && (s.consignee.zipCode||s.consignee.zipcode)) || destZip || '';
-    await checkRDIBeforeDispatch(conStreet, conSuite, conCity, conState, conZip, conAcc,
-      async () => {
-        // Proceed with dispatch
-        dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...';
-        dispBtn.disabled = true;
-        await _doDispatch(null);
-      },
-      (toAdd) => { overlay.remove(); if(toAdd&&toAdd.length&&typeof applyRequoteAccessorials==='function') { if(typeof showQuoteForm==='function') showQuoteForm(); setTimeout(()=>applyRequoteAccessorials(toAdd),500); } }
-    );
-    return;
+    const validDocs = (dr.docs || []).filter(d => d && d.url);
+    if (validDocs.length) {
+      _dispatchedDocs = validDocs;
+      dlBtn.style.opacity = '1'; dlBtn.style.pointerEvents = 'auto'; dlBtn.style.color = 'var(--tx)';
+      dlBtn.onclick = () => { validDocs.forEach(d => { const a = document.createElement('a'); a.href=d.url; a.target='_blank'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }); };
+    }
+    if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Dispatched!'; activeBtn.style.background = '#16a34a'; activeBtn.disabled = true; }
+    const priceAmt = parseMoney(rawTotal) || 0;
+    showBookingConfirmedModal({ BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: dr.docs, carrierName, carrierPrice: priceAmt, pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl });
+    overlay.remove();
   };
-  const _doDispatch = async (smallPackageHandling) => {
-    try {
-      const token = await getToken();
-      let dispResult = null, PRO = null, confirmation = null;
-      const dispBody = smallPackageHandling
-        ? { smallPackageHandling, forceDispatch:true }
-        : { makeEDI:true, forceDispatch:true };
-      const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
-        method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify(dispBody)
-      });
-      const drText = await dr.text();
-      let drData = {}; try { drData = JSON.parse(drText); } catch(e2) {}
-      if (dr.ok) {
-        dispResult = (drData.data&&drData.data.results)||drData.data||drData;
-        confirmation = (dispResult&&dispResult.confirmation)||null;
-        PRO = (dispResult&&dispResult.PRO)||null;
-        const dDocs = (dispResult&&dispResult.documents)||[];
-        if (dDocs.length) _dispatchedDocs = dDocs;
-        if (drData.success===false) dispResult = null;
-      } else {
-        const d1 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId, { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-        if (d1.ok) {
-          const d2 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-          const d2Data = await d2.json().catch(()=>({}));
-          if (d2.ok) { dispResult = (d2Data.data&&d2Data.data.results)||d2Data.data||d2Data; confirmation=(dispResult&&dispResult.confirmation)||null; PRO=(dispResult&&dispResult.PRO)||null; }
-        }
-      }
-      // Also try fetching docs if dispatch didn't return them
-      if (!_dispatchedDocs.length) {
-        try {
-          const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + BOLId, { headers:{'Authorization':'Bearer '+token} });
-          if (docRes.ok) { const docData = await docRes.json(); _dispatchedDocs = (docData.data&&docData.data.results)||[]; }
-        } catch(e3) {}
-      }
-      const validDocs = _dispatchedDocs.filter(d=>d.url);
-      if (validDocs.length) {
-        dlBtn.style.opacity = '1'; dlBtn.style.pointerEvents = 'auto'; dlBtn.style.color = 'var(--tx)';
-        dlBtn.onclick = () => { validDocs.forEach(d => { const a = document.createElement('a'); a.href=d.url; a.target='_blank'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }); };
-      }
-      dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Dispatched!';
-      dispBtn.style.background = '#16a34a';
-      dispBtn.disabled = true;
-      const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      const priceAmt = parseMoney(rawTotal) || 0;
-      showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling, iconUrl });
-      overlay.remove();
-    } catch(e) {
-      dispBtn.innerHTML = 'Dispatch Shipment'; dispBtn.disabled = false;
-      appendMessage('bot', 'Dispatch error: ' + e.message);
-    }
-  }
 
-  btnCol.appendChild(dispBtn);
-  btnCol.appendChild(dlBtn);
+  const _isParcelDetail = isParcelRate(s);
+  if (_isParcelDetail) {
+    // Parcel: show three pickup-method options IMMEDIATELY
+    const _sphPrompt = document.createElement('div');
+    _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:6px;';
+    _sphPrompt.textContent = 'How will this ship?';
+    btnCol.appendChild(_sphPrompt);
+    [
+      { label: 'Schedule Pickup',         value: 'SCHEDULE PICKUP',           desc: 'Carrier picks up from your location' },
+      { label: 'Drop to Carrier',          value: 'DROP TO CARRIER',           desc: 'You drop it off at a carrier location' },
+      { label: 'Pickup Already Scheduled', value: 'PICKUP ALREADY SCHEDULED', desc: 'A pickup is already confirmed' },
+    ].forEach(opt => {
+      const _b = document.createElement('button');
+      _b.type = 'button';
+      _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
+      _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
+      _b.onclick = () => _runDetailDispatch(opt.value, _b);
+      btnCol.appendChild(_b);
+    });
+    btnCol.appendChild(dlBtn);
+  } else {
+    dispBtn.onclick = async () => {
+      const conAcc = s.accessorials || s.accessorialsList || [];
+      const conStreet = (s.consignee && (s.consignee.address1||s.consignee.address)) || '';
+      const conSuite  = (s.consignee && s.consignee.address2) || '';
+      const conCity   = (s.consignee && (s.consignee.city||s.consignee.companyCity)) || s.destinationCity || '';
+      const conState  = (s.consignee && s.consignee.state) || s.destinationState || '';
+      const conZip    = (s.consignee && (s.consignee.zipCode||s.consignee.zipcode)) || destZip || '';
+      await checkRDIBeforeDispatch(conStreet, conSuite, conCity, conState, conZip, conAcc,
+        async () => _runDetailDispatch(null, dispBtn),
+        (toAdd) => { overlay.remove(); if(toAdd&&toAdd.length&&typeof applyRequoteAccessorials==='function') { if(typeof showQuoteForm==='function') showQuoteForm(); setTimeout(()=>applyRequoteAccessorials(toAdd),500); } }
+      );
+    };
+    btnCol.appendChild(dispBtn);
+    btnCol.appendChild(dlBtn);
+  }
 
   // Edit button — re-opens the quoting flow for this shipment
   const editBtn = document.createElement('button');
@@ -9774,105 +9770,62 @@ async function _execDispatchShipment(input) {
   input = input || {};
   try {
     const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
-    if (!BOLId) return { ok:false, error:'No booked shipment to dispatch. Book the shipment first.' };
+    if (!BOLId) return { ok: false, error: 'No booked shipment to dispatch. Book the shipment first.' };
     if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)
-      return { ok:true, alreadyDispatched:true, message:'This shipment is already dispatched. Check My Shipments for your shipping documents.' };
+      return { ok: true, alreadyDispatched: true, message: 'This shipment is already dispatched. Check My Shipments for your shipping documents.' };
     if (window._dispatchingBOLId === BOLId)
-      return { ok:true, dispatchInFlight:true, message:'Dispatch is already in progress — just a moment.' };
+      return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
+
     const _lb = window._lastBooked || {};
     const _isParcel = _lb.isParcel || (typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' }));
 
-    // Parcel with no pickup method stated yet — show picker popup AND invite conversational choice.
+    // Parcel with no pickup method — show the saved modal (which now shows picker immediately)
     if (_isParcel && !input.smallPackageHandling) {
       let _pu = '';
       try { _pu = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
       if (typeof showShipmentSavedModal === 'function') setTimeout(() => showShipmentSavedModal({
         BOLId: BOLId, BOLNumber: _lb.BOLNumber || BOLId, docs: [],
         carrierName: _lb.carrier || '', carrierPrice: _lb.price || 0,
-        pickupDate: _pu, rateType: 'SMALL PACKAGE', iconUrl: ''
+        pickupDate: _pu, rateType: 'SMALL PACKAGE', iconUrl: '',
       }), 0);
-      return { ok: true, parcelPickerShown: true, message: 'A pickup method selector is now showing on screen. Ask the customer which they prefer — Schedule Pickup (carrier comes to the pickup address), Drop to Carrier (customer drops it off at a carrier location), or Pickup Already Scheduled (a pickup is already confirmed with the carrier). They can click the popup OR just tell you in chat, and you can dispatch by calling dispatch_shipment again with smallPackageHandling set to their choice.' };
+      return { ok: true, parcelPickerShown: true, message: 'A pickup options panel just popped up — or just tell me: should the carrier pick it up (Schedule Pickup), or will you drop it off (Drop to Carrier)?' };
     }
 
     // Dismiss any open parcel picker popup so its buttons can't double-fire
     try { const _o = document.getElementById('bk-saved-overlay'); if (_o) _o.remove(); } catch(e2) {}
-    window._dispatchingBOLId = BOLId;
-    const token = await getToken();
 
-    let dispResult = null, confirmation = null, PRO = null, docs = [];
-    const dispBody = _isParcel
-      ? { smallPackageHandling: input.smallPackageHandling, forceDispatch: true }
-      : { makeEDI: true, forceDispatch: true };
-
-    // Primary: V2 dispatch
-    const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-      body:JSON.stringify(dispBody)
-    });
-    const drText = await dr.text();
-    let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
-    const dispatchedManually = /dispatched manually/i.test(drText);
-    if (dr.ok && drData.success !== false) {
-      dispResult = (drData.data&&drData.data.results)||drData.data||drData;
-      confirmation = (dispResult&&dispResult.confirmation)||null;
-      PRO = (dispResult&&dispResult.PRO)||null;
-      docs = (dispResult&&dispResult.documents)||[];
-    } else if (dr.status === 409) {
-      // Already dispatched in Primus — fall through; CLBL presence determines success below
-    }
-    // LTL only: fire the electronic tender (/API) if v2 was not a 409 AND failed or came back "manually" / with no confirmation
-    if (!_isParcel && dr.status !== 409 && (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A')) {
-      try {
-        const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-        const dApiText = await dApi.text();
-        console.log('electronic tender (/API) status:', dApi.status, dApiText.slice(0,200));
-        let dApiData = {}; try { dApiData = JSON.parse(dApiText); } catch(e) {}
-        if (dApi.ok) {
-          const apiRes = (dApiData.data&&dApiData.data.results)||dApiData.data||dApiData;
-          if (apiRes) { dispResult = dispResult || apiRes; confirmation = (apiRes&&apiRes.confirmation)||confirmation; PRO = (apiRes&&apiRes.PRO)||PRO; const ad=(apiRes&&apiRes.documents)||[]; if (ad.length) docs=[...(docs||[]),...ad]; }
-        }
-      } catch(apiErr) { console.warn('electronic tender (/API) failed:', apiErr); }
+    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling: input.smallPackageHandling });
+    if (dr.inFlight) return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
+    if (!dr.ok) {
+      console.error('dispatch_shipment error:', dr.error);
+      return { ok: false, error: 'Dispatch error: ' + (dr.error || 'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
     }
 
-    // Fetch docs: always for parcel (CLBL label), or whenever dispatch returned none
-    if (_isParcel || !docs.length) {
-      try {
-        const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + BOLId, { headers:{'Authorization':'Bearer '+token} });
-        if (docRes.ok) { const docData = await docRes.json(); const _fetched=(docData.data&&docData.data.results)||[]; if (_fetched.length) docs = _fetched; }
-      } catch(e) {}
+    const validDocs = (dr.docs || []).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
+    if (!dr.dispatchOk && !dr.hasClbl) {
+      return { ok: false, error: 'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
     }
-
-    const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
-    if (window._lastBooked) window._lastBooked.dispatched = true;
-    window._dispatchingBOLId = null;
-
-    const _hasClbl = validDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
-    if (!dispResult && !_hasClbl) {
-      return { ok:false, error:'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
-    }
-    // Show the SAME complete confirmation modal the form path uses (not the generic docs viewer).
+    // Show the confirmation modal
     try {
-      const lb = window._lastBooked || {};
-      const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
       let _pickupDate = '';
       try { _pickupDate = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
       if (typeof showBookingConfirmedModal === 'function') setTimeout(() => showBookingConfirmedModal({
-        BOLNumber: lb.BOLNumber || BOLId,
-        carrierName: lb.carrier || '',
-        PRO: PRO || lb.PRO || null,
-        confirmation: confirmation || null,
-        carrierPrice: lb.price || 0,
+        BOLNumber: _lb.BOLNumber || BOLId,
+        carrierName: _lb.carrier || '',
+        PRO: dr.PRO || null,
+        confirmation: dr.confirmation || null,
+        carrierPrice: _lb.price || 0,
         pickupDate: _pickupDate || '',
         docs: validDocs,
-        dispatchOk: !!(dispResult && hasConf) || _hasClbl,
-        isParcel: !!lb.isParcel
+        dispatchOk: dr.dispatchOk,
+        isParcel: !!_lb.isParcel,
       }), 500);
     } catch(e) {}
-    return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
+    return { ok: true, confirmation: dr.confirmation || null, PRO: dr.PRO || null, documents: validDocs, docsShown: true, message: 'Dispatched to carrier. Shipping documents are now displayed for download.' };
   } catch (e) {
     window._dispatchingBOLId = null;
     console.error('dispatch_shipment error:', e);
-    return { ok:false, error:'Dispatch error: ' + (e.message||'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
+    return { ok: false, error: 'Dispatch error: ' + (e.message || 'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
   }
 }
 
