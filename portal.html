@@ -1284,7 +1284,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;
       <div class=&quot;trust-item&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.75&quot;><path d=&quot;M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z&quot;/></svg>Fully Insured</div>
       <div class=&quot;trust-item&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.75&quot;><circle cx=&quot;12&quot; cy=&quot;12&quot; r=&quot;10&quot;/><polyline points=&quot;12 6 12 12 16 14&quot;/></svg>Since 2013</div>
       <div class=&quot;trust-item&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.75&quot;><path d=&quot;M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z&quot;/><polyline points=&quot;9 22 9 12 15 12 15 22&quot;/></svg>Nationwide Service</div>
-      <div class=&quot;trust-item&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.75&quot;><path d=&quot;M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2&quot;/><circle cx=&quot;9&quot; cy=&quot;7&quot; r=&quot;4&quot;/></svg>50+ Carriers</div>
+      <div class=&quot;trust-item&quot;><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.75&quot;><path d=&quot;M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2&quot;/><circle cx=&quot;9&quot; cy=&quot;7&quot; r=&quot;4&quot;/></svg>Compare Carrier Rates</div>
     </div>
   </div>
 </main>
@@ -2420,9 +2420,11 @@ async function fetchRates(shipment) {
 
   const accCodes = [];
   (shipment.accessorials || []).forEach(a => { if (ACC_MAP[a]) accCodes.push(ACC_MAP[a]); });
-  const isBox       = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
-  const isThreshold = (shipment.accessorials || []).includes('Threshold');
-  const vendorIds   = isThreshold ? THRESHOLD_VENDOR_IDS : isBox ? BOX_VENDOR_IDS : null;
+  const isBox          = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
+  const isThreshold    = (shipment.accessorials || []).includes('Threshold');
+  const vendorIds      = isThreshold ? THRESHOLD_VENDOR_IDS : isBox ? BOX_VENDOR_IDS : null;
+  const hasPalletOrSkid = shipment.items.some(i => i.packageType === 'PLT' || i.packageType === 'SKD' || !i.packageType);
+  const includeSP      = !hasPalletOrSkid;
 
   let params =
     'originCity='         + encodeURIComponent(shipment.originCity        || '') +
@@ -2434,7 +2436,7 @@ async function fetchRates(shipment) {
     '&destinationZipcode='+ encodeURIComponent((shipment.destinationZip   || '').replace(/\s/g, '')) +
     '&destinationCountry='+ encodeURIComponent(shipment.destinationCountry || 'US') +
     '&freightInfo='       + encodeURIComponent(JSON.stringify(freightInfo)) +
-    '&UOM=US&rateTypesList[]=LTL&rateTypesList[]=GUARANTEED&rateTypesList[]=VOL&timeout=30' +
+    '&UOM=US&rateTypesList[]=LTL&rateTypesList[]=GUARANTEED&rateTypesList[]=VOL' + (includeSP ? '&rateTypesList[]=SP' : '') + '&timeout=30' +
     '&pickupDate='        + (shipment.pickupDate || getTomorrow()) +
     (currentCustomer && currentCustomer.primusCustomerId ? '&customerId=' + currentCustomer.primusCustomerId : '') +
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
@@ -13976,7 +13978,7 @@ function showQuoteForm(prefill, silent) {
   quoteHdr.innerHTML =
     '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:18px;margin-right:4px;">' +
       '<div style="font-size:11px;font-weight:500;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:3px;">Get a Quote</div>' +
-      '<div style="font-size:16px;font-weight:500;color:var(--ac);line-height:1.2;">50+ LTL Carriers</div>' +
+      '<div style="font-size:16px;font-weight:500;color:var(--ac);line-height:1.2;">Compare Carrier Rates</div>' +
     '</div>' +
     '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
       '<div style="text-align:center;padding:0 10px;border-right:1px solid var(--bdr);">' +
@@ -14667,7 +14669,7 @@ function showQuoteForm(prefill, silent) {
     // Summary bar
     const totalLbs = items.reduce((s,it)=>s+(it.weight||0)*(it.qty||1),0);
     const totalPcs = items.reduce((s,it)=>s+(it.qty||1),0);
-    const accLabelsStr = accessorials.map(c=>({RSO:'Res PU',LFO:'LFG PU',NAO:'Lim PU',RSD:'Res DEL',LFD:'LFG DEL',IND:'Inside',NAD:'Lim DEL',LAD:'Appt',INS:'Ins'}[c]||c)).join(', ');
+    const accLabelsStr = accessorials.map(c=>({RSD:'Residential Delivery',RSO:'Residential Pickup',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',IND:'Inside Delivery',INO:'Inside Pickup',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',INS:'Cargo Insurance'}[c]||c)).join(', ');
     const sumEl = container.querySelector('#qt-quote-summary');
     if (sumEl) sumEl.textContent = originZip + ' → ' + destZip + '  ·  ' + totalPcs + ' pcs  ·  ' + totalLbs + ' lbs' + (accLabelsStr?' · '+accLabelsStr:'');
 
