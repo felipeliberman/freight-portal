@@ -8349,7 +8349,7 @@ async function submitBookingOnly(opts) {
       emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
       BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '9:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
+      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
@@ -8504,8 +8504,8 @@ async function submitBooking() {
       pickupInformation: {
         date:               bookingData.pickupDate,
         type:               'PO',
-        timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '9:00',
-        timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00',
+        timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '09:00',
+        timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00',
         appointmentNeeded:  (bookingData.accessorials || []).includes('LAD')
       },
       deliveryInformation: {
@@ -9240,7 +9240,8 @@ function _applyQuoteFields(input) {
   // Top-level fields
   if (input.originZip) { const el = panel.querySelector('#qt-origin'); if (el) { el.value = String(input.originZip); el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
   if (input.destZip)   { const el = panel.querySelector('#qt-dest');   if (el) { el.value = String(input.destZip);   el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); if (window._checkResidential) setTimeout(() => window._checkResidential(String(input.destZip)), 500); } }
-  if (input.pickupDate){ const el = panel.querySelector('#qt-date');   if (el) { el.value = input.pickupDate; el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
+  if (input.pickupDate){ const _pd=(d=>{const _m=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(String(d||'').trim());return _m?(((_m[3].length===2?'20':'')+_m[3])+'-'+String(_m[1]).padStart(2,'0')+'-'+String(_m[2]).padStart(2,'0')):d;})(input.pickupDate); const el = panel.querySelector('#qt-date'); if (el) { el.value = _pd; el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
+  if (input.name)      { const el = panel.querySelector('#qt-name');   if (el) { el.value = String(input.name); el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
 
   // Line items — surgical per-row, per-field
   if (input.items && input.items.length) {
@@ -9425,6 +9426,8 @@ function _liveStateBlock() {
       lines.push('ratesOnScreen: none pulled yet');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
+    const _rs = window._residentialStatus;
+    if (_rs) lines.push('residentialStatus: ' + JSON.stringify(_rs));
     return lines.join('\n');
   } catch(e) { return ''; }
 }
@@ -9726,7 +9729,7 @@ async function _execBookShipment(input) {
       emergencyPhone:   (input.isHazmat ? (input.emergencyPhone   || input.hazPhone   || '') : undefined),
       BOLInstructions: (input.isHazmat ? ('HAZMAT - UN#' + (input.hazUnNumber||'') + ' - Emergency Contact: ' + (input.hazContact||'') + ' ' + (input.hazPhone||'') + (input.specialInstructions ? ' | ' + input.specialInstructions : '')) : (input.specialInstructions || '')),
       accessorialsList: accCodes,
-      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupOpen) || '9:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?(parseInt(m[1],10)+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
     };
 
@@ -9748,7 +9751,7 @@ async function _execBookShipment(input) {
     const price = Number((rate.billTo&&rate.billTo.total)||rate.total||0);
 
     // Stash for the dispatch step
-    window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false };
+    window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false, isParcel: typeof isParcelRate === 'function' && isParcelRate(rate) };
     window._bookingLock = null; // booking complete — release the frozen rate
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
@@ -9834,7 +9837,8 @@ async function _execDispatchShipment(input) {
         carrierPrice: lb.price || 0,
         pickupDate: _pickupDate || '',
         docs: validDocs,
-        dispatchOk: !!(dispResult && hasConf) || _hasClbl
+        dispatchOk: !!(dispResult && hasConf) || _hasClbl,
+        isParcel: !!lb.isParcel
       }), 500);
     } catch(e) {}
     return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
@@ -9890,7 +9894,7 @@ async function _execRequoteShipment(input) {
     if (typeof requoteSavedShipment !== 'function') return { ok: false, error: 'requoteSavedShipment not available.' };
     requoteSavedShipment(s, originZip, destZip, pickupDate);
     const bolNum = s.BOLNumber || s.bolNumber || s.BOLId || bolRef;
-    return { ok: true, message: 'Requote form opened for BOL ' + bolNum + '. The original shipper, consignee, and freight details are pre-filled. Ask the customer to confirm the pickup date and click Get Rates.' };
+    return { ok: true, message: 'Requote form opened for BOL ' + bolNum + '. The original freight details are pre-filled. If the customer already confirmed a pickup date and window earlier in this conversation, you do not need to re-ask — carry them forward and mention them in the read-back. Only ask if pickup was never confirmed.' };
   } catch(e) {
     return { ok: false, error: 'Requote error: ' + (e.message || 'unknown') };
   }
@@ -9915,6 +9919,7 @@ HOW TO TALK:
 - Natural conversation, usually 2-4 sentences. Sound like a real person, not a brochure.
 - Plain prose. No bullet lists, no markdown headers, no emojis.
 - Never say something is "outside our services" — we handle all freight types and all industries.
+- Never editorialize about a customer's choice — no "great choice," "excellent," or "perfect." Just act on it.
 - Never invent specific shipping rates.
 - For truckload, hazmat, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call.
 
@@ -9983,10 +9988,10 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 3. Collect what booking needs, conversationally and naturally, passing each piece to update_booking as you get it:
    - Shipper (pickup): company/name, street address, contact person, phone → pass as shipper:{name,address,contact,phone}.
    - Consignee (delivery): company/name, street address, contact person, phone → pass as consignee:{name,address,contact,phone}.
-   - Pickup date and pickup window — ALWAYS ASK, and never skip it. Before you read the booking back, you must have asked the customer which day they want the pickup and what time window, and gotten an answer (or an explicit "use the default"). Treat this exactly like the PO question: do not silently default without asking. PICKUPS ARE MONDAY–FRIDAY ONLY — carriers do not run weekend LTL pickups, so never schedule or confirm a Saturday or Sunday pickup; if the customer asks for a weekend, move it to the next business day (Monday) and tell them. If they have no preference, default the date to the next business day and the window to 12:00–16:00. IMPORTANT: the booking panel PRE-FILLS a default pickup date and window — those are placeholders, NOT something the customer chose. Even though the panel shows a date and time, you have NOT confirmed them until you ask; never read the pre-filled default back as if the customer picked it. Ask first, then keep the default only if they say they have no preference. Pass pickupDate, pickupOpen, pickupClose.
+   - Pickup date and pickup window — ALWAYS ASK, and never skip it. Before you read the booking back, you must have asked the customer which day they want the pickup and what time window, and gotten an answer (or an explicit "use the default"). REQUOTE EXCEPTION: if the customer already confirmed a pickup date and window earlier in this conversation and then asked for a requote (rate change only), carry those forward — you do not need to re-ask; just mention them in the read-back. Treat this exactly like the PO question: do not silently default without asking. PICKUPS ARE MONDAY–FRIDAY ONLY — carriers do not run weekend LTL pickups, so never schedule or confirm a Saturday or Sunday pickup; if the customer asks for a weekend, move it to the next business day (Monday) and tell them. If they have no preference, default the date to the next business day and the window to 12:00–16:00. IMPORTANT: the booking panel PRE-FILLS a default pickup date and window — those are placeholders, NOT something the customer chose. Even though the panel shows a date and time, you have NOT confirmed them until you ask; never read the pre-filled default back as if the customer picked it. Ask first, then keep the default only if they say they have no preference. Pass pickupDate, pickupOpen, pickupClose.
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
-4. RESIDENTIAL / LIFTGATE SAFEGUARD: if the delivery (or pickup) is a residence, or _residentialStatus indicates residential, make sure residential delivery is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is.
+4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, make sure residential delivery (RSD) is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still recommend RSD if the address is residential.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). dispatch_shipment sends the pickup request to the carrier and returns the confirmation, PRO, and downloadable docs. Report: "Done — dispatched to [carrier], pickup confirmation [confirmation], PRO [PRO]. Your BOL and label are ready to download." If dispatch errors, say it's booked and our team will complete dispatch, give the phone line. NEVER call book_shipment more than once for the same shipment.
@@ -10072,6 +10077,7 @@ async function aiConverse(userText) {
                   originZip: { type: 'string', description: '5-digit US ZIP or Canadian postal code (e.g. K1A 0B1)' },
                   destZip: { type: 'string', description: '5-digit US ZIP or Canadian postal code (e.g. K1A 0B1)' },
                   pickupDate: { type: 'string', description: 'Pickup date YYYY-MM-DD' },
+                  name: { type: 'string', description: 'Optional label or name for this quote (e.g. customer reference, order name). Fills the Quote Name field on the form.' },
                   items: {
                     type: 'array',
                     description: 'Freight line items. Pass only the fields that changed.',
