@@ -2434,7 +2434,7 @@ async function fetchRates(shipment) {
     '&destinationZipcode='+ encodeURIComponent((shipment.destinationZip   || '').replace(/\s/g, '')) +
     '&destinationCountry='+ encodeURIComponent(shipment.destinationCountry || 'US') +
     '&freightInfo='       + encodeURIComponent(JSON.stringify(freightInfo)) +
-    '&UOM=US&rateTypesList[]=LTL' +
+    '&UOM=US&rateTypesList[]=LTL&rateTypesList[]=GUARANTEED&rateTypesList[]=VOL&timeout=30' +
     '&pickupDate='        + (shipment.pickupDate || getTomorrow()) +
     (currentCustomer && currentCustomer.primusCustomerId ? '&customerId=' + currentCustomer.primusCustomerId : '') +
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
@@ -2486,11 +2486,21 @@ async function fetchRates(shipment) {
     const carrierKey = (r.name || r.carrier || r.SCAC || 'x').replace(/[^a-z0-9]/gi,'').toLowerCase().slice(0,12);
     const svc = (r.serviceLevel || r.service || '').toLowerCase();
     const isVolume = VOLUME_KEYWORDS.test(svc) || VOLUME_KEYWORDS.test(r.name || '');
-    const dedupKey = carrierKey + '|' + (isVolume ? 'vol' : 'ltl');
+    const isGuaranteed = /guarantee|guaranteed|gtd/i.test(svc) || /guarantee|guaranteed|gtd/i.test(r.name||'');
+    const cat = isVolume ? 'vol' : isGuaranteed ? 'gtd' : 'ltl';
+    const dedupKey = carrierKey + '|' + cat;
     if (seen[dedupKey]) return false;
     seen[dedupKey] = true;
     return true;
   });
+}
+
+function rateRemarkText(r) {
+  if (!r) return '';
+  const rr = r.rateRemarks;
+  if (Array.isArray(rr)) return rr.filter(Boolean).join(' ');
+  if (typeof rr === 'string') return rr;
+  return r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || r.notice || r.disclaimer || '';
 }
 
 async function searchUNTable(query) {
@@ -9365,7 +9375,7 @@ function _publishRatesForAI(rates, shipment) {
         price: Number((r.billTo && r.billTo.total) || r.total || r.cost || 0),
         transitDays: r.transitDays || r.transitTime || null,
         service: r.serviceLevel || r.service || '',
-        note: r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
+        note: rateRemarkText(r) || r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
       }))
     };
   } catch (e) { console.error('publishRatesForAI error', e); window._lastRates = null; window._lastRatesRaw = null; }
@@ -14445,7 +14455,7 @@ function showQuoteForm(prefill, silent) {
       const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||0).toFixed(2);
       const transit = rate.transitDays||rate.transitTime||'—';
       const svc = rate.serviceLevel||rate.service||'—';
-      const svcMsg = rate.serviceLevelMessage || rate.message || rate.notes || rate.remarks || rate.carrierMessage || rate.notice || rate.disclaimer || '';
+      const svcMsg = rateRemarkText(rate) || rate.serviceLevelMessage || rate.message || rate.notes || rate.remarks || rate.carrierMessage || rate.notice || rate.disclaimer || '';
       const tr = document.createElement('tr');
       tr.style.cssText = 'border-bottom:1px solid var(--bdr);transition:background .1s;';
       tr.onmouseenter = ()=>tr.style.background='#faf9f6';
