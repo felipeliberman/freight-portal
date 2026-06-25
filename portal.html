@@ -14466,10 +14466,15 @@ function showQuoteForm(prefill, silent) {
           (rate.iconUrl ? '<img src="'+rate.iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;" onerror="this.onerror=null;this.hidden=true">' : '') +
           name + '</td>' +
         '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' + svc +
-          (svcMsg ? '<div style="display:flex;align-items:flex-start;gap:5px;margin-top:5px;padding:4px 0 4px 8px;border-left:2px solid var(--fa);">' +
-            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
-            '<span style="font-size:10px;color:var(--mu);line-height:1.5;">'+svcMsg+'</span>' +
-          '</div>' : '') +
+          (svcMsg ?
+            '<div style="margin-top:5px;">' +
+              '<button class="qt-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:var(--font);line-height:1.4;">' +
+                '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+                'Carrier terms' +
+              '</button>' +
+              '<div class="qt-terms-detail" style="display:none;margin-top:5px;padding:6px 9px;background:#fdf0fd;border-radius:6px;border-left:2px solid #bd27bc;font-size:10px;color:var(--mu);line-height:1.5;">' + svcMsg + '</div>' +
+            '</div>'
+          : '') +
         '</td>' +
         '<td style="padding:9px 6px;text-align:center;font-size:12px;">' + (transit!=='—'?transit+' days':transit) + '</td>' +
         '<td style="padding:9px 10px;text-align:right;width:90px;">' +
@@ -14501,6 +14506,15 @@ function showQuoteForm(prefill, silent) {
         window._bookingLock = { rate: rateWithMeta, shipment: shipData };
         window._bookingPanelOpen = true;
       };
+
+      const _termsBtn = tr.querySelector('.qt-terms-toggle');
+      if (_termsBtn) {
+        _termsBtn.onclick = function(ev){
+          ev.stopPropagation();
+          const detail = tr.querySelector('.qt-terms-detail');
+          if (detail) detail.style.display = (detail.style.display === 'none' ? 'block' : 'none');
+        };
+      }
 
       // Per-row save button
       const saveRateBtn = tr.querySelector('.qt-save-rate-btn');
