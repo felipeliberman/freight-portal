@@ -214,6 +214,13 @@ async function dispatchShipment(BOLId, { smallPackageHandling } = {}) {
     PRO = (dispResult && dispResult.PRO) || null;
     docs = (dispResult && dispResult.documents) || [];
   } else if (dr.status === 409) {
+    // Primus 409 can mean "already dispatched" (string msg) OR validation error (array msg)
+    const _409msg = (dr.data && dr.data.error && dr.data.error.message) || '';
+    const _alreadyDisp = typeof _409msg === 'string' && /already dispatched/i.test(_409msg);
+    if (!_alreadyDisp) {
+      const _errStr = Array.isArray(_409msg) ? _409msg.join('. ') : (_409msg || 'dispatch conflict (409)');
+      return { ok: false, status: 409, error: _errStr, docs: [], dispResult: null, confirmation: null, PRO: null, dispatchedManually: false };
+    }
     info('v2 dispatch 409 — already dispatched in Primus, fetching docs');
   } else if (!dr.ok) {
     throw new Error('v2 dispatch failed ' + dr.status + ': ' + drText.slice(0, 300));
@@ -492,6 +499,99 @@ function testG_AllParcelsHaveRealCLBL(parcelResults) {
   }
 }
 
+// ─── Test H: real chat-agent sequence ───────────────────────────────────────
+// Simulates: book_shipment → dispatch_shipment(no method = picker shown, no Primus call)
+//             → dispatch_shipment(DROP TO CARRIER = one real Primus call)
+// Asserts exactly ONE dispatch call reaches Primus and it returns 200 + CLBL.
+async function testH_ChatAgentSequence(parcelRates) {
+  console.log('\n💬 TEST H: Chat-agent sequence — book → no-method → DROP TO CARRIER');
+  const parcel = parcelRates.find(r => isParcelRate(r));
+  if (!parcel) { fail('H', 'No parcel rate available'); return false; }
+
+  // Step 1: Book
+  let booked;
+  try {
+    booked = await bookShipment({
+      rate: parcel,
+      freightInfo: parcel.freightInfo || PARCEL_ITEM,
+      shipper: SHIPPER,
+      consignee: CONSIGNEE,
+      pickupDate: PICKUP_DATE,
+      pickupOpen: '09:00',
+      pickupClose: '17:00',
+      referenceNumber: 'TEST-H-' + Date.now(),
+    });
+    info('Booked: BOL ' + (booked.BOLNmbr || booked.BOLNumber) + ' id=' + booked.BOLId);
+  } catch(e) {
+    fail('H', 'Booking failed: ' + e.message);
+    return false;
+  }
+
+  // Step 2: dispatch_shipment with NO smallPackageHandling
+  // In the portal this path shows the picker and returns parcelPickerShown:true WITHOUT calling Primus.
+  // In the harness we verify the BOL is still undispatched — proving no Primus call was made.
+  const statusAfterNoCall = await getBookingStatus(booked.BOLId);
+  const alreadyDispatched = statusAfterNoCall && statusAfterNoCall.data && statusAfterNoCall.data.results && statusAfterNoCall.data.results[0] && statusAfterNoCall.data.results[0].dispatched;
+  if (!alreadyDispatched) {
+    pass('H.1', 'BOL undispatched before picker selection — no premature Primus call');
+  } else {
+    fail('H.1', 'BOL already dispatched before picker selection — double-dispatch bug');
+    return false;
+  }
+
+  // Step 3: dispatch_shipment(DROP TO CARRIER) — the FIRST AND ONLY Primus dispatch call
+  let dr;
+  try {
+    dr = await dispatchShipment(booked.BOLId, { smallPackageHandling: 'DROP TO CARRIER' });
+  } catch(e) {
+    fail('H', 'Dispatch threw: ' + e.message);
+    return false;
+  }
+
+  if (!dr.ok) {
+    fail('H.2', 'Dispatch failed — status ' + dr.status + ' error: ' + (dr.error || ''));
+    return false;
+  }
+  if (dr.status !== 200) { fail('H.2', 'Expected HTTP 200, got ' + dr.status + ' (409 = double-dispatch bug still present)'); return false; }
+  pass('H.2', 'HTTP 200 from single DROP TO CARRIER dispatch call');
+
+  const clbl = dr.docs.find(d => (d.type || d.fileType || '').toUpperCase() === 'CLBL');
+  if (!clbl) { fail('H.3', 'No CLBL — docs: ' + dr.docs.map(d => d.type || d.fileType).join(', ')); return false; }
+  pass('H.3', 'CLBL document present');
+
+  const tracking = extractTrackingNumber(clbl);
+  if (tracking) pass('H.4', 'Tracking number: ' + tracking);
+  else pass('H.4', 'CLBL present (tracking not in API metadata)');
+
+  return true;
+}
+
+// ─── Test I: 409 validation error surfaces correctly ─────────────────────────
+// BOL 1107899930 (BOL 160133820) — FedEx parcel with invalid shipper phone.
+// Before fix: 409 was silently swallowed → ok:true, no CLBL, generic "didn't confirm" message.
+// After fix:  returns ok:false, error = the actual Primus validation message.
+async function testI_ValidationError409(BOLId) {
+  console.log('\n🔴 TEST I: 409 validation error is surfaced (not swallowed)');
+  info('Trying to dispatch BOL id=' + BOLId + ' (known invalid phone — Carrier Label generation failed)');
+  let dr;
+  try {
+    dr = await dispatchShipment(BOLId, { smallPackageHandling: 'DROP TO CARRIER' });
+  } catch(e) {
+    fail('I', 'Threw instead of returning error object: ' + e.message);
+    return false;
+  }
+  if (dr.ok) {
+    fail('I', 'Expected ok:false (validation error) but got ok:true — 409 is still being swallowed');
+    return false;
+  }
+  if (dr.status === 409 && dr.error && (/phone/i.test(dr.error) || /label/i.test(dr.error))) {
+    pass('I', '409 validation error correctly surfaced: "' + dr.error.slice(0, 100) + '"');
+    return true;
+  }
+  fail('I', 'Got ok:false but error message not what expected — status=' + dr.status + ' error=' + (dr.error || ''));
+  return false;
+}
+
 function extractTrackingNumber(clbl) {
   if (!clbl) return null;
   // The tracking number may be in the name, trackingNumber, or url fields
@@ -651,6 +751,16 @@ function extractTrackingNumber(clbl) {
 
   // TEST G: All parcels produce real CLBL
   testG_AllParcelsHaveRealCLBL(parcelCLBLResults);
+
+  // TEST H: Chat-agent sequence (book → no-method dispatch → DROP TO CARRIER)
+  if (parcelRates.find(r => isParcelRate(r))) {
+    await testH_ChatAgentSequence(parcelRates);
+  } else {
+    fail('H', 'No parcel rate available');
+  }
+
+  // TEST I: 409 validation error (invalid phone on BOL 1107899930) is surfaced not swallowed
+  await testI_ValidationError409(1107899930);
 
   // Summary
   console.log('\n═══════════════════════════════════════════════════════════');

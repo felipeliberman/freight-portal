@@ -5244,7 +5244,17 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
       PRO = (dispResult && dispResult.PRO) || null;
       docs = (dispResult && dispResult.documents) || [];
     } else if (dr.status === 409) {
-      // Already dispatched — fall through to doc fetch
+      // Primus returns 409 for two VERY different reasons:
+      //   "already dispatched" — message is a string → fall through to doc fetch
+      //   validation error (e.g. bad phone, CLBL failed) — message is an array → surface to user
+      const _409msg = (drData.error && drData.error.message) || '';
+      const _alreadyDispatched = typeof _409msg === 'string' && /already dispatched/i.test(_409msg);
+      if (!_alreadyDispatched) {
+        window._dispatchingBOLId = null;
+        const _errStr = Array.isArray(_409msg) ? _409msg.join('. ') : (_409msg || 'dispatch conflict (409)');
+        return { ok: false, status: 409, error: _errStr };
+      }
+      // "This shipment is already dispatched" → fall through to doc fetch
     } else if (!dr.ok) {
       window._dispatchingBOLId = null;
       const errMsg = (drData.error && drData.error.message) ? drData.error.message : ('error ' + dr.status);
