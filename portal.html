@@ -9769,13 +9769,26 @@ async function _execDispatchShipment(input) {
   try {
     const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
     if (!BOLId) return { ok:false, error:'No booked shipment to dispatch. Book the shipment first.' };
+    const _lb = window._lastBooked || {};
+    const _isParcel = _lb.isParcel || (typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' }));
+
+    // Parcel with no pickup method stated yet — show picker popup AND invite conversational choice.
+    if (_isParcel && !input.smallPackageHandling) {
+      let _pu = '';
+      try { _pu = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
+      if (typeof showShipmentSavedModal === 'function') setTimeout(() => showShipmentSavedModal({
+        BOLId: BOLId, BOLNumber: _lb.BOLNumber || BOLId, docs: [],
+        carrierName: _lb.carrier || '', carrierPrice: _lb.price || 0,
+        pickupDate: _pu, rateType: 'SMALL PACKAGE', iconUrl: ''
+      }), 0);
+      return { ok: true, parcelPickerShown: true, message: 'A pickup method selector is now showing on screen. Ask the customer which they prefer — Schedule Pickup (carrier comes to the pickup address), Drop to Carrier (customer drops it off at a carrier location), or Pickup Already Scheduled (a pickup is already confirmed with the carrier). They can click the popup OR just tell you in chat, and you can dispatch by calling dispatch_shipment again with smallPackageHandling set to their choice.' };
+    }
+
     const token = await getToken();
 
     let dispResult = null, confirmation = null, PRO = null, docs = [];
-    const _lb = window._lastBooked || {};
-    const _isParcel = typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' });
     const dispBody = _isParcel
-      ? { smallPackageHandling: 'SCHEDULE PICKUP', forceDispatch: true }
+      ? { smallPackageHandling: input.smallPackageHandling, forceDispatch: true }
       : { makeEDI: true, forceDispatch: true };
 
     // Primary: V2 dispatch
@@ -9808,11 +9821,11 @@ async function _execDispatchShipment(input) {
       } catch(apiErr) { console.warn('electronic tender (/API) failed:', apiErr); }
     }
 
-    // Fetch docs if dispatch didn't return them
-    if (!docs.length) {
+    // Fetch docs: always for parcel (CLBL label), or whenever dispatch returned none
+    if (_isParcel || !docs.length) {
       try {
         const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + BOLId, { headers:{'Authorization':'Bearer '+token} });
-        if (docRes.ok) { const docData = await docRes.json(); docs = (docData.data&&docData.data.results)||[]; }
+        if (docRes.ok) { const docData = await docRes.json(); const _fetched=(docData.data&&docData.data.results)||[]; if (_fetched.length) docs = _fetched; }
       } catch(e) {}
     }
 
@@ -9994,7 +10007,10 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, make sure residential delivery (RSD) is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still recommend RSD if the address is residential.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
-7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). dispatch_shipment sends the pickup request to the carrier and returns the confirmation, PRO, and downloadable docs. Report: "Done — dispatched to [carrier], pickup confirmation [confirmation], PRO [PRO]. Your BOL and label are ready to download." If dispatch errors, say it's booked and our team will complete dispatch, give the phone line. NEVER call book_shipment more than once for the same shipment.
+7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). NEVER call book_shipment more than once for the same shipment.
+For LTL: dispatch_shipment tenders to the carrier immediately and returns confirmation, PRO, and docs — report: "Done — dispatched to [carrier], pickup confirmation [confirmation], PRO [PRO]. Your BOL and label are ready to download."
+For PARCEL (FedEx Ground / UPS Ground): you MUST collect the pickup method — never assume it. Three values: SCHEDULE PICKUP (carrier comes to the pickup address), DROP TO CARRIER (customer drops off at a carrier location), PICKUP ALREADY SCHEDULED (a pickup is already confirmed with the carrier). (a) If the customer already stated how they want to ship ("I'll drop it off," "schedule a pickup," "pickup's already set"), map it to the exact enum value and call dispatch_shipment with smallPackageHandling set — it dispatches immediately and returns confirmation and your label. (b) If they have NOT stated a preference yet, call dispatch_shipment WITHOUT smallPackageHandling — a pickup-options popup appears on screen, AND ask in chat at the same time: "A pickup options panel just popped up — or just tell me: should the carrier pick it up (Schedule Pickup), or will you drop it off (Drop to Carrier)?" When they answer, call dispatch_shipment again with smallPackageHandling set to their choice. Do NOT report dispatch as done after the popup appears — the actual dispatch fires when the customer picks.
+If dispatch errors, say it's booked and our team will complete dispatch, give the phone line.
 Never call book_shipment until the panel is filled, the customer has confirmed the carrier, and you've read the details back.
 
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking.
@@ -10137,7 +10153,7 @@ async function aiConverse(userText) {
             {
               name: 'dispatch_shipment',
               description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
-              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' } } }
+              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' } } }
             },
             {
               name: 'save_shipment',
