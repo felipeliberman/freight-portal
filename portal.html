@@ -2422,7 +2422,7 @@ async function fetchRates(shipment) {
   (shipment.accessorials || []).forEach(a => { if (ACC_MAP[a]) accCodes.push(ACC_MAP[a]); });
   const isBox          = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
   const isThreshold    = (shipment.accessorials || []).includes('Threshold');
-  const vendorIds      = isThreshold ? THRESHOLD_VENDOR_IDS : isBox ? BOX_VENDOR_IDS : null;
+  const vendorIds      = isThreshold ? THRESHOLD_VENDOR_IDS : null;
   const hasPalletOrSkid = shipment.items.some(i => i.packageType === 'PLT' || i.packageType === 'SKD' || !i.packageType);
   const includeSP      = !hasPalletOrSkid;
 
@@ -4916,13 +4916,6 @@ function renderQuotes(rates, isBox) {
   hdr.style.cssText = 'font-size:11px;font-weight:600;color:var(--mu);letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px;';
   hdr.textContent = rates.length + ' live rate' + (rates.length !== 1 ? 's' : '');
   wrap.appendChild(hdr);
-
-  if (isBox) {
-    const boxNote = document.createElement('div');
-    boxNote.style.cssText = 'font-size:11px;color:var(--mu);margin-bottom:10px;padding:6px 10px;background:var(--ac2);border-radius:6px;border-left:3px solid var(--ac);';
-    boxNote.textContent = 'Filtered to carriers that accept boxes and cartons: ABF, Pilot, SAIA, SEFL, Metro, XPO';
-    wrap.appendChild(boxNote);
-  }
 
   top.forEach((q, i) => {
     const price   = (q.billTo && q.billTo.total) ? q.billTo.total : (q.total || 0);
