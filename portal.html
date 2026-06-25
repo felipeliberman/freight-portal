@@ -17038,11 +17038,12 @@ async function _spAutoExtractAndRate(text) {
     var rawText = (resp.content && resp.content[0] && resp.content[0].text) || '';
     var data = JSON.parse(rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim());
 
-    var sh  = data.shipper   || {};
-    var co  = data.consignee || {};
-    var it  = (data.items && data.items[0]) || {};
+    var sh     = data.shipper   || {};
+    var co     = data.consignee || {};
+    var _items = (data.items && data.items.length) ? data.items : [{}];
+    var it     = _items[0];
 
-    var weight  = parseFloat(it.weight) || 0;
+    var weight = _items.reduce(function(s,i){ return s + (parseFloat(i.weight)||0); }, 0);
     var _coZip  = (co.zip || '').trim();
     var destZip = _isCanadianPostal(_coZip)
       ? _coZip.toUpperCase().replace(/\s/g, '').replace(/^([A-Z]\d[A-Z])(\d[A-Z]\d)$/, '$1 $2')
@@ -17108,18 +17109,20 @@ async function _spAutoExtractAndRate(text) {
       destZip:     destZip,
       pickupDate:  data.pickupDate || '',
       accessorials: _accCodes,
-      lineItems: [{
-        qty:          parseInt(it.pieces) || 1,
-        type:         it.packageType || 'PLT',
-        weight:       weight,
-        length:       parseFloat(it.length) || 48,
-        width:        parseFloat(it.width)  || 40,
-        height:       parseFloat(it.height) || 48,
-        stack:        'N',
-        freightClass: it.freightClass || '',
-        nmfc:         typeof it.nmfc === 'string' ? it.nmfc : (it.nmfc ? String(it.nmfc) : ''),
-        commodity:    it.commodity || ''
-      }]
+      lineItems: _items.map(function(item) {
+        return {
+          qty:          parseInt(item.pieces) || 1,
+          type:         item.packageType || 'PLT',
+          weight:       parseFloat(item.weight) || 0,
+          length:       parseFloat(item.length) || 48,
+          width:        parseFloat(item.width)  || 40,
+          height:       parseFloat(item.height) || 48,
+          stack:        'N',
+          freightClass: item.freightClass || '',
+          nmfc:         typeof item.nmfc === 'string' ? item.nmfc : (item.nmfc ? String(item.nmfc) : ''),
+          commodity:    item.commodity || ''
+        };
+      })
     };
 
     // Call showQuoteForm directly — _execUpdateQuote guards on _quoteFormOpen which can be stale.
