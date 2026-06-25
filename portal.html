@@ -5551,10 +5551,20 @@ function editSavedShipment(s, BOLId, BOLNumber) {
             async () => {
               dspBtn.textContent = 'Dispatching...';
               try {
+                // Capture parcel state before submitBookingOnly clears bookingRate/bookingData
+                const _isParcelRtd = bookingRate && typeof isParcelRate === 'function' && isParcelRate(bookingRate);
+                const _rtdPickup   = (bookingData && bookingData.pickupDate) || getTomorrow();
+                const _rtdRateType = (bookingRate && bookingRate.rateType) || 'SMALL PACKAGE';
+                const _rtdIcon     = (bookingRate && (bookingRate.iconUrl || bookingRate.icon || bookingRate.logoUrl)) || '';
                 await submitBookingOnly({ thenDispatch: true });
                 const _bolId = window._lastBooked && window._lastBooked.BOLId;
                 if (!_bolId) throw new Error('Save failed — check the chat for details');
-                if (typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
+                if (_isParcelRtd) {
+                  // Parcel: show handling picker instead of auto-dispatching
+                  showShipmentSavedModal({ BOLId:_bolId, BOLNumber:(window._lastBooked&&window._lastBooked.BOLNumber)||'', docs:[], carrierName:(window._lastBooked&&window._lastBooked.carrier)||'', carrierPrice:(window._lastBooked&&window._lastBooked.price)||0, pickupDate:_rtdPickup, rateType:_rtdRateType, iconUrl:_rtdIcon });
+                } else {
+                  if (typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
+                }
               } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
             },
             (toAdd) => {
@@ -8519,6 +8529,19 @@ async function submitBooking() {
     const BOLId     = result.BOLId;
     const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
     const docs      = result.documents || [];
+
+    // Parcel: skip auto-dispatch — user must choose SCHEDULE PICKUP or DROP TO CARRIER from the picker.
+    if (bookingRate && typeof isParcelRate === 'function' && isParcelRate(bookingRate)) {
+      removeTyping();
+      if (_bkBtn) { _bkBtn.textContent = 'Booked!'; _bkBtn.disabled = true; _bkBtn.style.background = '#f0ede6'; _bkBtn.style.opacity = '0.7'; _bkBtn.style.cursor = 'default'; }
+      const _pCn = (bookingRate._name||bookingRate.name||bookingRate.carrierName)||'';
+      const _pCp = Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0);
+      window._lastBooked = { BOLId, BOLNumber, carrier:_pCn, price:_pCp, PRO:null, confirmation:null, dispatched:false };
+      showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:_pCn, carrierPrice:_pCp, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:bookingRate.rateType||'SMALL PACKAGE', iconUrl:(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl)||'' });
+      bookingRate = null; bookingData = {};
+      window._bookingPanelContainer = null;
+      return;
+    }
 
     // Dispatch — required to make BOL valid for tendering AND to send the electronic
     // pickup request to the carrier. NOTE: v2 dispatch with makeEDI/forceDispatch can
