@@ -2497,6 +2497,17 @@ async function fetchRates(shipment) {
   });
 }
 
+function isParcelRate(o) {
+  if (!o) return false;
+  const t = (o.rateType || '') + '';
+  const s = (o.serviceLevel || o.service || (o.vendor && o.vendor.serviceLevel) || '') + '';
+  const n = (o.carrierName || o.name || o._name || (o.vendor && (o.vendor.name || o.vendor.companyName)) || '') + '';
+  return /small\s*package/i.test(t)
+    || t.toUpperCase() === 'SP'
+    || /small\s*package|parcel/i.test(s)
+    || /ups\s*ground|fedex\s*(ground|home|small)/i.test(n + ' ' + s);
+}
+
 function rateRemarkText(r) {
   if (!r) return '';
   const rr = r.rateRemarks;
@@ -5041,7 +5052,7 @@ function showBookingConfirmedModal(bc) {
       '</div>' +
       '<div>' +
         '<div style="font-size:18px;font-weight:800;color:#fff;letter-spacing:-.02em;">Shipment ' + (bc.dispatchOk ? 'Dispatched' : 'Booked') + '</div>' +
-        '<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:2px;">' + (bc.dispatchOk ? 'Ready for carrier pickup' : 'Awaiting dispatch — not yet valid for tendering') + '</div>' +
+        '<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:2px;">' + (bc.isParcel && bc.dispatchOk ? 'Print your shipping label — ready for carrier pickup' : bc.dispatchOk ? 'Ready for carrier pickup' : 'Awaiting dispatch — not yet valid for tendering') + '</div>' +
       '</div>' +
     '</div>';
   modal.appendChild(strip);
@@ -5117,16 +5128,17 @@ function showBookingConfirmedModal(bc) {
     validDocs.forEach(doc => {
       const isBOL = /bol|bill/i.test(doc.name || doc.type || '');
       const isLabel = /label|shipping/i.test(doc.name || doc.type || '');
+      const isPrimary = bc.isParcel ? isLabel : isBOL;
       const a = document.createElement('a');
       a.href = doc.url; a.target = '_blank';
       a.style.cssText = 'display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:9px;font-size:12px;font-weight:600;text-decoration:none;transition:all .12s;' +
-        (isBOL ? 'background:var(--ac);color:#fff;' : 'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);');
+        (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);');
       const icon = isBOL
         ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
         : isLabel
           ? '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'
           : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + (doc.name || doc.type || 'Document');
+      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + (bc.isParcel && isLabel ? 'Download Shipping Label' : doc.name || doc.type || 'Document');
       docRow.appendChild(a);
     });
     body.appendChild(docRow);
@@ -5162,12 +5174,14 @@ function showBookingConfirmedModal(bc) {
           bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-wrap:wrap;';
           validDocs.forEach(doc => {
             const isBOL = /bol|bill/i.test(doc.name||doc.type||'');
+            const isLabel = /label|shipping/i.test(doc.name||doc.type||'');
+            const isPrimary = bc.isParcel ? isLabel : isBOL;
             const a = document.createElement('a');
             a.href = doc.url; a.target = '_blank';
             a.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:600;text-decoration:none;' +
-              (isBOL ? 'background:var(--ac);color:#fff;' : 'background:#fff;border:1px solid var(--bdr);color:var(--tx);');
+              (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#fff;border:1px solid var(--bdr);color:var(--tx);');
             const icon = isBOL ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>' : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-            a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + (doc.name||doc.type||'Document');
+            a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + (bc.isParcel && isLabel ? 'Download Shipping Label' : doc.name||doc.type||'Document');
             bar.appendChild(a);
           });
           const tabBar = panel.querySelector('.rp-tab-bar') || panel.querySelector('[style*="tab"]') || panel.firstElementChild;
@@ -5248,18 +5262,53 @@ function showShipmentSavedModal(bc) {
   dispBtn.style.cssText = 'width:100%;background:var(--ac);color:#fff;border:none;border-radius:9px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;gap:7px;';
   dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Dispatch Now';
   dispBtn.onclick = async () => {
-    if (pickupDate && typeof isPastPickup === 'function' && isPastPickup(pickupDate)) {
+    if (bc.pickupDate && typeof isPastPickup === 'function' && isPastPickup(bc.pickupDate)) {
       appendMessage('bot', "That pickup date has passed — please edit the shipment and set a new pickup date before dispatching.");
       return;
     }
+    if (isParcelRate(bc)) {
+      dispBtn.style.display = 'none';
+      const _sphPicker = document.createElement('div');
+      _sphPicker.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+      const _sphPrompt = document.createElement('div');
+      _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:2px;';
+      _sphPrompt.textContent = 'How will this ship?';
+      _sphPicker.appendChild(_sphPrompt);
+      [
+        { label:'Schedule Pickup',         value:'SCHEDULE PICKUP',           desc:'Carrier picks up from your location' },
+        { label:'Drop to Carrier',          value:'DROP TO CARRIER',           desc:'You drop it off at a carrier location' },
+        { label:'Pickup Already Scheduled', value:'PICKUP ALREADY SCHEDULED', desc:'A pickup is already confirmed' },
+      ].forEach(opt => {
+        const _b = document.createElement('button');
+        _b.type = 'button';
+        _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
+        _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
+        _b.onclick = () => { _sphPicker.remove(); doDispatch(opt.value); };
+        _sphPicker.appendChild(_b);
+      });
+      const _sphCancel = document.createElement('button');
+      _sphCancel.type = 'button';
+      _sphCancel.style.cssText = 'background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:2px;text-align:center;';
+      _sphCancel.textContent = 'Cancel';
+      _sphCancel.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; };
+      _sphPicker.appendChild(_sphCancel);
+      dispBtn.parentNode.insertBefore(_sphPicker, dispBtn.nextSibling);
+      return;
+    }
+    await doDispatch(null);
+  };
+  const doDispatch = async (smallPackageHandling) => {
     dispBtn.textContent = 'Dispatching...'; dispBtn.disabled = true;
     try {
       const token = await getToken();
       let dispResult = null, PRO = null, confirmation = null, dispatchedDocs = bc.docs || [];
+      const dispBody = smallPackageHandling
+        ? { smallPackageHandling, forceDispatch:true }
+        : { makeEDI:true, forceDispatch:true };
       // v2 dispatch
       const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + bc.BOLId, {
         method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify({ makeEDI:true, forceDispatch:true })
+        body:JSON.stringify(dispBody)
       });
       const drText = await dr.text();
       let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
@@ -5279,9 +5328,16 @@ function showShipmentSavedModal(bc) {
           if (d2.ok) { dispResult = (d2Data.data&&d2Data.data.results)||d2Data.data||d2Data; confirmation=(dispResult&&dispResult.confirmation)||null; PRO=(dispResult&&dispResult.PRO)||null; }
         }
       }
+      // For parcel: also fetch all docs from document endpoint
+      if (smallPackageHandling && !dispatchedDocs.length) {
+        try {
+          const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bc.BOLId, { headers:{'Authorization':'Bearer '+token} });
+          if (docRes.ok) { const docData = await docRes.json(); dispatchedDocs = (docData.data&&docData.data.results)||[]; }
+        } catch(e3) {}
+      }
       overlay.remove();
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult&&hasConf) });
+      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling });
     } catch(e) {
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       appendMessage('bot', 'Dispatch error: ' + e.message);
@@ -5610,7 +5666,37 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       }
       return;
     }
-    // Run RDI check first
+    if (isParcelRate(s)) {
+      // Parcel: skip RDI check, show inline handling picker
+      dispBtn.style.display = 'none';
+      const _sphPicker = document.createElement('div');
+      _sphPicker.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+      const _sphPrompt = document.createElement('div');
+      _sphPrompt.style.cssText = 'font-size:12px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:2px;';
+      _sphPrompt.textContent = 'How will this ship?';
+      _sphPicker.appendChild(_sphPrompt);
+      [
+        { label:'Schedule Pickup',         value:'SCHEDULE PICKUP',           desc:'Carrier picks up from your location' },
+        { label:'Drop to Carrier',          value:'DROP TO CARRIER',           desc:'You drop it off at a carrier location' },
+        { label:'Pickup Already Scheduled', value:'PICKUP ALREADY SCHEDULED', desc:'A pickup is already confirmed' },
+      ].forEach(opt => {
+        const _b = document.createElement('button');
+        _b.type = 'button';
+        _b.style.cssText = 'width:100%;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);text-align:left;';
+        _b.innerHTML = '<div style="font-size:12px;font-weight:600;color:#bd27bc;">' + opt.label + '</div><div style="font-size:10px;color:var(--mu);margin-top:1px;">' + opt.desc + '</div>';
+        _b.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...'; dispBtn.disabled = true; _doDispatch(opt.value); };
+        _sphPicker.appendChild(_b);
+      });
+      const _sphCancel = document.createElement('button');
+      _sphCancel.type = 'button';
+      _sphCancel.style.cssText = 'background:none;border:none;color:var(--mu);font-size:12px;cursor:pointer;font-family:var(--font);padding:2px;text-align:center;';
+      _sphCancel.textContent = 'Cancel';
+      _sphCancel.onclick = () => { _sphPicker.remove(); dispBtn.style.display = ''; };
+      _sphPicker.appendChild(_sphCancel);
+      dispBtn.parentNode.insertBefore(_sphPicker, dispBtn.nextSibling);
+      return;
+    }
+    // LTL: run RDI check first
     const conAcc = s.accessorials || s.accessorialsList || [];
     const conStreet = (s.consignee && (s.consignee.address1||s.consignee.address)) || '';
     const conSuite  = (s.consignee && s.consignee.address2) || '';
@@ -5622,19 +5708,22 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
         // Proceed with dispatch
         dispBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...';
         dispBtn.disabled = true;
-        await _doDispatch();
+        await _doDispatch(null);
       },
       (toAdd) => { overlay.remove(); if(toAdd&&toAdd.length&&typeof applyRequoteAccessorials==='function') { if(typeof showQuoteForm==='function') showQuoteForm(); setTimeout(()=>applyRequoteAccessorials(toAdd),500); } }
     );
     return;
   };
-  const _doDispatch = async () => {
+  const _doDispatch = async (smallPackageHandling) => {
     try {
       const token = await getToken();
       let dispResult = null, PRO = null, confirmation = null;
+      const dispBody = smallPackageHandling
+        ? { smallPackageHandling, forceDispatch:true }
+        : { makeEDI:true, forceDispatch:true };
       const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
         method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify({ makeEDI:true, forceDispatch:true })
+        body:JSON.stringify(dispBody)
       });
       const drText = await dr.text();
       let drData = {}; try { drData = JSON.parse(drText); } catch(e2) {}
@@ -5670,7 +5759,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       dispBtn.disabled = true;
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
       const priceAmt = parseMoney(rawTotal) || 0;
-      showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf) });
+      showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling });
       overlay.remove();
     } catch(e) {
       dispBtn.innerHTML = 'Dispatch Shipment'; dispBtn.disabled = false;
@@ -8276,7 +8365,7 @@ async function submitBookingOnly(opts) {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
-    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow() });
+    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
   } catch(e) {
