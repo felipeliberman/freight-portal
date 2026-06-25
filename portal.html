@@ -5130,8 +5130,9 @@ function showBookingConfirmedModal(bc) {
     const docRow = document.createElement('div');
     docRow.style.cssText = 'display:flex;flex-wrap:nowrap;gap:8px;margin-bottom:16px;overflow-x:auto;';
     validDocs.forEach(doc => {
-      const isBOL = /bol|bill/i.test(doc.name || doc.type || '');
-      const isLabel = /label|shipping/i.test(doc.name || doc.type || '');
+      const isBOL   = (doc.type||'').toUpperCase() === 'BOL' || /bol|bill/i.test(doc.name||'');
+      const isLabel = (doc.type||'').toUpperCase() === 'LBL' || /label|shipping/i.test(doc.name||'');
+      const isQuote = (doc.type||'').toUpperCase() === 'QUO' || /quote/i.test(doc.name||'');
       if (bc.isParcel && isBOL && !isLabel) return;
       const isPrimary = bc.isParcel ? isLabel : isBOL;
       const a = document.createElement('a');
@@ -5143,7 +5144,8 @@ function showBookingConfirmedModal(bc) {
         : isLabel
           ? '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'
           : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + (bc.isParcel && isLabel ? 'Download Carrier Label' : doc.name || doc.type || 'Document');
+      const docLabel = bc.isParcel && isLabel ? 'Download Carrier Label' : isQuote ? 'Quote' : doc.name || doc.type || 'Document';
+      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + docLabel;
       docRow.appendChild(a);
     });
     body.appendChild(docRow);
@@ -5178,15 +5180,18 @@ function showBookingConfirmedModal(bc) {
           bar.id = 'bk-persisted-docs';
           bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-wrap:wrap;';
           validDocs.forEach(doc => {
-            const isBOL = /bol|bill/i.test(doc.name||doc.type||'');
-            const isLabel = /label|shipping/i.test(doc.name||doc.type||'');
+            const isBOL   = (doc.type||'').toUpperCase() === 'BOL' || /bol|bill/i.test(doc.name||'');
+            const isLabel = (doc.type||'').toUpperCase() === 'LBL' || /label|shipping/i.test(doc.name||'');
+            const isQuote2 = (doc.type||'').toUpperCase() === 'QUO' || /quote/i.test(doc.name||'');
+            if (bc.isParcel && isBOL && !isLabel) return;
             const isPrimary = bc.isParcel ? isLabel : isBOL;
             const a = document.createElement('a');
             a.href = doc.url; a.target = '_blank';
             a.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:600;text-decoration:none;' +
               (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#fff;border:1px solid var(--bdr);color:var(--tx);');
             const icon = isBOL ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>' : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-            a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + (bc.isParcel && isLabel ? 'Download Shipping Label' : doc.name||doc.type||'Document');
+            const barLabel = bc.isParcel && isLabel ? 'Carrier Label' : isQuote2 ? 'Quote' : doc.name||doc.type||'Document';
+            a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + barLabel;
             bar.appendChild(a);
           });
           const tabBar = panel.querySelector('.rp-tab-bar') || panel.querySelector('[style*="tab"]') || panel.firstElementChild;
@@ -5255,7 +5260,9 @@ function showShipmentSavedModal(bc) {
   // Info notice
   const notice = document.createElement('div');
   notice.style.cssText = 'font-size:11px;color:var(--mu);background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:18px;line-height:1.5;';
-  notice.innerHTML = 'This shipment is saved but <strong style="color:var(--tx);">not yet dispatched</strong>. The BOL is not valid for tendering until you dispatch it. You can edit or dispatch from <strong style="color:var(--tx);">My Shipments</strong>.';
+  notice.innerHTML = isParcelRate(bc)
+    ? 'This shipment is saved. Dispatch it to send the pickup request to the carrier and generate your <strong style="color:var(--tx);">carrier label</strong>. You can also dispatch from <strong style="color:var(--tx);">My Shipments</strong>.'
+    : 'This shipment is saved but <strong style="color:var(--tx);">not yet dispatched</strong>. The BOL is not valid for tendering until you dispatch it. You can edit or dispatch from <strong style="color:var(--tx);">My Shipments</strong>.';
   body.appendChild(notice);
 
   // Buttons
@@ -5325,25 +5332,26 @@ function showShipmentSavedModal(bc) {
         const dDocs = (dispResult&&dispResult.documents)||[];
         if (dDocs.length) dispatchedDocs = [...dispatchedDocs, ...dDocs];
         if (drData.success===false) dispResult = null;
+      } else if (dr.status === 409) {
+        // 409 = already dispatched by Primus — parcel auto-dispatches on save; also fired on re-dispatch attempts. Treat as success.
+        dispResult = { alreadyDispatched: true };
       } else {
-        // v1 fallback
-        const d1 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + bc.BOLId, { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-        if (d1.ok) {
-          const d2 = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + bc.BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
-          const d2Data = await d2.json().catch(()=>({}));
-          if (d2.ok) { dispResult = (d2Data.data&&d2Data.data.results)||d2Data.data||d2Data; confirmation=(dispResult&&dispResult.confirmation)||null; PRO=(dispResult&&dispResult.PRO)||null; }
-        }
+        // Real failure — surface error to user, do NOT show confirmed modal
+        overlay.remove();
+        dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
+        appendMessage('bot', 'Dispatch could not be completed (error ' + dr.status + '). Please try from My Shipments or contact support at (800) 687-3713.');
+        return;
       }
-      // For parcel: also fetch all docs from document endpoint
-      if (smallPackageHandling && !dispatchedDocs.length) {
+      // Fetch docs: always for parcel, and whenever dispatch returned none
+      if (smallPackageHandling || !dispatchedDocs.length) {
         try {
           const docRes = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bc.BOLId, { headers:{'Authorization':'Bearer '+token} });
-          if (docRes.ok) { const docData = await docRes.json(); dispatchedDocs = (docData.data&&docData.data.results)||[]; }
+          if (docRes.ok) { const docData = await docRes.json(); const fetched=(docData.data&&docData.data.results)||[]; if(fetched.length) dispatchedDocs=fetched; }
         } catch(e3) {}
       }
       overlay.remove();
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
+      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult && (hasConf || dispResult.alreadyDispatched)), isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
     } catch(e) {
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       appendMessage('bot', 'Dispatch error: ' + e.message);
@@ -5403,10 +5411,10 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
         document.body.appendChild(warnOv);
         warnBox.querySelector('#rdi-proceed').onclick = () => { warnOv.remove(); onProceed(); };
         warnBox.querySelector('#rdi-requote').onclick = () => {
-          warnOv.remove();
           const toAdd = [];
-          const cRsd = document.getElementById('rdi-chk-rsd'); if (cRsd && cRsd.checked) toAdd.push('RSD');
-          const cLfd = document.getElementById('rdi-chk-lfd'); if (cLfd && cLfd.checked) toAdd.push('LFD');
+          const cRsd = warnBox.querySelector('#rdi-chk-rsd'); if (cRsd && cRsd.checked) toAdd.push('RSD');
+          const cLfd = warnBox.querySelector('#rdi-chk-lfd'); if (cLfd && cLfd.checked) toAdd.push('LFD');
+          warnOv.remove();
           if (onRequote) onRequote(toAdd);
         };
         return;
@@ -9737,11 +9745,16 @@ async function _execDispatchShipment(input) {
     const token = await getToken();
 
     let dispResult = null, confirmation = null, PRO = null, docs = [];
+    const _lb = window._lastBooked || {};
+    const _isParcel = typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' });
+    const dispBody = _isParcel
+      ? { smallPackageHandling: 'SCHEDULE PICKUP', forceDispatch: true }
+      : { makeEDI: true, forceDispatch: true };
 
     // Primary: V2 dispatch
     const dr = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-      body:JSON.stringify({ makeEDI:true, forceDispatch:true })
+      body:JSON.stringify(dispBody)
     });
     const drText = await dr.text();
     let drData = {}; try { drData = JSON.parse(drText); } catch(e) {}
@@ -9751,10 +9764,12 @@ async function _execDispatchShipment(input) {
       confirmation = (dispResult&&dispResult.confirmation)||null;
       PRO = (dispResult&&dispResult.PRO)||null;
       docs = (dispResult&&dispResult.documents)||[];
+    } else if (dr.status === 409) {
+      // Already dispatched by Primus — parcel auto-dispatches on save. Treat as success; docs fetched below.
+      dispResult = { alreadyDispatched: true };
     }
-    // ALWAYS fire the electronic tender (/API) if v2 failed OR came back "manually" / with no
-    // confirmation — this is what actually sends the pickup request to the carrier.
-    if (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A') {
+    // LTL only: fire the electronic tender (/API) if v2 was not a 409 AND failed or came back "manually" / with no confirmation
+    if (!_isParcel && dr.status !== 409 && (!dr.ok || dispatchedManually || !confirmation || confirmation === 'N/A')) {
       try {
         const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:'{}' });
         const dApiText = await dApi.text();
@@ -12909,7 +12924,7 @@ function showBookingPanel(rate, shipmentData) {
               : Number(bookingData.weight) || 0;
             const hasPlt = lastQuotedShipment && lastQuotedShipment.items &&
               lastQuotedShipment.items.some(it => !it.packageType || it.packageType === 'PLT' || it.packageType === 'SKD');
-            const needsLiftgate = !hasLFD;
+            const needsLiftgate = !hasLFD && !isParcelRate(bookingRate || lastQuotedShipment || {});
 
             const warnOverlay = document.createElement('div');
             warnOverlay.id = 'bk-rdi-warn';
@@ -13018,9 +13033,9 @@ function showBookingPanel(rate, shipmentData) {
               if (!window._lastBooked || !window._lastBooked.BOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; }
             };
             document.getElementById('bk-rdi-requote').onclick = () => {
+              const addRSD = !hasRSD && warnBox.querySelector('#chk-rsd') && warnBox.querySelector('#chk-rsd').checked;
+              const addLFD = needsLiftgate && warnBox.querySelector('#chk-lfd') && warnBox.querySelector('#chk-lfd').checked;
               warnOverlay.remove();
-              const addRSD = !hasRSD && document.getElementById('chk-rsd') && document.getElementById('chk-rsd').checked;
-              const addLFD = needsLiftgate && document.getElementById('chk-lfd') && document.getElementById('chk-lfd').checked;
               const toAdd = [];
               if (addRSD) toAdd.push('RSD');
               if (addLFD) toAdd.push('LFD');
