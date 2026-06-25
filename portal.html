@@ -2113,7 +2113,7 @@ function resetShipmentState(wipeConversation) {
   try {
     window._lastRates = null; window._lastRatesRaw = null; window._lastRatesShipment = null;
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
-    window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false;
+    window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
@@ -5311,6 +5311,9 @@ function showShipmentSavedModal(bc) {
     await doDispatch(null);
   };
   const doDispatch = async (smallPackageHandling) => {
+    if (window._dispatchingBOLId === bc.BOLId) return;
+    if (window._lastBooked && window._lastBooked.BOLId === bc.BOLId && window._lastBooked.dispatched) { overlay.remove(); return; }
+    window._dispatchingBOLId = bc.BOLId;
     dispBtn.textContent = 'Dispatching...'; dispBtn.disabled = true;
     try {
       const token = await getToken();
@@ -5349,11 +5352,14 @@ function showShipmentSavedModal(bc) {
           if (docRes.ok) { const docData = await docRes.json(); const fetched=(docData.data&&docData.data.results)||[]; if(fetched.length) dispatchedDocs=fetched; }
         } catch(e3) {}
       }
+      if (window._lastBooked && window._lastBooked.BOLId === bc.BOLId) window._lastBooked.dispatched = true;
+      window._dispatchingBOLId = null;
       overlay.remove();
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
       const _hasClbl = dispatchedDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
       showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult && hasConf) || _hasClbl, isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
     } catch(e) {
+      window._dispatchingBOLId = null;
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       appendMessage('bot', 'Dispatch error: ' + e.message);
     }
@@ -9769,6 +9775,10 @@ async function _execDispatchShipment(input) {
   try {
     const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
     if (!BOLId) return { ok:false, error:'No booked shipment to dispatch. Book the shipment first.' };
+    if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)
+      return { ok:true, alreadyDispatched:true, message:'This shipment is already dispatched. Check My Shipments for your shipping documents.' };
+    if (window._dispatchingBOLId === BOLId)
+      return { ok:true, dispatchInFlight:true, message:'Dispatch is already in progress — just a moment.' };
     const _lb = window._lastBooked || {};
     const _isParcel = _lb.isParcel || (typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' }));
 
@@ -9784,6 +9794,9 @@ async function _execDispatchShipment(input) {
       return { ok: true, parcelPickerShown: true, message: 'A pickup method selector is now showing on screen. Ask the customer which they prefer — Schedule Pickup (carrier comes to the pickup address), Drop to Carrier (customer drops it off at a carrier location), or Pickup Already Scheduled (a pickup is already confirmed with the carrier). They can click the popup OR just tell you in chat, and you can dispatch by calling dispatch_shipment again with smallPackageHandling set to their choice.' };
     }
 
+    // Dismiss any open parcel picker popup so its buttons can't double-fire
+    try { const _o = document.getElementById('bk-saved-overlay'); if (_o) _o.remove(); } catch(e2) {}
+    window._dispatchingBOLId = BOLId;
     const token = await getToken();
 
     let dispResult = null, confirmation = null, PRO = null, docs = [];
@@ -9831,6 +9844,7 @@ async function _execDispatchShipment(input) {
 
     const validDocs = (docs||[]).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
     if (window._lastBooked) window._lastBooked.dispatched = true;
+    window._dispatchingBOLId = null;
 
     const _hasClbl = validDocs.some(d => (d.type||'').toUpperCase() === 'CLBL');
     if (!dispResult && !_hasClbl) {
@@ -9856,6 +9870,7 @@ async function _execDispatchShipment(input) {
     } catch(e) {}
     return { ok:true, confirmation: confirmation||null, PRO: PRO||null, documents: validDocs, docsShown:true, message:'Dispatched to carrier. Shipping documents are now displayed for download.' };
   } catch (e) {
+    window._dispatchingBOLId = null;
     console.error('dispatch_shipment error:', e);
     return { ok:false, error:'Dispatch error: ' + (e.message||'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
   }
