@@ -5100,6 +5100,10 @@ function showBookingConfirmedModal(bc) {
 
   stat('BOL Number', bc.BOLNumber, '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/>', true);
   stat('Carrier', bc.carrierName, '<rect x="1" y="3" width="15" height="13"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>');
+  if (bc.iconUrl) {
+    const _cc = grid.lastChild;
+    if (_cc) { const _li = document.createElement('img'); _li.src=bc.iconUrl; _li.alt=''; _li.style.cssText='height:18px;max-width:72px;object-fit:contain;display:block;margin-bottom:4px;'; _li.onerror=function(){this.style.display='none';}; const _vd=_cc.querySelector('div:last-child'); if(_vd) _cc.insertBefore(_li,_vd); else _cc.appendChild(_li); }
+  }
   if (bc.PRO) stat('PRO Number', bc.PRO, '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>', true);
   if (bc.carrierPrice) stat('Quoted Rate', '$' + Number(bc.carrierPrice).toFixed(2), '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>');
   if (bc.pickupDate) stat('Pickup Date', dateCountdown(bc.pickupDate), '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>');
@@ -5112,7 +5116,7 @@ function showBookingConfirmedModal(bc) {
     const warn = document.createElement('div');
     warn.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-left:3px solid var(--fa);border-radius:4px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--mu);display:flex;align-items:flex-start;gap:8px;';
     warn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
-      '<span>Dispatch is pending. The BOL will show <strong>NOT VALID FOR TENDERING</strong> until dispatch completes. Contact us if this persists.</span>';
+      '<span>' + (bc.isParcel ? 'Dispatch is pending. The carrier label will be available once dispatch completes. Contact us if this persists.' : 'Dispatch is pending. The BOL will show <strong>NOT VALID FOR TENDERING</strong> until dispatch completes. Contact us if this persists.') + '</span>';
     body.appendChild(warn);
   }
 
@@ -5128,6 +5132,7 @@ function showBookingConfirmedModal(bc) {
     validDocs.forEach(doc => {
       const isBOL = /bol|bill/i.test(doc.name || doc.type || '');
       const isLabel = /label|shipping/i.test(doc.name || doc.type || '');
+      if (bc.isParcel && isBOL && !isLabel) return;
       const isPrimary = bc.isParcel ? isLabel : isBOL;
       const a = document.createElement('a');
       a.href = doc.url; a.target = '_blank';
@@ -5138,7 +5143,7 @@ function showBookingConfirmedModal(bc) {
         : isLabel
           ? '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'
           : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + (bc.isParcel && isLabel ? 'Download Shipping Label' : doc.name || doc.type || 'Document');
+      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + (bc.isParcel && isLabel ? 'Download Carrier Label' : doc.name || doc.type || 'Document');
       docRow.appendChild(a);
     });
     body.appendChild(docRow);
@@ -5239,6 +5244,7 @@ function showShipmentSavedModal(bc) {
     '<div><div style="font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">BOL Number</div>' +
       '<div style="font-size:15px;font-weight:700;color:var(--ac);">' + (bc.BOLNumber||'—') + '</div></div>' +
     '<div><div style="font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Carrier</div>' +
+      (bc.iconUrl ? '<img src="'+bc.iconUrl+'" alt="" style="height:18px;max-width:72px;object-fit:contain;display:block;margin-bottom:4px;" onerror="this.style.display=\'none\'">' : '') +
       '<div style="font-size:13px;font-weight:600;color:var(--tx);">' + (bc.carrierName||'—') + '</div></div>' +
     '<div><div style="font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Rate</div>' +
       '<div style="font-size:15px;font-weight:700;color:var(--tx);">$' + Number(bc.carrierPrice||0).toFixed(2) + '</div></div>' +
@@ -5337,34 +5343,13 @@ function showShipmentSavedModal(bc) {
       }
       overlay.remove();
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
-      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling });
+      showBookingConfirmedModal({ BOLNumber:bc.BOLNumber, PRO, confirmation, docs:dispatchedDocs, carrierName:bc.carrierName, carrierPrice:bc.carrierPrice, pickupDate:bc.pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling, iconUrl:bc.iconUrl||'' });
     } catch(e) {
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       appendMessage('bot', 'Dispatch error: ' + e.message);
     }
   };
   btnCol.appendChild(dispBtn);
-
-  // Download docs — BOL and Label as separate buttons, popup stays open
-  const validDocs = (bc.docs||[]).filter(d=>d.url);
-  if (validDocs.length) {
-    const bolDoc = validDocs.find(d => /bol|bill/i.test(d.fileType||d.type||d.name||''));
-    const lblDoc = validDocs.find(d => /label|shipping/i.test(d.fileType||d.type||d.name||''));
-    const dlRow = document.createElement('div');
-    dlRow.style.cssText = 'display:flex;gap:8px;';
-    const mkSavedDocBtn = (doc, label, icon) => {
-      const b = document.createElement('button');
-      b.style.cssText = 'flex:1;background:#f7f5f2;border:1px solid var(--bdr);border-radius:9px;padding:10px 6px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font);color:'+(doc?'var(--tx)':'var(--fa)')+';display:flex;align-items:center;justify-content:center;gap:5px;'+(doc?'':'opacity:.45;pointer-events:none;');
-      b.innerHTML = icon + label;
-      if (doc) b.onclick = () => { const a = document.createElement('a'); a.href=doc.url; a.target='_blank'; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
-      return b;
-    }
-    const bolIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
-    const lblIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>';
-    dlRow.appendChild(mkSavedDocBtn(bolDoc, 'Download BOL', bolIcon));
-    dlRow.appendChild(mkSavedDocBtn(lblDoc, 'Download Label', lblIcon));
-    btnCol.appendChild(dlRow);
-  }
 
   // Go to My Shipments
   const goBtn = document.createElement('button');
@@ -5588,6 +5573,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   const con = s.consignee || {};
   const shp = s.shipper || {};
   const carrierName = ven.name || ven.companyName || s.carrierName || ti.carrierName || '';
+  const iconUrl = ven.iconUrl || ven.icon || ven.logoUrl || ven.logo || '';
   const rawTotal = s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount;
   const _totalNum = parseMoney(rawTotal);
   const total = (!isNaN(_totalNum) && _totalNum > 0) ? '$' + _totalNum.toFixed(2) : '—';
@@ -5759,7 +5745,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       dispBtn.disabled = true;
       const hasConf = confirmation && confirmation.trim() && confirmation !== 'N/A';
       const priceAmt = parseMoney(rawTotal) || 0;
-      showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling });
+      showBookingConfirmedModal({ BOLNumber, PRO, confirmation, docs:_dispatchedDocs, carrierName, carrierPrice:priceAmt, pickupDate, dispatchOk:!!(dispResult&&hasConf), isParcel:!!smallPackageHandling, iconUrl });
       overlay.remove();
     } catch(e) {
       dispBtn.innerHTML = 'Dispatch Shipment'; dispBtn.disabled = false;
@@ -8365,7 +8351,7 @@ async function submitBookingOnly(opts) {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
-    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'' });
+    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
   } catch(e) {
