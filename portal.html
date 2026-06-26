@@ -8303,6 +8303,29 @@ function parseAddrParts(addrStr, fallbackZip) {
   };
 }
 
+// Shared residential detection helper — used by all booking paths (agent, form Save, form Book).
+// PRIMARY: window._residentialStatus.residential===true is always definitive; trust it.
+// FALLBACK: live Geocodio street-level query — the ONLY reliable check. City+ZIP queries
+//   return no zip4.residential data (confirmed). A street address is required.
+// Returns {residential:bool, formatted:string}. On network failure returns {residential:false}
+// so a geocodio outage never blocks a legitimate booking.
+async function _geocodioResidentialCheck(street, city, state, zip) {
+  const _cached = window._residentialStatus;
+  if (_cached && _cached.residential === true) return { residential: true, formatted: zip || '' };
+  const _street = (street || '').trim();
+  if (!_street) return { residential: false };
+  try {
+    const _addr = [_street, city, state, zip].filter(Boolean).join(' ').trim();
+    const _r = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+    if (!_r.ok) return { residential: false };
+    const _d = await _r.json();
+    const _r0 = _d.results && _d.results[0];
+    const _isRes = !!(_r0 && _r0.fields && _r0.fields.zip4 && _r0.fields.zip4.residential === true);
+    if (_isRes) window._residentialStatus = { residential: true, liftgateRecommended: true };
+    return { residential: _isRes, formatted: (_r0 && _r0.formatted_address) || _addr };
+  } catch(e) { return { residential: false }; }
+}
+
 async function submitBookingOnly(opts) {
   opts = opts || {};
   // Creates the BOL in Primus but does NOT dispatch — "Save Shipment" flow
@@ -8467,6 +8490,18 @@ async function submitBooking() {
     const hasResDL = (s.accessorials || []).includes('Residential Delivery');
 
     const rateId = rate.id || rate.rateId || null;
+
+    // Residential guard — must fire before saveRate or Primus POST.
+    // consParts.address1 is the delivery street filled in the booking form.
+    if (!window._resWarnShown && !accCodes.includes('RSD')) {
+      const _sbgRes = await _geocodioResidentialCheck(consParts.address1, consParts.city, consParts.state, consParts.zipCode);
+      if (_sbgRes.residential) {
+        window._resWarnShown = true;
+        removeTyping();
+        appendMessage('bot', 'The delivery address ' + (_sbgRes.formatted || consParts.address1) + ' appears to be residential. Residential deliveries need residential delivery (RSD) added to the quote — it changes the carrier rate. I stopped the booking to avoid a surprise surcharge. Please add RSD via the quote form and get updated rates, then try again.');
+        return;
+      }
+    }
 
     // Auto-save rate to get official quoteNumber — this assigns the carrier to the BOL
     // Without quoteNumber, dispatch fails with "shipment does not have a carrier assigned"
@@ -9759,41 +9794,14 @@ async function _execBookShipment(input) {
     const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
     const items = (s.items && s.items.length) ? s.items : [];
 
-    // Residential safeguard — fires BEFORE saveRate/Primus POST so no stale BOL is ever created.
-    // PRIMARY: trust the cache ONLY when it says residential=true — that is always definitive.
-    //   A cached residential=false is NOT reliable: checkResidential() queries city+ZIP (never
-    //   a street address), and Geocodio returns no zip4 data for city+ZIP queries, so the form
-    //   always resolves to residential=false even for real residential streets like 8859 Horner St.
-    // FALLBACK: live Geocodio with the full street address — this is the ONLY reliable check.
-    //   Always runs if cn.address is present and not already blocked. The tiny latency cost is
-    //   worth it: a missed residential check creates a $14.95+ carrier rebill on every parcel.
+    // Residential safeguard — uses the shared _geocodioResidentialCheck() helper.
+    // Fires BEFORE _bookingLock, saveRate, or Primus POST so no stale BOL is ever created.
     if (!window._resWarnShown && !accCodes.includes('RSD')) {
-      let _resBlocked = false, _resAddr = s.destinationZip || '';
-      const _cachedRes = window._residentialStatus;
-      if (_cachedRes && _cachedRes.residential === true) {
-        _resBlocked = true;
-      }
-      if (!_resBlocked) {
-        const _cnStreet = cn.address && cn.address.trim();
-        if (_cnStreet) {
-          try {
-            const _cnAddr = [_cnStreet, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip].filter(Boolean).join(' ').trim();
-            const _gr = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_cnAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
-            if (_gr.ok) {
-              const _gd = await _gr.json();
-              const _r0 = _gd.results && _gd.results[0];
-              if (_r0 && _r0.fields && _r0.fields.zip4 && _r0.fields.zip4.residential === true) {
-                _resBlocked = true; _resAddr = _r0.formatted_address || _cnAddr;
-                window._residentialStatus = { residential:true, weight:items.reduce((t,it)=>t+(it.weight||0)*(it.qty||it.pieces||1),0), liftgateRecommended:true };
-              }
-            }
-          } catch(e) { /* geocodio failed — proceed */ }
-        }
-      }
-      if (_resBlocked) {
+      const _bsRes = await _geocodioResidentialCheck(cn.address, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip);
+      if (_bsRes.residential) {
         window._resWarnShown = true;
-        return { ok:false, residentialWarning:true, address:_resAddr,
-          message:'Before booking: the delivery address ' + _resAddr + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service (RSD), plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to add residential delivery (and liftgate for LTL/heavy freight) or proceed as-is at their own risk. If they agree to add RSD (or RSD+LFD): call update_quote with addAccessorials:["RSD"] (and "LFD" if applicable) AND getRates:true in a single call to re-pull rates with the surcharge included, then call read_rates to confirm the new price, read it back to the customer, and only then call book_shipment. For parcel carriers (SMALL PACKAGE), omit the liftgate question but still re-pull if RSD is added. Do NOT call book_shipment until the re-pull is done and the customer has confirmed the new rate.' };
+        return { ok:false, residentialWarning:true, address:_bsRes.formatted || s.destinationZip,
+          message:'Before booking: the delivery address ' + (_bsRes.formatted || s.destinationZip) + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service (RSD), plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to add residential delivery (and liftgate for LTL/heavy freight) or proceed as-is at their own risk. If they agree to add RSD (or RSD+LFD): call update_quote with addAccessorials:["RSD"] (and "LFD" if applicable) AND getRates:true in a single call to re-pull rates with the surcharge included, then call read_rates to confirm the new price, read it back to the customer, and only then call book_shipment. For parcel carriers (SMALL PACKAGE), omit the liftgate question but still re-pull if RSD is added. Do NOT call book_shipment until the re-pull is done and the customer has confirmed the new rate.' };
       }
     }
 
@@ -12975,6 +12983,52 @@ function showBookingPanel(rate, shipmentData) {
     const _hazPhone2 = document.getElementById('bk-haz-phone');
     if (_hazUn2) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn2.value.trim(); bookingData.hazContact = (_hazContact2&&_hazContact2.value.trim())||''; bookingData.hazPhone = (_hazPhone2&&_hazPhone2.value.trim())||''; }
     errEl.style.display = 'none';
+
+    // Residential guard for the Save path — same canonical check as btn.onclick and _execBookShipment.
+    // The gray "Save Shipment" button was bypassing this check entirely; without it a BOL is created
+    // at the non-residential rate and the carrier rebills the surcharge at delivery.
+    if (!window._resWarnShown) {
+      const _sbHasRSD = ((lastQuotedShipment&&lastQuotedShipment.accessorials)||[]).some(a=>/residential/i.test(a));
+      if (!_sbHasRSD) {
+        const _sbRes = await _geocodioResidentialCheck(bookingData.consigneeStreet, bookingData.consigneeCity, bookingData.consigneeState, bookingData.consigneeZip || destZip);
+        if (_sbRes.residential) {
+          window._resWarnShown = true;
+          const hasLFD_sb = ((lastQuotedShipment&&lastQuotedShipment.accessorials)||[]).some(a=>/liftgate/i.test(a));
+          const needsLFD_sb = !hasLFD_sb && !isParcelRate(bookingRate || lastQuotedShipment || {});
+          const sbOv = document.createElement('div');
+          sbOv.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;border-radius:0;';
+          const sbBox = document.createElement('div');
+          sbBox.style.cssText = 'background:var(--card);border-radius:14px;padding:24px;max-width:360px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);';
+          let sbIssues = '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="sb-chk-rsd" checked style="margin-top:2px;accent-color:var(--ac);width:14px;height:14px;flex-shrink:0;"><div><div style="font-size:13px;font-weight:600;color:var(--tx);">Add Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Address appears residential — carriers charge extra if not included.</div></div></label>';
+          if (needsLFD_sb) sbIssues += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="sb-chk-lfd" checked style="margin-top:2px;accent-color:var(--ac);width:14px;height:14px;flex-shrink:0;"><div><div style="font-size:13px;font-weight:600;color:var(--tx);">Add Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Residential address — liftgate recommended to avoid post-delivery surcharge.</div></div></label>';
+          sbBox.innerHTML = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><div style="width:36px;height:36px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div style="font-size:14px;font-weight:700;color:var(--tx);">Before You Save — Check These</div></div><div style="font-size:12px;color:var(--mu);margin-bottom:16px;">The delivery address <strong style="color:var(--tx);">' + (bookingData.consigneeStreet||_sbRes.formatted||'') + '</strong> appears to be residential. Select what to add:</div>' + sbIssues + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;"><button id="sb-rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button><button id="sb-rdi-save" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Save Without Changes</button></div>';
+          sbOv.appendChild(sbBox);
+          c.style.position = 'relative';
+          c.appendChild(sbOv);
+          document.getElementById('sb-rdi-save').onclick = async () => {
+            sbOv.remove(); window._resWarnShown = false; // allow re-check next time
+            saveBtn.textContent = 'Saving...'; saveBtn.disabled = true;
+            const formBodySave2 = document.getElementById('bk-form-body');
+            if (formBodySave2) { formBodySave2.style.opacity='0.4'; formBodySave2.style.pointerEvents='none'; }
+            showChatArea(); await submitBookingOnly();
+            if (formBodySave2) { formBodySave2.style.opacity=''; formBodySave2.style.pointerEvents=''; }
+          };
+          document.getElementById('sb-rdi-requote').onclick = () => {
+            const addRSD_sb = sbBox.querySelector('#sb-chk-rsd') && sbBox.querySelector('#sb-chk-rsd').checked;
+            const addLFD_sb = needsLFD_sb && sbBox.querySelector('#sb-chk-lfd') && sbBox.querySelector('#sb-chk-lfd').checked;
+            sbOv.remove();
+            const toAdd_sb = [];
+            if (addRSD_sb) toAdd_sb.push('RSD');
+            if (addLFD_sb) toAdd_sb.push('LFD');
+            window._bookingPanelContainer = null;
+            if (typeof applyRequoteAccessorials === 'function') applyRequoteAccessorials(toAdd_sb);
+            else if (window._showRequoteToast) window._showRequoteToast('Residential' + (addLFD_sb?' + Liftgate':''), toAdd_sb.join('+'));
+          };
+          return;
+        }
+      }
+    }
+
     saveBtn.textContent = 'Saving...'; saveBtn.disabled = true;
     const formBodySave = document.getElementById('bk-form-body');
     if (formBodySave) { formBodySave.style.opacity = '0.4'; formBodySave.style.pointerEvents = 'none'; }
