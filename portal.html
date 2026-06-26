@@ -2129,7 +2129,6 @@ function resetShipmentState(wipeConversation) {
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
-    window._quotedContacts = null;
     window._quoteFormOpen = false;
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
@@ -2145,6 +2144,7 @@ function resetShipmentState(wipeConversation) {
     } catch(e) {}
     if (wipeConversation) {
       chatHistory = [];
+      window._quotedContacts = null;
       try {
         if (typeof rpState !== 'undefined' && rpState.tabs) {
           rpState.tabs.filter(t => t.title === 'Get a Quote')
@@ -9672,7 +9672,8 @@ function _setBkField(id, val, evt) {
 function _applyBookingFields(input) {
   input = input || {};
   // Merge quote-time captured contacts as baseline so the booking panel auto-fills
-  // from a prior update_quote call that included shipper/consignee.
+  // from a prior update_quote call that included shipper/consignee, or from a
+  // requote where bookingData was snapshotted into _quotedContacts before panel closed.
   const _qc = window._quotedContacts || {};
   const sp = Object.assign({}, _qc.shipper || {}, input.shipper || {});
   const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
@@ -9681,7 +9682,7 @@ function _applyBookingFields(input) {
   _setBkField('bk-pu-suite', sp.suite);
   _setBkField('bk-pu-contact', sp.contact);
   _setBkField('bk-pu-phone', sp.phone);
-  _setBkField('bk-pu-ref', input.referenceNumber || sp.referenceNumber);
+  _setBkField('bk-pu-ref', input.referenceNumber || _qc.referenceNumber || sp.referenceNumber);
   if (input.pickupDate) _setBkField('bk-pu-date', input.pickupDate, 'change');
   if (input.pickupOpen) _setBkField('bk-pu-open', input.pickupOpen, 'change');
   if (input.pickupClose) _setBkField('bk-pu-close', input.pickupClose, 'change');
@@ -9690,9 +9691,10 @@ function _applyBookingFields(input) {
   _setBkField('bk-dl-suite', cn.suite);
   _setBkField('bk-dl-contact', cn.contact);
   _setBkField('bk-dl-phone', cn.phone);
-  if (input.specialInstructions) {
+  const siText = input.specialInstructions || _qc.specialInstructions;
+  if (siText) {
     const si = document.getElementById('bk-special-instructions');
-    if (si) { si.value = String(input.specialInstructions); si.dispatchEvent(new Event('input',{bubbles:true})); if (typeof flashField==='function') flashField(si); }
+    if (si) { si.value = String(siText); si.dispatchEvent(new Event('input',{bubbles:true})); if (typeof flashField==='function') flashField(si); }
   }
 }
 
@@ -9991,7 +9993,7 @@ async function _execRequoteShipment(input) {
   }
 }
 
-const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Talk like a sharp, friendly freight broker on the phone — natural, direct, helpful. You are chatting with a logged-in customer.
+const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Be natural, direct, and helpful — a knowledgeable freight expert who gets things done without drama. You are chatting with a logged-in customer.
 
 You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
 
@@ -10004,13 +10006,15 @@ WHAT YOU KNOW:
 - Accessorials: liftgate delivery $75-150, residential delivery $50-100, limited access $50-100+, inside delivery, appointment, two-man.
 - Cargo insurance is priced off the declared value by our system. Standard LTL carrier liability is about $0.50/lb. R&L is always $1/lb for new furniture.
 - Linear foot rules vary by carrier; anything over 4 standard pallets needs verification.
-- Residential delivery is our bread and butter — always speak about it and every carrier positively.
+- Residential delivery is our bread and butter. Never speak negatively about any carrier or service.
 
 HOW TO TALK:
 - Natural conversation, usually 2-4 sentences. Sound like a real person, not a brochure.
 - Plain prose. No bullet lists, no markdown headers, no emojis.
 - Never say something is "outside our services" — we handle all freight types and all industries.
 - Never editorialize about a customer's choice — no "great choice," "excellent," or "perfect." Just act on it.
+- Never editorialize about rates or carriers — no "tough to beat," "hard to beat," "great price," "right fit," "clearly the way to go," or any other value judgment. State the facts (carrier, price, transit days) and let the customer decide. You are not a salesperson.
+- Never fabricate explanations for rate behavior, carrier pricing, coverage, or residential status. If a carrier is not in the results, do not invent a reason why. If a rate did not change, do not invent a reason why. If you don't know, say "I'm not certain."
 - Never invent specific shipping rates.
 - For truckload, hazmat, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call.
 
@@ -10067,14 +10071,14 @@ READING WEIGHT AND DIMENSIONS — NEVER MISMAP THE NUMBERS. When a customer ratt
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. Also ask whether the freight is hazardous material (hazmat / dangerous goods) — if the customer says yes, or gives a UN number, set hazmat:true on the line item so the rate includes the carrier hazmat surcharge. You do not need the UN number to quote; the full UN number and emergency contact are collected at booking. Never guess hazmat — only set it when the customer indicates it. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting. PACKING SLIP EXCEPTION: when the customer's message is a packing slip or structured shipping document that already answers the accessorial questions — explicitly stating liftgate is not needed, identifying the facility type (commercial/dock/residential), or specifying limited access — do NOT re-ask those questions. The written document is the customer's answer. Extract the answers from the doc and apply them; asking again after the customer already provided a document is friction, not diligence.
 
-FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull ONLY when the shipment genuinely changes (new weight, dims, accessorial, origin, or destination). Repeatedly pulling rates churns the form and confuses the customer.
+FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull (getRates:true) when: (a) the shipment genuinely changes (new weight, dims, accessorial, origin, or destination), OR (b) the customer explicitly asks to re-rate or requote. Never decline an explicit customer request for new rates. Repeatedly pulling rates unprompted churns the form and confuses the customer.
 
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
 
 READING RATES BACK — you have a read_rates tool:
-Once rates are pulled, you can SEE them. When the customer asks anything about the rates — "what's the cheapest," "who's fastest," "what's next," "how long is the Estes one," "compare the top three," "what are my options" — call read_rates to get the live list (sorted cheapest-first with carrier, price, transit days, service, and any note). Then answer like a sharp broker: CONCISE by default — give what they asked plus the natural next step. Example: "Cheapest is Estes at $441, 4 days. Want me to book it?" For a follow-up like "what's next," give the next option: "TForce at $467, 3 days — a day faster for $26 more." You have the full list, so you can answer any follow-up about price, speed, carrier, or service. Never invent a price or transit time — only state what read_rates returns. For info that isn't in the rate data — like a carrier's terminal address or phone — use web_search. If read_rates comes back empty, tell them you need to pull rates first.
+Once rates are pulled, you can SEE them. When the customer asks anything about the rates — "what's the cheapest," "who's fastest," "what's next," "how long is the Estes one," "compare the top three," "what are my options" — call read_rates to get the live list (sorted cheapest-first with carrier, price, transit days, service, and any note). Then answer concisely: give what they asked plus the natural next step. Example: "Cheapest is Estes at $441, 4 days. Want me to book it?" For a follow-up like "what's next," give the next option: "TForce at $467, 3 days." You have the full list, so you can answer any follow-up about price, speed, carrier, or service. Never invent a price or transit time — only state what read_rates returns. Never add a value judgment ("that's a great rate," "tough to beat," "right fit") — just report the facts. For info that isn't in the rate data — like a carrier's terminal address or phone — use web_search. If read_rates comes back empty, tell them you need to pull rates first.
 
-READ_RATES IS READ-ONLY — NEVER RE-PULL TO ANSWER A QUESTION. This is critical: read_rates just looks at the rates already on the screen. When the customer asks about rates that are already pulled ("what's the cheapest," "who's next," "transit time," "what about Saia"), call read_rates ONLY. Do NOT call update_quote with getRates:true — that re-pulls and refreshes the rates the customer is already looking at, which is jarring and wrong. The customer will notice and be annoyed ("you just refreshed the rates"). Only ever re-pull rates (getRates:true) when something about the SHIPMENT actually changed — a new weight, new dimensions, a new accessorial, a different origin or destination. If nothing about the shipment changed and they're just asking about the options on screen, it is read_rates and nothing else. Also do not narrate "let me pull/grab/refresh those" when you are only reading — just answer.
+READ_RATES IS READ-ONLY — NEVER RE-PULL TO ANSWER A QUESTION. This is critical: read_rates just looks at the rates already on the screen. When the customer asks about rates that are already pulled ("what's the cheapest," "who's next," "transit time," "what about Saia"), call read_rates ONLY. Do NOT call update_quote with getRates:true — that re-pulls and refreshes the rates the customer is already looking at, which is jarring and wrong. The customer will notice and be annoyed ("you just refreshed the rates"). Only ever re-pull rates (getRates:true) when something about the SHIPMENT actually changed — a new weight, new dimensions, a new accessorial, a different origin or destination — OR when the customer explicitly asks to re-rate or requote. If they're just asking a question about rates already on screen (no change, no re-rate request), it is read_rates and nothing else. Also do not narrate "let me pull/grab/refresh those" when you are only reading — just answer.
 
 BOOKING A SHIPMENT — you have update_booking and book_shipment tools:
 When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in Estes"), you book it conversationally with a VISIBLE booking panel the customer watches fill in — just like the quote form. Steps:
@@ -10086,7 +10090,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    - Pickup date and pickup window — ALWAYS ASK, and never skip it. Before you read the booking back, you must have asked the customer which day they want the pickup and what time window, and gotten an answer (or an explicit "use the default"). REQUOTE EXCEPTION: if the customer already confirmed a pickup date and window earlier in this conversation and then asked for a requote (rate change only), carry those forward — you do not need to re-ask; just mention them in the read-back. Treat this exactly like the PO question: do not silently default without asking. PICKUPS ARE MONDAY–FRIDAY ONLY — carriers do not run weekend LTL pickups, so never schedule or confirm a Saturday or Sunday pickup; if the customer asks for a weekend, move it to the next business day (Monday) and tell them. If they have no preference, default the date to the next business day and the window to 12:00–16:00. IMPORTANT: the booking panel PRE-FILLS a default pickup date and window — those are placeholders, NOT something the customer chose. Even though the panel shows a date and time, you have NOT confirmed them until you ask; never read the pre-filled default back as if the customer picked it. Ask first, then keep the default only if they say they have no preference. Pass pickupDate, pickupOpen, pickupClose.
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
-4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, make sure residential delivery (RSD) is on, and for heavier freight to a home, raise the liftgate question — exactly like the form's pop-up: flag it, recommend it, and let the customer either add it or knowingly decline and assume the risk. Word it like: "That delivery address comes back residential and it's 275 lbs — want me to add residential delivery and a liftgate, or are you set to handle the unload?" Detect, recommend, let them choose. Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still recommend RSD if the address is residential. ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed.
+4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, report it and ask whether to add RSD (and liftgate for heavier LTL freight). State the fact, ask the question — let the customer decide; do NOT push them toward a choice. Word it like: "That delivery address comes back residential — want me to add residential delivery and a liftgate, or are you good handling the unload?" Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still inform the customer about RSD if the address is residential. ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). NEVER call book_shipment more than once for the same shipment.
@@ -10102,7 +10106,10 @@ Booking has TWO steps: Save and Dispatch. A customer can save a shipment now and
 Never pressure a customer to dispatch immediately — if they want to save and come back, that's the right flow.
 
 REQUOTING A SAVED SHIPMENT — you have a requote_shipment tool:
-When a customer wants to get new rates for a shipment they already saved (e.g. "requote BOL 12345," "re-rate my saved shipment," "I want a different carrier on that order"), call requote_shipment with the bol_id. It reopens the quote form pre-filled with the original freight details and contacts so the customer can adjust and get fresh rates. After calling it, tell the customer the form is open and ask them to confirm the pickup date or anything they want to change before you pull rates. Do NOT call update_quote with getRates:true until they've confirmed the details.
+When a customer wants to get new rates for a shipment they already saved (e.g. "requote BOL 12345," "re-rate my saved shipment," "I want a different carrier on that order"), call requote_shipment with the bol_id. It reopens the quote form pre-filled with the original freight details and contacts.
+ALWAYS HONOR AN EXPLICIT REQUOTE REQUEST — never refuse or delay re-pulling rates when the customer explicitly asks for a requote, even if nothing about the shipment appears to have changed. The customer may just want a fresh look at current market rates. If they say "requote it," re-pull immediately.
+After requote_shipment returns, immediately call update_quote with getRates:true to pull fresh rates — do not wait for additional confirmation unless the customer says they want to change something first. If the customer has not provided a pickup date yet, ask for it after the rates are on screen.
+RE-RATING AFTER AN ACCESSORIAL CHANGE (in-flight requote): when the customer is mid-booking and agrees to add an accessorial (e.g. "yes, add residential"), call update_quote with addAccessorials AND getRates:true in one call, then call read_rates to confirm the updated pricing, then read the new rate back before proceeding. This is a requote — it IS the right move; never skip it.
 
 COMPANY: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. support@freightandlogistics.com. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
@@ -13020,6 +13027,19 @@ function showBookingPanel(rate, shipmentData) {
             const toAdd_sb = [];
             if (addRSD_sb) toAdd_sb.push('RSD');
             if (addLFD_sb) toAdd_sb.push('LFD');
+            // Snapshot panel data to _quotedContacts before closing — preserves manually entered
+            // shipper/consignee/suite/PO/instructions through the requote cycle.
+            if (!window._quotedContacts) window._quotedContacts = {};
+            if (bookingData.shipperName || bookingData.shipperStreet || bookingData.shipperContact) {
+              const _psp = window._quotedContacts.shipper || {};
+              window._quotedContacts.shipper = { name: bookingData.shipperName||_psp.name||'', address: bookingData.shipperStreet||_psp.address||'', suite: bookingData.shipperSuite||_psp.suite||'', city: bookingData.shipperCity||_psp.city||'', state: bookingData.shipperState||_psp.state||'', contact: bookingData.shipperContact||_psp.contact||'', phone: bookingData.shipperPhone||_psp.phone||'', referenceNumber: bookingData.shipperRef||_psp.referenceNumber||'' };
+            }
+            if (bookingData.consigneeName || bookingData.consigneeStreet || bookingData.consigneeContact) {
+              const _pcn = window._quotedContacts.consignee || {};
+              window._quotedContacts.consignee = { name: bookingData.consigneeName||_pcn.name||'', address: bookingData.consigneeStreet||_pcn.address||'', suite: bookingData.consigneeSuite||_pcn.suite||'', city: bookingData.consigneeCity||_pcn.city||'', state: bookingData.consigneeState||_pcn.state||'', contact: bookingData.consigneeContact||_pcn.contact||'', phone: bookingData.consigneePhone||_pcn.phone||'' };
+            }
+            if (bookingData.specialInstructions) window._quotedContacts.specialInstructions = bookingData.specialInstructions;
+            if (bookingData.shipperRef) window._quotedContacts.referenceNumber = bookingData.shipperRef;
             window._bookingPanelContainer = null;
             if (typeof applyRequoteAccessorials === 'function') applyRequoteAccessorials(toAdd_sb);
             else if (window._showRequoteToast) window._showRequoteToast('Residential' + (addLFD_sb?' + Liftgate':''), toAdd_sb.join('+'));
@@ -13230,6 +13250,19 @@ function showBookingPanel(rate, shipmentData) {
               const toAdd = [];
               if (addRSD) toAdd.push('RSD');
               if (addLFD) toAdd.push('LFD');
+              // Snapshot panel data to _quotedContacts before closing — preserves manually entered
+              // shipper/consignee/suite/PO/instructions through the requote cycle.
+              if (!window._quotedContacts) window._quotedContacts = {};
+              if (bookingData.shipperName || bookingData.shipperStreet || bookingData.shipperContact) {
+                const _psp = window._quotedContacts.shipper || {};
+                window._quotedContacts.shipper = { name: bookingData.shipperName||_psp.name||'', address: bookingData.shipperStreet||_psp.address||'', suite: bookingData.shipperSuite||_psp.suite||'', city: bookingData.shipperCity||_psp.city||'', state: bookingData.shipperState||_psp.state||'', contact: bookingData.shipperContact||_psp.contact||'', phone: bookingData.shipperPhone||_psp.phone||'', referenceNumber: bookingData.shipperRef||_psp.referenceNumber||'' };
+              }
+              if (bookingData.consigneeName || bookingData.consigneeStreet || bookingData.consigneeContact) {
+                const _pcn = window._quotedContacts.consignee || {};
+                window._quotedContacts.consignee = { name: bookingData.consigneeName||_pcn.name||'', address: bookingData.consigneeStreet||_pcn.address||'', suite: bookingData.consigneeSuite||_pcn.suite||'', city: bookingData.consigneeCity||_pcn.city||'', state: bookingData.consigneeState||_pcn.state||'', contact: bookingData.consigneeContact||_pcn.contact||'', phone: bookingData.consigneePhone||_pcn.phone||'' };
+              }
+              if (bookingData.specialInstructions) window._quotedContacts.specialInstructions = bookingData.specialInstructions;
+              if (bookingData.shipperRef) window._quotedContacts.referenceNumber = bookingData.shipperRef;
               window._bookingPanelContainer = null;
 
               // Close the booking tab first
