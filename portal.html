@@ -2091,6 +2091,18 @@ const ACC_MAP = {
   // 'Appointment':           'APT',
 };
 
+const ACC_LABEL = {
+  RSD:'Residential Delivery',  RSO:'Residential Pickup',
+  LFD:'Liftgate Delivery',     LFO:'Liftgate Pickup',
+  IND:'Inside Delivery',       INO:'Inside Pickup',
+  LAD:'Limited Access Delivery', NAO:'Limited Access Pickup',
+  APT:'Appointment Delivery',  APD:'Appointment Delivery',
+  INS:'Cargo Insurance',       HZM:'Hazmat',
+  OVL:'Overlength',            SOR:'Sort & Segregate',
+  TWO:'Two-Man Delivery',      NBD:'Notify Before Delivery',
+  NAD:'Limited Access Delivery',
+};
+
 const BOX_VENDOR_IDS       = [1722353822,275896084,514597722,178611714,1981463586,1747236260,2083014725,1011981016,1892709332,1918549515];
 const THRESHOLD_VENDOR_IDS = [1918549515,1981463586,1747236260];
 
@@ -5525,7 +5537,7 @@ function editSavedShipment(s, BOLId, BOLNumber) {
     originZip: originZip, destZip: destZip, destinationZip: destZip,
     weight: lineItems.reduce((a,i)=>a+(i.weight||0)*(i.pieces||1),0),
     pieces: lineItems.reduce((a,i)=>a+(i.pieces||1),0),
-    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','IND':'Inside Delivery','LAD':'Limited Access Delivery','NAO':'Limited Access Pickup','APT':'Appointment Required','NAD':'Limited Access Delivery'}[cd]||cd)),
+    accessorials: accCodes.map(cd=>(ACC_LABEL[cd]||cd)),
     pickupDate: (d => (!d || isPastPickup(d) ? getTomorrow() : d))(s.estimatedPickupDate || s.actualPickupDate || ti.dispatchDate),
     lineItems: lineItems, items: lineItems,
     length: lineItems[0].length, width: lineItems[0].width, height: lineItems[0].height,
@@ -5815,7 +5827,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     const editShipData = {
       originZip: originZip,
       destinationZip: destZip,
-      accessorials: accCodes.map(c=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required'}[c]||c)),
+      accessorials: accCodes.map(c=>(ACC_LABEL[c]||c)),
       items: freightItems.length ? freightItems.map(it=>({
         pieces: Number(it.qty||it.pieces||1),
         weight: Number(it.weight||0),
@@ -5983,7 +5995,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
   const editShipData = {
     originZip: originZip, destinationZip: destZip,
-    accessorials: accCodes.map(cd=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required'}[cd]||cd)),
+    accessorials: accCodes.map(cd=>(ACC_LABEL[cd]||cd)),
     items: freightItems.length ? freightItems.map(it=>({
       pieces: Number(it.qty||it.pieces||1), weight: Number(it.weight||0),
       length: Number(it.length||48), width: Number(it.width||40), height: Number(it.height||48),
@@ -6192,7 +6204,7 @@ async function showShipmentDetail(s) {
           <div style="font-size:9px;font-weight:700;color:var(--ac);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Carrier</div>
           <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:3px;">${carrierName||'—'}</div>
           <div style="font-size:12px;color:var(--mu);">${[ven.serviceLevel||'LTL', transit?'Transit: '+transit+' days':null, quoteNum?'Quote #'+quoteNum:null].filter(Boolean).join(' · ')}</div>
-          ${accStr && accStr.length ? `<div style="font-size:11px;color:var(--mu);margin-top:4px;"><span style="font-weight:600;color:var(--tx);">Accessorials:</span> ${(Array.isArray(accStr)?accStr:[accStr]).map(a=>({'LFD':'Liftgate Delivery','LFO':'Liftgate Pickup','RSD':'Residential Delivery','RSO':'Residential Pickup','IND':'Inside Delivery','INO':'Inside Pickup','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment Required','INS':'Cargo Insurance','HZM':'Hazmat','OVL':'Overlength','SOR':'Sort & Segregate','TWO':'Two-Man Delivery','NBD':'Notify Before Delivery'}[a]||a)).join(', ')}</div>` : ''}
+          ${accStr && accStr.length ? `<div style="font-size:11px;color:var(--mu);margin-top:4px;"><span style="font-weight:600;color:var(--tx);">Accessorials:</span> ${(Array.isArray(accStr)?accStr:[accStr]).map(a=>(ACC_LABEL[a]||a)).join(', ')}</div>` : ''}
         </div>
       </div>
 
@@ -7318,7 +7330,7 @@ function applyRequoteAccessorials(toAdd) {
     const toast = document.createElement('div');
     toast.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-left:3px solid var(--ac);border-radius:4px;padding:8px 12px;margin-bottom:8px;display:flex;align-items:center;gap:8px;';
     toast.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2.5" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>' +
-      '<span style="font-size:12px;color:var(--tx);"><strong>' + toAdd.map(c => c==='RSD'?'Residential Delivery':'Liftgate Delivery').join(' + ') + ' added</strong> — getting fresh rates…</span>';
+      '<span style="font-size:12px;color:var(--tx);"><strong>' + toAdd.map(c => ACC_LABEL[c]||c).join(' + ') + ' added</strong> — getting fresh rates…</span>';
     getRatesBtn.parentNode.insertBefore(toast, getRatesBtn);
     setTimeout(() => {
       if (window._doGetRates) window._doGetRates(); else getRatesBtn.click();
@@ -9225,9 +9237,8 @@ function describeQuoteInput(input) {
       if (d.length) parts.push((input.items.length > 1 ? 'item ' + (i+1) + ' ' : '') + d.join(' '));
     });
   }
-  const accMap = { RSO:'residential pickup', LFO:'liftgate pickup', NAO:'limited access pickup', RSD:'residential delivery', LFD:'liftgate delivery', IND:'inside delivery', LAD:'limited access delivery', APT:'appointment', INS:'insurance' };
-  if (input.addAccessorials && input.addAccessorials.length) parts.push('added ' + input.addAccessorials.map(c=>accMap[c]||c).join(', '));
-  if (input.removeAccessorials && input.removeAccessorials.length) parts.push('removed ' + input.removeAccessorials.map(c=>accMap[c]||c).join(', '));
+  if (input.addAccessorials && input.addAccessorials.length) parts.push('added ' + input.addAccessorials.map(c=>(ACC_LABEL[c]||c).toLowerCase()).join(', '));
+  if (input.removeAccessorials && input.removeAccessorials.length) parts.push('removed ' + input.removeAccessorials.map(c=>(ACC_LABEL[c]||c).toLowerCase()).join(', '));
   return parts.join('; ');
 }
 
@@ -11595,7 +11606,7 @@ async function handleInput(text) {
         filled.length = 0; _nonEmpty.forEach(f => filled.push(f));
       } else if (parsed.length) filled.push('dims ' + parsed.length + 'x' + parsed.width + 'x' + parsed.height);
       if (parsed.accessorials) {
-        const accReadable = parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',NAD:'Limited Access Delivery',INS:'Cargo Insurance'}[c]||c));
+        const accReadable = parsed.accessorials.map(c=>(ACC_LABEL[c]||c));
         filled.push(accReadable.join(', '));
       }
       setTimeout(() => {
@@ -12015,7 +12026,7 @@ async function handleInput(text) {
       if (parsed.weight)        filled.push(parsed.weight + ' lbs');
       if (parsed.pieces)        filled.push(parsed.pieces + ' piece' + (parsed.pieces !== '1' ? 's' : ''));
       if (parsed.length)        filled.push('dims ' + parsed.length + 'x' + parsed.width + 'x' + parsed.height);
-      if (parsed.accessorials)  filled.push(parsed.accessorials.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup',IND:'Inside Delivery',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',NAD:'Limited Access Delivery',INS:'Cargo Insurance'}[c]||c)).join(', '));
+      if (parsed.accessorials)  filled.push(parsed.accessorials.map(c=>(ACC_LABEL[c]||c)).join(', '));
       // Delay fill+check to allow quote form DOM to fully render
       setTimeout(() => {
         fillQuoteForm(parsed);
@@ -12452,7 +12463,7 @@ function showSavedQuotes() {
     const savedDate = new Date(q.savedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
     const ageDays = q.savedAt ? Math.floor((Date.now() - q.savedAt) / (1000*60*60*24)) : 0;
     const isStale = ageDays >= 3;
-    const acc = (q.accessorials || []).map(c=>({'RSO':'Residential Pickup','LFO':'Liftgate Pickup','NAO':'Limited Access Pickup','RSD':'Residential Delivery','LFD':'Liftgate Delivery','IND':'Inside Delivery','NAD':'Limited Access Delivery','NAO':'Limited Access Pickup','LAD':'Limited Access Delivery','APT':'Appointment','INS':'Insurance'}[c]||c)).join(', ') || 'Dock to Dock';
+    const acc = (q.accessorials || []).map(c=>(ACC_LABEL[c]||c)).join(', ') || 'Dock to Dock';
     const displayPrice = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0));
     const carrierName  = q.carrierName || (q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name)) || '';
     const carrierLogo  = q.carrierLogo || (q.rates&&q.rates[0]&&(q.rates[0]._iconUrl||q.rates[0].iconUrl)) || '';
@@ -12535,7 +12546,7 @@ function showBookingPanel(rate, shipmentData) {
   const weight    = shipmentData.weight    || 0;
   const pieces    = shipmentData.pieces    || 1;
   const accList   = (shipmentData.accessorials || []);
-  const accLabels = accList.map(c=>({RSO:'Residential Pickup',LFO:'Liftgate Pickup',NAO:'Limited Access Pickup',RSD:'Residential Delivery',LFD:'Liftgate Delivery',IND:'Inside Delivery',NAD:'Limited Access',LAD:'Appointment',INS:'Cargo Insurance'}[c]||c)).join(', ')||'Dock to Dock';
+  const accLabels = accList.map(c=>(ACC_LABEL[c]||c)).join(', ')||'Dock to Dock';
   const pickupDate = shipmentData.pickupDate || getTomorrow();
 
   bookingRate = rate;
@@ -12555,7 +12566,7 @@ function showBookingPanel(rate, shipmentData) {
     originZip, destinationZip: destZip,
     originCountry: (window._lastRatesShipment && window._lastRatesShipment.originCountry) || 'US',
     destinationCountry: (window._lastRatesShipment && window._lastRatesShipment.destinationCountry) || 'US',
-    accessorials: accList.map(c=>({RSD:'Residential Delivery',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',RSO:'Residential Pickup'}[c]||c)),
+    accessorials: accList.map(c=>(ACC_LABEL[c]||c)),
     items: (shipmentData.lineItems && shipmentData.lineItems.length)
       ? shipmentData.lineItems.map(it => ({ pieces: Number(it.qty)||1, weight: Number(it.weight||weight)||0, length: Number(it.length)||_bkL||48, width: Number(it.width)||_bkW||40, height: Number(it.height)||_bkH||48, packageType: it.dimType||_bkType, freightClass: it.freightClass||_bkFC, description: it.commodity||_bkDesc, hazmat: it.hazmat||false, stack: it.stack||false, stackAmount: (it.stack||false) ? 2 : 1 }))
       : [{ pieces, weight, length: _bkL || 48, width: _bkW || 40, height: _bkH || 48, packageType: _bkType, freightClass: _bkFC, description: _bkDesc }]
@@ -14657,7 +14668,7 @@ function showQuoteForm(prefill, silent) {
           (rate.iconUrl ? '<img src="'+rate.iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;" onerror="this.onerror=null;this.hidden=true">' : '') +
           name + '</td>' +
         '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
-          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
             '<span>' + svc + '</span>' +
             (svcMsg ?
               '<button class="qt-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:var(--font);line-height:1.4;flex-shrink:0;">' +
@@ -14861,7 +14872,7 @@ function showQuoteForm(prefill, silent) {
     // Summary bar
     const totalLbs = items.reduce((s,it)=>s+(it.weight||0)*(it.qty||1),0);
     const totalPcs = items.reduce((s,it)=>s+(it.qty||1),0);
-    const accLabelsStr = accessorials.map(c=>({RSD:'Residential Delivery',RSO:'Residential Pickup',LFD:'Liftgate Delivery',LFO:'Liftgate Pickup',IND:'Inside Delivery',INO:'Inside Pickup',LAD:'Limited Access Delivery',NAO:'Limited Access Pickup',APT:'Appointment',INS:'Cargo Insurance'}[c]||c)).join(', ');
+    const accLabelsStr = accessorials.map(c=>(ACC_LABEL[c]||c)).join(', ');
     const sumEl = container.querySelector('#qt-quote-summary');
     if (sumEl) sumEl.textContent = originZip + ' → ' + destZip + '  ·  ' + totalPcs + ' pcs  ·  ' + totalLbs + ' lbs' + (accLabelsStr?' · '+accLabelsStr:'');
 
