@@ -2117,6 +2117,7 @@ function resetShipmentState(wipeConversation) {
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
+    window._quotedContacts = null;
     window._quoteFormOpen = false;
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
@@ -5130,21 +5131,24 @@ function showBookingConfirmedModal(bc) {
     const docRow = document.createElement('div');
     docRow.style.cssText = 'display:flex;flex-wrap:nowrap;gap:8px;margin-bottom:16px;overflow-x:auto;';
     validDocs.forEach(doc => {
-      const isBOL   = (doc.type||'').toUpperCase() === 'BOL' || /bol|bill/i.test(doc.name||'');
-      const isLabel = (doc.type||'').toUpperCase() === 'LBL' || /label|shipping/i.test(doc.name||'');
-      const isQuote = (doc.type||'').toUpperCase() === 'QUO' || /quote/i.test(doc.name||'');
-      if (bc.isParcel && isBOL && !isLabel) return;
-      const isPrimary = bc.isParcel ? isLabel : isBOL;
+      const _dt    = (doc.type||'').toUpperCase();
+      const isClbl  = _dt === 'CLBL';
+      const isBOL   = _dt === 'BOL';
+      const isLBL   = _dt === 'LBL';
+      const isQuote = _dt === 'QUO';
+      // Parcel: show only CLBL (real carrier label) and QUO. Suppress LBL placeholder and BOL.
+      if (bc.isParcel && (isBOL || isLBL)) return;
+      const isPrimary = bc.isParcel ? isClbl : isBOL;
       const a = document.createElement('a');
       a.href = doc.url; a.target = '_blank';
       a.style.cssText = 'display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:9px;font-size:12px;font-weight:600;text-decoration:none;transition:all .12s;' +
         (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);');
       const icon = isBOL
         ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
-        : isLabel
+        : isClbl
           ? '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'
           : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-      const docLabel = bc.isParcel && isLabel ? 'Download Carrier Label' : isQuote ? 'Quote' : doc.name || doc.type || 'Document';
+      const docLabel = bc.isParcel && isClbl ? 'Download Carrier Label' : isQuote ? 'Quote' : doc.name || doc.type || 'Document';
       a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + icon + '</svg>' + docLabel;
       docRow.appendChild(a);
     });
@@ -5180,17 +5184,22 @@ function showBookingConfirmedModal(bc) {
           bar.id = 'bk-persisted-docs';
           bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-wrap:wrap;';
           validDocs.forEach(doc => {
-            const isBOL   = (doc.type||'').toUpperCase() === 'BOL' || /bol|bill/i.test(doc.name||'');
-            const isLabel = (doc.type||'').toUpperCase() === 'LBL' || /label|shipping/i.test(doc.name||'');
-            const isQuote2 = (doc.type||'').toUpperCase() === 'QUO' || /quote/i.test(doc.name||'');
-            if (bc.isParcel && isBOL && !isLabel) return;
-            const isPrimary = bc.isParcel ? isLabel : isBOL;
+            const _dt2    = (doc.type||'').toUpperCase();
+            const isClbl2  = _dt2 === 'CLBL';
+            const isBOL2   = _dt2 === 'BOL';
+            const isLBL2   = _dt2 === 'LBL';
+            const isQuote2 = _dt2 === 'QUO';
+            // Parcel: show only CLBL and QUO; suppress LBL placeholder and BOL
+            if (bc.isParcel && (isBOL2 || isLBL2)) return;
+            const isPrimary = bc.isParcel ? isClbl2 : isBOL2;
             const a = document.createElement('a');
             a.href = doc.url; a.target = '_blank';
             a.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:600;text-decoration:none;' +
               (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#fff;border:1px solid var(--bdr);color:var(--tx);');
-            const icon = isBOL ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>' : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
-            const barLabel = bc.isParcel && isLabel ? 'Carrier Label' : isQuote2 ? 'Quote' : doc.name||doc.type||'Document';
+            const icon = isBOL2 ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
+                       : isClbl2 ? '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'
+                       : '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>';
+            const barLabel = bc.isParcel && isClbl2 ? 'Carrier Label' : isQuote2 ? 'Quote' : doc.name||doc.type||'Document';
             a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + barLabel;
             bar.appendChild(a);
           });
@@ -9297,6 +9306,49 @@ function _applyQuoteFields(input) {
   if (input.addAccessorials) input.addAccessorials.forEach(c => toggleAcc(c, true));
   if (input.removeAccessorials) input.removeAccessorials.forEach(c => toggleAcc(c, false));
 
+  // Shipper/consignee — the quote form has no DOM fields for party details, so store
+  // them in window._quotedContacts. They surface in _quoteFormState (so the agent sees
+  // "shipper already provided") and are merged into the booking payload automatically.
+  if (input.shipper && typeof input.shipper === 'object') {
+    if (!window._quotedContacts) window._quotedContacts = {};
+    const _prevSp = window._quotedContacts.shipper || {};
+    const _sp = input.shipper;
+    window._quotedContacts.shipper = {
+      name:    _sp.name    !== undefined ? _sp.name    : _prevSp.name    || '',
+      address: _sp.address !== undefined ? _sp.address : _prevSp.address || '',
+      city:    _sp.city    !== undefined ? _sp.city    : _prevSp.city    || '',
+      state:   _sp.state   !== undefined ? _sp.state   : _prevSp.state   || '',
+      contact: _sp.contact !== undefined ? _sp.contact : _prevSp.contact || '',
+      phone:   _sp.phone   !== undefined ? _sp.phone   : _prevSp.phone   || '',
+    };
+    // Also write to the booking panel if it happens to be open already
+    if (document.getElementById('bk-pu-name')) {
+      if (_sp.name)    _setBkField('bk-pu-name',    _sp.name);
+      if (_sp.address) _setBkField('bk-pu-street',  _sp.address);
+      if (_sp.contact) _setBkField('bk-pu-contact', _sp.contact);
+      if (_sp.phone)   _setBkField('bk-pu-phone',   _sp.phone);
+    }
+  }
+  if (input.consignee && typeof input.consignee === 'object') {
+    if (!window._quotedContacts) window._quotedContacts = {};
+    const _prevCn = window._quotedContacts.consignee || {};
+    const _cn = input.consignee;
+    window._quotedContacts.consignee = {
+      name:    _cn.name    !== undefined ? _cn.name    : _prevCn.name    || '',
+      address: _cn.address !== undefined ? _cn.address : _prevCn.address || '',
+      city:    _cn.city    !== undefined ? _cn.city    : _prevCn.city    || '',
+      state:   _cn.state   !== undefined ? _cn.state   : _prevCn.state   || '',
+      contact: _cn.contact !== undefined ? _cn.contact : _prevCn.contact || '',
+      phone:   _cn.phone   !== undefined ? _cn.phone   : _prevCn.phone   || '',
+    };
+    if (document.getElementById('bk-dl-name')) {
+      if (_cn.name)    _setBkField('bk-dl-name',    _cn.name);
+      if (_cn.address) _setBkField('bk-dl-street',  _cn.address);
+      if (_cn.contact) _setBkField('bk-dl-contact', _cn.contact);
+      if (_cn.phone)   _setBkField('bk-dl-phone',   _cn.phone);
+    }
+  }
+
   // Pull rates if requested — but GUARD against redundant pulls that churn the form.
   // Only actually pull if the shipment signature changed since the last pull.
   if (input.getRates) {
@@ -9382,7 +9434,9 @@ function _quoteFormState() {
       stc: first.stc,
       items: items,
       accessorials: accs,
-      ratesPulled: !!(window._lastRates && window._lastRates.count)
+      ratesPulled: !!(window._lastRates && window._lastRates.count),
+      shipper:   (window._quotedContacts && window._quotedContacts.shipper   && Object.values(window._quotedContacts.shipper).some(Boolean))   ? window._quotedContacts.shipper   : undefined,
+      consignee: (window._quotedContacts && window._quotedContacts.consignee && Object.values(window._quotedContacts.consignee).some(Boolean)) ? window._quotedContacts.consignee : undefined,
     };
   } catch(e) { return { quoteFormOpen: false }; }
 }
@@ -9571,8 +9625,11 @@ function _setBkField(id, val, evt) {
 
 function _applyBookingFields(input) {
   input = input || {};
-  const sp = input.shipper || {};
-  const cn = input.consignee || {};
+  // Merge quote-time captured contacts as baseline so the booking panel auto-fills
+  // from a prior update_quote call that included shipper/consignee.
+  const _qc = window._quotedContacts || {};
+  const sp = Object.assign({}, _qc.shipper || {}, input.shipper || {});
+  const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
   _setBkField('bk-pu-name', sp.name);
   _setBkField('bk-pu-street', sp.address || sp.street);
   _setBkField('bk-pu-suite', sp.suite);
@@ -9690,8 +9747,12 @@ async function _execBookShipment(input) {
     const hasResPU = accCodes.includes('RSO');
     const hasResDL = accCodes.includes('RSD');
 
-    const sp = input.shipper || {};
-    const cn = input.consignee || {};
+    // Merge quote-time captured party details as baseline — _quotedContacts is populated when
+    // the agent calls update_quote with shipper/consignee (e.g. from a pasted shipment).
+    // Explicit book_shipment args take precedence over quote-time values (never lose an update).
+    const _qc = window._quotedContacts || {};
+    const sp = Object.assign({}, _qc.shipper || {}, input.shipper || {});
+    const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
     const items = (s.items && s.items.length) ? s.items : [];
 
     // Residential safeguard (mirrors the form's RDI pop-up): verify the delivery STREET address.
@@ -9919,14 +9980,18 @@ When a customer wants to ship something or get a rate, use update_quote to open 
 
 OPEN THE FORM IMMEDIATELY when you recognize a quote — on your very first quote response, even before you have any details. The moment you say something like "I'd love to help you get a quote, where's it shipping from?", you should ALSO call update_quote (with whatever you have, or with nothing — an empty call just opens the blank form). This makes the quote form appear on the Quote Details tab right away, so the customer sees it and watches every answer fill in live as they talk. Do NOT wait until you have the ZIPs or weight to open it — open it on turn one, then fill fields as the details come in. Filling the form is EAGER and EARLY (open immediately, populate each detail as you get it). Only PULLING RATES is deliberate and late (after details + accessorials confirmed, when the customer asks).
 
-PACKING SLIPS AND COMPLETE BOL COPIES — extract everything in one shot. When a customer pastes a complete packing slip, BOL copy, or order form that already contains weight, dimensions, piece count, freight class, and NMFC, do NOT ask for fields that are plainly stated. Read the document and call update_quote with every field you can extract. Critical parsing rules:
+PACKING SLIPS AND COMPLETE BOL COPIES — extract everything in one shot. When a customer pastes a complete shipment description, packing slip, BOL copy, or order form, do NOT ask for fields that are plainly stated. Read the message and call update_quote with EVERY field you can extract — freight AND party details. Critical parsing rules:
+- SHIPPER: extract company name, street address, city, state, contact name, phone → pass as shipper:{name, address, city, state, contact, phone} in update_quote. "Michaels Furniture 7240 Crider Ave Pico Rivera CA 90660 Contact Juan Ortiz 888-888-8888" → shipper:{name:"Michaels Furniture", address:"7240 Crider Ave", city:"Pico Rivera", state:"CA", contact:"Juan Ortiz", phone:"8888888888"}.
+- CONSIGNEE: same extraction → pass as consignee:{name, address, city, state, contact, phone}. "to Mike Smith 1145 S Clark Drive LA CA 90035 Contact Mike Smith 555-555-5555" → consignee:{name:"Mike Smith", address:"1145 S Clark Drive", city:"Los Angeles", state:"CA", contact:"Mike Smith", phone:"5555555555"}.
 - PIECE COUNT comes from labels like "Total Pallet Count:", "Total Boxes:", "Qty:", "Pieces:", or the count of "PALLET #" sections. Never use a PO number as pieces.
 - PO NUMBERS are labeled "PO #", "PO:", "Purchase Order:", "Ref #" etc. They go in referenceNumber at booking, NOT in pieces. A PO # of 32620 is not 32620 pieces.
 - DIMENSIONS labeled "Dimensions: 55"L x 38"W x 43"H" or "L x W x H" are exact — extract them.
 - FREIGHT CLASS labeled "Freight Class: 250" on the customer's own document is their stated class — you may pass it as freightClass. This is not inventing it; it is what the customer provided.
 - NMFC labeled "NMFC: 79300" — pass it as nmfc.
 - ACCESSORIALS at the bottom of a packing slip ("Need liftgate on residential delivery") should be mapped to the correct codes (LFD + RSD in this case).
-After extracting, still ask about pickup date and window if not stated.
+- PHONES: strip all non-digit characters (dashes, parentheses, spaces) before passing.
+- ZIP CODES: extract from the address if present and use as originZip/destZip.
+The shipper and consignee are stored automatically and carried through to booking — you will NEVER need to re-ask for them. After extracting, still ask about pickup date and window if not stated.
 
 NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class you invented; let the form auto-calculate it. Exception: if the customer's own document explicitly states a freight class (a packing slip, BOL copy, or they typed it), you may pass it as-is. NMFC IS OPTIONAL — Primus does not require an NMFC code. You may ask once if the customer has an NMFC they'd like on the BOL, but never require it and never hold up a quote or booking over it; if they don't have one or don't want to give one, that's completely fine, just move on. So when they say "quote a sofa from Ocala to Wilmington":
 - Fill what you genuinely know once locations are unambiguous: originZip (look up Ocala = 34470), destZip, commodity "sofa". If the destination city is ambiguous (like "Wilmington"), ask which state before filling it.
@@ -10095,7 +10160,23 @@ async function aiConverse(userText) {
                   },
                   addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APT appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, NAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
                   removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
-                  getRates: { type: 'boolean', description: 'Set true to pull live rates now' }
+                  getRates: { type: 'boolean', description: 'Set true to pull live rates now' },
+                  shipper: { type: 'object', description: 'Pickup/origin party. Set whenever the customer provides the shipper name, address, or contact — especially when they paste a complete shipment in one message. These are stored and carried through to booking automatically so you never re-ask.', properties: {
+                    name:    { type: 'string', description: 'Company or person name at pickup' },
+                    address: { type: 'string', description: 'Street address (e.g. "7240 Crider Ave")' },
+                    city:    { type: 'string' },
+                    state:   { type: 'string', description: '2-letter state code (e.g. "CA")' },
+                    contact: { type: 'string', description: 'Contact person name' },
+                    phone:   { type: 'string', description: '10-digit phone number, digits only' }
+                  } },
+                  consignee: { type: 'object', description: 'Delivery/destination party. Set whenever the customer provides the consignee name, address, or contact — especially when they paste a complete shipment. Stored and carried to booking automatically.', properties: {
+                    name:    { type: 'string', description: 'Company or person name at delivery' },
+                    address: { type: 'string', description: 'Street address' },
+                    city:    { type: 'string' },
+                    state:   { type: 'string', description: '2-letter state code' },
+                    contact: { type: 'string', description: 'Contact person name' },
+                    phone:   { type: 'string', description: '10-digit phone number, digits only' }
+                  } }
                 }
               }
             },
@@ -10106,7 +10187,7 @@ async function aiConverse(userText) {
             },
             {
               name: 'book_shipment',
-              description: 'Book the shipment with a chosen carrier. Only call this AFTER the customer has confirmed they want to book a specific carrier AND you have read back the full details (carrier, price, pickup date, shipper and consignee name/address/contact/phone). Identify the carrier by rank (1=cheapest) or carrier name. Collect shipper and consignee details conversationally first.',
+              description: 'Book the shipment with a chosen carrier. Only call this AFTER the customer has confirmed they want to book a specific carrier AND you have read back the full details (carrier, price, pickup date, shipper and consignee name/address/contact/phone). Identify the carrier by rank (1=cheapest) or carrier name. If shipper and consignee were already provided earlier (via update_quote or in the chat), they are stored automatically — do NOT re-ask for them. Only ask for genuinely missing fields. Check formState.shipper and formState.consignee in the live state block to see what is already on file.',
               input_schema: {
                 type: 'object',
                 properties: {
