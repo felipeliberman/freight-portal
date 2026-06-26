@@ -9760,17 +9760,20 @@ async function _execBookShipment(input) {
     const items = (s.items && s.items.length) ? s.items : [];
 
     // Residential safeguard — fires BEFORE saveRate/Primus POST so no stale BOL is ever created.
-    // PRIMARY: use window._residentialStatus set by the quote form's checkResidential() — it is
-    // already known to the agent via the live state block and is more reliable than a second
-    // geocodio call at booking time (zip-only / city+zip queries return no zip4.residential data).
-    // FALLBACK: live geocodio only when no cached status AND a street address is present.
+    // PRIMARY: trust the cache ONLY when it says residential=true — that is always definitive.
+    //   A cached residential=false is NOT reliable: checkResidential() queries city+ZIP (never
+    //   a street address), and Geocodio returns no zip4 data for city+ZIP queries, so the form
+    //   always resolves to residential=false even for real residential streets like 8859 Horner St.
+    // FALLBACK: live Geocodio with the full street address — this is the ONLY reliable check.
+    //   Always runs if cn.address is present and not already blocked. The tiny latency cost is
+    //   worth it: a missed residential check creates a $14.95+ carrier rebill on every parcel.
     if (!window._resWarnShown && !accCodes.includes('RSD')) {
       let _resBlocked = false, _resAddr = s.destinationZip || '';
       const _cachedRes = window._residentialStatus;
       if (_cachedRes && _cachedRes.residential === true) {
         _resBlocked = true;
       }
-      if (!_resBlocked && !_cachedRes) {
+      if (!_resBlocked) {
         const _cnStreet = cn.address && cn.address.trim();
         if (_cnStreet) {
           try {
