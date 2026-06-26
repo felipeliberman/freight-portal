@@ -9741,16 +9741,9 @@ async function _execBookShipment(input) {
             || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
       }
       if (!rate) return { ok:false, error:'Could not match that carrier to the pulled rates. Ask the customer which carrier by name or rank.' };
-      // FREEZE this rate + shipment for the rest of the booking
-      window._bookingLock = { rate: rate, shipment: s };
+      // NOTE: _bookingLock is set AFTER the residential guard below — a warning return must
+      // never freeze a pre-RSD rate. Lock is only applied when proceeding to actually book.
     }
-
-    const rateId = rate.id || rate.rateId;
-    const token = await getToken();
-
-    // Reserve the rate to get a quoteNumber (fresh, so it matches what we book)
-    let quoteNumber = null;
-    try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
 
     // Accessorial codes from the shipment
     const accCodes = [];
@@ -9766,27 +9759,51 @@ async function _execBookShipment(input) {
     const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
     const items = (s.items && s.items.length) ? s.items : [];
 
-    // Residential safeguard (mirrors the form's RDI pop-up): verify the delivery STREET address.
-    // If it comes back residential and residential delivery isn't already on, surface it ONCE so the
-    // agent confirms with the customer before booking — adding residential changes the rate.
+    // Residential safeguard — fires BEFORE saveRate/Primus POST so no stale BOL is ever created.
+    // PRIMARY: use window._residentialStatus set by the quote form's checkResidential() — it is
+    // already known to the agent via the live state block and is more reliable than a second
+    // geocodio call at booking time (zip-only / city+zip queries return no zip4.residential data).
+    // FALLBACK: live geocodio only when no cached status AND a street address is present.
     if (!window._resWarnShown && !accCodes.includes('RSD')) {
-      try {
-        const _cnAddr = [cn.address, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip].filter(Boolean).join(' ').trim();
-        if (_cnAddr) {
-          const _gr = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_cnAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
-          if (_gr.ok) {
-            const _gd = await _gr.json();
-            const _r0 = _gd.results && _gd.results[0];
-            const _isRes = _r0 && _r0.fields && _r0.fields.zip4 && _r0.fields.zip4.residential === true;
-            if (_isRes) {
-              window._resWarnShown = true;
-              return { ok:false, residentialWarning:true, address:(_r0.formatted_address || _cnAddr),
-                message:'Before booking: the delivery address ' + (_r0.formatted_address || _cnAddr) + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service (RSD), plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to add residential delivery (and liftgate for LTL/heavy freight) or proceed as-is at their own risk. If they agree to add RSD (or RSD+LFD): call update_quote with addAccessorials:["RSD"] (and "LFD" if applicable) AND getRates:true in a single call to re-pull rates with the surcharge included, then call read_rates to confirm the new price, read it back to the customer, and only then call book_shipment. For parcel carriers (SMALL PACKAGE), omit the liftgate question but still re-pull if RSD is added. Do NOT call book_shipment until the re-pull is done and the customer has confirmed the new rate.' };
+      let _resBlocked = false, _resAddr = s.destinationZip || '';
+      const _cachedRes = window._residentialStatus;
+      if (_cachedRes && _cachedRes.residential === true) {
+        _resBlocked = true;
+      }
+      if (!_resBlocked && !_cachedRes) {
+        const _cnStreet = cn.address && cn.address.trim();
+        if (_cnStreet) {
+          try {
+            const _cnAddr = [_cnStreet, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip].filter(Boolean).join(' ').trim();
+            const _gr = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_cnAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+            if (_gr.ok) {
+              const _gd = await _gr.json();
+              const _r0 = _gd.results && _gd.results[0];
+              if (_r0 && _r0.fields && _r0.fields.zip4 && _r0.fields.zip4.residential === true) {
+                _resBlocked = true; _resAddr = _r0.formatted_address || _cnAddr;
+                window._residentialStatus = { residential:true, weight:items.reduce((t,it)=>t+(it.weight||0)*(it.qty||it.pieces||1),0), liftgateRecommended:true };
+              }
             }
-          }
+          } catch(e) { /* geocodio failed — proceed */ }
         }
-      } catch(e) { /* geocodio failed — proceed */ }
+      }
+      if (_resBlocked) {
+        window._resWarnShown = true;
+        return { ok:false, residentialWarning:true, address:_resAddr,
+          message:'Before booking: the delivery address ' + _resAddr + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service (RSD), plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to add residential delivery (and liftgate for LTL/heavy freight) or proceed as-is at their own risk. If they agree to add RSD (or RSD+LFD): call update_quote with addAccessorials:["RSD"] (and "LFD" if applicable) AND getRates:true in a single call to re-pull rates with the surcharge included, then call read_rates to confirm the new price, read it back to the customer, and only then call book_shipment. For parcel carriers (SMALL PACKAGE), omit the liftgate question but still re-pull if RSD is added. Do NOT call book_shipment until the re-pull is done and the customer has confirmed the new rate.' };
+      }
     }
+
+    // Freeze rate+shipment AFTER the residential guard — only when we are actually proceeding to book.
+    // If we entered via the _bookingLock reuse path at the top of this function, skip (already frozen).
+    if (!window._bookingLock || !window._bookingLock.rate) window._bookingLock = { rate: rate, shipment: s };
+
+    const rateId = rate.id || rate.rateId;
+    const token = await getToken();
+
+    // Reserve the rate to get a quoteNumber (fresh, so it matches what we book)
+    let quoteNumber = null;
+    try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
 
     const payload = {
       quoteNumber: quoteNumber, rateId: rateId,
