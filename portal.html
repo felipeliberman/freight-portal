@@ -9904,6 +9904,7 @@ async function _execDispatchShipment(input) {
         carrierName: _lb.carrier || '', carrierPrice: _lb.price || 0,
         pickupDate: _pu, rateType: 'SMALL PACKAGE', iconUrl: '',
       }), 0);
+      // NOTE: this message names only two pickup options, contradicting the three-option instruction in _convoSysPrompt (~line 10102); left unchanged intentionally — behavior tests (test-parcel-pickup-options.js, toolresult scenario) proved the 10102 prompt dominates, with the agent offering all three options 10/10 even when fed this two-option message.
       return { ok: true, parcelPickerShown: true, message: 'A pickup options panel just popped up — or just tell me: should the carrier pick it up (Schedule Pickup), or will you drop it off (Drop to Carrier)?' };
     }
 
