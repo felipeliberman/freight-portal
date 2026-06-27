@@ -4839,11 +4839,14 @@ function appendMessage(role, text, extras) {
   // Text bubble
   const textDiv = document.createElement('div');
   textDiv.className = 'msg-text ' + role;
-  // Render basic markdown bold (**text**)
+  // Render basic markdown for bot messages: links [label](url), bold **text**, newlines.
   if (text == null || text === '') {
     textDiv.style.display = 'none';
-  } else if (role === 'bot' && text.includes('**')) {
-    textDiv.innerHTML = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+  } else if (role === 'bot' && (text.includes('**') || /\[[^\]]+\]\(https?:\/\//.test(text))) {
+    textDiv.innerHTML = text
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
   } else {
     textDiv.textContent = text;
   }
