@@ -2145,6 +2145,7 @@ function resetShipmentState(wipeConversation) {
     if (wipeConversation) {
       chatHistory = [];
       window._quotedContacts = null;
+      window._quoteContainer = null;
       try {
         if (typeof rpState !== 'undefined' && rpState.tabs) {
           rpState.tabs.filter(t => t.title === 'Get a Quote')
@@ -7320,7 +7321,7 @@ function sendMessage() {
 function applyRequoteAccessorials(toAdd) {
   if (!toAdd || !toAdd.length) return;
   toAdd.forEach(code => {
-    const accBtn = [...document.querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
+    const accBtn = [...(window._quoteContainer || document).querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
     if (accBtn && !accBtn.classList.contains('acc-active')) accBtn.click();
   });
   // Show green confirmation and trigger fresh rates
@@ -9337,7 +9338,7 @@ function _applyQuoteFields(input) {
 
   // Accessorials — toggle by data-code, respecting current state
   const toggleAcc = (code, wantOn) => {
-    const btn = [...document.querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
+    const btn = [...(window._quoteContainer || document).querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
     if (!btn) return;
     const isOn = btn.classList.contains('acc-active');
     if (wantOn && !isOn) btn.click();
@@ -14277,6 +14278,7 @@ function showQuoteForm(prefill, silent) {
   // ── Container ────────────────────────────────────────────────────────────
   const container = document.createElement('div');
   container.style.cssText = 'display:flex;flex-direction:column;height:100%;';
+  window._quoteContainer = container;
 
   // ── Hero header ──────────────────────────────────────────────────────────
   const quoteHdr = document.createElement('div');
