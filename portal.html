@@ -8330,6 +8330,38 @@ async function _geocodioResidentialCheck(street, city, state, zip) {
   } catch(e) { return { residential: false }; }
 }
 
+// ── Canonical hazmat field builders — shared by EVERY booking payload builder so the
+// form path and the agent path can never drift apart again. ───────────────────────
+// _hazmatLineFields: the structured per-lineItem hazmat keys Primus documents
+// (lineItems[].UN, lineItems[].UNPKGGroup). UN is sent verbatim from the UN lookup;
+// a customer-typed leading "UN" prefix (+ surrounding whitespace) is stripped so the
+// value matches the untable UNNumber. Applied only to items flagged hazmat.
+function _hazmatLineFields(item, haz) {
+  if (!item || !item.hazmat || !haz) return {};
+  const out = {};
+  const un = String(haz.un || '').trim().replace(/^un\s*/i, '').trim();
+  if (un) out.UN = un;
+  const pg = String(haz.pkgGroup || '').trim();
+  if (pg) out.UNPKGGroup = pg;
+  return out;
+}
+// _hazmatShipmentFields: top-level emergencyContact/emergencyPhone (required by Primus
+// when hazmat) plus BOLInstructions. The UN number is NOT placed in BOLInstructions —
+// it now rides in the structured lineItems[].UN field instead.
+function _hazmatShipmentFields(haz, specialInstructions) {
+  const si = specialInstructions || '';
+  if (!haz || !haz.isHazmat) {
+    return { emergencyContact: undefined, emergencyPhone: undefined, BOLInstructions: si };
+  }
+  const contact = haz.contact || '';
+  const phone = haz.phone || '';
+  return {
+    emergencyContact: contact,
+    emergencyPhone: phone,
+    BOLInstructions: 'HAZMAT - Emergency Contact: ' + contact + ' ' + phone + (si ? ' | ' + si : '')
+  };
+}
+
 async function submitBookingOnly(opts) {
   opts = opts || {};
   // Creates the BOL in Primus but does NOT dispatch — "Save Shipment" flow
@@ -8398,16 +8430,18 @@ async function submitBookingOnly(opts) {
     // Fall back to s.items only if the rate has no freightInfo.
     const _rateFI = (bookingRate && bookingRate.freightInfo && bookingRate.freightInfo.length) ? bookingRate.freightInfo : null;
     const _allItems = _rateFI || (s.items && s.items.length ? s.items : [item]);
+    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, pkgGroup: bookingData.hazPkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
+    const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
     const payload = {
       quoteNumber: bookQuoteNumber, rateId,
       thirdPartyReferenceNumber: bookingData.shipperRef || '',
       shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:s.originCountry||'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
       consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:s.destinationCountry||'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
-      lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
+      lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, ..._hazmatLineFields(it, _haz), stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
       UOM:'US',
-      emergencyContact: (bookingData.isHazmat ? (bookingData.hazContact || '') : undefined),
-      emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
-      BOLInstructions:(bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
+      emergencyContact: _hazShip.emergencyContact,
+      emergencyPhone:   _hazShip.emergencyPhone,
+      BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList:accCodes,
       pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
@@ -8524,6 +8558,8 @@ async function submitBooking() {
       bookQuoteNumber = qNum;
     }
 
+    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, pkgGroup: bookingData.hazPkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
+    const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
     const payload = {
       quoteNumber:              bookQuoteNumber,
       rateId:                   rateId,
@@ -8564,14 +8600,15 @@ async function submitBooking() {
         dimType:    item.dimType || item.packageType || 'PLT',
         class:      String(item.class || item.freightClass || 70),
         hazmat:     item.hazmat || false,
+        ..._hazmatLineFields(item, _haz),
         stackAmount: item.stackAmount || ((item.stack === true || item.stack === 'Y') ? 2 : 1),
         commodity:  (document.getElementById('bk-commodity') && document.getElementById('bk-commodity').value.trim()) || item.commodity || item.description || 'Freight',
         nmfc:       (document.getElementById('bk-nmfc') && document.getElementById('bk-nmfc').value.trim()) || item.nmfc || undefined,
       }],
       UOM: 'US',
-      emergencyContact: (bookingData.isHazmat ? (bookingData.hazContact || '') : undefined),
-      emergencyPhone:   (bookingData.isHazmat ? (bookingData.hazPhone   || '') : undefined),
-      BOLInstructions: (bookingData.isHazmat ? ('HAZMAT - UN#' + (bookingData.hazUnNumber||'') + ' - Emergency Contact: ' + (bookingData.hazContact||'') + ' ' + (bookingData.hazPhone||'') + (bookingData.specialInstructions ? ' | ' + bookingData.specialInstructions : '')) : (bookingData.specialInstructions || '')),
+      emergencyContact: _hazShip.emergencyContact,
+      emergencyPhone:   _hazShip.emergencyPhone,
+      BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,  // flat array of strings e.g. ["LFD","RSD"]
       pickupInformation: {
         date:               bookingData.pickupDate,
@@ -9822,6 +9859,8 @@ async function _execBookShipment(input) {
     let quoteNumber = null;
     try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
 
+    const _haz = { isHazmat: input.isHazmat, un: input.hazUnNumber, pkgGroup: input.hazPkgGroup, contact: input.emergencyContact || input.hazContact, phone: input.emergencyPhone || input.hazPhone };
+    const _hazShip = _hazmatShipmentFields(_haz, input.specialInstructions);
     const payload = {
       quoteNumber: quoteNumber, rateId: rateId,
       thirdPartyReferenceNumber: input.referenceNumber || '',
@@ -9839,13 +9878,13 @@ async function _execBookShipment(input) {
         qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each',
         length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48),
         dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||calcFreightClass(Number(it.weight||0),Number(it.length||48),Number(it.width||40),Number(it.height||48),Number(it.qty||it.pieces||1))||70),
-        hazmat:it.hazmat||false, stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
+        hazmat:it.hazmat||false, ..._hazmatLineFields(it, _haz), stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1),
         STC:((it.stc||it.STC)?String(it.stc||it.STC):undefined), commodity:it.commodity||it.description||'Freight', nmfc:it.nmfc||undefined
       })),
       UOM:'US',
-      emergencyContact: (input.isHazmat ? (input.emergencyContact || input.hazContact || '') : undefined),
-      emergencyPhone:   (input.isHazmat ? (input.emergencyPhone   || input.hazPhone   || '') : undefined),
-      BOLInstructions: (input.isHazmat ? ('HAZMAT - UN#' + (input.hazUnNumber||'') + ' - Emergency Contact: ' + (input.hazContact||'') + ' ' + (input.hazPhone||'') + (input.specialInstructions ? ' | ' + input.specialInstructions : '')) : (input.specialInstructions || '')),
+      emergencyContact: _hazShip.emergencyContact,
+      emergencyPhone:   _hazShip.emergencyPhone,
+      BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,
       pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
@@ -12993,7 +13032,7 @@ function showBookingPanel(rate, shipmentData) {
     const _hazUn2 = document.getElementById('bk-haz-un');
     const _hazContact2 = document.getElementById('bk-haz-contact');
     const _hazPhone2 = document.getElementById('bk-haz-phone');
-    if (_hazUn2) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn2.value.trim(); bookingData.hazContact = (_hazContact2&&_hazContact2.value.trim())||''; bookingData.hazPhone = (_hazPhone2&&_hazPhone2.value.trim())||''; }
+    if (_hazUn2) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn2.value.trim(); bookingData.hazPkgGroup = _hazUn2.dataset.unPg || ''; bookingData.hazContact = (_hazContact2&&_hazContact2.value.trim())||''; bookingData.hazPhone = (_hazPhone2&&_hazPhone2.value.trim())||''; }
     errEl.style.display = 'none';
 
     // Residential guard for the Save path — same canonical check as btn.onclick and _execBookShipment.
@@ -13098,7 +13137,7 @@ function showBookingPanel(rate, shipmentData) {
     const _hazUn = document.getElementById('bk-haz-un');
     const _hazContact = document.getElementById('bk-haz-contact');
     const _hazPhone = document.getElementById('bk-haz-phone');
-    if (_hazUn) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn.value.trim(); bookingData.hazContact = (_hazContact&&_hazContact.value.trim())||''; bookingData.hazPhone = (_hazPhone&&_hazPhone.value.trim())||''; }
+    if (_hazUn) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn.value.trim(); bookingData.hazPkgGroup = _hazUn.dataset.unPg || ''; bookingData.hazContact = (_hazContact&&_hazContact.value.trim())||''; bookingData.hazPhone = (_hazPhone&&_hazPhone.value.trim())||''; }
 
     const missing = [];
     if (!bookingData.shipperName)   missing.push('Pickup business name');
