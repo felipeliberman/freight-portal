@@ -9732,6 +9732,14 @@ function _applyBookingFields(input) {
   _setBkField('bk-dl-suite', cn.suite);
   _setBkField('bk-dl-contact', cn.contact);
   _setBkField('bk-dl-phone', cn.phone);
+  // Hazmat: write the structured values into the dedicated panel fields (never Special Instructions).
+  const _hazUnEl = document.getElementById('bk-haz-un');
+  if (_hazUnEl) {
+    if (input.unNumber) _hazUnEl.value = String(input.unNumber);
+    if (input.packingGroup) _hazUnEl.dataset.unPg = String(input.packingGroup);
+  }
+  if (input.emergencyContactName) { const _hc = document.getElementById('bk-haz-contact'); if (_hc) _hc.value = String(input.emergencyContactName); }
+  if (input.emergencyPhone) { const _hp = document.getElementById('bk-haz-phone'); if (_hp) _hp.value = String(input.emergencyPhone); }
   const siText = input.specialInstructions || _qc.specialInstructions;
   if (siText) {
     const si = document.getElementById('bk-special-instructions');
@@ -9793,6 +9801,23 @@ async function _execBookShipment(input) {
       input.specialInstructions = input.specialInstructions || (_si ? _si.value.trim() : '');
       window._bookingPanelOpen = false; // values harvested — proceed via proven chat path below
       // fall through to the proven booking path
+    }
+    // Hazmat normalization — panel values win, else the structured book_shipment/update_booking
+    // args (covers both the panel-harvest path and a direct book_shipment call). Never reads or
+    // writes Special Instructions for hazmat data.
+    {
+      const _huEl = document.getElementById('bk-haz-un');
+      const _hcEl = document.getElementById('bk-haz-contact');
+      const _hpEl = document.getElementById('bk-haz-phone');
+      const _hu = _huEl ? String(_huEl.value||'').trim() : '';
+      const _hpg = (_huEl && _huEl.dataset && _huEl.dataset.unPg) ? String(_huEl.dataset.unPg) : '';
+      const _hc = _hcEl ? String(_hcEl.value||'').trim() : '';
+      const _hp = _hpEl ? String(_hpEl.value||'').trim() : '';
+      input.hazUnNumber = _hu || input.unNumber || input.hazUnNumber || '';
+      input.hazPkgGroup = _hpg || input.packingGroup || input.hazPkgGroup || '';
+      input.emergencyContact = _hc || input.emergencyContactName || input.emergencyContact || input.hazContact || '';
+      input.emergencyPhone = _hp || input.emergencyPhone || input.hazPhone || '';
+      if (input.hazUnNumber || input.emergencyContact || input.emergencyPhone) input.isHazmat = true;
     }
     // ── proceed with the proven chat booking path ──────────────────────────────
 
@@ -10243,8 +10268,7 @@ async function aiConverse(userText) {
                         stc: { type: 'number', description: 'Said To Contain: number of boxes/pieces riding on a pallet. Only set for pallet (PLT) or skid (SKD). Leave blank for a single piece, a plain box, or a crate. For several identical pallets on one line, set this to the TOTAL boxes across them.' },
                         freightClass: { type: 'string', description: 'Freight class as a string (e.g. "70", "125", "250"). Only pass this when the customer explicitly states a freight class from their own documentation — never invent or guess it.' },
                         nmfc: { type: 'string', description: 'NMFC item number (optional). Pass when the customer provides it on a packing slip or BOL.' },
-                        hazmat: { type: 'boolean', description: 'True if this freight is hazardous material (hazmat/dangerous goods). Set when the customer says it is hazmat, dangerous goods, or gives a UN number. This makes the rate include the carrier hazmat surcharge.' },
-                        unNumber: { type: 'string', description: 'UN identification number for hazmat freight (e.g. "1993"). Optional at quote time — only set if the customer volunteers it. The full UN number and emergency contact are collected at booking, not required to quote.' }
+                        hazmat: { type: 'boolean', description: 'True if this freight is hazardous material (hazmat/dangerous goods). Set when the customer says it is hazmat, dangerous goods, or gives a UN number. This makes the rate include the carrier hazmat surcharge. The UN number, packing group, and emergency contact are NOT collected at quote time — they are booking-only.' }
                       }
                     }
                   },
@@ -10295,7 +10319,11 @@ async function aiConverse(userText) {
                   pickupOpen: { type: 'string', description: 'Pickup window open time HH:MM' },
                   pickupClose: { type: 'string', description: 'Pickup window close time HH:MM' },
                   referenceNumber: { type: 'string', description: 'Optional PO or reference number for the carrier' },
-                  specialInstructions: { type: 'string', description: 'Optional special instructions for the driver/BOL' }
+                  specialInstructions: { type: 'string', description: 'Optional special instructions for the driver/BOL. NEVER put hazmat data (UN number, emergency contact) here — use the dedicated hazmat fields below.' },
+                  unNumber: { type: 'string', description: 'Hazmat UN identification number (e.g. "1993"), hazmat shipments only. Collected at booking.' },
+                  packingGroup: { type: 'string', description: 'Hazmat packing group (e.g. "I", "II", "III"), hazmat shipments only.' },
+                  emergencyContactName: { type: 'string', description: 'Hazmat 24-hour emergency contact name (e.g. "CHEMTREC"), hazmat shipments only.' },
+                  emergencyPhone: { type: 'string', description: 'Hazmat 24-hour emergency contact phone, hazmat shipments only.' }
                 }
               }
             },
@@ -10328,7 +10356,11 @@ async function aiConverse(userText) {
                   pickupOpen: { type: 'string', description: 'Pickup window open time HH:MM (default 12:00)' },
                   pickupClose: { type: 'string', description: 'Pickup window close time HH:MM (default 16:00)' },
                   referenceNumber: { type: 'string', description: 'PO or reference number' },
-                  specialInstructions: { type: 'string', description: 'Special instructions for the driver/BOL' }
+                  specialInstructions: { type: 'string', description: 'Special instructions for the driver/BOL. NEVER put hazmat data (UN number, emergency contact) here — use the dedicated hazmat fields below.' },
+                  unNumber: { type: 'string', description: 'Hazmat UN identification number (e.g. "1993"), hazmat shipments only. Fills the booking panel UN Number field.' },
+                  packingGroup: { type: 'string', description: 'Hazmat packing group (e.g. "I", "II", "III"), hazmat shipments only.' },
+                  emergencyContactName: { type: 'string', description: 'Hazmat 24-hour emergency contact name (e.g. "CHEMTREC"), hazmat shipments only.' },
+                  emergencyPhone: { type: 'string', description: 'Hazmat 24-hour emergency contact phone, hazmat shipments only.' }
                 },
                 cache_control: { type: 'ephemeral' }
               }
