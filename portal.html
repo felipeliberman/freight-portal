@@ -2540,25 +2540,18 @@ async function fetchRates(shipment) {
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
     (vendorIds ? vendorIds.map(id => '&vendorIdList[]=' + id).join('') : '');
 
-  // ── Cargo insurance — roll the premium into the quoted rates ─────────────────
-  // Read the insurance fields directly from the DOM by ID at call time. No button-
-  // state detection and no container-scoped selectors — that was the root cause of
-  // the params not appending. This works for every call path (form, chat, requote)
-  // while the quote form is in the DOM; when it isn't (programmatic requote) we
-  // fall back to the values carried on the shipment object.
+  console.log('📡 Fetching rates:', params.substring(0, 200));
+
   const _insCommodityEl = document.getElementById('qt-ins-commodity');
   const _insValueEl = document.getElementById('qt-ins-value');
-  let _insCommodityVal = _insCommodityEl ? _insCommodityEl.value : '';
-  let _insCargoVal = _insValueEl ? parseFloat(_insValueEl.value) : 0;
-  if (!(_insCommodityVal && _insCargoVal > 0) &&
-      shipment.insuranceEnabled && shipment.insuranceCommodityId && Number(shipment.insuranceAmount) > 0) {
-    _insCommodityVal = shipment.insuranceCommodityId;
-    _insCargoVal = Number(shipment.insuranceAmount);
-  }
+  const _insCommodityVal = _insCommodityEl ? _insCommodityEl.value : '';
+  const _insCargoVal = _insValueEl ? parseFloat(_insValueEl.value) : 0;
   if (_insCommodityVal && _insCargoVal > 0) {
-    params += '&commodityInsurance=' + encodeURIComponent(_insCommodityVal) +
-              '&insuranceAmount=' + _insCargoVal +
-              '&insuranceFreight=false&insuranceAddOn=false';
+    params += '&commodityInsurance=' + encodeURIComponent(_insCommodityVal)
+            + '&insuranceAmount=' + _insCargoVal
+            + '&insuranceFreight=false&insuranceAddOn=false';
+    // Sync onto the shipment so lastQuotedShipment carries the selection — drives the
+    // rate-card badge and the read-only booking-panel insurance summary.
     shipment.insuranceEnabled = true;
     shipment.insuranceCommodityId = _insCommodityVal;
     shipment.insuranceCommodityName = (REDKIK_COMMODITIES.find(c => c.id === _insCommodityVal) || {}).name || shipment.insuranceCommodityName || '';
@@ -2566,8 +2559,6 @@ async function fetchRates(shipment) {
   } else {
     shipment.insuranceEnabled = false;
   }
-
-  console.log('📡 Fetching rates:', params.substring(0, 200));
 
   const r    = await fetch(PRIMUS_BASE + '/applet/v1/rate/multiple?' + params, { headers: { 'Authorization': 'Bearer ' + token } });
   const text = await r.text();
