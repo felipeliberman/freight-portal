@@ -2069,6 +2069,43 @@ document.addEventListener('DOMContentLoaded',()=>{
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const PRIMUS_BASE = 'https://freightandlogistics-api.shipprimus.com';
 
+// ── Redkik cargo insurance commodity catalog ──────────────────────────────────
+// Selected at quote time; the chosen commodity id + cargo value are passed to the
+// rate call so Redkik's premium rolls into the returned (Primus) totals.
+const REDKIK_COMMODITIES = [
+  { id: 'ebe38cf9-df60-4f69-9210-a439981e6989', name: 'General Goods &/or Merchandise' },
+  { id: '16951fce-b292-4da6-90f0-a93ce2138cdd', name: 'Lithium batteries' },
+  { id: '31ad53d3-e4a9-41f2-ad0a-038a202d4a5c', name: 'Electric Scooters' },
+  { id: 'c5357633-a926-4cd6-bc97-5370d67207b2', name: 'Beer, Wine, and Spirits' },
+  { id: 'ae3e2710-5895-43a7-a302-c6d3f96c18be', name: 'Dry Goods' },
+  { id: '176ea6e6-dd6b-4af4-a611-66fe65dd478c', name: 'New Aircraft Engines' },
+  { id: 'c5de9fa2-cee7-4759-bb16-f2b27495f7ec', name: 'Temperature Controlled (24 hour Reefer)' },
+  { id: 'f639f2d7-4e8c-4fbf-865f-c3fddc2268ca', name: 'Household Goods & Personal Effects (professionally packed)' },
+  { id: '8ddb2991-514f-4a36-a674-4259e42e20f6', name: 'Aircraft Parts' },
+  { id: 'a3067dbe-a960-4d47-a7c3-d5b5cf5d5849', name: 'Used Aircraft Engines' },
+  { id: '9548cc77-00a1-4b1e-95b7-eb0523089575', name: 'Automobiles' },
+  { id: '2d5429e4-05ed-4fed-8cc8-b80ea2f0b931', name: 'Fragile Goods' },
+  { id: '0abfbc3b-a090-47fa-b1db-2ac1abd8a482', name: 'Household Goods & Personal Effects (owner packed)' },
+  { id: '800564ad-0c81-4fb2-b1a0-4e518a52a779', name: 'Bitcoin Server' },
+  { id: '97d5afdb-bc3c-477f-a069-1d1cbd90edb6', name: 'Solar Panels' },
+  { id: 'd2d162cd-9c4d-43ee-86f6-d5b37a14b1d4', name: 'New Computers/Cell Phones' },
+  { id: '379142b5-7150-4dc5-ae41-d271fca6af66', name: 'Boats' },
+  { id: '3c510511-2246-427b-b5d0-d7aff6976607', name: 'Server Racks (when containing computers, servers and/or electronic components)' },
+  { id: '8dff5f9f-06e1-4746-be17-b6e3ad9c547d', name: 'Non-Perishable Foods' },
+  { id: 'df41985a-1c44-4cb8-961c-e29173370cc3', name: 'New Household Electronics' },
+  { id: 'b32aae35-696b-4cf8-b69b-ea8c862cb0ee', name: 'Used Household Electronics' },
+  { id: 'ef1db7eb-6971-40e9-af97-b9f5965aa058', name: 'Bulk Copper' },
+  { id: '5d3866ca-26d8-4ec2-8726-4ad2a7071145', name: 'Medical Supplies' },
+  { id: '8b5984c6-99f5-4a19-8ca6-a84c50023c0d', name: 'Used Computers/Cell Phones' },
+  { id: '6060f586-4b2e-4913-a8e4-d901f313118a', name: 'Structural Glass shipped in crates' },
+  { id: 'c2ee98af-a7ea-4174-b414-e45e2d133870', name: 'Medical Devices' },
+  { id: '606a1b56-0b32-4fa9-b472-d9e336859407', name: 'New drums of oil' },
+  { id: '9cdc2876-41e6-48b8-8d5f-3395aae0c59e', name: 'Polypropylene Pellets' },
+  { id: 'f85fb301-fcad-40d4-b14f-877d40a66861', name: 'Limestone' },
+  { id: '4a541a07-f4e0-4ded-bf41-4cdb609c2581', name: 'Machinery (excluding Medical Equipment)' },
+  { id: '63fb6e54-904d-4073-9b70-121cd811fb40', name: 'Pharmaceuticals' },
+];
+
 // All customers now authenticate dynamically via Primus (Option B)
 // No hardcoded passwords — credentials validated directly against Primus API
 const CUSTOMERS = {};
@@ -2132,6 +2169,7 @@ function resetShipmentState(wipeConversation) {
     window._quoteFormOpen = false;
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
+    window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
     // Always close stale booking panel tab on any fresh-quote reset (not just full wipe).
@@ -2397,6 +2435,52 @@ function parseAccessorials(text) {
   return acc;
 }
 
+// ── Redkik insurance: the quote-form selection is the source of truth ──────────
+// Reads the INS accessorial state + commodity/value inputs from the live quote form.
+function _readQuoteInsurance() {
+  const qc = window._quoteContainer;
+  if (!qc) return { active: false };
+  const btn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
+  const active = !!(btn && btn.classList.contains('acc-active'));
+  if (!active) return { active: false };
+  const cSel = qc.querySelector('#qt-ins-commodity');
+  const vInp = qc.querySelector('#qt-ins-value');
+  const commodityId = cSel ? cSel.value : '';
+  const amount = vInp ? Number(vInp.value) : 0;
+  return { active: true, complete: !!commodityId && amount > 0, commodityId, amount };
+}
+function _showQuoteInsuranceError(msg) {
+  const qc = window._quoteContainer; if (!qc) return;
+  const errEl = qc.querySelector('#qt-ins-error');
+  if (errEl) { errEl.textContent = msg || ''; errEl.style.display = msg ? 'block' : 'none'; }
+}
+// Build a quote-form prefill from a quoted shipment (used to silently reopen the form
+// when the chat agent adds insurance to a chat-only quote).
+function _lqsToPrefill(s) {
+  s = s || {};
+  const items = (s.items && s.items.length) ? s.items : [{}];
+  const it0 = items[0] || {};
+  return {
+    originZip: s.originZip || '',
+    destZip:   s.destinationZip || '',
+    pickupDate: s.pickupDate || undefined,
+    weight: Number(it0.weight || 0),
+    pieces: Number(it0.pieces || it0.qty || 1),
+    lineItems: items.map(it => ({
+      qty: Number(it.pieces || it.qty || 1),
+      type: it.packageType || it.dimType || 'PLT',
+      weight: Number(it.weight || 0),
+      length: Number(it.length || 48), width: Number(it.width || 40), height: Number(it.height || 48),
+      stack: (Number(it.stackAmount) > 1 || it.stack === 'Y' || it.stack === true) ? 'Y' : 'N',
+      freightClass: String(it.freightClass || it.class || ''),
+      nmfc: it.nmfc || '', commodity: it.description || it.commodity || ''
+    }))
+  };
+}
+function _quoteFormIsOpen() {
+  return !!(window._quoteContainer && document.body.contains(window._quoteContainer));
+}
+
 async function fetchRates(shipment) {
   // Resolve city/state from ZIP if not already provided
   if (!shipment.originCity || !shipment.originState) {
@@ -2455,6 +2539,31 @@ async function fetchRates(shipment) {
     (currentCustomer && currentCustomer.primusCustomerId ? '&customerId=' + currentCustomer.primusCustomerId : '') +
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
     (vendorIds ? vendorIds.map(id => '&vendorIdList[]=' + id).join('') : '');
+
+  // ── Redkik cargo insurance — roll the premium into the quoted rates ──────────
+  // Source of truth is the quote-form INS selection; on the requote/programmatic
+  // path (form not driving the call) carry the selection forward from the shipment.
+  let _ins = _readQuoteInsurance();
+  if (_ins.active && !_ins.complete) {
+    _showQuoteInsuranceError('Please select a commodity type and enter the cargo value before getting insurance rates.');
+    throw new Error('INSURANCE_INCOMPLETE');
+  }
+  if (_ins.active && _ins.complete) {
+    _showQuoteInsuranceError('');
+  } else if (!_ins.active && shipment.insuranceEnabled && shipment.insuranceCommodityId && Number(shipment.insuranceAmount) > 0) {
+    _ins = { active: true, complete: true, commodityId: shipment.insuranceCommodityId, amount: Number(shipment.insuranceAmount) };
+  }
+  if (_ins.active && _ins.complete) {
+    params += '&commodityInsurance=' + encodeURIComponent(_ins.commodityId) +
+              '&insuranceAmount=' + encodeURIComponent(_ins.amount) +
+              '&insuranceFreight=false&insuranceAddOn=false';
+    shipment.insuranceEnabled = true;
+    shipment.insuranceCommodityId = _ins.commodityId;
+    shipment.insuranceCommodityName = (REDKIK_COMMODITIES.find(c => c.id === _ins.commodityId) || {}).name || shipment.insuranceCommodityName || '';
+    shipment.insuranceAmount = _ins.amount;
+  } else {
+    shipment.insuranceEnabled = false;
+  }
 
   console.log('📡 Fetching rates:', params.substring(0, 200));
 
@@ -5000,6 +5109,13 @@ function renderQuotes(rates, isBox) {
     priceDiv.style.cssText = 'font-size:20px;font-weight:800;color:' + (i === 0 ? 'var(--ac)' : 'var(--tx)') + ';margin-bottom:6px;';
     priceDiv.textContent = '$' + price.toFixed(2);
     right.appendChild(priceDiv);
+
+    if (lastQuotedShipment && lastQuotedShipment.insuranceEnabled) {
+      const insBadge = document.createElement('div');
+      insBadge.style.cssText = 'font-size:10px;color:#16a34a;display:flex;align-items:center;gap:3px;margin-top:-2px;margin-bottom:6px;justify-content:flex-end;';
+      insBadge.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>incl. Redkik cargo insurance';
+      right.appendChild(insBadge);
+    }
 
     const bookBtn = document.createElement('button');
     bookBtn.style.cssText = 'background:var(--ac);border:none;border-radius:7px;padding:7px 16px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
@@ -9640,6 +9756,20 @@ function _publishRatesForAI(rates, shipment) {
         lastQuotedShipment.originCountry = shipment.originCountry || lastQuotedShipment.originCountry;
         lastQuotedShipment.destinationCountry = shipment.destinationCountry || lastQuotedShipment.destinationCountry;
       }
+      // Carry the Redkik insurance selection to the booking form / read-back.
+      if (shipment && typeof shipment.insuranceEnabled !== 'undefined') {
+        if (!lastQuotedShipment) lastQuotedShipment = {};
+        lastQuotedShipment.insuranceEnabled = !!shipment.insuranceEnabled;
+        if (shipment.insuranceEnabled) {
+          lastQuotedShipment.insuranceCommodityId = shipment.insuranceCommodityId || '';
+          lastQuotedShipment.insuranceCommodityName = shipment.insuranceCommodityName || '';
+          lastQuotedShipment.insuranceAmount = Number(shipment.insuranceAmount) || 0;
+        } else {
+          lastQuotedShipment.insuranceCommodityId = '';
+          lastQuotedShipment.insuranceCommodityName = '';
+          lastQuotedShipment.insuranceAmount = 0;
+        }
+      }
     } catch(e) { console.warn('[FP] lastQuotedShipment sync failed:', e); }
     window._lastRates = {
       lane: shipment ? ((shipment.originCity||shipment.originZip||'') + ' -> ' + (shipment.destinationCity||shipment.destinationZip||'')) : '',
@@ -11629,6 +11759,92 @@ async function handleInput(text) {
     }
   }
 
+  // ── Redkik cargo insurance — conversational intent + collection (pre-AI) ────────
+  // 6a: intent detection — only when a quote exists and insurance isn't already on.
+  if (window._insCollecting !== 'value' && window._insCollecting !== 'commodity' &&
+      /\b(insurance|insure|cargo insurance|redkik|cover|coverage|insured|protect my)\b/i.test(t) &&
+      lastQuotedShipment && !lastQuotedShipment.insuranceEnabled) {
+    window._insCollecting = 'value';
+    appendMessage('bot', 'To add Redkik cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
+    return;
+  }
+  // 6b: collect the cargo value.
+  if (window._insCollecting === 'value') {
+    const _m = String(t).replace(/[$,]/g, '').match(/\d+(?:\.\d+)?/);
+    const _num = _m ? parseFloat(_m[0]) : NaN;
+    if (_num > 0) {
+      window._insTempValue = _num;
+      window._insCollecting = 'commodity';
+      const _list = REDKIK_COMMODITIES.map((c, i) => (i + 1) + '. ' + c.name).join('\n');
+      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. Now select the commodity type by number or keyword:\n\n' + _list);
+    } else {
+      appendMessage('bot', 'I did not catch a dollar amount. What is the total value of the cargo?');
+    }
+    return;
+  }
+  // 6c: match the commodity, apply it, and requote with insurance included.
+  if (window._insCollecting === 'commodity') {
+    if (/^\s*(cancel|never ?mind|stop|forget it|no thanks?)\s*$/i.test(t)) {
+      window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+      appendMessage('bot', 'No problem — I\'ve left cargo insurance off. Let me know if you change your mind.');
+      return;
+    }
+    let _match = null;
+    if (/^\s*\d+\s*$/.test(t)) {
+      const _n = parseInt(t.trim(), 10);
+      if (_n >= 1 && _n <= REDKIK_COMMODITIES.length) _match = REDKIK_COMMODITIES[_n - 1];
+    }
+    if (!_match) {
+      const _lc = lower.trim();
+      _match = REDKIK_COMMODITIES.find(c => c.name.toLowerCase().includes(_lc)) ||
+               REDKIK_COMMODITIES.find(c => _lc.split(/\s+/).some(w => w.length >= 3 && c.name.toLowerCase().includes(w)));
+    }
+    if (!_match) {
+      appendMessage('bot', 'I could not match that. Reply with the number (1–' + REDKIK_COMMODITIES.length + ') or a keyword for the commodity type, or say "cancel" to skip insurance.');
+      return;
+    }
+    const _val = Number(window._insTempValue) || 0;
+    if (!lastQuotedShipment) lastQuotedShipment = {};
+    lastQuotedShipment.insuranceEnabled = true;
+    lastQuotedShipment.insuranceCommodityId = _match.id;
+    lastQuotedShipment.insuranceCommodityName = _match.name;
+    lastQuotedShipment.insuranceAmount = _val;
+    window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+    appendMessage('bot', 'Cargo insurance added — ' + _match.name + ', insured for $' + _val.toLocaleString('en-US') + '. Pulling rates with insurance included...');
+
+    const _wasOpen = _quoteFormIsOpen();
+    if (!_wasOpen) {
+      // Open the quote form silently so the customer can see the insurance panel,
+      // and re-apply the original accessorials so the requote matches the prior quote.
+      try { showQuoteForm(_lqsToPrefill(lastQuotedShipment), true); } catch(e) { console.warn('[FP] insurance: showQuoteForm failed', e); }
+      const _origAcc = (lastQuotedShipment.accessorials || [])
+        .map(a => (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) ? ACC_MAP[a] : a)
+        .filter(c => typeof c === 'string' && c.length >= 2 && c.length <= 4);
+      const _qcNew = window._quoteContainer;
+      if (_qcNew) {
+        _origAcc.forEach(code => {
+          const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
+          if (b && !b.classList.contains('acc-active')) b.click();
+        });
+      }
+    }
+    const qc = window._quoteContainer;
+    if (qc) {
+      const cSel = qc.querySelector('#qt-ins-commodity');
+      const vInp = qc.querySelector('#qt-ins-value');
+      if (cSel) cSel.value = _match.id;
+      if (vInp) vInp.value = _val;
+      const insBtn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
+      if (insBtn && !insBtn.classList.contains('acc-active')) insBtn.click();
+      const panel = qc.querySelector('#qt-insurance-panel'); if (panel) panel.style.display = 'block';
+    }
+    if (_wasOpen) {
+      // Form already populated — requote now. (When we just opened it, the prefill auto-run fires the pull.)
+      if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); } }
+    }
+    return;
+  }
+
   // ── Support mode bypass — skip ALL pre-AI handlers, go straight to AI ──────────
   if (window._supModeActive) {
     // If draft is showing and user is giving edit instructions, update draft directly
@@ -12896,6 +13112,18 @@ function showBookingPanel(rate, shipmentData) {
     '<label style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;display:block;">Instructions (prints on BOL)</label>' +
     '<textarea id="bk-special-instructions" style="width:100%;border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;resize:vertical;min-height:64px;" placeholder="e.g. Call before delivery, fragile items, gate code 1234…"></textarea>';
   body.appendChild(siSec);
+
+  // Cargo insurance — read-only summary of what was quoted (no re-rating at booking)
+  if (lastQuotedShipment && lastQuotedShipment.insuranceEnabled) {
+    const insSec = document.createElement('div');
+    insSec.style.marginBottom = '16px';
+    const _insAmt = Number(lastQuotedShipment.insuranceAmount || 0).toLocaleString('en-US');
+    insSec.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--ac);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--bdr);">Cargo Insurance</div>' +
+      '<div style="font-size:12px;color:var(--mu);">Commodity: ' + (lastQuotedShipment.insuranceCommodityName || '') + '</div>' +
+      '<div style="font-size:12px;color:var(--mu);">Insured value: $' + _insAmt + '</div>' +
+      '<div style="font-size:12px;color:var(--mu);margin-top:4px;">Premium included in quoted rate — no additional charge at booking.</div>';
+    body.appendChild(insSec);
+  }
 
   // Chat paste hint
   const hint = document.createElement('div');
@@ -14486,6 +14714,17 @@ function showQuoteForm(prefill, silent) {
         }).join('') +
       '</div></div>' +
     '</div>' +
+    // Cargo insurance (Redkik) — revealed when the INS accessorial is active
+    '<div id="qt-insurance-panel" style="display:none;border:1px solid var(--bdr);border-radius:8px;padding:12px;background:#faf9f6;">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--ac);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--bdr);">Cargo Insurance (Redkik)</div>' +
+      '<select id="qt-ins-commodity" style="width:100%;border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:12px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;margin-bottom:8px;">' +
+        '<option value="" disabled selected>Select commodity type</option>' +
+        REDKIK_COMMODITIES.map(c => '<option value="' + c.id + '">' + c.name + '</option>').join('') +
+      '</select>' +
+      '<input id="qt-ins-value" type="number" min="1" placeholder="Cargo value (USD)" style="width:100%;border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:12px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;">' +
+      '<div style="font-size:10px;color:var(--mu);margin-top:4px;">Premium is calculated by Redkik and included in your quoted rates.</div>' +
+      '<div id="qt-ins-error" style="display:none;color:#dc2626;font-size:11px;margin-top:4px;"></div>' +
+    '</div>' +
     // Get Rates button
     '<div style="font-size:10px;color:var(--mu);margin-bottom:6px;">* Required field</div>' +
     '<button id="qt-get-rates" style="width:100%;background:var(--ac);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--font);flex-shrink:0;">Get Rates</button>';
@@ -14576,6 +14815,10 @@ function showQuoteForm(prefill, silent) {
       btn.style.borderColor = 'var(--ac)';
       btn.style.background  = '#f3e8ff';
       btn.style.color       = 'var(--ac)';
+    }
+    if (code === 'INS') {
+      const panel = container.querySelector('#qt-insurance-panel');
+      if (panel) panel.style.display = 'block';
     }
   }
 
@@ -14693,6 +14936,22 @@ function showQuoteForm(prefill, silent) {
       btn.style.borderColor = on ? 'var(--ac)' : 'var(--bdr)';
       btn.style.background  = on ? '#f3e8ff'   : 'var(--card)';
       btn.style.color       = on ? 'var(--ac)'  : 'var(--mu)';
+      if (btn.dataset.code === 'INS') {
+        const panel = container.querySelector('#qt-insurance-panel');
+        if (panel) {
+          if (on) {
+            panel.style.display = 'block';
+            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            panel.style.display = 'none';
+            const cSel = container.querySelector('#qt-ins-commodity');
+            const vInp = container.querySelector('#qt-ins-value');
+            if (cSel) cSel.selectedIndex = 0;
+            if (vInp) vInp.value = '';
+            _showQuoteInsuranceError('');
+          }
+        }
+      }
     };
   });
 
@@ -14887,6 +15146,9 @@ function showQuoteForm(prefill, silent) {
         '<td style="padding:9px 6px;text-align:center;font-size:12px;">' + (transit!=='—'?transit+' days':transit) + '</td>' +
         '<td style="padding:9px 10px;text-align:right;width:90px;">' +
           '<span class="qt-price-link" style="font-weight:700;font-size:13px;color:var(--tx);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;font-variant-numeric:tabular-nums;letter-spacing:0;display:inline-block;min-width:60px;text-align:right;" title="View rate breakdown">$' + price + '</span>' +
+          (lastQuotedShipment && lastQuotedShipment.insuranceEnabled ?
+            '<div style="font-size:10px;color:#16a34a;display:flex;align-items:center;gap:3px;margin-top:3px;justify-content:flex-end;"><svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>incl. Redkik cargo insurance</div>'
+          : '') +
         '</td>' +
         '<td style="padding:9px 6px;text-align:center;white-space:nowrap;">' +
           '<button class="qt-save-rate-btn" title="Save this rate" style="background:none;border:1px solid var(--bdr);border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:var(--font);color:var(--mu);margin-right:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>' +
@@ -15044,6 +15306,16 @@ function showQuoteForm(prefill, silent) {
     if (!destZip   || (!_isCanadianPostal(destZip)   && destZip.length   !== 5)) { alert('Please enter a valid destination ZIP or Canadian postal code (e.g. K1A 0B1).'); return; }
     if (!items[0]||!items[0].weight)       { alert('Please enter weight for at least one line item.'); return; }
     if (!items[0]||!items[0].length||!items[0].width||!items[0].height) { alert('Dimensions are required (L×W×H). Carriers need dims to quote accurately.'); return; }
+
+    // Cargo insurance must be complete before leaving the quote tab — show inline error in the panel.
+    const _insSel = _readQuoteInsurance();
+    if (_insSel.active && !_insSel.complete) {
+      _showQuoteInsuranceError('Please select a commodity type and enter the cargo value before getting insurance rates.');
+      const _ip = container.querySelector('#qt-insurance-panel');
+      if (_ip) _ip.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    _showQuoteInsuranceError('');
 
     console.log('[FP] doGetRates start — origin:', originZip, '→ dest:', destZip, '| weight:', items[0]&&items[0].weight, '| class:', items[0]&&items[0].freightClass, '| accs:', accessorials);
     // Switch to Rates tab and show loading
