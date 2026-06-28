@@ -50,6 +50,7 @@ function buildWindow(scriptText){
     if(u.includes('api.zippopotam.us'))        return makeRes({places:[{'place name':'Dallas','state abbreviation':'TX'}]});
     if(u.includes('api.geocod.io'))            return makeRes({results:[{fields:{zip4:{residential:false}}}]});
     if(u.includes('/applet/v1/rate/save'))     return makeRes({data:{quoteNumber:'Q1'}});
+    if(u.includes('/api/v1/database/untable')) return makeRes({data:{results:[{UNNumber:'1993',description:'Paint',HAZClass:'3',PKGGroup:'III'}]}});
     if(u.includes('/applet/v1/book')&&(m==='POST'||m==='PUT')){ if(book===null){ try{book=JSON.parse(opts.body);}catch(e){book={_raw:opts.body};} } return makeRes({data:{results:[{BOLId:'TEST-BOL',BOLNmbr:'BOL1',documents:[]}]}}); }
     return makeRes({},true,200);
   };
@@ -102,9 +103,8 @@ function wireAsserts(prefix, body){
   eq(prefix+' emergencyContact', body.emergencyContact, 'TEST CONTACT');
   eq(prefix+' emergencyPhone', body.emergencyPhone, '800-555-0100');
   const bol=typeof body.BOLInstructions==='string'?body.BOLInstructions:'';
-  tru(prefix+' UN absent from BOLInstructions', bol.indexOf('1993')===-1 && bol.indexOf('UN')===-1, 'BOLInstructions: '+JSON.stringify(body.BOLInstructions));
-  const si=typeof body.specialInstructions==='string'?body.specialInstructions:'';
-  tru(prefix+' UN absent from specialInstructions', si.indexOf('1993')===-1, 'specialInstructions: '+JSON.stringify(body.specialInstructions));
+  tru(prefix+' BOLInstructions HAS UN + class', bol.indexOf('UN1993')!==-1 && /class\s*3\b/i.test(bol), 'BOLInstructions: '+JSON.stringify(body.BOLInstructions));
+  tru(prefix+' BOLInstructions has NO emergency contact (Primus renders the structured fields itself)', bol.indexOf('TEST CONTACT')===-1 && bol.indexOf('800-555-0100')===-1 && !/emergency/i.test(bol), 'BOLInstructions: '+JSON.stringify(body.BOLInstructions));
 }
 
 (async()=>{

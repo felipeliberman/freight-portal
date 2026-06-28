@@ -8345,20 +8345,35 @@ function _hazmatLineFields(item, haz) {
   if (pg) out.UNPKGGroup = pg;
   return out;
 }
-// _hazmatShipmentFields: top-level emergencyContact/emergencyPhone (required by Primus
-// when hazmat) plus BOLInstructions. The UN number is NOT placed in BOLInstructions —
-// it now rides in the structured lineItems[].UN field instead.
+// Resolve hazmat class + packing group for a UN number from the Primus UN table (HAZClass /
+// PKGGroup) so they never have to be asked. Prefers any value already captured; else looks it up.
+async function _resolveHazInfo(un, existingClass, existingPg) {
+  const out = { hazClass: String(existingClass || '').trim(), pkgGroup: String(existingPg || '').trim() };
+  const norm = String(un || '').trim().replace(/^un\s*/i, '').trim();
+  if (!norm || (out.hazClass && out.pkgGroup)) return out;
+  try {
+    const rows = (typeof searchUNTable === 'function') ? await searchUNTable(norm) : [];
+    const row = rows.find(r => String(r.UNNumber) === norm) || rows[0];
+    if (row) { out.hazClass = out.hazClass || String(row.HAZClass || ''); out.pkgGroup = out.pkgGroup || String(row.PKGGroup || ''); }
+  } catch (e) { console.warn('UN class lookup failed:', e); }
+  return out;
+}
+// _hazmatShipmentFields: emergencyContact/emergencyPhone are structured fields that Primus itself
+// copies onto the BOL's Special Instructions — so they are NOT repeated in BOLInstructions (doing
+// so duplicated them on the BOL). The UN number and hazmat class, which Primus does NOT surface on
+// the BOL, ARE written into BOLInstructions so they appear there exactly once.
 function _hazmatShipmentFields(haz, specialInstructions) {
   const si = specialInstructions || '';
   if (!haz || !haz.isHazmat) {
     return { emergencyContact: undefined, emergencyPhone: undefined, BOLInstructions: si };
   }
-  const contact = haz.contact || '';
-  const phone = haz.phone || '';
+  const un = String(haz.un || '').trim().replace(/^un\s*/i, '').trim();
+  const cls = String(haz.hazClass || '').trim();
+  const tag = 'HAZMAT' + (un ? ' - UN' + un : '') + (cls ? ', Class ' + cls : '');
   return {
-    emergencyContact: contact,
-    emergencyPhone: phone,
-    BOLInstructions: 'HAZMAT - Emergency Contact: ' + contact + ' ' + phone + (si ? ' | ' + si : '')
+    emergencyContact: haz.contact || '',
+    emergencyPhone: haz.phone || '',
+    BOLInstructions: tag + (si ? ' | ' + si : '')
   };
 }
 
@@ -8430,7 +8445,8 @@ async function submitBookingOnly(opts) {
     // Fall back to s.items only if the rate has no freightInfo.
     const _rateFI = (bookingRate && bookingRate.freightInfo && bookingRate.freightInfo.length) ? bookingRate.freightInfo : null;
     const _allItems = _rateFI || (s.items && s.items.length ? s.items : [item]);
-    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, pkgGroup: bookingData.hazPkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
+    const _hi = await _resolveHazInfo(bookingData.hazUnNumber, bookingData.hazClass, bookingData.hazPkgGroup);
+    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
     const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
     const payload = {
       quoteNumber: bookQuoteNumber, rateId,
@@ -8558,7 +8574,8 @@ async function submitBooking() {
       bookQuoteNumber = qNum;
     }
 
-    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, pkgGroup: bookingData.hazPkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
+    const _hi = await _resolveHazInfo(bookingData.hazUnNumber, bookingData.hazClass, bookingData.hazPkgGroup);
+    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
     const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
     const payload = {
       quoteNumber:              bookQuoteNumber,
@@ -9884,7 +9901,8 @@ async function _execBookShipment(input) {
     let quoteNumber = null;
     try { quoteNumber = await saveRate(rateId); } catch(e) { console.warn('saveRate failed:', e); }
 
-    const _haz = { isHazmat: input.isHazmat, un: input.hazUnNumber, pkgGroup: input.hazPkgGroup, contact: input.emergencyContact || input.hazContact, phone: input.emergencyPhone || input.hazPhone };
+    const _hi = await _resolveHazInfo(input.hazUnNumber, input.hazClass, input.hazPkgGroup);
+    const _haz = { isHazmat: input.isHazmat, un: input.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: input.emergencyContact || input.hazContact, phone: input.emergencyPhone || input.hazPhone };
     const _hazShip = _hazmatShipmentFields(_haz, input.specialInstructions);
     const payload = {
       quoteNumber: quoteNumber, rateId: rateId,

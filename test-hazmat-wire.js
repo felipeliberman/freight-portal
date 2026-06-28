@@ -90,6 +90,7 @@ function buildWindow(scriptText) {
     if (u.includes('api.zippopotam.us'))  return makeRes({ places: [{ 'place name': 'Los Angeles', 'state abbreviation': 'CA' }] });
     if (u.includes('api.geocod.io'))      return makeRes({ results: [{ fields: { zip4: { residential: false } } }] });
     if (u.includes('/applet/v1/rate/save')) return makeRes({ data: { quoteNumber: 'Q-TEST' } });
+    if (u.includes('/api/v1/database/untable')) return makeRes({ data: { results: [{ UNNumber: '1993', description: 'Paint', HAZClass: '3', PKGGroup: 'III' }] } });
     if (u.includes('/applet/v1/book') && (method === 'POST' || method === 'PUT')) {
       if (capturedBookBody === null) {
         try { capturedBookBody = JSON.parse(opts.body); } catch (e) { capturedBookBody = { _parseError: String(e), _raw: opts.body }; }
@@ -245,7 +246,8 @@ function assertScenario(name, body, { expectPkg }) {
   check('A: lineItems[].UN === ' + JSON.stringify(ENTERED_UN), li.UN === ENTERED_UN, 'got: ' + JSON.stringify(li.UN));
   if (expectPkg) check('B: lineItems[].UNPKGGroup === ' + JSON.stringify(ENTERED_PKG), li.UNPKGGroup === ENTERED_PKG, 'got: ' + JSON.stringify(li.UNPKGGroup));
   const bol = typeof body.BOLInstructions === 'string' ? body.BOLInstructions : '';
-  check('C: BOLInstructions contains no UN number', bol.indexOf('1993') === -1 && bol.indexOf('UN1993') === -1, 'BOLInstructions: ' + JSON.stringify(body.BOLInstructions));
+  check('C1: BOLInstructions HAS UN + class', bol.indexOf('UN1993') !== -1 && /class\s*3\b/i.test(bol), 'BOLInstructions: ' + JSON.stringify(body.BOLInstructions));
+  check('C2: BOLInstructions has NO emergency contact (no duplication)', bol.indexOf('TEST CONTACT') === -1 && bol.indexOf('800-555-0100') === -1 && !/emergency/i.test(bol), 'BOLInstructions: ' + JSON.stringify(body.BOLInstructions));
   console.log('');
 }
 
