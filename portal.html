@@ -2540,25 +2540,20 @@ async function fetchRates(shipment) {
     (accCodes.length ? '&accessorialsList[]=' + accCodes.join('|') : '') +
     (vendorIds ? vendorIds.map(id => '&vendorIdList[]=' + id).join('') : '');
 
-  console.log('📡 Fetching rates:', params.substring(0, 200));
-
-  const _insCommodityEl = document.getElementById('qt-ins-commodity');
-  const _insValueEl = document.getElementById('qt-ins-value');
-  const _insCommodityVal = _insCommodityEl ? _insCommodityEl.value : '';
-  const _insCargoVal = _insValueEl ? parseFloat(_insValueEl.value) : 0;
+  // ── Cargo insurance — append premium params BEFORE the fetch log so the logged URL
+  // reflects them. Source of truth is the value carried on the shipment, which the form
+  // path (doGetRates) reads from its OWN scoped container. A global getElementById here
+  // was the bug: with more than one quote panel mounted it could read a stale/empty
+  // element. DOM read kept only as a fallback for paths that don't set the shipment.
+  let _insCommodityVal = shipment.insuranceEnabled ? String(shipment.insuranceCommodityId || '') : ((document.getElementById('qt-ins-commodity') || {}).value || '');
+  let _insCargoVal = shipment.insuranceEnabled ? (Number(shipment.insuranceAmount) || 0) : (parseFloat((document.getElementById('qt-ins-value') || {}).value) || 0);
   if (_insCommodityVal && _insCargoVal > 0) {
     params += '&commodityInsurance=' + encodeURIComponent(_insCommodityVal)
             + '&insuranceAmount=' + _insCargoVal
             + '&insuranceFreight=false&insuranceAddOn=false';
-    // Sync onto the shipment so lastQuotedShipment carries the selection — drives the
-    // rate-card badge and the read-only booking-panel insurance summary.
-    shipment.insuranceEnabled = true;
-    shipment.insuranceCommodityId = _insCommodityVal;
-    shipment.insuranceCommodityName = (REDKIK_COMMODITIES.find(c => c.id === _insCommodityVal) || {}).name || shipment.insuranceCommodityName || '';
-    shipment.insuranceAmount = _insCargoVal;
-  } else {
-    shipment.insuranceEnabled = false;
   }
+
+  console.log('📡 Fetching rates:', params.substring(0, 200));
 
   const r    = await fetch(PRIMUS_BASE + '/applet/v1/rate/multiple?' + params, { headers: { 'Authorization': 'Bearer ' + token } });
   const text = await r.text();
@@ -15366,6 +15361,20 @@ function showQuoteForm(prefill, silent) {
           hazmat: it.hazmat||false, stackAmount: it.stack==='Y'?2:1,
         }))
       };
+      // Cargo insurance — read from THIS form's own container (scoped), never a global
+      // getElementById, so the value always comes from the panel the customer filled in.
+      const _insC = container.querySelector('#qt-ins-commodity');
+      const _insV = container.querySelector('#qt-ins-value');
+      const _insCid = _insC ? _insC.value : '';
+      const _insAmt = _insV ? parseFloat(_insV.value) : 0;
+      if (_insCid && _insAmt > 0) {
+        shipment.insuranceEnabled = true;
+        shipment.insuranceCommodityId = _insCid;
+        shipment.insuranceCommodityName = (REDKIK_COMMODITIES.find(c => c.id === _insCid) || {}).name || '';
+        shipment.insuranceAmount = _insAmt;
+      } else {
+        shipment.insuranceEnabled = false;
+      }
       const rates = await fetchRates(shipment);
       currentRates = rates;
       console.log('[FP] doGetRates complete —', rates.length, 'rates | top:', rates[0] && (rates[0].name||rates[0].carrierName) + ' $' + ((rates[0].billTo&&rates[0].billTo.total)||rates[0].total));
