@@ -13183,15 +13183,15 @@ function showBookingPanel(rate, shipmentData) {
     '<button id="bk-dl-save-ab" style="background:none;border:none;font-size:11px;font-weight:600;color:var(--ac);cursor:pointer;font-family:var(--font);padding:0;">Save to address book</button>';
   dl.grid.appendChild(dlAbRow);
 
-  field(dl.grid, 'bk-dl-name',    'Name / Company', 'Rooms To Go',    'text', true);
-  field(dl.grid, 'bk-dl-street',  'Street Address','123 Main St',    'text', true);
-  field(dl.grid, 'bk-dl-suite',   'Suite / Unit',  'Apt 4B');
-  field(dl.grid, 'bk-dl-city',    'City',          'Dallas');
-  field(dl.grid, 'bk-dl-state',   'State',         'TX');
+  field(dl.grid, 'bk-dl-name',    'Name / Company', 'e.g. XYZ Company', 'text', true);
+  field(dl.grid, 'bk-dl-street',  'Street Address','e.g. 456 Oak Ave', 'text', true);
+  field(dl.grid, 'bk-dl-suite',   'Suite / Unit',  'e.g. Apt 4B');
+  field(dl.grid, 'bk-dl-city',    'City',          'e.g. Dallas');
+  field(dl.grid, 'bk-dl-state',   'State',         'e.g. TX');
   const dlZipFld = field(dl.grid, 'bk-dl-zip', 'ZIP', destZip || '');
   dlZipFld.readOnly = true; dlZipFld.style.background = '#f7f5f2'; dlZipFld.style.color = 'var(--mu)';
-  field(dl.grid, 'bk-dl-contact', 'Contact Name',  'John Smith');
-  field(dl.grid, 'bk-dl-phone',   'Phone',         '214-555-5678', 'tel');
+  field(dl.grid, 'bk-dl-contact', 'Contact Name',  'e.g. John Smith');
+  field(dl.grid, 'bk-dl-phone',   'Phone',         'e.g. 555-555-5555', 'tel');
 
   // Pre-fill ZIP and look up city for delivery
   if (destZip) {
