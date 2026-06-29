@@ -16475,7 +16475,7 @@ async function quickAction(action) {
 // ElevenLabs TTS (Roger voice). NOTE: this key ships in client-side code on a public
 // page — anyone can read it. Move it behind the Cloudflare Worker proxy when possible.
 const ELEVEN_KEY   = 'sk_bc5fb4dafbcbcba7098fb241ada20d25b8ff648fd13f7228';
-const ELEVEN_VOICE = 'EXAVITQu4vr4xnSDxMaL'; // Bella - American female, free tier
+const ELEVEN_VOICE = 'MF3mGyEYCl7XYWbV9V6O'; // Elli - warm, upbeat American female
 
 function _srSupported()  { return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
 
@@ -16674,7 +16674,7 @@ async function _vmSpeakReply(text) {
     const resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + ELEVEN_VOICE, {
       method: 'POST',
       headers: { 'xi-api-key': ELEVEN_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: 0.9 } })
+      body: JSON.stringify({ text: clean, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: 1.0 } })
     });
     if (!resp.ok || !_vm.active || _vm.speakToken !== tok) { resume(); return; }
     const blob = await resp.blob();
