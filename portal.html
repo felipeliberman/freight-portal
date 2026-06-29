@@ -15750,14 +15750,7 @@ async function showReports() {
 
 function renderClaims(claims) {
   const container = document.createElement('div');
-
-  if (!claims || !claims.length) {
-    const empty = document.createElement('div');
-    empty.style.cssText = 'color:var(--mu);font-size:13px;padding:12px 0;';
-    empty.textContent = 'No open claims found.';
-    container.appendChild(empty);
-    return container;
-  }
+  claims = claims || [];
 
   const totalAmount = claims.reduce((s,c) => s + (parseFloat(c.claimAmount)||0), 0);
 
@@ -15827,6 +15820,11 @@ function renderClaims(claims) {
       <td style="padding:10px 14px;text-align:right;color:var(--tx);font-weight:500;">$${amt}</td>`;
     tbody.appendChild(tr);
   });
+  if (!claims.length) {
+    const er = document.createElement('tr');
+    er.innerHTML = '<td colspan="3" style="padding:20px 14px;color:var(--mu);font-size:13px;text-align:center;">No open claims found.</td>';
+    tbody.appendChild(er);
+  }
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   container.appendChild(tableWrap);
