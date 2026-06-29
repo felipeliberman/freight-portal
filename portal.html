@@ -172,27 +172,20 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 }
 #sidebar.collapsed .sb-link:hover .sb-tooltip{ display:block; }
 
-#btn-voice:hover{background:rgba(189,39,188,.1);}
-/* ── Voice conversation mode overlay (Claude.ai phone-call style) ───────────── */
-#vm-overlay{position:fixed;inset:0;z-index:9999;background:rgba(15,15,15,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;opacity:0;pointer-events:none;transition:opacity .2s ease;}
-#vm-overlay.show{opacity:1;pointer-events:auto;}
-#vm-title{color:#fff;font-size:18px;letter-spacing:.1em;font-weight:600;text-transform:none;}
-#vm-orb{position:relative;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle at 50% 45%, #bd27bc 0%, #7a1879 70%, #4a0f49 100%);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:box-shadow .2s ease, transform .2s ease;box-shadow:0 0 40px rgba(189,39,188,.35);}
-#vm-orb .vm-ring{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(189,39,188,.6);opacity:0;}
-#vm-orb.listening .vm-ring{animation:vmRing 1.8s ease-out infinite;}
-#vm-orb.listening .vm-ring:nth-child(2){animation-delay:.6s;}
-#vm-orb.listening .vm-ring:nth-child(3){animation-delay:1.2s;}
-@keyframes vmRing{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}
-#vm-orb.speaking{animation:vmSpeak 1s ease-in-out infinite;}
-@keyframes vmSpeak{0%,100%{box-shadow:0 0 40px rgba(189,39,188,.4);transform:scale(1)}50%{box-shadow:0 0 75px 14px rgba(189,39,188,.85);transform:scale(1.05)}}
-#vm-orb.thinking{animation:vmThink 2.2s ease-in-out infinite;}
-@keyframes vmThink{0%,100%{opacity:1}50%{opacity:.45}}
-#vm-status{color:#fff;font-size:14px;min-height:18px;letter-spacing:.02em;}
-#vm-transcript{max-width:440px;width:90%;text-align:center;display:flex;flex-direction:column;gap:6px;min-height:40px;}
-#vm-user{color:#9ca3af;font-size:13px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-#vm-bot{color:#fff;font-size:13px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-#vm-end{width:64px;height:64px;border-radius:50%;background:#dc2626;border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-top:6px;transition:transform .12s,background .15s;}
-#vm-end:hover{background:#b91c1c;transform:scale(1.05);}
+/* ── Voice mode — in-place in the chat input bar (no overlay) ───────────────── */
+#btn-voice{color:#9ca3af;}
+#btn-voice:hover{background:rgba(0,0,0,.05);}
+#btn-voice.vm-listening{color:#bd27bc;animation:vmMicPulse 1.1s ease-in-out infinite;}
+#btn-voice.vm-speaking{color:#bd27bc;animation:vmMicSpeak .9s ease-in-out infinite;}
+@keyframes vmMicPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:.65}}
+@keyframes vmMicSpeak{0%,100%{opacity:.55}50%{opacity:1}}
+/* Listening waveform inside the input area (3 bouncing bars) */
+#voice-wave{position:absolute;left:46px;bottom:16px;display:none;align-items:flex-end;gap:3px;height:16px;pointer-events:none;}
+#voice-wave.show{display:flex;}
+#voice-wave i{display:block;width:3px;height:5px;background:#bd27bc;border-radius:2px;animation:vmBar .8s ease-in-out infinite;}
+#voice-wave i:nth-child(2){animation-delay:.2s;}
+#voice-wave i:nth-child(3){animation-delay:.4s;}
+@keyframes vmBar{0%,100%{height:5px}50%{height:16px}}
   color:var(--mu);font-size:13px;cursor:pointer;
   transition:background .1s;user-select:none;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
@@ -1953,8 +1946,9 @@ document.addEventListener('DOMContentLoaded',()=>{
         <button onclick="document.getElementById('chat-file-input').click()" title="Attach a document or screenshot" style="position:absolute;bottom:10px;left:10px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
-        <button id="btn-voice" onclick="enterVoiceMode()" title="Start a voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:#bd27bc;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        <div id="voice-wave" aria-hidden="true"><i></i><i></i><i></i></div>
+        <button id="btn-voice" onclick="toggleVoiceMode()" title="Start a voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
         </button>
         <button id="btn-send" style="position:absolute;bottom:8px;right:8px;width:36px;height:36px;background:#bd27bc;border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
@@ -7451,6 +7445,8 @@ function sendMessage() {
   const ta=document.getElementById('input-textarea');
   const txt=ta.value.trim();
   if(!txt) return;
+  // Typing a message and sending it exits voice mode.
+  if (window._vm && window._vm.active) _vmExit();
   ta.value=''; ta.style.height='auto';
   showChatArea();
   appendMessage('user',txt);
@@ -16444,7 +16440,7 @@ async function quickAction(action) {
 // ── EVENTS ────────────────────────────────────────────────────────────────────
 
 // ============================================================================
-// VOICE CONVERSATION MODE — Claude.ai phone-call-style voice UX
+// VOICE CONVERSATION MODE — Claude.ai-style, in-place in the chat input (no overlay)
 // Reuses the Web Speech APIs: SpeechRecognition (input) + SpeechSynthesis (output).
 // ============================================================================
 
@@ -16505,53 +16501,58 @@ function speakText(text, onEnd) {
   try { window.speechSynthesis.speak(u); } catch(e) { if (onEnd) onEnd(); }
 }
 
-// ── Voice conversation state machine ─────────────────────────────────────────
-const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null };
+// ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'' };
 window._vm = _vm;
 
-function _vmBuildOverlay() {
-  if (document.getElementById('vm-overlay')) return;
-  const ov = document.createElement('div');
-  ov.id = 'vm-overlay';
-  ov.innerHTML =
-    '<div id="vm-title">FreightAI</div>' +
-    '<div id="vm-orb" onclick="_vmBargeIn()"><span class="vm-ring"></span><span class="vm-ring"></span><span class="vm-ring"></span></div>' +
-    '<div id="vm-status">Listening…</div>' +
-    '<div id="vm-transcript"><div id="vm-user"></div><div id="vm-bot"></div></div>' +
-    '<button id="vm-end" onclick="exitVoiceMode()" title="End voice conversation"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
-  document.body.appendChild(ov);
+function _vmEls() {
+  return {
+    btn:  document.getElementById('btn-voice'),
+    wave: document.getElementById('voice-wave'),
+    ta:   document.getElementById('input-textarea')
+  };
 }
 
 function _vmSetState(state) {
   _vm.state = state;
-  const orb = document.getElementById('vm-orb');
-  const status = document.getElementById('vm-status');
-  if (orb) orb.className = (state === 'listen') ? 'listening' : (state === 'speak') ? 'speaking' : (state === 'think') ? 'thinking' : '';
-  if (status) status.textContent = (state === 'listen') ? 'Listening…' : (state === 'think') ? 'Thinking…' : (state === 'speak') ? 'Speaking…' : '';
+  const { btn, wave, ta } = _vmEls();
+  if (btn) {
+    btn.classList.remove('vm-listening', 'vm-speaking');
+    if (state === 'listen') btn.classList.add('vm-listening');
+    else if (state === 'speak') btn.classList.add('vm-speaking');
+    btn.title = _vm.active ? 'Tap to exit voice mode' : 'Start a voice conversation';
+  }
+  if (wave) wave.classList.toggle('show', state === 'listen');
+  if (ta) ta.placeholder = (state === 'listen') ? 'Listening…' : _vm.origPlaceholder;
 }
 
-function _vmSetUser(t) { const el = document.getElementById('vm-user'); if (el) el.textContent = t || ''; }
-function _vmSetBot(t)  { const el = document.getElementById('vm-bot');  if (el) el.textContent = t || ''; }
-
-function enterVoiceMode() {
+// The mic button: enter when idle; while active, barge-in if speaking, else exit.
+function toggleVoiceMode() {
   if (!_srSupported() || !_ttsSupported()) return; // unsupported → button hidden anyway
-  _vmBuildOverlay();
+  if (!_vm.active) { _vmEnter(); return; }
+  if (_vm.state === 'speak') { _vmBargeIn(); return; }
+  _vmExit();
+}
+
+function _vmEnter() {
+  if (!_srSupported() || !_ttsSupported()) return;
   if (!_ttsVoice) _pickVoice();
-  const ov = document.getElementById('vm-overlay');
+  if (typeof showChatArea === 'function') showChatArea();
+  const { ta } = _vmEls();
+  if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
   _vm.active = true;
-  requestAnimationFrame(() => { if (ov) ov.classList.add('show'); });
-  _vmSetUser(''); _vmSetBot('');
   _vmStartListen();
 }
 
-function exitVoiceMode() {
+function _vmExit() {
   _vm.active = false;
+  _vm.speakToken++; // cancel any pending relisten tied to in-flight speech
   _vmStopListen();
   try { window.speechSynthesis.cancel(); } catch(e) {}
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
-  const ov = document.getElementById('vm-overlay');
-  if (ov) ov.classList.remove('show');
   _vmSetState('idle');
+  const { ta } = _vmEls();
+  if (ta) { ta.style.paddingLeft = _vm.origPadLeft; if (ta.placeholder === 'Listening…') ta.placeholder = _vm.origPlaceholder; }
 }
 
 function _vmStopListen() {
@@ -16571,6 +16572,8 @@ function _vmStartListen() {
   rec.continuous = false; rec.interimResults = true; rec.lang = 'en-US';
   _vm.rec = rec; _vm.listening = true;
   _vmSetState('listen');
+  const { ta } = _vmEls();
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
   let finalText = '';
   rec.onresult = (event) => {
     let interim = '';
@@ -16578,25 +16581,20 @@ function _vmStartListen() {
       const r = event.results[i];
       if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
     }
-    _vmSetUser((finalText + interim).trim());
+    // Interim transcript appears in the input field in real time.
+    const t2 = _vmEls().ta;
+    if (t2) { t2.value = (finalText + interim).trim(); t2.style.height = 'auto'; t2.style.height = Math.min(t2.scrollHeight, 140) + 'px'; }
   };
   rec.onerror = (e) => {
-    if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) {
-      _vm.listening = false;
-      _vmSetState('idle');
-      const st = document.getElementById('vm-status'); if (st) st.textContent = 'Microphone blocked — tap × to exit.';
-    }
-    // 'no-speech' / 'aborted' / transient errors → onend handles the relisten
+    if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); }
+    // 'no-speech' / 'aborted' / transient → onend handles the relisten
   };
   rec.onend = () => {
     _vm.listening = false;
     if (!_vm.active) return;
     const said = finalText.trim();
-    if (said) {
-      _vmHandleFinal(said);
-    } else if (_vm.state === 'listen') {
-      setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 300);
-    }
+    if (said) _vmHandleFinal(said);
+    else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 300);
   };
   try { rec.start(); }
   catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
@@ -16604,29 +16602,22 @@ function _vmStartListen() {
 
 function _vmHandleFinal(text) {
   _vmStopListen();
-  _vmSetUser(text);
-  _vmSetBot('');
   _vmSetState('think');
-  // Send exactly like a typed message so every agent capability runs (rates, booking, insurance…).
-  try {
-    appendMessage('user', text);
-    handleInput(text);
-  } catch(e) { console.warn('[VM] send failed', e); }
-  // Watchdog: if no spoken bot reply arrives (e.g. a panel-only turn), relisten so we never stall.
+  const { ta } = _vmEls();
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+  // Auto-send exactly like a typed message so every agent capability runs (rates, booking, insurance…).
+  try { appendMessage('user', text); handleInput(text); } catch(e) { console.warn('[VM] send failed', e); }
+  // Watchdog: if no spoken reply arrives (e.g. a panel-only turn), relisten so we never stall.
   if (_vm.watchdog) clearTimeout(_vm.watchdog);
   _vm.watchdog = setTimeout(() => { if (_vm.active && _vm.state === 'think') _vmStartListen(); }, 25000);
 }
 
-// Called from appendMessage whenever a bot text message renders while voice mode is active.
+// Called from appendMessage when a bot text message renders while voice mode is active.
 function _vmOnBotReply(text) {
   if (!_vm.active) return;
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
   const speech = _speechTextFor(text);
-  _vmSetBot(_cleanForSpeech(text).slice(0, 240));
-  if (!speech) {  // nothing speakable → go back to listening
-    setTimeout(() => { if (_vm.active) _vmStartListen(); }, 600);
-    return;
-  }
+  if (!speech) { setTimeout(() => { if (_vm.active) _vmStartListen(); }, 600); return; }
   _vmSetState('speak');
   const token = ++_vm.speakToken;
   speakText(text, () => {
@@ -16635,14 +16626,12 @@ function _vmOnBotReply(text) {
   });
 }
 
-// Barge-in: tapping the orb while the agent is speaking cancels speech → back to listening.
+// Barge-in: tap the mic while the agent is speaking → cancel speech, start listening.
 function _vmBargeIn() {
   if (!_vm.active) return;
-  if (_vm.state === 'speak') {
-    _vm.speakToken++; // invalidate the in-flight onEnd so it doesn't double-relisten
-    try { window.speechSynthesis.cancel(); } catch(e) {}
-    _vmStartListen();
-  }
+  _vm.speakToken++; // invalidate the in-flight onEnd so it doesn't double-relisten
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  _vmStartListen();
 }
 
 function initVoiceMode() {
@@ -16650,7 +16639,7 @@ function initVoiceMode() {
     _pickVoice();
     try { window.speechSynthesis.onvoiceschanged = _pickVoice; } catch(e) {}
   }
-  // Hide the voice-mode button if the browser lacks speech recognition or synthesis (e.g. Firefox).
+  // Hide the voice button if the browser lacks speech recognition or synthesis (e.g. Firefox).
   if (!_srSupported() || !_ttsSupported()) {
     const b = document.getElementById('btn-voice'); if (b) b.style.display = 'none';
   }
