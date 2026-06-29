@@ -7142,7 +7142,7 @@ function openPrivacyPanel() {
 }
 
 
-function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); sessionStorage.removeItem('fl_session'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} showLogin(); }
+function doLogout() { currentCustomer=null;primusToken=null; try { sessionStorage.removeItem('fl_token'); sessionStorage.removeItem('fl_email'); sessionStorage.removeItem('fl_pw'); sessionStorage.removeItem('fl_session'); localStorage.removeItem('rp_tabs'); localStorage.removeItem('rp_active_title'); } catch(e) {} window.location.href = '/'; }
 function filterChats(q) { document.querySelectorAll('#sb-body .sb-link').forEach(el=>{el.style.display=!q||el.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';}); }
 function addRecent(title) { renderSessionList(); }
 function showSessionMenu(e, s, row) {
