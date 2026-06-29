@@ -172,12 +172,25 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 }
 #sidebar.collapsed .sb-link:hover .sb-tooltip{ display:block; }
 
-/* Mic button active state */
-#btn-mic.listening, #welcome-mic.listening{
-  background:rgba(189,39,188,.1);
-  color:var(--ac);
-  animation:pulse 1s infinite;
+/* Mic button active state — background pulses between the two brand purples */
+#btn-mic.listening, #welcome-mic.listening, #mob-ships-mic.listening, #mob-content-mic.listening{
+  color:#fff;
+  animation:micPulse 1s infinite;
 }
+@keyframes micPulse{0%,100%{background:#bd27bc}50%{background:#8e1b8d}}
+/* Auto-speak header toggle */
+#chat-header-bar{max-width:680px;width:100%;margin:0 auto;display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:2px 0 0;}
+#autospeak-toggle{width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;padding:2px;transition:color .15s,background .12s;}
+#autospeak-toggle:hover{background:rgba(0,0,0,.05);}
+#autospeak-toggle svg{width:20px;height:20px;}
+/* Voice output — speaking indicator (waveform) + stop button */
+.speak-wave{display:inline-flex;align-items:flex-end;gap:2px;height:12px;}
+.speak-wave i{display:block;width:2px;height:4px;background:#bd27bc;border-radius:1px;animation:speakWave .9s ease-in-out infinite;}
+.speak-wave i:nth-child(2){animation-delay:.15s;}
+.speak-wave i:nth-child(3){animation-delay:.3s;}
+.speak-wave i:nth-child(4){animation-delay:.45s;}
+@keyframes speakWave{0%,100%{height:4px}50%{height:12px}}
+.speak-stop:hover{border-color:#bd27bc !important;color:#bd27bc !important;}
   color:var(--mu);font-size:13px;cursor:pointer;
   transition:background .1s;user-select:none;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
@@ -1934,6 +1947,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   <!-- CHAT AREA (hidden until first message) -->
   <div id="chat-area">
+    <div id="chat-header-bar">
+      <button id="autospeak-toggle" onclick="toggleAutoSpeak()" title="Auto-speak replies"></button>
+    </div>
     <div id="messages"></div>
     <div id="input-bar">
       <div class="inp-wrap" style="position:relative;">
@@ -5067,6 +5083,11 @@ function appendMessage(role, text, extras) {
 
   wrap.appendChild(row);
   scrollBottom();
+
+  // Voice output — read agent replies aloud (when auto-speak is on and supported).
+  if (role === 'bot' && text && String(text).trim()) {
+    try { speakText(String(text), bubble); } catch(e) {}
+  }
 }
 
 function renderQuotes(rates, isBox) {
@@ -16443,8 +16464,7 @@ let voiceMode = false;
 
 function toggleMic() {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    alert('Speech recognition is not supported in this browser. Please use Chrome or Safari.');
-    return;
+    return; // unsupported (e.g. Firefox) — buttons are hidden on init; degrade silently
   }
 
   if (isListening || voiceMode) {
@@ -16519,6 +16539,135 @@ function stopMic() {
 }
 
 // ============================================================================
+// VOICE OUTPUT — read agent replies aloud via Web Speech API SpeechSynthesis
+// ============================================================================
+window._autoSpeak = true;          // restored from localStorage in initVoiceFeatures()
+let _ttsVoice = null;              // chosen US-English voice
+window._speakIndicatorEl = null;  // the inline waveform/stop row currently shown
+
+function _ttsSupported() { return typeof window !== 'undefined' && 'speechSynthesis' in window; }
+
+// Pick the best available natural US-English voice.
+function _pickVoice() {
+  if (!_ttsSupported()) return;
+  let voices = [];
+  try { voices = window.speechSynthesis.getVoices() || []; } catch(e) { return; }
+  if (!voices.length) return;
+  const prefs = ['Samantha', 'Google US English', 'Microsoft Aria Online (Natural) - English (United States)', 'Microsoft Jenny Online (Natural) - English (United States)', 'Alex'];
+  for (const name of prefs) { const v = voices.find(x => x.name === name); if (v) { _ttsVoice = v; return; } }
+  _ttsVoice = voices.find(v => /en[-_]US/i.test(v.lang || '')) ||
+              voices.find(v => /^en/i.test(v.lang || '')) || voices[0];
+}
+
+// Strip markdown so symbols are not read aloud, and collapse links to their label.
+function _cleanForSpeech(t) {
+  return String(t || '')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')  // [label](url) → label
+    .replace(/[`*#_>~]/g, '')                                  // md tokens
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+// Build the spoken string: long numbered lists (e.g. the insurance commodity list)
+// are not read in full — speak the first sentence then point to the chat.
+function _speechTextFor(t) {
+  const raw = String(t || '');
+  const numbered = (raw.match(/^\s*\d+[\.\)]\s+/gm) || []).length;
+  if (numbered > 8) {
+    const m = raw.match(/^[\s\S]*?[.!?](\s|$)/);
+    const first = (m ? m[0] : (raw.split('\n')[0] || raw)).trim();
+    return _cleanForSpeech(first) + ' — please check the chat for the full list.';
+  }
+  return _cleanForSpeech(raw);
+}
+
+function _buildSpeakIndicator(bubble) {
+  if (!bubble) return null;
+  const row = document.createElement('div');
+  row.className = 'speak-indicator';
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
+  row.innerHTML =
+    '<span class="speak-wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' +
+    '<button class="speak-stop" onclick="stopSpeaking()" title="Stop speaking" style="display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--bdr);border-radius:14px;padding:2px 9px;font-size:11px;font-weight:600;color:var(--mu);cursor:pointer;font-family:var(--font);line-height:1.4;">' +
+      '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>Stop</button>';
+  bubble.appendChild(row);
+  window._speakIndicatorEl = row;
+  return row;
+}
+
+function _removeSpeakIndicator() {
+  if (window._speakIndicatorEl && window._speakIndicatorEl.parentNode) {
+    window._speakIndicatorEl.parentNode.removeChild(window._speakIndicatorEl);
+  }
+  window._speakIndicatorEl = null;
+}
+
+function stopSpeaking() {
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  _removeSpeakIndicator();
+}
+
+function speakText(text, bubble) {
+  if (!window._autoSpeak || !_ttsSupported()) return;
+  const speech = _speechTextFor(text);
+  if (!speech) return;
+  // Cancel any in-flight speech (and its indicator) before starting the new one.
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  _removeSpeakIndicator();
+  if (!_ttsVoice) _pickVoice();
+  let u;
+  try { u = new SpeechSynthesisUtterance(speech); } catch(e) { return; }
+  if (_ttsVoice) u.voice = _ttsVoice;
+  u.rate = 1.0; u.pitch = 1.0;
+  u.lang = (_ttsVoice && _ttsVoice.lang) || 'en-US';
+  _buildSpeakIndicator(bubble);
+  u.onend = () => { _removeSpeakIndicator(); };
+  u.onerror = () => { _removeSpeakIndicator(); };
+  try { window.speechSynthesis.speak(u); } catch(e) { _removeSpeakIndicator(); }
+}
+
+// Auto-speak toggle (chat header) — persisted in localStorage 'fp_autospeak'.
+function _renderAutoSpeakBtn() {
+  const btn = document.getElementById('autospeak-toggle');
+  if (!btn) return;
+  const on = !!window._autoSpeak;
+  btn.style.color = on ? '#bd27bc' : '#9ca3af';
+  btn.title = on ? 'Auto-speak replies: ON' : 'Auto-speak replies: OFF';
+  btn.innerHTML = on
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+}
+
+function toggleAutoSpeak() {
+  window._autoSpeak = !window._autoSpeak;
+  try { localStorage.setItem('fp_autospeak', window._autoSpeak ? '1' : '0'); } catch(e) {}
+  if (!window._autoSpeak) stopSpeaking();  // turning off stops any current speech
+  _renderAutoSpeakBtn();
+}
+
+function initVoiceFeatures() {
+  // Restore auto-speak preference (default ON).
+  try { const saved = localStorage.getItem('fp_autospeak'); window._autoSpeak = (saved === null) ? true : (saved === '1'); }
+  catch(e) { window._autoSpeak = true; }
+
+  if (_ttsSupported()) {
+    _pickVoice();
+    try { window.speechSynthesis.onvoiceschanged = _pickVoice; } catch(e) {}
+    _renderAutoSpeakBtn();
+  } else {
+    // No TTS — hide the toggle silently.
+    const b = document.getElementById('autospeak-toggle'); if (b) b.style.display = 'none';
+  }
+
+  // No SpeechRecognition — hide the mic buttons silently (graceful degradation, e.g. Firefox).
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    document.querySelectorAll('#btn-mic, #welcome-mic, #mob-ships-mic, #mob-content-mic')
+      .forEach(b => { b.style.display = 'none'; });
+  }
+}
+
+// ============================================================================
 // LEFT NAV COLLAPSE — remembers preference
 // ============================================================================
 let leftNavCollapsed = localStorage.getItem('navCollapsed') === 'true';
@@ -16540,7 +16689,7 @@ function toggleLeftNav() {
 }
 
 // Apply on load
-document.addEventListener('DOMContentLoaded', () => { applyNavState(); });
+document.addEventListener('DOMContentLoaded', () => { applyNavState(); initVoiceFeatures(); });
 
 // ============================================================================
 // RIGHT PANEL — TABBED, AUTO-WIDTH, DRAGGABLE, remembers width
