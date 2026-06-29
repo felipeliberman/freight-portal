@@ -2123,6 +2123,9 @@ const ACC_MAP = {
   'Limited Access Delivery':'LAD',
   'Limited Access Pickup': 'LAD',
   'Limited Access':        'LAD',
+  // Cargo insurance — doGetRates labels the INS button as 'Cargo Insurance' (CODE_TO_LABEL);
+  // without this mapping fetchRates dropped it and INS never reached accessorialsList[].
+  'Cargo Insurance':       'INS',
   // 'Appointment' is a booking flag, not sent to the rates API
   // 'Appointment Delivery':  'APT',
   // 'Appointment':           'APT',
