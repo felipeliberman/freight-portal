@@ -2173,6 +2173,7 @@ function resetShipmentState(wipeConversation) {
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+    window._insPreRate = false; window._insDecided = false;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
     // Always close stale booking panel tab on any fresh-quote reset (not just full wipe).
@@ -2482,6 +2483,39 @@ function _lqsToPrefill(s) {
 }
 function _quoteFormIsOpen() {
   return !!(window._quoteContainer && document.body.contains(window._quoteContainer));
+}
+
+// Insurance gate for the fast-quote shortcut paths (one-liner detection, parseShipQuery,
+// wizard) that build a shipment and call fetchRates directly, skipping the conversational
+// checklist. Call this right before fetchRates: it asks the cargo-insurance question once,
+// arms the existing _insCollecting flow (which collects value → commodity → sets the DOM →
+// pulls rates), and returns true so the caller returns WITHOUT pulling. Returns false when
+// insurance is already decided/enabled, so the caller proceeds to pull normally.
+function _insGateBeforeRates(shipment, summary) {
+  if (window._insDecided) return false;
+  if (window._insCollecting === 'value' || window._insCollecting === 'commodity') return false;
+  if (shipment && shipment.insuranceEnabled) return false;
+  // Capture the shipment so the insurance flow can pull rates for it.
+  lastQuotedShipment = shipment;
+  // Open the quote form silently so the INS panel + window._doGetRates exist for both the
+  // decline (pull without insurance) and the commodity-complete (pull with insurance) paths.
+  // Suppress the prefill auto-run so the insurance flow controls the single pull.
+  if (!_quoteFormIsOpen()) {
+    window._suppressQuoteAutoRun = true;
+    try { showQuoteForm(_lqsToPrefill(shipment), true); } catch(e) { console.warn('[FP] ins gate: showQuoteForm failed', e); }
+    const _acc = (shipment.accessorials || [])
+      .map(a => (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) ? ACC_MAP[a] : a)
+      .filter(c => typeof c === 'string' && c.length >= 2 && c.length <= 4);
+    const _qc = window._quoteContainer;
+    if (_qc) _acc.forEach(code => {
+      const b = [..._qc.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
+      if (b && !b.classList.contains('acc-active')) b.click();
+    });
+  }
+  window._insPreRate = true;
+  window._insCollecting = 'value';
+  appendMessage('bot', (summary ? summary + ' ' : '') + 'One last thing — would you like to add cargo insurance? If so, what is the total value of the cargo? Or say "no" to skip.');
+  return true;
 }
 
 async function fetchRates(shipment) {
@@ -4927,11 +4961,6 @@ function exportShipmentsToExcel(shipments) {
 
 function appendMessage(role, text, extras) {
   extras = extras || {};
-  // Soft-offer cargo insurance on the rates message itself, unless it's already added.
-  if (extras.quotes && extras.quotes.length &&
-      !(typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.insuranceEnabled)) {
-    text = (text ? text + ' ' : '') + 'Would you like to add cargo insurance? If so, tell me the value of your cargo.';
-  }
   const wrap = document.getElementById('messages');
 
   const row = document.createElement('div');
@@ -8095,6 +8124,8 @@ async function handleWizardInput(text) {
 
     const dimStr = dimMatch ? L+'x'+W+'x'+H+'" ' : '';
     const accStr = acc.length ? acc.join(', ') : 'None';
+    // Ask cargo insurance before pulling rates (premium must be priced into the rate).
+    if (_insGateBeforeRates(finalShipment, 'Got it — ' + finalShipment.originZip + ' to ' + finalShipment.destinationZip + ', ' + weight + ' lbs, class ' + freightClass + '.')) { wizardStep = null; quoteData = {}; return; }
     appendMessage('bot', 'Pulling live rates for ' + finalShipment.originZip + ' to ' + finalShipment.destinationZip + ' — ' + pieces + ' ' + (packageType==='BOX'?'box(es)':'pallet(s)') + ', ' + weight + ' lbs, class ' + freightClass + (acc.length ? ', ' + acc.join(', ') : '') + '...');
     // Open quote panel (if not already open) so rates can appear in the Rates tab
     if (!window._quoteFormOpen) {
@@ -9568,6 +9599,9 @@ function _applyQuoteFields(input) {
   // Pull rates if requested — but GUARD against redundant pulls that churn the form.
   // Only actually pull if the shipment signature changed since the last pull.
   if (input.getRates) {
+    // Hold the pull while cargo insurance is being collected — the insurance flow sets the
+    // DOM and pulls once it's resolved, so the premium is always in the rate.
+    if (window._insCollecting === 'value' || window._insCollecting === 'commodity') return;
     setTimeout(() => {
       try {
         const sig = _quoteSignature();
@@ -10284,6 +10318,8 @@ READING WEIGHT AND DIMENSIONS — NEVER MISMAP THE NUMBERS. When a customer ratt
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. Also ask whether the freight is hazardous material (hazmat / dangerous goods) — if the customer says yes, or gives a UN number, set hazmat:true on the line item so the rate includes the carrier hazmat surcharge. You do not need the UN number to quote; the full UN number, packing group, and emergency contact are collected at booking, NOT at quote. During quoting, never ask for UN number, UN packaging group, or hazmat class details. The only hazmat question allowed at quote time is: is the freight hazardous material (yes/no)? All other hazmat details are collected at booking only. Do not ask for them early even if the customer volunteers the information. Never guess hazmat — only set it when the customer indicates it. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting. PACKING SLIP EXCEPTION: when the customer's message is a packing slip or structured shipping document that already answers the accessorial questions — explicitly stating liftgate is not needed, identifying the facility type (commercial/dock/residential), or specifying limited access — do NOT re-ask those questions. The written document is the customer's answer. Extract the answers from the doc and apply them; asking again after the customer already provided a document is friction, not diligence.
 
+CARGO INSURANCE — REQUIRED LAST QUESTION BEFORE RATES. After the hazmat question and before you pull rates, you MUST ask exactly once: "Would you like to add cargo insurance? If so, what is the total value of the cargo?" End that message with [[INSURANCE]] on its own line, and do NOT call update_quote with getRates on that turn. The system then takes over: it collects the cargo value and the commodity type and pulls the rates itself with the premium included (insurance must be priced into the rate, so it has to be decided before rates run). Do not ask for the commodity yourself and never quote an insurance price. If the customer already declined insurance earlier in this quote, skip the question. Never pull rates before this insurance question has been asked and answered.
+
 FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull (getRates:true) when: (a) the shipment genuinely changes (new weight, dims, accessorial, origin, or destination), OR (b) the customer explicitly asks to re-rate or requote. Never decline an explicit customer request for new rates. Repeatedly pulling rates unprompted churns the form and confuses the customer.
 
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
@@ -10570,7 +10606,15 @@ async function aiConverse(userText) {
 
       // Normal completion (includes resolved server-side web_search)
       removeTyping();
-      const finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
+      let finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
+      // Pre-rate cargo insurance: the agent appends [[INSURANCE]] when it asks the insurance
+      // question (instead of pulling rates). Strip the marker and arm the collection flow so
+      // the customer's next reply (a value, or "no") is handled deterministically before rates.
+      if (/\[\[INSURANCE\]\]/.test(finalText)) {
+        finalText = finalText.replace(/\[\[INSURANCE\]\]/g, '').trim();
+        window._insCollecting = 'value';
+        window._insPreRate = true;
+      }
       chatHistory.push({ role: 'assistant', content: finalText });
       _showBot(finalText);
       return;
@@ -11764,17 +11808,30 @@ async function handleInput(text) {
     appendMessage('bot', 'To add cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
     return;
   }
-  // 6b: collect the cargo value.
+  // 6b: collect the cargo value (or a decline).
   if (window._insCollecting === 'value') {
+    // Decline → skip insurance. If we were gating a pre-rate pull, pull the rates now.
+    if (/\b(no|nope|skip|none|no thanks?|not needed|without|don'?t|no insurance)\b/i.test(t) && !/\d/.test(t)) {
+      window._insCollecting = null; window._insTempValue = null;
+      if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
+      if (window._insPreRate) {
+        window._insPreRate = false; window._insDecided = true;
+        appendMessage('bot', 'No problem — pulling your rates now without insurance.');
+        if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] no-insurance pull failed', e); } }
+      } else {
+        appendMessage('bot', 'No problem — I\'ve left cargo insurance off.');
+      }
+      return;
+    }
     const _m = String(t).replace(/[$,]/g, '').match(/\d+(?:\.\d+)?/);
     const _num = _m ? parseFloat(_m[0]) : NaN;
     if (_num > 0) {
       window._insTempValue = _num;
       window._insCollecting = 'commodity';
       const _list = REDKIK_COMMODITIES.map((c, i) => (i + 1) + '. ' + c.name).join('\n');
-      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. Now select the commodity type by number or keyword:\n\n' + _list);
+      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. What type of commodity is it? Reply with a number:\n\n' + _list);
     } else {
-      appendMessage('bot', 'I did not catch a dollar amount. What is the total value of the cargo?');
+      appendMessage('bot', 'I did not catch a dollar amount. What is the total value of the cargo? (Or say "no" to skip insurance.)');
     }
     return;
   }
@@ -11782,7 +11839,14 @@ async function handleInput(text) {
   if (window._insCollecting === 'commodity') {
     if (/^\s*(cancel|never ?mind|stop|forget it|no thanks?)\s*$/i.test(t)) {
       window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
-      appendMessage('bot', 'No problem — I\'ve left cargo insurance off. Let me know if you change your mind.');
+      if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
+      if (window._insPreRate) {
+        window._insPreRate = false; window._insDecided = true;
+        appendMessage('bot', 'No problem — pulling your rates now without insurance.');
+        if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] no-insurance pull failed', e); } }
+      } else {
+        appendMessage('bot', 'No problem — I\'ve left cargo insurance off. Let me know if you change your mind.');
+      }
       return;
     }
     let _match = null;
@@ -11806,6 +11870,7 @@ async function handleInput(text) {
     lastQuotedShipment.insuranceCommodityName = _match.name;
     lastQuotedShipment.insuranceAmount = _val;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+    window._insPreRate = false; window._insDecided = true;
     appendMessage('bot', 'Cargo insurance added — ' + _match.name + ', insured for $' + _val.toLocaleString('en-US') + '. Pulling rates with insurance included...');
 
     // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
@@ -12562,6 +12627,8 @@ async function handleInput(text) {
     };
     const accStr = accessorials.length ? accessorials.join(', ') : 'None';
     const _dimStr = (dimMatch ? _dimL+'x'+_dimW+'x'+_dimH+'" ' : '');
+    // Ask cargo insurance before pulling rates (premium must be priced into the rate).
+    if (_insGateBeforeRates(shipment, 'Got it — ' + shipment.originZip + ' to ' + shipment.destinationZip + ', ' + weight + ' lbs, class ' + freightClass + '.')) return;
     appendMessage('bot',
       'Pulling live rates for ' + shipment.originZip + ' to ' + shipment.destinationZip + ' — ' + pieces + ' pallet(s), ' + weight + ' lbs, class ' + freightClass + (_dimStr ? ', ' + _dimL+'x'+_dimW+'x'+_dimH+'"' : '') + (accStr !== 'None' ? ', ' + accStr : '') + '...');
     showTyping();
@@ -12615,6 +12682,8 @@ async function handleInput(text) {
       };
       const accStr = accessorials.length ? accessorials.join(', ') : 'None';
       const _aiDimStr = (q.length && q.width && q.height ? ', '+q.length+'x'+q.width+'x'+q.height+'"' : '');
+      // Ask cargo insurance before pulling rates (premium must be priced into the rate).
+      if (_insGateBeforeRates(shipment, 'Got it — ' + q.originZip + ' to ' + q.destinationZip + ', ' + q.weight + ' lbs, class ' + freightClass + '.')) return;
       appendMessage('bot',
         'Pulling live rates for ' + q.originZip + ' to ' + q.destinationZip + ' — ' + pieces + ' pallet(s), ' + q.weight + ' lbs, class ' + freightClass + (_aiDimStr ? ', ' + _aiDimStr.trim() : '') + (accStr !== 'None' ? ', ' + accStr : '') + '...');
       showTyping();
