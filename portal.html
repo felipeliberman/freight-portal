@@ -14919,6 +14919,7 @@ function showQuoteForm(prefill, silent) {
   // ── Geocodio RDI residential check ──────────────────────────────────────────
   const GEOCODIO_KEY = 'ac756697506a2de2a23696336660c729c62f052';
   let _rdiTimer = null;
+  let _rdiTimer2 = null;
 
   function activateAcc(code) {
     // Find the accessorial button by data-code and activate it
@@ -14948,25 +14949,29 @@ function showQuoteForm(prefill, silent) {
     // Option B: thin left-border inline banner — clean and minimal
     banner.style.cssText = 'border-left:3px solid var(--fa);background:var(--card);border-radius:0 4px 4px 0;padding:7px 10px;margin:5px 0;display:flex;align-items:center;gap:10px;';
 
-    const icon = type === 'residential'
+    const icon = (type === 'residential' || type === 'residential-pickup')
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>'
       : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>';
 
-    const txt = type === 'residential'
-      ? 'Residential address detected'
+    const txt = type === 'residential' ? 'Residential address detected'
+      : type === 'residential-pickup' ? 'Residential pickup address detected'
       : (type === 'liftgate' ? '100+ lbs to a residence — liftgate recommended' : 'Limited access location detected');
 
-    const addLabel = type === 'residential' ? 'Add Residential' : (type === 'liftgate' ? 'Add Liftgate' : 'Add Limited Access');
-    const addCode  = type === 'residential' ? 'RSD' : (type === 'liftgate' ? 'LFD' : 'LAD');
+    const addLabel = type === 'residential' ? 'Add Residential'
+      : type === 'residential-pickup' ? 'Add Residential Pickup'
+      : (type === 'liftgate' ? 'Add Liftgate' : 'Add Limited Access');
+    const addCode  = type === 'residential' ? 'RSD'
+      : type === 'residential-pickup' ? 'RSO'
+      : (type === 'liftgate' ? 'LFD' : 'LAD');
 
     banner.innerHTML = icon +
       '<span style="font-size:11px;color:var(--mu);flex:1;">' + txt + '</span>' +
       '<button style="background:none;border:none;font-size:11px;font-weight:700;color:var(--ac);cursor:pointer;font-family:var(--font);padding:0;white-space:nowrap;" id="rdi-add-' + type + '">' + addLabel + '</button>' +
       '<button style="background:none;border:none;font-size:11px;color:var(--mu);cursor:pointer;font-family:var(--font);padding:0;" id="rdi-skip-' + type + '">×</button>';
 
-    const destCity = container.querySelector('#qt-dest-city');
-    if (destCity && destCity.parentNode) {
-      destCity.parentNode.insertBefore(banner, destCity.nextSibling);
+    const anchor = container.querySelector(type === 'residential-pickup' ? '#qt-origin-city' : '#qt-dest-city');
+    if (anchor && anchor.parentNode) {
+      anchor.parentNode.insertBefore(banner, anchor.nextSibling);
     }
 
     banner.querySelector('#rdi-add-' + type).onclick = () => {
@@ -15022,11 +15027,32 @@ function showQuoteForm(prefill, silent) {
     } catch(e) { /* silent fail */ }
   }
 
+  async function checkResidentialPickup(zip) {
+    if (!zip || zip.length !== 5) return;
+    ['rdi-banner-residential-pickup','rdi-banner-liftgate-pickup'].forEach(id => {
+      const el = container.querySelector('#' + id); if (el) el.remove();
+    });
+    if (isAccActive('RSO')) return; // already set
+    try {
+      const _cityEl = container.querySelector('#qt-origin-city');
+      const _cityVal = _cityEl ? _cityEl.textContent.trim() : '';
+      const _addrQ = _cityVal ? (_cityVal + ' ' + zip) : zip;
+      const url = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&api_key=' + GEOCODIO_KEY + '&limit=1';
+      const r = await fetch(url);
+      if (!r.ok) return;
+      const d = await r.json();
+      const result = d.results && d.results[0];
+      const _isRes = result && result.fields && result.fields.zip4 && result.fields.zip4.residential === true;
+      if (_isRes) showRDIBanner('residential-pickup');
+    } catch(e) { /* silent fail */ }
+  }
+
   container.querySelector('#qt-origin').oninput = e => {
     const v = e.target.value.trim();
     if (_isCanadianPostal(v)) { e.target.maxLength = 7; quoteData.originCountry = 'CA'; }
     else { e.target.maxLength = 5; quoteData.originCountry = 'US'; }
     zipLookup(v, 'qt-origin-city'); updateProgress();
+    if (_rdiTimer2) clearTimeout(_rdiTimer2); _rdiTimer2 = setTimeout(() => checkResidentialPickup(v), 800);
   };
   container.querySelector('#qt-dest').oninput = e => {
     const v = e.target.value.trim();
@@ -15036,7 +15062,7 @@ function showQuoteForm(prefill, silent) {
     if (_rdiTimer) clearTimeout(_rdiTimer); _rdiTimer = setTimeout(() => checkResidential(v), 800);
   };
   container.querySelector('#qt-date').oninput = () => updateProgress();
-  if (pf.originZip) zipLookup(pf.originZip, 'qt-origin-city');
+  if (pf.originZip) { zipLookup(pf.originZip, 'qt-origin-city'); setTimeout(() => checkResidentialPickup(pf.originZip), 1000); }
   if (pf.destZip)   { zipLookup(pf.destZip, 'qt-dest-city'); setTimeout(() => checkResidential(pf.destZip), 1000); }
   // Initialize maxlength from prefill — catches agent update_quote before _applyQuoteFields fires.
   if (_isCanadianPostal(pf.originZip || '')) { container.querySelector('#qt-origin').maxLength = 7; quoteData.originCountry = 'CA'; }
