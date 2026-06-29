@@ -16681,12 +16681,18 @@ async function _vmSpeakReply(text) {
     if (!_vm.active || _vm.speakToken !== tok) { resume(); return; }
     const url = URL.createObjectURL(blob);
     try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+    _vmStopListen();                 // mic OFF while the agent speaks (no self-hearing)
+    _vm.state = 'speak';
+    _vmUpdateButtons();
     const audio = new Audio(url);
     _vm.audio = audio;
-    const cleanup = () => { try { URL.revokeObjectURL(url); } catch(e) {} };
-    audio.onended  = () => { cleanup(); resume(); };
-    audio.onerror  = () => { cleanup(); resume(); };
-    audio.play().catch(() => { cleanup(); resume(); });
+    audio.onended = () => {
+      try { URL.revokeObjectURL(url); } catch(e) {}
+      // 800ms lets the speaker sound fully clear before the mic reopens.
+      if (_vm.active) setTimeout(() => { _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen(); }, 800);
+    };
+    audio.onerror = () => { if (_vm.active) setTimeout(() => _vmStartListen(), 800); };
+    audio.play().catch(() => { if (_vm.active) _vmStartListen(); });
   } catch(e) { resume(); }
 }
 
