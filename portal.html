@@ -15334,7 +15334,7 @@ function showQuoteForm(prefill, silent) {
         if (charges.length) {
           const tbl = document.createElement('table');
           tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
-          tbl.innerHTML = '<thead><tr style="border-bottom:1px solid var(--bdr);"><th style="text-align:left;padding:5px 0;font-size:10px;color:var(--mu);font-weight:700;text-transform:uppercase;">Description</th><th style="text-align:right;padding:5px 0;font-size:10px;color:var(--mu);font-weight:700;text-transform:uppercase;">Amount</th></tr></thead><tbody>'+charges.map(c=>'<tr style="border-bottom:1px solid #f0ede6;"><td style="padding:8px 0;color:var(--tx);">'+(c.name||c.description||c.type||'Charge')+'</td><td style="padding:8px 0;text-align:right;font-weight:600;">$'+Number(c.total||c.amount||0).toFixed(2)+'</td></tr>').join('')+'</tbody>';
+          tbl.innerHTML = '<thead><tr style="border-bottom:1px solid var(--bdr);"><th style="text-align:left;padding:5px 0;font-size:10px;color:var(--mu);font-weight:700;text-transform:uppercase;">Description</th><th style="text-align:right;padding:5px 0;font-size:10px;color:var(--mu);font-weight:700;text-transform:uppercase;">Amount</th></tr></thead><tbody>'+charges.map(c=>'<tr style="border-bottom:1px solid #f0ede6;"><td style="padding:8px 0;color:var(--tx);">'+String(c.name||c.description||c.type||'Charge').toUpperCase()+'</td><td style="padding:8px 0;text-align:right;font-weight:600;">$'+Number(c.total||c.amount||0).toFixed(2)+'</td></tr>').join('')+'</tbody>';
           box.appendChild(tbl);
         } else {
           const msg = document.createElement('div');
