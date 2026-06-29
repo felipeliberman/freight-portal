@@ -172,13 +172,17 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 }
 #sidebar.collapsed .sb-link:hover .sb-tooltip{ display:block; }
 
-/* ── Voice mode — in-place in the chat input bar (no overlay) ───────────────── */
-#btn-voice{color:#9ca3af;}
-#btn-voice:hover{background:rgba(0,0,0,.05);}
-#btn-voice.vm-listening{color:#bd27bc;animation:vmMicPulse 1.1s ease-in-out infinite;}
-#btn-voice.vm-speaking{color:#bd27bc;animation:vmMicSpeak .9s ease-in-out infinite;}
+/* ── Voice mode — in-place in the chat input bars (no overlay) ──────────────── */
+.btn-voice-mic{color:#9ca3af;}
+.btn-voice-mic:hover{background:rgba(0,0,0,.05);}
+.btn-voice-mic.vm-active{color:#bd27bc;}
+.btn-voice-mic.vm-listening{color:#bd27bc;animation:vmMicPulse 1.1s ease-in-out infinite;}
+.btn-voice-mic.vm-speaking{color:#bd27bc;animation:vmMicSpeak .9s ease-in-out infinite;}
 @keyframes vmMicPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:.65}}
 @keyframes vmMicSpeak{0%,100%{opacity:.55}50%{opacity:1}}
+/* Voice-mode status bar above the main input */
+#vm-status-bar{display:none;align-items:center;gap:6px;color:#bd27bc;font-size:11px;font-weight:600;padding:4px 2px 2px;}
+#vm-status-bar.show{display:flex;}
 /* Listening waveform inside the input area (3 bouncing bars) */
 #voice-wave{position:absolute;left:46px;bottom:16px;display:none;align-items:flex-end;gap:3px;height:16px;pointer-events:none;}
 #voice-wave.show{display:flex;}
@@ -1875,6 +1879,9 @@ document.addEventListener('DOMContentLoaded',()=>{
     </div>
         <div id="welcome-input-wrap" style="position:relative;">
       <textarea id="welcome-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:80px;min-height:72px;"></textarea>
+      <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
       <button id="welcome-send" style="position:absolute;bottom:10px;right:10px;width:32px;height:32px;background:#bd27bc;border:none;border-radius:8px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
@@ -1940,6 +1947,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div id="chat-area">
     <div id="messages"></div>
     <div id="input-bar">
+      <div id="vm-status-bar">🎙 Voice mode on — I'm listening</div>
       <div class="inp-wrap" style="position:relative;">
         <textarea id="input-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:90px;padding-left:44px;min-height:72px;"></textarea>
         <input type="file" id="chat-file-input" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
@@ -1947,7 +1955,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
         <div id="voice-wave" aria-hidden="true"><i></i><i></i><i></i></div>
-        <button id="btn-voice" onclick="toggleVoiceMode()" title="Start a voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
+        <button id="btn-voice" class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
         </button>
         <button id="btn-send" style="position:absolute;bottom:8px;right:8px;width:36px;height:36px;background:#bd27bc;border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;">
@@ -1980,6 +1988,9 @@ document.addEventListener('DOMContentLoaded',()=>{
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input id="mob-ships-input" type="text" placeholder="Ask about a shipment..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobShipsAsk()">
+      <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
       <button onclick="mobShipsAsk()" style="width:38px;height:38px;background:var(--ac);border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
@@ -2000,6 +2011,9 @@ document.addEventListener('DOMContentLoaded',()=>{
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input id="mob-content-input" type="text" placeholder="Ask a question..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobContentAsk()">
+      <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
       <button onclick="mobContentAsk()" style="width:38px;height:38px;background:var(--ac);border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
@@ -5067,9 +5081,9 @@ function appendMessage(role, text, extras) {
   wrap.appendChild(row);
   scrollBottom();
 
-  // Voice conversation mode — speak the reply and drive the call state machine.
-  if (role === 'bot' && text && String(text).trim() && window._vm && window._vm.active) {
-    try { _vmOnBotReply(String(text)); } catch(e) {}
+  // Voice conversation mode — speak the agent's reply aloud, then resume listening.
+  if (role === 'bot' && window._vm && window._vm.active) {
+    try { _vmSpeakReply(text); } catch(e) {}
   }
 }
 
@@ -16504,34 +16518,44 @@ function speakText(text, onEnd) {
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
 const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'' };
 window._vm = _vm;
+_vm.startListen = function(){ _vmStartListen(); }; // exposed for the appendMessage speak-back hook
+
+// Public alias used by the speak-back hook (strips markdown before speaking).
+function cleanForSpeech(t) { return _cleanForSpeech(t); }
 
 function _vmEls() {
   return {
-    btn:  document.getElementById('btn-voice'),
     wave: document.getElementById('voice-wave'),
     ta:   document.getElementById('input-textarea')
   };
 }
 
-function _vmSetState(state) {
-  _vm.state = state;
-  const { btn, wave, ta } = _vmEls();
-  if (btn) {
-    btn.classList.remove('vm-listening', 'vm-speaking');
-    if (state === 'listen') btn.classList.add('vm-listening');
-    else if (state === 'speak') btn.classList.add('vm-speaking');
-    btn.title = _vm.active ? 'Tap to exit voice mode' : 'Start a voice conversation';
-  }
-  if (wave) wave.classList.toggle('show', state === 'listen');
-  if (ta) ta.placeholder = (state === 'listen') ? 'Listening…' : _vm.origPlaceholder;
+// Update every mic button (.btn-voice-mic, across all input bars) to reflect voice state.
+function _vmUpdateButtons() {
+  document.querySelectorAll('.btn-voice-mic').forEach(btn => {
+    btn.classList.remove('vm-active', 'vm-listening', 'vm-speaking');
+    if (_vm.active) {
+      btn.classList.add('vm-active');
+      btn.classList.add(_vm.state === 'speak' ? 'vm-speaking' : 'vm-listening');
+      btn.title = 'Stop voice conversation';
+    } else {
+      btn.title = 'Start voice conversation';
+    }
+  });
 }
 
-// The mic button: enter when idle; while active, barge-in if speaking, else exit.
+function _vmSetState(state) {
+  _vm.state = state;
+  _vmUpdateButtons();
+  const { wave, ta } = _vmEls();
+  if (wave) wave.classList.toggle('show', _vm.active && state === 'listen');
+  if (ta) ta.placeholder = (_vm.active && state === 'listen') ? 'Listening…' : _vm.origPlaceholder;
+}
+
+// The mic button is a clear two-state toggle: ON ↔ OFF.
 function toggleVoiceMode() {
-  if (!_srSupported() || !_ttsSupported()) return; // unsupported → button hidden anyway
-  if (!_vm.active) { _vmEnter(); return; }
-  if (_vm.state === 'speak') { _vmBargeIn(); return; }
-  _vmExit();
+  if (!_srSupported() || !_ttsSupported()) return; // unsupported → buttons hidden anyway
+  if (_vm.active) _vmExit(); else _vmEnter();
 }
 
 function _vmEnter() {
@@ -16541,6 +16565,8 @@ function _vmEnter() {
   const { ta } = _vmEls();
   if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
   _vm.active = true;
+  const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.add('show');
+  _vmUpdateButtons();
   _vmStartListen();
 }
 
@@ -16550,7 +16576,9 @@ function _vmExit() {
   _vmStopListen();
   try { window.speechSynthesis.cancel(); } catch(e) {}
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
+  const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.remove('show');
   _vmSetState('idle');
+  _vmUpdateButtons();
   const { ta } = _vmEls();
   if (ta) { ta.style.paddingLeft = _vm.origPadLeft; if (ta.placeholder === 'Listening…') ta.placeholder = _vm.origPlaceholder; }
 }
@@ -16612,26 +16640,22 @@ function _vmHandleFinal(text) {
   _vm.watchdog = setTimeout(() => { if (_vm.active && _vm.state === 'think') _vmStartListen(); }, 25000);
 }
 
-// Called from appendMessage when a bot text message renders while voice mode is active.
-function _vmOnBotReply(text) {
+// Speak an agent reply aloud during voice mode, then resume listening.
+// (Invoked from the appendMessage bot-render hook.) A speakToken guards against
+// multi-message turns: only the latest reply's completion resumes listening.
+function _vmSpeakReply(text) {
   if (!_vm.active) return;
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
-  const speech = _speechTextFor(text);
-  if (!speech) { setTimeout(() => { if (_vm.active) _vmStartListen(); }, 600); return; }
+  const textToSpeak = typeof text === 'string' ? text : (text && text.text ? text.text : '');
+  if (!textToSpeak || !textToSpeak.trim()) { setTimeout(() => { if (_vm.active) _vmStartListen(); }, 600); return; }
   _vmSetState('speak');
-  const token = ++_vm.speakToken;
-  speakText(text, () => {
-    if (!_vm.active || token !== _vm.speakToken) return; // superseded by a newer reply or barge-in
-    setTimeout(() => { if (_vm.active && _vm.speakToken === token) _vmStartListen(); }, 800);
+  const tok = ++_vm.speakToken;
+  speakText(cleanForSpeech(textToSpeak), function() {
+    // after speaking, restart listening if still in voice mode (and not superseded)
+    if (window._vm && window._vm.active && _vm.speakToken === tok) {
+      setTimeout(function() { if (window._vm && window._vm.active && _vm.speakToken === tok && window._vm.startListen) window._vm.startListen(); }, 800);
+    }
   });
-}
-
-// Barge-in: tap the mic while the agent is speaking → cancel speech, start listening.
-function _vmBargeIn() {
-  if (!_vm.active) return;
-  _vm.speakToken++; // invalidate the in-flight onEnd so it doesn't double-relisten
-  try { window.speechSynthesis.cancel(); } catch(e) {}
-  _vmStartListen();
 }
 
 function initVoiceMode() {
