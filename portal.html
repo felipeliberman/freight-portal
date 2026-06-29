@@ -5054,7 +5054,7 @@ function appendMessage(role, text, extras) {
   if (extras.claims !== undefined) {
     const claimsEl = renderClaims(extras.claims);
     setTimeout(() => {
-      openRightPanel(claimsEl, 'Claims (' + extras.claims.length + ')');
+      openRightPanel(claimsEl, 'Open Claims (' + extras.claims.length + ')');
     }, 100);
   }
 
@@ -15695,7 +15695,7 @@ async function showClaims() {
       pg++;
     }
     removeTyping();
-    appendMessage('bot', `Here are your open claims (${allClaims.length} found):`, { claims: allClaims });
+    appendMessage('bot', `Here are your open claims (${allClaims.length} found):`, { claims: allClaims, claimsLabel: 'Open Claims' });
   } catch(e) {
     removeTyping();
     appendMessage('bot', 'Could not load claims. Please try again.');
@@ -15750,68 +15750,86 @@ async function showReports() {
 
 function renderClaims(claims) {
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;min-height:100%;box-sizing:border-box;background:#fff;';
 
   if (!claims || !claims.length) {
-    container.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No open claims found.</div>';
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:var(--mu);font-size:13px;padding:12px 0;';
+    empty.textContent = 'No open claims found.';
+    container.appendChild(empty);
     return container;
   }
 
-  // ── Defensive field readers (Primus openclaims shape varies) ───────────────
-  const _val = (c, keys) => { for (const k of keys) { if (c[k] != null && c[k] !== '') return c[k]; } return ''; };
-  const claimNo = c => _val(c, ['claimNumber','claimNo','claimId','id','number']);
-  const bolNo   = c => _val(c, ['bolNumber','bolNum','BOLNumber','proNumber','pro']);
-  const status  = c => { const s = _val(c, ['claimStatus','status','state']); return typeof s === 'object' ? (s.name || s.code || '') : s; };
-  const claimDt = c => _val(c, ['claimDate','dateFiled','filedDate','createdDate','date']);
-  const amount  = c => parseMoney(_val(c, ['claimAmount','amount','claimedAmount','totalAmount']));
+  const totalAmount = claims.reduce((s,c) => s + (parseFloat(c.claimAmount)||0), 0);
 
-  const fmtMoney = n => isNaN(n) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtDate  = d => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt) ? String(d) : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
-  const isOpen   = c => { const s = String(status(c)).toLowerCase(); return !/(closed|resolved|paid|settled|denied)/.test(s); };
+  // ── Dashboard header — matches renderShipments() style exactly ──
+  const titleSection = document.createElement('div');
+  titleSection.style.cssText = 'margin-bottom:16px;border-radius:14px;background:var(--card);border:1px solid var(--bdr);padding:20px 24px;display:flex;align-items:center;gap:0;flex-wrap:wrap;';
 
-  // ── Summary cards — same card style as renderInvoices() ────────────────────
-  const totalAmount = claims.reduce((s, c) => s + (amount(c) || 0), 0);
-  const openCount   = claims.filter(isOpen).length;
-  const cards = [
-    { label: 'Total Claims', value: String(claims.length), color: 'var(--tx)' },
-    { label: 'Open',         value: String(openCount),     color: 'var(--ac)' },
-    { label: 'Total Amount', value: fmtMoney(totalAmount),  color: 'var(--tx)' },
-  ];
-  const summary = document.createElement('div');
-  summary.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:10px;';
-  summary.innerHTML = cards.map(c =>
-    '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:16px 18px;">' +
-      '<div style="font-size:22px;font-weight:500;color:' + c.color + ';line-height:1;">' + c.value + '</div>' +
-      '<div style="font-size:10px;color:var(--fa);margin-top:6px;text-transform:uppercase;letter-spacing:.04em;">' + c.label + '</div>' +
-    '</div>'
-  ).join('');
-  container.appendChild(summary);
+  // Left: title + count
+  const headerLeft = document.createElement('div');
+  headerLeft.style.cssText = 'flex:1;min-width:140px;border-right:1px solid var(--bdr);padding-right:24px;margin-right:24px;';
+  headerLeft.innerHTML = `
+    <div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Open Claims</div>
+    <div style="display:flex;align-items:baseline;gap:6px;">
+      <span style="font-size:36px;font-weight:500;color:var(--tx);line-height:1.1;">${claims.length}</span>
+      <span style="font-size:12px;color:var(--fa);">total</span>
+    </div>`;
+  titleSection.appendChild(headerLeft);
 
-  // ── Claims table ───────────────────────────────────────────────────────────
+  // Right: stat cols — Total Claimed + Claim Types
+  const headerRight = document.createElement('div');
+  headerRight.style.cssText = 'display:flex;flex:2;justify-content:space-around;gap:4px;min-width:0;';
+
+  const types = [...new Set(claims.map(c => c.claimTypeName || 'Unknown'))];
+  [
+    { label: 'Total Claimed', val: '$' + totalAmount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), color: 'var(--tx)' },
+    { label: 'Claim Types',   val: types.length,  color: 'var(--tx)' },
+  ].forEach(({label, val, color}) => {
+    const col = document.createElement('div');
+    col.style.cssText = 'display:flex;flex-direction:column;align-items:center;padding:4px 8px;border-radius:8px;min-width:60px;';
+    col.innerHTML = `<div style="font-size:22px;font-weight:500;color:${color};line-height:1.1;">${val}</div>
+      <div style="font-size:10px;color:var(--fa);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;text-align:center;">${label}</div>`;
+    headerRight.appendChild(col);
+  });
+  titleSection.appendChild(headerRight);
+  container.appendChild(titleSection);
+
+  // ── Table ──
   const tableWrap = document.createElement('div');
   tableWrap.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:10px;overflow:hidden;';
-  const headCells = ['Claim #','BOL','Status','Date','Amount'];
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
-    '<thead><tr style="background:var(--bg);">' +
-    headCells.map((h, i) => '<th style="text-align:' + (i === 4 ? 'right' : 'left') + ';padding:10px 14px;font-size:10px;font-weight:600;color:var(--fa);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--bdr);">' + h + '</th>').join('') +
-    '</tr></thead><tbody>';
-  claims.forEach((c, idx) => {
-    const sTxt = String(status(c)) || '—';
-    const open = isOpen(c);
-    const badge = '<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600;' +
-      (open ? 'background:#bd27bc18;color:var(--ac);' : 'background:#e5e2d9;color:var(--mu);') + '">' + (sTxt === '—' ? (open ? 'Open' : 'Closed') : sTxt) + '</span>';
-    html += '<tr style="border-bottom:' + (idx < claims.length - 1 ? '1px solid var(--bdr)' : 'none') + ';">' +
-      '<td style="padding:11px 14px;color:var(--tx);font-weight:500;">' + (claimNo(c) || '—') + '</td>' +
-      '<td style="padding:11px 14px;color:var(--mu);">' + (bolNo(c) || '—') + '</td>' +
-      '<td style="padding:11px 14px;">' + badge + '</td>' +
-      '<td style="padding:11px 14px;color:var(--mu);">' + fmtDate(claimDt(c)) + '</td>' +
-      '<td style="padding:11px 14px;color:var(--tx);text-align:right;font-weight:500;">' + fmtMoney(amount(c)) + '</td>' +
-    '</tr>';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  headerRow.style.background = '#faf9f6';
+  ['BOL #','Claim Type','Amount'].forEach(h => {
+    const th = document.createElement('th');
+    th.style.cssText = 'text-align:left;padding:10px 14px;font-weight:500;color:var(--mu);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--bdr);';
+    if (h === 'Amount') th.style.textAlign = 'right';
+    th.textContent = h;
+    headerRow.appendChild(th);
   });
-  html += '</tbody></table>';
-  tableWrap.innerHTML = html;
-  container.appendChild(tableWrap);
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
 
+  const tbody = document.createElement('tbody');
+  claims.forEach((c, i) => {
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid var(--bdr);' + (i%2===1 ? 'background:var(--bg);' : '');
+    const bol = c.BOLNumber || c.BOLId || '—';
+    const type = c.claimTypeName || 'Unknown';
+    const amt = (parseFloat(c.claimAmount)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    tr.innerHTML = `
+      <td style="padding:10px 14px;color:var(--tx);font-weight:500;">${bol}</td>
+      <td style="padding:10px 14px;">
+        <span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:#fef3c7;color:#92400e;">${type}</span>
+      </td>
+      <td style="padding:10px 14px;text-align:right;color:var(--tx);font-weight:500;">$${amt}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
   return container;
 }
 
@@ -16930,6 +16948,7 @@ function renderPanel() {
     'Saved Quotes':    '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
     'Invoices':        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>',
     'Reports':         '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    'Open Claims':     '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
     'Address Book':    '<path d="M4 2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="14" y2="14"/>',
     'Shipping Items':  '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
     'Check a Location':'<circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C13 21.5 20 15.4 20 10a8 8 0 0 0-8-8z"/>',
