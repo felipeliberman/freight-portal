@@ -16572,6 +16572,7 @@ function _vmExit() {
 
 function _vmStopListen() {
   _vm.listening = false;
+  if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
   if (_vm.rec) {
     try { _vm.rec.onend = null; _vm.rec.onresult = null; _vm.rec.onerror = null; _vm.rec.abort(); } catch(e) {}
     _vm.rec = null;
@@ -16584,12 +16585,23 @@ function _vmStartListen() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec;
   try { rec = new SR(); } catch(e) { return; }
-  rec.continuous = false; rec.interimResults = true; rec.lang = 'en-US';
+  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
   _vm.rec = rec; _vm.listening = true;
   _vmSetState('listen');
   const { ta } = _vmEls();
   if (ta) { ta.value = ''; ta.style.height = 'auto'; }
   let finalText = '';
+  // Silence detection: in continuous mode the recognizer never ends on its own, so after
+  // the user pauses (no new speech for SILENCE_MS) we stop() it — which fires onend and
+  // sends the accumulated transcript. Re-armed on every result while speech is heard.
+  const SILENCE_MS = 1500;
+  const armSilence = () => {
+    if (_vm.silenceTimer) clearTimeout(_vm.silenceTimer);
+    _vm.silenceTimer = setTimeout(() => {
+      _vm.silenceTimer = null;
+      if (_vm.active && _vm.rec === rec) { try { rec.stop(); } catch(e) {} }
+    }, SILENCE_MS);
+  };
   rec.onresult = (event) => {
     let interim = '';
     for (let i = 0; i < event.results.length; i++) {
@@ -16599,6 +16611,8 @@ function _vmStartListen() {
     // Interim transcript appears in the input field in real time.
     const t2 = _vmEls().ta;
     if (t2) { t2.value = (finalText + interim).trim(); t2.style.height = 'auto'; t2.style.height = Math.min(t2.scrollHeight, 140) + 'px'; }
+    // Reset the silence countdown whenever we hear anything.
+    if ((finalText + interim).trim()) armSilence();
   };
   rec.onerror = (e) => {
     if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); return; }
@@ -16609,6 +16623,7 @@ function _vmStartListen() {
   };
   rec.onend = () => {
     _vm.listening = false;
+    if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
     if (!_vm.active) return;
     const said = finalText.trim();
     if (said) _vmHandleFinal(said);
