@@ -5081,9 +5081,14 @@ function appendMessage(role, text, extras) {
   wrap.appendChild(row);
   scrollBottom();
 
-  // Voice conversation mode — speak the agent's reply aloud, then resume listening.
-  if (role === 'bot' && window._vm && window._vm.active) {
-    try { _vmSpeakReply(text); } catch(e) {}
+  // Voice mode — speak the agent's reply aloud, then resume listening.
+  // (role==='bot' so we never speak the user's own transcript back.)
+  if (role === 'bot' && window._vm && window._vm.active && typeof text === 'string' && text.trim()) {
+    setTimeout(() => {
+      if (window._vm && window._vm.active) {
+        try { window._vm.speakReply(text); } catch(e) {}
+      }
+    }, 100);
   }
 }
 
@@ -16465,14 +16470,15 @@ function _srSupported()  { return ('webkitSpeechRecognition' in window) || ('Spe
 
 // Pick the best available natural US-English voice.
 function _pickVoice() {
-  if (!_ttsSupported()) return;
+  if (!_ttsSupported()) return _ttsVoice;
   let voices = [];
-  try { voices = window.speechSynthesis.getVoices() || []; } catch(e) { return; }
-  if (!voices.length) return;
+  try { voices = window.speechSynthesis.getVoices() || []; } catch(e) { return _ttsVoice; }
+  if (!voices.length) return _ttsVoice;
   const prefs = ['Samantha', 'Google US English', 'Microsoft Aria Online (Natural) - English (United States)', 'Microsoft Jenny Online (Natural) - English (United States)', 'Alex'];
-  for (const name of prefs) { const v = voices.find(x => x.name === name); if (v) { _ttsVoice = v; return; } }
+  for (const name of prefs) { const v = voices.find(x => x.name === name); if (v) { return (_ttsVoice = v); } }
   _ttsVoice = voices.find(v => /en[-_]US/i.test(v.lang || '')) ||
               voices.find(v => /^en/i.test(v.lang || '')) || voices[0];
+  return _ttsVoice;
 }
 
 // Strip markdown so symbols are not read aloud, and collapse links to their label.
@@ -16518,7 +16524,8 @@ function speakText(text, onEnd) {
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
 const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'' };
 window._vm = _vm;
-_vm.startListen = function(){ _vmStartListen(); }; // exposed for the appendMessage speak-back hook
+_vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
+_vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
 
 // Public alias used by the speak-back hook (strips markdown before speaking).
 function cleanForSpeech(t) { return _cleanForSpeech(t); }
@@ -16614,15 +16621,18 @@ function _vmStartListen() {
     if (t2) { t2.value = (finalText + interim).trim(); t2.style.height = 'auto'; t2.style.height = Math.min(t2.scrollHeight, 140) + 'px'; }
   };
   rec.onerror = (e) => {
-    if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); }
-    // 'no-speech' / 'aborted' / transient → onend handles the relisten
+    if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); return; }
+    // transient ('no-speech' / 'aborted' / 'network') → restart shortly if still listening with no result
+    if (_vm.active && _vm.state === 'listen' && !finalText.trim()) {
+      setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
+    }
   };
   rec.onend = () => {
     _vm.listening = false;
     if (!_vm.active) return;
     const said = finalText.trim();
     if (said) _vmHandleFinal(said);
-    else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 300);
+    else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
   };
   try { rec.start(); }
   catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
@@ -16646,16 +16656,38 @@ function _vmHandleFinal(text) {
 function _vmSpeakReply(text) {
   if (!_vm.active) return;
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
-  const textToSpeak = typeof text === 'string' ? text : (text && text.text ? text.text : '');
-  if (!textToSpeak || !textToSpeak.trim()) { setTimeout(() => { if (_vm.active) _vmStartListen(); }, 600); return; }
-  _vmSetState('speak');
+  const raw = typeof text === 'string' ? text : (text && text.text ? text.text : '');
   const tok = ++_vm.speakToken;
-  speakText(cleanForSpeech(textToSpeak), function() {
-    // after speaking, restart listening if still in voice mode (and not superseded)
+
+  // Resume listening after speaking — runs exactly once, whether triggered by onend,
+  // onerror, or the safety fallback (so voice mode never stalls if speech is silent).
+  let done = false;
+  const resume = () => {
+    if (done) return; done = true;
+    if (_vm._resumeTimer) { clearTimeout(_vm._resumeTimer); _vm._resumeTimer = null; }
     if (window._vm && window._vm.active && _vm.speakToken === tok) {
-      setTimeout(function() { if (window._vm && window._vm.active && _vm.speakToken === tok && window._vm.startListen) window._vm.startListen(); }, 800);
+      setTimeout(() => { if (window._vm && window._vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     }
-  });
+  };
+
+  // Strip markdown + apply the long-list guard (>8 numbered items → first sentence + pointer).
+  const speech = _speechTextFor(cleanForSpeech(raw));
+  if (!speech || !_ttsSupported()) { resume(); return; }
+
+  _vmSetState('speak'); // mic shows the speaker animation while talking
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  try { window.speechSynthesis.resume(); } catch(e) {} // clear any paused state (Chrome)
+  const v = _pickVoice();
+  let u;
+  try { u = new SpeechSynthesisUtterance(speech); } catch(e) { resume(); return; }
+  if (v) u.voice = v;
+  u.rate = 1.0; u.pitch = 1.0;
+  u.lang = (v && v.lang) || 'en-US';
+  u.onend = resume;
+  u.onerror = resume;
+  // Safety net: if neither onend nor onerror fires (known on some browsers), resume anyway.
+  _vm._resumeTimer = setTimeout(resume, Math.min(60000, Math.max(6000, speech.length * 90)));
+  try { window.speechSynthesis.speak(u); } catch(e) { resume(); }
 }
 
 function initVoiceMode() {
