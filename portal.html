@@ -16570,6 +16570,13 @@ function _vmSetState(state) {
 
 // The mic button is a clear two-state toggle: ON ↔ OFF.
 function toggleVoiceMode() {
+  // Unlock TTS on the user gesture (some browsers require a gesture-initiated
+  // speak() before later programmatic speech will play).
+  if (window.speechSynthesis && !window._ttsUnlocked) {
+    const u = new SpeechSynthesisUtterance('');
+    window.speechSynthesis.speak(u);
+    window._ttsUnlocked = true;
+  }
   if (!_srSupported() || !_ttsSupported()) return; // unsupported → buttons hidden anyway
   if (_vm.active) _vmExit(); else _vmEnter();
 }
@@ -16696,7 +16703,8 @@ function _vmSpeakReply(text) {
   u.onerror = resume;
   // Safety net: if neither onend nor onerror fires (known on some browsers), resume anyway.
   _vm._resumeTimer = setTimeout(resume, Math.min(60000, Math.max(6000, speech.length * 90)));
-  try { window.speechSynthesis.speak(u); } catch(e) { resume(); }
+  window.speechSynthesis.cancel();
+  setTimeout(() => { try { window.speechSynthesis.speak(u); } catch(e) { resume(); } }, 100);
 }
 
 function initVoiceMode() {
