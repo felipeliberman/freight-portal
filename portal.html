@@ -7619,11 +7619,11 @@ function showSettings() {
   const ds = s.defaultShipper || {};
   const flds = [
     { key:'name',    label:'Business Name',   ph:'e.g. Haynes Brothers Furniture', w:'220px' },
-    { key:'street',  label:'Street Address',  ph:'e.g. 7240 Crider Avenue',        w:'220px' },
+    { key:'street',  label:'Street Address',  ph:'e.g. 123 Main St',               w:'220px' },
     { key:'suite',   label:'Suite / Unit',    ph:'optional',                        w:'120px' },
-    { key:'city',    label:'City',            ph:'e.g. Pico Rivera',               w:'160px' },
+    { key:'city',    label:'City',            ph:'e.g. Los Angeles',               w:'160px' },
     { key:'state',   label:'State',           ph:'CA',                              w:'60px'  },
-    { key:'zip',     label:'ZIP Code',        ph:'90660',                           w:'80px'  },
+    { key:'zip',     label:'ZIP Code',        ph:'e.g. 90210',                      w:'80px'  },
     { key:'contact', label:'Contact Name',    ph:'e.g. John Smith',                w:'160px' },
     { key:'phone',   label:'Phone',           ph:'e.g. 323-587-6127',              w:'140px' },
   ];
@@ -13139,16 +13139,16 @@ function showBookingPanel(rate, shipmentData) {
     '<button id="bk-pu-save-ab" style="background:none;border:none;font-size:11px;font-weight:600;color:var(--ac);cursor:pointer;font-family:var(--font);padding:0;">Save as default</button>';
   pu.grid.appendChild(puAbRow);
 
-  field(pu.grid, 'bk-pu-name',    'Name / Company',    'Michaels Warehouse', 'text', true);
-  field(pu.grid, 'bk-pu-street',  'Street Address',   '7240 Crider Ave',    'text', true);
-  field(pu.grid, 'bk-pu-suite',   'Suite / Unit',     'Suite 100');
-  field(pu.grid, 'bk-pu-city',    'City',             'Pico Rivera');
-  field(pu.grid, 'bk-pu-state',   'State',            'CA');
+  field(pu.grid, 'bk-pu-name',    'Name / Company',    'e.g. ABC Warehouse', 'text', true);
+  field(pu.grid, 'bk-pu-street',  'Street Address',    'e.g. 123 Main St',   'text', true);
+  field(pu.grid, 'bk-pu-suite',   'Suite / Unit',      'e.g. Suite 100');
+  field(pu.grid, 'bk-pu-city',    'City',              'e.g. Los Angeles');
+  field(pu.grid, 'bk-pu-state',   'State',             'e.g. CA');
   const puZipFld = field(pu.grid, 'bk-pu-zip', 'ZIP', originZip || '');
   puZipFld.readOnly = true; puZipFld.style.background = '#f7f5f2'; puZipFld.style.color = 'var(--mu)';
-  field(pu.grid, 'bk-pu-contact', 'Contact Name',     'Felipe Liberman');
-  field(pu.grid, 'bk-pu-phone',   'Phone',            '310-555-1234', 'tel');
-  field(pu.grid, 'bk-pu-ref',     'Reference / PO#',  'PO-7272');
+  field(pu.grid, 'bk-pu-contact', 'Contact Name',      'e.g. Jane Smith');
+  field(pu.grid, 'bk-pu-phone',   'Phone',             'e.g. 555-555-5555', 'tel');
+  field(pu.grid, 'bk-pu-ref',     'Reference / PO#',   'e.g. PO-1234');
   const puDate = field(pu.grid, 'bk-pu-date', 'Pickup Date', '', 'date');
   puDate.value = pickupDate;
   const puOpen = field(pu.grid, 'bk-pu-open', 'Open', '', 'time');
@@ -14768,8 +14768,8 @@ function showQuoteForm(prefill, silent) {
   quotePane.innerHTML =
     // ZIPs
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-      '<div><label style="' + lS + '">Origin ZIP</label><input id="qt-origin" type="text" maxlength="7" placeholder="90660" value="' + (pf.originZip||'') + '" style="' + iS + '"><div id="qt-origin-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
-      '<div><label style="' + lS + '">Destination ZIP</label><input id="qt-dest" type="text" maxlength="7" placeholder="75001" value="' + (pf.destZip||'') + '" style="' + iS + '"><div id="qt-dest-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+      '<div><label style="' + lS + '">Origin ZIP</label><input id="qt-origin" type="text" maxlength="7" placeholder="Origin ZIP" value="' + (pf.originZip||'') + '" style="' + iS + '"><div id="qt-origin-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+      '<div><label style="' + lS + '">Destination ZIP</label><input id="qt-dest" type="text" maxlength="7" placeholder="Dest ZIP" value="' + (pf.destZip||'') + '" style="' + iS + '"><div id="qt-dest-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
     '</div>' +
     // Date + Name
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
