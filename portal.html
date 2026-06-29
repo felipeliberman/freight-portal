@@ -4927,6 +4927,11 @@ function exportShipmentsToExcel(shipments) {
 
 function appendMessage(role, text, extras) {
   extras = extras || {};
+  // Soft-offer cargo insurance on the rates message itself, unless it's already added.
+  if (extras.quotes && extras.quotes.length &&
+      !(typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.insuranceEnabled)) {
+    text = (text ? text + ' ' : '') + 'Would you like to add cargo insurance? If so, tell me the value of your cargo.';
+  }
   const wrap = document.getElementById('messages');
 
   const row = document.createElement('div');
@@ -11803,22 +11808,22 @@ async function handleInput(text) {
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
     appendMessage('bot', 'Cargo insurance added — ' + _match.name + ', insured for $' + _val.toLocaleString('en-US') + '. Pulling rates with insurance included...');
 
-    const _wasOpen = _quoteFormIsOpen();
-    if (!_wasOpen) {
-      // Open the quote form silently so the customer can see the insurance panel,
-      // and re-apply the original accessorials so the requote matches the prior quote.
+    // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
+    // it ourselves, suppress the prefill auto-run so we control the single requote below.
+    if (!_quoteFormIsOpen()) {
+      window._suppressQuoteAutoRun = true;
       try { showQuoteForm(_lqsToPrefill(lastQuotedShipment), true); } catch(e) { console.warn('[FP] insurance: showQuoteForm failed', e); }
+      // Re-apply the original accessorials so the requote matches the prior quote.
       const _origAcc = (lastQuotedShipment.accessorials || [])
         .map(a => (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) ? ACC_MAP[a] : a)
         .filter(c => typeof c === 'string' && c.length >= 2 && c.length <= 4);
       const _qcNew = window._quoteContainer;
-      if (_qcNew) {
-        _origAcc.forEach(code => {
-          const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
-          if (b && !b.classList.contains('acc-active')) b.click();
-        });
-      }
+      if (_qcNew) _origAcc.forEach(code => {
+        const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
+        if (b && !b.classList.contains('acc-active')) b.click();
+      });
     }
+    // Populate the insurance panel from the (scoped) container, activate INS, THEN requote — once.
     const qc = window._quoteContainer;
     if (qc) {
       const cSel = qc.querySelector('#qt-ins-commodity');
@@ -11829,9 +11834,10 @@ async function handleInput(text) {
       if (insBtn && !insBtn.classList.contains('acc-active')) insBtn.click();
       const panel = qc.querySelector('#qt-insurance-panel'); if (panel) panel.style.display = 'block';
     }
-    if (_wasOpen) {
-      // Form already populated — requote now. (When we just opened it, the prefill auto-run fires the pull.)
-      if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); } }
+    if (typeof window._doGetRates === 'function') {
+      try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); }
+    } else {
+      console.warn('[FP] insurance: _doGetRates unavailable — could not requote with insurance');
     }
     return;
   }
@@ -15446,8 +15452,10 @@ function showQuoteForm(prefill, silent) {
   const oldBtn = document.getElementById('chat-get-rates-btn');
   if (oldBtn) oldBtn.remove();
 
-  // Pre-fill auto-run
-  if (pf.originZip && pf.destZip && pf.weight) {
+  // Pre-fill auto-run (the chat insurance flow suppresses this so it can trigger the single pull itself)
+  var _skipAuto = window._suppressQuoteAutoRun;
+  window._suppressQuoteAutoRun = false;
+  if (!_skipAuto && pf.originZip && pf.destZip && pf.weight) {
     setTimeout(doGetRates, 400);
   }
 }
