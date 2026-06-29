@@ -16469,26 +16469,15 @@ async function quickAction(action) {
 
 // ============================================================================
 // VOICE CONVERSATION MODE — Claude.ai-style, in-place in the chat input (no overlay)
-// Reuses the Web Speech APIs: SpeechRecognition (input) + SpeechSynthesis (output).
+// Input via Web Speech SpeechRecognition; output via ElevenLabs TTS REST API.
 // ============================================================================
 
-let _ttsVoice = null; // chosen US-English voice
+// ElevenLabs TTS (Roger voice). NOTE: this key ships in client-side code on a public
+// page — anyone can read it. Move it behind the Cloudflare Worker proxy when possible.
+const ELEVEN_KEY   = 'sk_bc5fb4dafbcbcba7098fb241ada20d25b8ff648fd13f7228';
+const ELEVEN_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
 
-function _ttsSupported() { return typeof window !== 'undefined' && 'speechSynthesis' in window; }
 function _srSupported()  { return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
-
-// Pick the best available natural US-English voice.
-function _pickVoice() {
-  if (!_ttsSupported()) return _ttsVoice;
-  let voices = [];
-  try { voices = window.speechSynthesis.getVoices() || []; } catch(e) { return _ttsVoice; }
-  if (!voices.length) return _ttsVoice;
-  const prefs = ['Samantha', 'Google US English', 'Microsoft Aria Online (Natural) - English (United States)', 'Microsoft Jenny Online (Natural) - English (United States)', 'Alex'];
-  for (const name of prefs) { const v = voices.find(x => x.name === name); if (v) { return (_ttsVoice = v); } }
-  _ttsVoice = voices.find(v => /en[-_]US/i.test(v.lang || '')) ||
-              voices.find(v => /^en/i.test(v.lang || '')) || voices[0];
-  return _ttsVoice;
-}
 
 // Strip markdown so symbols are not read aloud, and collapse links to their label.
 function _cleanForSpeech(t) {
@@ -16511,23 +16500,6 @@ function _speechTextFor(t) {
     return _cleanForSpeech(first) + ' — please check the chat for the full list.';
   }
   return _cleanForSpeech(raw);
-}
-
-// Speak text aloud; calls onEnd() when finished (or immediately if nothing to say).
-function speakText(text, onEnd) {
-  if (!_ttsSupported()) { if (onEnd) onEnd(); return; }
-  const speech = _speechTextFor(text);
-  if (!speech) { if (onEnd) onEnd(); return; }
-  try { window.speechSynthesis.cancel(); } catch(e) {}
-  if (!_ttsVoice) _pickVoice();
-  let u;
-  try { u = new SpeechSynthesisUtterance(speech); } catch(e) { if (onEnd) onEnd(); return; }
-  if (_ttsVoice) u.voice = _ttsVoice;
-  u.rate = 1.0; u.pitch = 1.0;
-  u.lang = (_ttsVoice && _ttsVoice.lang) || 'en-US';
-  u.onend = () => { if (onEnd) onEnd(); };
-  u.onerror = () => { if (onEnd) onEnd(); };
-  try { window.speechSynthesis.speak(u); } catch(e) { if (onEnd) onEnd(); }
 }
 
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
@@ -16570,20 +16542,12 @@ function _vmSetState(state) {
 
 // The mic button is a clear two-state toggle: ON ↔ OFF.
 function toggleVoiceMode() {
-  // Unlock TTS on the user gesture (some browsers require a gesture-initiated
-  // speak() before later programmatic speech will play).
-  if (window.speechSynthesis && !window._ttsUnlocked) {
-    const u = new SpeechSynthesisUtterance('');
-    window.speechSynthesis.speak(u);
-    window._ttsUnlocked = true;
-  }
-  if (!_srSupported() || !_ttsSupported()) return; // unsupported → buttons hidden anyway
+  if (!_srSupported()) return; // needs mic input; buttons hidden anyway when unsupported
   if (_vm.active) _vmExit(); else _vmEnter();
 }
 
 function _vmEnter() {
-  if (!_srSupported() || !_ttsSupported()) return;
-  if (!_ttsVoice) _pickVoice();
+  if (!_srSupported()) return;
   if (typeof showChatArea === 'function') showChatArea();
   const { ta } = _vmEls();
   if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
@@ -16597,7 +16561,7 @@ function _vmExit() {
   _vm.active = false;
   _vm.speakToken++; // cancel any pending relisten tied to in-flight speech
   _vmStopListen();
-  try { window.speechSynthesis.cancel(); } catch(e) {}
+  try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
   const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.remove('show');
   _vmSetState('idle');
@@ -16666,55 +16630,56 @@ function _vmHandleFinal(text) {
   _vm.watchdog = setTimeout(() => { if (_vm.active && _vm.state === 'think') _vmStartListen(); }, 25000);
 }
 
-// Speak an agent reply aloud during voice mode, then resume listening.
+// Speak an agent reply aloud via ElevenLabs TTS, then resume listening.
 // (Invoked from the appendMessage bot-render hook.) A speakToken guards against
-// multi-message turns: only the latest reply's completion resumes listening.
-function _vmSpeakReply(text) {
+// multi-message turns / barge / exit: only the latest reply's completion resumes.
+async function _vmSpeakReply(text) {
   if (!_vm.active) return;
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
   const raw = typeof text === 'string' ? text : (text && text.text ? text.text : '');
   const tok = ++_vm.speakToken;
 
-  // Resume listening after speaking — runs exactly once, whether triggered by onend,
-  // onerror, or the safety fallback (so voice mode never stalls if speech is silent).
+  // Resume listening after speaking — runs exactly once (success, error, or no-audio),
+  // so voice mode never stalls.
   let done = false;
   const resume = () => {
     if (done) return; done = true;
-    if (_vm._resumeTimer) { clearTimeout(_vm._resumeTimer); _vm._resumeTimer = null; }
     if (window._vm && window._vm.active && _vm.speakToken === tok) {
       setTimeout(() => { if (window._vm && window._vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     }
   };
 
-  // Strip markdown + apply the long-list guard (>8 numbered items → first sentence + pointer).
-  const speech = _speechTextFor(cleanForSpeech(raw));
-  if (!speech || !_ttsSupported()) { resume(); return; }
+  // Strip markdown + apply the long-list guard (>8 numbered items → first sentence + pointer)
+  // so we never read the full insurance commodity list aloud.
+  const clean = _speechTextFor(raw);
+  if (!clean) { resume(); return; }
 
   _vmSetState('speak'); // mic shows the speaker animation while talking
-  try { window.speechSynthesis.cancel(); } catch(e) {}
-  try { window.speechSynthesis.resume(); } catch(e) {} // clear any paused state (Chrome)
-  const v = _pickVoice();
-  let u;
-  try { u = new SpeechSynthesisUtterance(speech); } catch(e) { resume(); return; }
-  if (v) u.voice = v;
-  u.rate = 1.0; u.pitch = 1.0;
-  u.lang = (v && v.lang) || 'en-US';
-  u.onend = resume;
-  u.onerror = resume;
-  // Safety net: if neither onend nor onerror fires (known on some browsers), resume anyway.
-  _vm._resumeTimer = setTimeout(resume, Math.min(60000, Math.max(6000, speech.length * 90)));
-  window.speechSynthesis.cancel();
-  setTimeout(() => { try { window.speechSynthesis.speak(u); } catch(e) { resume(); } }, 100);
+  try {
+    const resp = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + ELEVEN_VOICE, {
+      method: 'POST',
+      headers: { 'xi-api-key': ELEVEN_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+    });
+    if (!resp.ok || !_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    const blob = await resp.blob();
+    if (!_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    const url = URL.createObjectURL(blob);
+    try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+    const audio = new Audio(url);
+    _vm.audio = audio;
+    const cleanup = () => { try { URL.revokeObjectURL(url); } catch(e) {} };
+    audio.onended  = () => { cleanup(); resume(); };
+    audio.onerror  = () => { cleanup(); resume(); };
+    audio.play().catch(() => { cleanup(); resume(); });
+  } catch(e) { resume(); }
 }
 
 function initVoiceMode() {
-  if (_ttsSupported()) {
-    _pickVoice();
-    try { window.speechSynthesis.onvoiceschanged = _pickVoice; } catch(e) {}
-  }
-  // Hide the voice button if the browser lacks speech recognition or synthesis (e.g. Firefox).
-  if (!_srSupported() || !_ttsSupported()) {
-    const b = document.getElementById('btn-voice'); if (b) b.style.display = 'none';
+  // Hide the mic buttons if the browser lacks speech recognition (mic input). TTS output
+  // is handled by ElevenLabs, so it doesn't depend on the browser's speechSynthesis.
+  if (!_srSupported()) {
+    document.querySelectorAll('.btn-voice-mic').forEach(b => { b.style.display = 'none'; });
   }
 }
 
