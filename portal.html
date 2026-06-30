@@ -11112,13 +11112,39 @@ async function clientSideSearch(t, lower) {
   // Analytics questions can be phrased like knowledge questions ("what is my average cost per carrier",
   // "what does estes usually cost me") — exempt clear account-analytics phrasings so they reach the
   // analytics gate below instead of being handed to the AI.
-  const _analyticsOverride = currentCustomer && /\b(average cost|avg cost|cost per|per carrier|per shipment|usually cost|cost me|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|transit time|by month|by week|by carrier|by state|by lane|busiest|delivered vs|in transit vs)\b/i.test(lower);
+  const _analyticsOverride = currentCustomer && /\b(average cost|avg cost|cost per|per carrier|per shipment|usually cost|cost me|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|transit time|by month|by week|by carrier|by state|by lane|busiest|delivered vs|in transit vs|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower);
   if ((isKnowledgeQ || isCalculationQ) && !_analyticsOverride) return false; // Let AI handle it
 
   // ── Carrier / terminal / location guard — let aiConverse handle with web_search ──
   const isCarrierLocationQ = /\b(terminal|service center|freight station|depot)\b/i.test(lower) ||
     (/\b(abf|arcbest|estes|saia|xpo|tforce|fedex|forward air|southeastern|sefl|aaa cooper|r&l|rl carriers|pilot|metro|metropolitan|old dominion|odfl|central transport|pitt ohio|ward)\b/i.test(lower) && /\b(phone|number|address|hours|location|where|closest|nearest|near|service area|coverage|call|contact)\b/i.test(lower));
   if (isCarrierLocationQ) return false; // aiConverse will search the web for this
+
+  // ── Follow-up on a SINGLE shipment (Step 5 A/C: field questions + pronouns) ──
+  // Reference resolution order: last single shipment → last tracked → sole item of last result.
+  const _refShip = window._lastSingleShipment || window._lastTrackedShipment ||
+    (window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length === 1 ? window._lastAnalyticsResult.list[0] : null);
+  const _ssWc = t.trim().split(/\s+/).length;
+  const isSingleFollowUp = _refShip && _ssWc <= 9 &&
+    /\b(who was the (consignee|shipper|customer)|the (consignee|shipper|customer)|what was the commodity|what carrier|what did it cost|how much did it cost|where did it (go|come from)|when was it (shipped|delivered|picked)|that shipment|that one|the one we just|tell me more|more details?|show me details?|what was it)\b/i.test(lower) &&
+    !/\b(quote|rate|new chat)\b/.test(lower);
+  if (isSingleFollowUp && currentCustomer) {
+    const f = shipFields(_refShip);
+    const carLabel = (f.carrier||'Unknown').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D').replace('Less Than Truckload','').trim() || 'Unknown';
+    const _m$ = v => '$' + Number(v||0).toFixed(2);
+    const parts = [];
+    if (/consignee|customer|where did it go|deliver/i.test(lower)) parts.push('Consignee: ' + (f.consignee||'—') + (f.consigneeCity ? (' (' + f.consigneeCity + (f.consigneeState ? ', ' + f.consigneeState.toUpperCase() : '') + ')') : ''));
+    if (/shipper|where did it come|origin/i.test(lower)) parts.push('Shipper: ' + (f.shipper||'—') + (f.shipperCity ? (' (' + f.shipperCity + (f.shipperState ? ', ' + f.shipperState.toUpperCase() : '') + ')') : ''));
+    if (/commodity/i.test(lower)) parts.push('Commodity: ' + (f.commodity||'—'));
+    if (/carrier/i.test(lower)) parts.push('Carrier: ' + carLabel);
+    if (/cost|how much|price|paid/i.test(lower)) parts.push('Cost: ' + _m$(f.cost));
+    if (/when|shipped|date/i.test(lower) && f.date) parts.push('Shipped: ' + f.date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}));
+    let msg;
+    if (parts.length) msg = 'BOL ' + f.bol + ' — ' + parts.join('; ') + '.';
+    else msg = 'BOL ' + f.bol + ': ' + carLabel + ', ' + (f.commodity||'freight') + ' to ' + (f.consignee||'—') + (f.consigneeState ? (' in ' + f.consigneeState.toUpperCase()) : '') + ', ' + _m$(f.cost) + (f.weight ? (', ' + f.weight.toLocaleString() + ' lbs') : '') + '.';
+    appendMessage('bot', msg);
+    return true;
+  }
 
   // ── Follow-up on last analytics result ("who were the customers?") ──
   // Hardened vs the broad original regex: require short, referential phrasing so a later
@@ -11162,6 +11188,113 @@ async function clientSideSearch(t, lower) {
     return true;
   }
 
+
+  // ── Universal analytics gate — catches ALL shipment history questions ──
+  // This must run before any fallthrough to Sonnet. Any question about the
+  // customer's own shipment history, spend, carriers, lanes, timing, weight,
+  // status, or billing is handled here via parseShipQuery → summarize.
+  const _analyticsIntent = currentCustomer && (function() {
+    // Spend / cost
+    if (/\b(how much|total spend|total cost|total paid|spent|average cost|avg cost|cost per|price per|what.*cost|cost.*what|billing|invoiced|overbill|rebill|variance|over.*quoted?|quoted?.*over|paid more|more than quoted|biggest.*bill|largest.*invoice|freight spend|total.*spend|average.*cost)\b/.test(lower)) return true;
+    // Carrier analytics
+    if (/\b(carrier|carriers)\b/.test(lower) && /\b(use|used|using|most|least|often|top|best|worst|fastest|slowest|average|avg|cost|expensive|cheap|compare|comparison|breakdown|split|volume|count|how many|transit|reliable|reliability|performance|history|usual|typically|normally)\b/.test(lower)) return true;
+    // Geography / state / city / lane
+    if (/\b(shipments? to|shipped to|going to|deliveries? to|deliver.*to|how many.*to|sent to)\b/.test(lower) && /\b([a-z]{2}|california|texas|florida|new york|georgia|ohio|illinois|pennsylvania|arizona|north carolina|washington|colorado|nevada|virginia|tennessee|michigan|oregon|minnesota|wisconsin|maryland|missouri|indiana|alabama|louisiana|kentucky|connecticut|utah|iowa|arkansas|mississippi|kansas|oklahoma|nebraska|new mexico|west virginia|idaho|hawaii|new hampshire|maine|montana|rhode island|delaware|south dakota|north dakota|alaska|vermont|wyoming|massachusetts|new jersey|south carolina)\b/.test(lower)) return true;
+    if (/\b(top.*states?|states?.*top|by states?|per states?|destination states?|origin states?|top.*cit(?:y|ies)|cit(?:y|ies).*top|by cit(?:y|ies)|per cit(?:y|ies)|destination cit(?:y|ies)|origin cit(?:y|ies)|top.*lanes?|lanes?.*top|by lanes?|per lanes?|most.*lanes?|lanes?.*most|repeat.*lanes?|lanes?.*repeat|common.*routes?|routes?.*common|where.*ship|ship.*where|what.*routes?|routes?.*what)\b/.test(lower)) return true;
+    // Consignees / shippers
+    if (/\b(who.*ship|ship.*who|top.*consignees?|consignees?.*top|deliver.*most|most.*deliver|top.*customers?|customers?.*top|top.*recipients?|recipients?.*top|ship.*to most|most.*ship to|shipper|shippers|pickup.*location|location.*pickup)\b/.test(lower)) return true;
+    if (/\b(shipments? to|sent to|delivered to|going to)\b.{0,30}\b[A-Z][a-z]/.test(t)) return true; // "shipments to Jonathan"
+    // Origination / "where do my shipments go" (plural-safe, avoids singular "where is my shipment")
+    if (/where.{0,30}(do|does).{0,30}ship|where.{0,30}shipments?\b.{0,15}(go|come|head)|\boriginate\b/.test(lower)) return true;
+    // Time / date breakdowns
+    if (/\b(by month|per month|monthly|month.*breakdown|breakdown.*month|by week|per week|weekly|week.*breakdown|by day|per day|daily|day of week|what day|busiest|slowest month|busiest month|this month|last month|this year|last year|this quarter|last quarter|year over year|trend|over time|shipments? in [a-z])\b/.test(lower)) return true;
+    // Transit time
+    if (/\b(transit time|transit day|how long|how fast|fastest|slowest|average.*time|time.*average|delivery time|days? to deliver|days? in transit|how many days?|shipping time)\b/.test(lower) && !/\b(quote|rate|price|cost)\b/.test(lower)) return true;
+    // Weight
+    if (/\b(weight|heavy|heaviest|lightest|total weight|average weight|avg weight|how much.*weigh|lbs?|pounds?)\b/.test(lower) && /\b(ship|shipment|my|average|total|most|heaviest)\b/.test(lower)) return true;
+    // Status breakdowns
+    if (/\b(delivered vs|vs delivered|in transit vs|status breakdown|how many.*delivered|how many.*transit|how many.*pending|delivered.*in transit|outstanding|not yet delivered|still in transit|open shipments?)\b/.test(lower)) return true;
+    // Accessorials / fees
+    if (/\b(liftgate|residential|accessorial|fuel surcharge|reweigh|reclassif|inside delivery|appointment|limited access|fees?|charges?|add.?on|extra charge)\b/.test(lower) && /\b(how much|total|paid|cost|average|my|charged)\b/.test(lower)) return true;
+    // Comparisons / rankings
+    if (/\b(most expensive|least expensive|cheapest|biggest|largest|smallest|highest|lowest|top \d|best \d|worst \d|compare|versus|vs\.?)\b/.test(lower) && /\b(shipments?|carriers?|lanes?|cost|spend|bill)\b/.test(lower)) return true;
+    // BOL lookups by consignee name
+    if (/\b(bol|bols|bol number|tracking number)\b/.test(lower) && /\b(for|to|from|going to|named|called)\b/.test(lower)) return true;
+    // Commodity
+    if (/\b(commodit(y|ies)|most common (item|product|commodity|freight)|what (kind|type) of (freight|product|goods)|what.*(items?|products?|goods).*ship|what do i ship|do i ship.*most)\b/.test(lower)) return true;
+    // Carrier-name comparisons (e.g. "compare metro w&d vs abf") — names, not the word "carrier"
+    if (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/.test(lower)) return true;
+    return false;
+  })();
+
+  if (_analyticsIntent) {
+    showTyping();
+    // Ensure shipment history is loaded
+    if (!shipCtx || !shipCtx.loaded || !shipCtx.loaded.length) {
+      appendMessage('bot', 'Let me pull your shipment history...');
+      await runShipQuery({ action: 'list', sortField: 'date', sortDir: 'desc' });
+    }
+    // Parse AFTER load so shipCtx exists, but preserve loaded data
+    const _savedLoaded = shipCtx ? shipCtx.loaded : [];
+    const _aq = await parseShipQuery(t);
+    // Restore loaded data in case parseShipQuery triggered anything
+    if (shipCtx && _savedLoaded.length && !shipCtx.loaded.length) {
+      shipCtx.loaded = _savedLoaded;
+    }
+    // If parseShipQuery returned a valid aggregate action, run it against loaded data
+    if (_aq && (_aq.aggregate || _aq.action === 'aggregate' || _aq.action === 'list')) {
+      // Apply any filters from the parsed query to the already-loaded data
+      const _aCtx = shipCtx || {};
+      if (_aq.aggregate) {
+        _aq.action = 'aggregate';
+        // Merge parsed filters into context query so filteredList() applies them
+        if (_aCtx.query) {
+          ['carrier','consignee','shipper','destCity','destState','originCity','originState',
+           'status','mode','costMin','costMax','weightMin','weightMax','dateFrom','dateTo',
+           'aggregateCarrier','aggregateState','aggregateLimit'].forEach(k => {
+            if (_aq[k] !== null && _aq[k] !== undefined) _aCtx.query[k] = _aq[k];
+          });
+          _aCtx.query.aggregate = _aq.aggregate;
+          if (_aq.aggregateCarrier && !_aCtx.query.carrier) _aCtx.query.carrier = _aq.aggregateCarrier;
+        } else {
+          shipCtx.query = _aq;
+        }
+        const _aList = filteredList();
+        removeTyping();
+        const _aAnswer = summarize(_aList, shipCtx.query);
+        appendMessage('bot', _aAnswer);
+        // Scope follow-up context to the shipments actually featured (Step 5 A/B):
+        // for ranked aggregates, save the sorted top shipment(s) — not all 34 loaded.
+        const _RANKED = {
+          heaviestShipments: (a,b)=>shipFields(b).weight-shipFields(a).weight,
+          mostExpensive:     (a,b)=>shipFields(b).cost-shipFields(a).cost,
+          leastExpensive:    (a,b)=>shipFields(a).cost-shipFields(b).cost
+        };
+        let _ctxList = _aList;
+        const _aggName = shipCtx.query.aggregate;
+        if (_RANKED[_aggName]) {
+          const _ranked = _aList.slice()
+            .filter(s => _aggName === 'leastExpensive' ? shipFields(s).cost > 0 : true)
+            .sort(_RANKED[_aggName]);
+          const _singular = /\b(my|the)\b/.test(lower) && !/\b(shipments|ones|list|top \d|\d+ )/.test(lower);
+          if (_singular && _ranked.length) { window._lastSingleShipment = _ranked[0]; _ctxList = [_ranked[0]]; }
+          else { _ctxList = _ranked.slice(0, shipCtx.query.aggregateLimit || 10); }
+        }
+        window._lastAnalyticsResult = { list: _ctxList, query: shipCtx.query, answer: _aAnswer };
+        return true;
+      }
+    }
+    // Fallback: if parseShipQuery didn't resolve to aggregate, show filtered list
+    removeTyping();
+    const _fbList = filteredList();
+    if (_fbList.length) {
+      appendMessage('bot', describeQuery(shipCtx.query, _fbList.length), { shipments: _fbList.slice(0,10), shipmentsList: _fbList });
+      window._lastAnalyticsResult = { list: _fbList, query: shipCtx.query, answer: '' };
+    } else {
+      appendMessage('bot', 'No shipments found matching that. Try asking in a different way or say "show all my shipments" to start fresh.');
+    }
+    return true;
+  }
 
   // ── Reports ──
   if (/\b(report|reports|analytics|dashboard|charts?|breakdown|spend|statistics|stats)\b/.test(lower) && currentCustomer) {
@@ -11528,93 +11661,7 @@ async function clientSideSearch(t, lower) {
     }
   }
 
-  // ── Universal analytics gate — catches ALL shipment history questions ──
-  // This must run before any fallthrough to Sonnet. Any question about the
-  // customer's own shipment history, spend, carriers, lanes, timing, weight,
-  // status, or billing is handled here via parseShipQuery → summarize.
-  const _analyticsIntent = currentCustomer && (function() {
-    // Spend / cost
-    if (/\b(how much|total spend|total cost|total paid|spent|average cost|avg cost|cost per|price per|what.*cost|cost.*what|billing|invoiced|overbill|rebill|variance|over.*quoted?|quoted?.*over|paid more|more than quoted|biggest.*bill|largest.*invoice)\b/.test(lower)) return true;
-    // Carrier analytics
-    if (/\b(carrier|carriers)\b/.test(lower) && /\b(use|used|using|most|least|often|top|best|worst|fastest|slowest|average|avg|cost|expensive|cheap|compare|comparison|breakdown|split|volume|count|how many|transit|reliable|reliability|performance|history|usual|typically|normally)\b/.test(lower)) return true;
-    // Geography / state / city / lane
-    if (/\b(shipments? to|shipped to|going to|deliveries? to|deliver.*to|how many.*to|sent to)\b/.test(lower) && /\b([a-z]{2}|california|texas|florida|new york|georgia|ohio|illinois|pennsylvania|arizona|north carolina|washington|colorado|nevada|virginia|tennessee|michigan|oregon|minnesota|wisconsin|maryland|missouri|indiana|alabama|louisiana|kentucky|connecticut|utah|iowa|arkansas|mississippi|kansas|oklahoma|nebraska|new mexico|west virginia|idaho|hawaii|new hampshire|maine|montana|rhode island|delaware|south dakota|north dakota|alaska|vermont|wyoming|massachusetts|new jersey|south carolina)\b/.test(lower)) return true;
-    if (/\b(top.*states?|states?.*top|by states?|per states?|destination states?|origin states?|top.*cit(?:y|ies)|cit(?:y|ies).*top|by cit(?:y|ies)|per cit(?:y|ies)|destination cit(?:y|ies)|origin cit(?:y|ies)|top.*lanes?|lanes?.*top|by lanes?|per lanes?|most.*lanes?|lanes?.*most|repeat.*lanes?|lanes?.*repeat|common.*routes?|routes?.*common|where.*ship|ship.*where|what.*routes?|routes?.*what)\b/.test(lower)) return true;
-    // Consignees / shippers
-    if (/\b(who.*ship|ship.*who|top.*consignee|consignee.*top|deliver.*most|most.*deliver|top.*customer|customer.*top|top.*recipient|recipient.*top|ship.*to most|most.*ship to|shipper|shippers|pickup.*location|location.*pickup)\b/.test(lower)) return true;
-    if (/\b(shipments? to|sent to|delivered to|going to)\b.{0,30}\b[A-Z][a-z]/.test(t)) return true; // "shipments to Jonathan"
-    // Time / date breakdowns
-    if (/\b(by month|per month|monthly|month.*breakdown|breakdown.*month|by week|per week|weekly|week.*breakdown|by day|per day|daily|day of week|what day|busiest|slowest month|busiest month|this month|last month|this year|last year|this quarter|last quarter|year over year|trend|over time|shipments? in [a-z])\b/.test(lower)) return true;
-    // Transit time
-    if (/\b(transit time|transit day|how long|how fast|fastest|slowest|average.*time|time.*average|delivery time|days? to deliver|days? in transit|how many days?|shipping time)\b/.test(lower) && !/\b(quote|rate|price|cost)\b/.test(lower)) return true;
-    // Weight
-    if (/\b(weight|heavy|heaviest|lightest|total weight|average weight|avg weight|how much.*weigh|lbs?|pounds?)\b/.test(lower) && /\b(ship|shipment|my|average|total|most|heaviest)\b/.test(lower)) return true;
-    // Status breakdowns
-    if (/\b(delivered vs|vs delivered|in transit vs|status breakdown|how many.*delivered|how many.*transit|how many.*pending|delivered.*in transit|outstanding|not yet delivered|still in transit|open shipments?)\b/.test(lower)) return true;
-    // Accessorials / fees
-    if (/\b(liftgate|residential|accessorial|fuel surcharge|reweigh|reclassif|inside delivery|appointment|limited access|fees?|charges?|add.?on|extra charge)\b/.test(lower) && /\b(how much|total|paid|cost|average|my|charged)\b/.test(lower)) return true;
-    // Comparisons / rankings
-    if (/\b(most expensive|least expensive|cheapest|biggest|largest|smallest|highest|lowest|top \d|best \d|worst \d|compare|versus|vs\.?)\b/.test(lower) && /\b(shipment|carrier|lane|cost|spend|bill)\b/.test(lower)) return true;
-    // BOL lookups by consignee name
-    if (/\b(bol|bols|bol number|tracking number)\b/.test(lower) && /\b(for|to|from|going to|named|called)\b/.test(lower)) return true;
-    // Commodity
-    if (/\b(commodit(y|ies)|most common (item|product|commodity|freight)|what (kind|type) of (freight|product|goods)|what.*(items?|products?|goods).*ship)\b/.test(lower)) return true;
-    // Carrier-name comparisons (e.g. "compare metro w&d vs abf") — names, not the word "carrier"
-    if (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/.test(lower)) return true;
-    return false;
-  })();
-
-  if (_analyticsIntent) {
-    showTyping();
-    // Ensure shipment history is loaded
-    if (!shipCtx || !shipCtx.loaded || !shipCtx.loaded.length) {
-      appendMessage('bot', 'Let me pull your shipment history...');
-      await runShipQuery({ action: 'list', sortField: 'date', sortDir: 'desc' });
-    }
-    // Parse AFTER load so shipCtx exists, but preserve loaded data
-    const _savedLoaded = shipCtx ? shipCtx.loaded : [];
-    const _aq = await parseShipQuery(t);
-    // Restore loaded data in case parseShipQuery triggered anything
-    if (shipCtx && _savedLoaded.length && !shipCtx.loaded.length) {
-      shipCtx.loaded = _savedLoaded;
-    }
-    // If parseShipQuery returned a valid aggregate action, run it against loaded data
-    if (_aq && (_aq.aggregate || _aq.action === 'aggregate' || _aq.action === 'list')) {
-      // Apply any filters from the parsed query to the already-loaded data
-      const _aCtx = shipCtx || {};
-      if (_aq.aggregate) {
-        _aq.action = 'aggregate';
-        // Merge parsed filters into context query so filteredList() applies them
-        if (_aCtx.query) {
-          ['carrier','consignee','shipper','destCity','destState','originCity','originState',
-           'status','mode','costMin','costMax','weightMin','weightMax','dateFrom','dateTo',
-           'aggregateCarrier','aggregateState','aggregateLimit'].forEach(k => {
-            if (_aq[k] !== null && _aq[k] !== undefined) _aCtx.query[k] = _aq[k];
-          });
-          _aCtx.query.aggregate = _aq.aggregate;
-          if (_aq.aggregateCarrier && !_aCtx.query.carrier) _aCtx.query.carrier = _aq.aggregateCarrier;
-        } else {
-          shipCtx.query = _aq;
-        }
-        const _aList = filteredList();
-        removeTyping();
-        const _aAnswer = summarize(_aList, shipCtx.query);
-        appendMessage('bot', _aAnswer);
-        window._lastAnalyticsResult = { list: _aList, query: shipCtx.query, answer: _aAnswer };
-        return true;
-      }
-    }
-    // Fallback: if parseShipQuery didn't resolve to aggregate, show filtered list
-    removeTyping();
-    const _fbList = filteredList();
-    if (_fbList.length) {
-      appendMessage('bot', describeQuery(shipCtx.query, _fbList.length), { shipments: _fbList.slice(0,10), shipmentsList: _fbList });
-      window._lastAnalyticsResult = { list: _fbList, query: shipCtx.query, answer: '' };
-    } else {
-      appendMessage('bot', 'No shipments found matching that. Try asking in a different way or say "show all my shipments" to start fresh.');
-    }
-    return true;
-  }
+  // (analytics gate relocated above — runs before Reports/status/carrier-usage)
 
   // ── Shipment count / volume queries ──
   const isVolumeQuery = /\b(how many shipments|shipment count|number of shipments|total shipments|shipments last|last \d+ days|past \d+ days|shipments this month|shipments this year|shipments yesterday|average.*shipment|shipment.*average)\b/.test(lower);
@@ -12901,7 +12948,7 @@ async function handleInput(text) {
 
   // Override isEducational for account-specific questions that need data
   const isAccountSpecific = /\b(my (carrier|shipment|lane|invoice|top|spend|volume|bol|pro)|which carrier|top lane|my lane|how many shipment|shipment count|what.*owe|my invoice|when will|will it deliver|will.*arrive|eta for|\d{7,}|is.*address|is.*residential|is.*limited|do i need.*liftgate|carriers.*on|on.*lane|fl.*ca|fl.*ny|fl.*pa|fl.*mi|fl.*va)\b/i.test(lower)
-    || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit)\b/i.test(lower)
+    || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower)
     || (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/i.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/i.test(lower));
 
   if (isEducational && !isAccountSpecific) {
