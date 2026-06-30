@@ -11117,6 +11117,28 @@ function getActiveShipment() {
   return window._activeShipment;
 }
 
+// ── PRECEDENCE CLASSIFIER — the single rule that resolves context collisions ──
+// Questions about the customer's whole shipment history (aggregates, existence, comparisons,
+// geography counts) must ALWAYS beat single-shipment context AND an open quote conversation.
+// This is what stops "what is my heaviest shipment" from being answered off a quote's line
+// items, or "who is a better carrier" from being answered as one tracked shipment's status.
+function isExistenceQ(l) {
+  return /\b(have i ever|have we ever|do i have any|did i ever|ever (shipped|used|sent)|any shipments? (with|to|from|via)|how often (do|have) i|have i shipped|did i ship)\b/i.test(l);
+}
+function isFullHistoryQ(t, l) {
+  // Singular-referent markers ("it", "this shipment", "that one") mean it's a follow-up about
+  // the active shipment, NOT a history question — unless it's clearly aggregate-shaped.
+  const singularRef = /\b(it|was it|is it|did it|this shipment|that shipment|that one|on it|about it)\b/i.test(l);
+  const aggregateShape = /\b(have i ever|have we ever|do i have any|did i ever|how many|how much have i|how often|compare|versus|\bvs\b|better (carrier|than)|which is better|who is better|cheaper|more reliable|\bor\b (abf|metro|estes|xpo|saia|pilot|odfl|fedex)|total (spend|weight)|average|by (carrier|month|state|lane)|top \d|breakdown|all my|my (carriers|lanes|spend|consignees))\b/i.test(l);
+  if (singularRef && !aggregateShape) return false;
+  return (
+    /\b(how many|how much have i|how much do i|total (spend|cost|weight)|average|avg|most expensive|least expensive|cheapest|heaviest|lightest|biggest|largest|top \d|breakdown|by (carrier|month|week|state|lane|day)|per (carrier|month)|which carrier do|what carrier do|which carrier (cost|costs|is)|costs me|carrier (do|did|breakdown)|my (carriers|lanes|spend|consignees|customers)|freight spend|total.*spend|cities do i|what cities|ship to most|use the most|do i use|all my shipments|\blanes\b|\bconsignees\b|commodities do i|on time|delivered vs|in transit vs|busiest)\b/i.test(l)
+    || isExistenceQ(l)
+    || /\b(compare|comparison|versus|\bvs\b|vs\.|better (carrier|than|option)|which is better|who is better|what.?s better|cheaper|faster than|more reliable)\b/i.test(l)
+    || /\b(shipments? (to|from)|going to|sent to|deliveries to)\b.{0,20}\b(california|texas|florida|new york|georgia|[a-z]{2})\b/i.test(l)
+  );
+}
+
 async function clientSideSearch(t, lower) {
   // ── UNIVERSAL STANDING CONTEXT CHECK — must run before all other gates ──
   // If we have an active shipment in context AND this message is a short referential
@@ -11132,7 +11154,7 @@ async function clientSideSearch(t, lower) {
     const _wc = t.trim().split(/\s+/).length;
     const looksFresh = _wc > 11 || /\b(how many|my shipments|all my|all of my|shipments to|by carrier|by month|by state|by lane|breakdown|carrier (do|did)|carriers do|use the most|top \d|most expensive|heaviest|cheapest|average|avg|total (spend|weight|cost)|per carrier|consignees|customers|lanes)\b/i.test(lower);
 
-    if (!introducesNewBol && !introducesNewTopic && !isGreeting && !looksFresh) {
+    if (!introducesNewBol && !introducesNewTopic && !isGreeting && !looksFresh && !isFullHistoryQ(t, lower)) {
       const f = shipFields(_active);
 
       // Document request about the active shipment
@@ -11147,7 +11169,7 @@ async function clientSideSearch(t, lower) {
       }
 
       // Address request about the active shipment's consignee or shipper
-      if (/\b(their address|the address|what.?s the address|delivery address|consignee address|shipper address|pickup address)\b/.test(lower)) {
+      if (/\b(their address|the address|what.?s the address|delivery address|consignee address|shipper address|pickup address|where did it go|where.?s it going|where is it going)\b/.test(lower)) {
         let who, city, st;
         if (/shipper|pickup/.test(lower)) { who = f.shipper || 'Shipper'; city = f.shipperCity; st = f.shipperState; }
         else { who = f.consignee || 'Consignee'; city = f.consigneeCity; st = f.consigneeState; }
@@ -11157,7 +11179,7 @@ async function clientSideSearch(t, lower) {
       }
 
       // Status / delivered / tracking follow-up about the active shipment
-      if (/\b(delivered|status|where is it|when.*deliver|did it arrive|has it arrived|in transit|picked up|tracking|when did it ship)\b/.test(lower)) {
+      if (/\b(delivered|status|where is it|when.*deliver|did it arrive|has it arrived|in transit|picked up|tracking|when did it ship|has it shipped|shipped yet|did it get there|get there|when does it arrive|any update|arrived yet)\b/.test(lower)) {
         let msg = 'BOL ' + f.bol + ' (' + (f.carrier || 'carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D') + '): ';
         if (f.deliveredDate) {
           msg += 'delivered on ' + f.deliveredDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + '.';
@@ -11171,8 +11193,15 @@ async function clientSideSearch(t, lower) {
         return true;
       }
 
+      // Weight / size follow-up about the active shipment (must answer weight, NOT cost).
+      // Question-shaped only — must not fire on a quote statement like "the weight is 500 pounds".
+      if (/\b(how heavy|how much.*weigh|what.?s the weight|weight of it|how big was|how many (pieces|pallets|boxes))\b/.test(lower)) {
+        appendMessage('bot', 'BOL ' + f.bol + (f.weight > 0 ? ' weighed ' + f.weight.toLocaleString() + ' lbs' : '’s weight is not on file') + (f.pieces > 0 ? ' (' + f.pieces + ' piece' + (f.pieces===1?'':'s') + ')' : '') + '.');
+        return true;
+      }
+
       // Cost / price follow-up about the active shipment
-      if (/\b(how much.*cost|what.*cost|the cost|the price|how much did|what did.*pay)\b/.test(lower)) {
+      if (/\b(how much.*cost|what.*cost|the cost|the price|how much did|what did.*pay|how much was it|what did i pay)\b/.test(lower)) {
         appendMessage('bot', 'BOL ' + f.bol + ' cost ' + (f.cost > 0 ? '$' + f.cost.toFixed(2) : 'is not yet invoiced') + '.');
         return true;
       }
@@ -11184,7 +11213,7 @@ async function clientSideSearch(t, lower) {
       }
 
       // Commodity follow-up
-      if (/\b(what was the commodity|what.*shipping|what.*item|what.*moved)\b/.test(lower)) {
+      if (/\b(what was the commodity|what.*shipping|what.*item|what.*moved|what was shipped|what was on it|whats on it)\b/.test(lower)) {
         appendMessage('bot', 'BOL ' + f.bol + ' — ' + (f.commodity || 'commodity not specified') + '.');
         return true;
       }
@@ -11200,7 +11229,7 @@ async function clientSideSearch(t, lower) {
       }
 
       // Generic "tell me more" / pronoun reference about the active shipment
-      if (/\b(tell me more|more details|more info|show me details|i just told you|that shipment|that one|this shipment)\b/.test(lower)) {
+      if (/\b(tell me more|more details|more info|show me details|i just told you|that shipment|that one|this shipment|the full picture|full picture|expand on that)\b/.test(lower)) {
         const orig = f.originCity ? (f.originCity.replace(/\b\w/g, c=>c.toUpperCase()) + (f.originState ? ', ' + f.originState.toUpperCase() : '')) : '';
         const dest = f.destCity ? (f.destCity.replace(/\b\w/g, c=>c.toUpperCase()) + (f.destState ? ', ' + f.destState.toUpperCase() : '')) : '';
         let msg = 'BOL ' + f.bol + ' — ' + (f.carrier || 'unknown carrier') +
@@ -11214,6 +11243,41 @@ async function clientSideSearch(t, lower) {
     }
   }
   // ── END UNIVERSAL STANDING CONTEXT CHECK ──
+
+  // ── Existence / frequency questions — ALWAYS answer yes/no with a count ──
+  // ("have I ever shipped with ABF", "do I have any shipments to TX"). Bug class #4: previously
+  // these loaded history and then stopped without answering. Never claim a definitive "never"
+  // off a partial window — say what wasn't found in what we actually loaded.
+  if (currentCustomer && isExistenceQ(lower)) {
+    showTyping();
+    let _eq = {};
+    try { _eq = await parseShipQuery(t) || {}; } catch(e) {}
+    // Existence means "ever" — load a wide window unless the question scoped a date.
+    const _eNow = new Date(); const _eFromD = new Date(_eNow); _eFromD.setFullYear(_eFromD.getFullYear() - 2);
+    await runShipQuery({
+      action: 'list', sortField: 'date', sortDir: 'desc',
+      dateFrom: _eq.dateFrom || _eFromD.toISOString().split('T')[0],
+      dateTo: _eq.dateTo || _eNow.toISOString().split('T')[0],
+      carrier: _eq.carrier || _eq.aggregateCarrier || null, consignee: _eq.consignee || null,
+      destState: _eq.destState || null, originState: _eq.originState || null,
+      destCity: _eq.destCity || null, originCity: _eq.originCity || null,
+      commodity: _eq.commodity || null, mode: _eq.mode || null
+    });
+    const _matches = (typeof filteredList === 'function') ? filteredList() : ((shipCtx && shipCtx.loaded) || []);
+    removeTyping();
+    const _what = _eq.carrier ? ('with ' + _eq.carrier)
+      : _eq.destState ? ('to ' + String(_eq.destState).toUpperCase())
+      : _eq.originState ? ('from ' + String(_eq.originState).toUpperCase())
+      : _eq.commodity ? ('of ' + _eq.commodity)
+      : _eq.consignee ? ('to ' + _eq.consignee) : 'matching that';
+    if (_matches.length) {
+      appendMessage('bot', 'Yes — ' + _matches.length + ' shipment' + (_matches.length === 1 ? '' : 's') + ' ' + _what + ' in your history.',
+        { shipments: _matches.slice(0, 10), shipmentsList: _matches });
+    } else {
+      appendMessage('bot', 'I don\'t see any shipments ' + _what + ' in the records I loaded (last ~2 years). Say "look further back" and I\'ll check older history.');
+    }
+    return true;
+  }
 
   // ── Pure greeting guard — never intercept greetings with shipment search ──
   if (/^\s*(hello|hi|hey|howdy|greetings|sup|yo|hiya|good morning|good afternoon|good evening|what's up|whats up|how are you|how's it going|hows it going|what can you do|what do you do|help me|help|its all there|it's all there|all there|all filled|all good|looks good|all set|good to go|thats right|that's right|its there|it's there|yes correct|all done|filled in|yes all|all filled in)\s*[?!.]*\s*$/i.test(t.trim())) return false;
@@ -12555,7 +12619,11 @@ async function handleInput(text) {
   // (e.g. Claude asked "which Wilmington?" and the customer replies "california").
   // Routes to the AI before any shipment/quote regex can grab a short reply.
   // Exception: let the user explicitly leave via navigation words.
-  if ((window._quoteFormOpen || window._inQuoteConvo) && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)) {
+  if ((window._quoteFormOpen || window._inQuoteConvo) && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)
+      && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t)) {
+    // Full-history analytics / existence / comparison questions and explicit BOL numbers
+    // break OUT of the quote conversation (otherwise the quote AI answers them off the
+    // open quote's line items — confidently wrong). The quote form stays open underneath.
     window._inQuoteConvo = true;
     removeTyping();
     await aiConverse(t);
