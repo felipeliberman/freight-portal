@@ -5025,6 +5025,7 @@ function appendMessage(role, text, extras) {
   if (extras.trackInline !== undefined) {
     const s = extras.trackInline;
     window._lastTrackedShipment = s; // save for tracking follow-up questions ("was it delivered?")
+    setActiveShipment(s); // standing context: every follow-up handler checks this first
     try {
       const inlineCard = buildTrackInlineCard(s);
       bubble.appendChild(inlineCard);
@@ -9092,6 +9093,9 @@ function shipFields(s){
   const items = s.items || s.lineItems || [];
   const _rawCost=Number(s.totalDue||s.invoiceAmount||ven.cost||ven.totalCharges||s.totalCharges||s.amount||0); const cost=isNaN(_rawCost)?0:_rawCost;
   const ds=s.bookDate||ti.bookDate||s.createdDate||'';
+  // Parse dates at LOCAL noon so a bare YYYY-MM-DD isn't shifted back a day by UTC parsing
+  // (otherwise a delivered date of 2026-01-20 can display as Jan 19 — a wrong-date bug).
+  const _pd = v => { if(!v) return null; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v)+'T12:00:00' : v); return isNaN(d) ? null : d; };
   // Delivery / pickup dates — present on tracking objects (after /track); usually absent on
   // plain /book list items, in which case these stay null and date-based aggregates fall back.
   const deliveredDateRaw = ti.deliveredDate||ti.actualDeliveryDate||ti.deliveryDate||s.deliveredDate||s.actualDeliveryDate||s.deliveryDate||'';
@@ -9120,9 +9124,9 @@ function shipFields(s){
     cost:cost,
     weight:Number(s.totalWeight||s.weight||0),
     pieces:Number(s.pieces||s.totalPieces||items.length||0),
-    date:ds?new Date(ds):null,
-    deliveredDate:deliveredDateRaw?new Date(deliveredDateRaw):null,
-    pickedUpDate:pickedUpDateRaw?new Date(pickedUpDateRaw):null,
+    date:_pd(ds),
+    deliveredDate:_pd(deliveredDateRaw),
+    pickedUpDate:_pd(pickedUpDateRaw),
     accessorials:Array.isArray(_acc)?_acc:[],
     commodity:commodity,
     freightClass:freightClass,
@@ -9693,6 +9697,7 @@ async function openDocsFor(id){
   removeTyping();
   if(!s){ appendMessage('bot','I could not find that shipment to pull documents. Double-check the BOL or PRO.'); return; }
   const bolId=s.BOLId||s.bolId||s.BOLNumber||''; const bol=s.BOLNumber||s.bolNumber||'';
+  setActiveShipment(s); // standing context
   appendMessage('bot','Here is '+(bol||id)+' — opening its documents:',{shipments:[s], singleResult:true});
   openDocsModal(String(bolId),String(bol));
 }
@@ -11097,7 +11102,119 @@ function shipmentMatchesQuery(s, query) {
   return words.every(word => fields.some(f => fuzzyScore(f, word) > 0.4));
 }
 
+// ── Standing shipment context — single source of truth for "what shipment are we talking about" ──
+window._activeShipment = window._activeShipment || null;     // the full shipment object from Primus
+window._activeShipmentSetAt = window._activeShipmentSetAt || null; // timestamp, for staleness checks
+function setActiveShipment(shipmentObj) {
+  if (!shipmentObj) return;
+  window._activeShipment = shipmentObj;
+  window._activeShipmentSetAt = Date.now();
+}
+function getActiveShipment() {
+  if (!window._activeShipment) return null;
+  // Staleness window — context older than 30 min probably isn't relevant anymore.
+  if (window._activeShipmentSetAt && Date.now() - window._activeShipmentSetAt > 30 * 60 * 1000) return null;
+  return window._activeShipment;
+}
+
 async function clientSideSearch(t, lower) {
+  // ── UNIVERSAL STANDING CONTEXT CHECK — must run before all other gates ──
+  // If we have an active shipment in context AND this message is a short referential
+  // follow-up (not a new BOL/PRO, new topic, greeting, or a fresh aggregate/list query),
+  // answer it about that shipment. Hardened so it never hijacks fresh analytics/invoice/
+  // report queries (Step 6b) and never fabricates a missing field.
+  const _active = getActiveShipment();
+  if (_active && currentCustomer) {
+    const introducesNewBol   = /\b\d{6,}\b/.test(t);
+    const introducesNewTopic = /\b(quote|new shipment|book a|i need to ship|get a rate|track\s+\d|rate a|invoice|invoices|claim|claims|report|reports|dashboard)\b/i.test(lower);
+    const isGreeting         = /^(hi|hello|hey|thanks|thank you|ok|okay|got it)\.?$/i.test(t.trim());
+    // A "fresh" aggregate/list query must NOT be answered from single-shipment context.
+    const _wc = t.trim().split(/\s+/).length;
+    const looksFresh = _wc > 11 || /\b(how many|my shipments|all my|all of my|shipments to|by carrier|by month|by state|by lane|breakdown|carrier (do|did)|carriers do|use the most|top \d|most expensive|heaviest|cheapest|average|avg|total (spend|weight|cost)|per carrier|consignees|customers|lanes)\b/i.test(lower);
+
+    if (!introducesNewBol && !introducesNewTopic && !isGreeting && !looksFresh) {
+      const f = shipFields(_active);
+
+      // Document request about the active shipment
+      if (/\b(pod|proof of delivery|bol pdf|bol document|invoice for (this|that)|document|paperwork|paper work|receipt)\b/.test(lower)) {
+        showTyping();
+        const bolId = _active.BOLId || _active.bolId || _active.BOLNumber || '';
+        const bol = _active.BOLNumber || _active.bolNumber || '';
+        removeTyping();
+        appendMessage('bot', 'Here is BOL ' + (bol || f.bol) + ' — opening its documents:', { shipments: [_active], singleResult: true });
+        openDocsModal(String(bolId), String(bol));
+        return true;
+      }
+
+      // Address request about the active shipment's consignee or shipper
+      if (/\b(their address|the address|what.?s the address|delivery address|consignee address|shipper address|pickup address)\b/.test(lower)) {
+        let who, city, st;
+        if (/shipper|pickup/.test(lower)) { who = f.shipper || 'Shipper'; city = f.shipperCity; st = f.shipperState; }
+        else { who = f.consignee || 'Consignee'; city = f.consigneeCity; st = f.consigneeState; }
+        const loc = [city, st ? st.toUpperCase() : ''].filter(Boolean).join(', ');
+        appendMessage('bot', 'BOL ' + f.bol + ' — ' + who + (loc ? ' (' + loc + ')' : '') + '. I have the city and state on file; for the full street address open the shipment\'s BOL document.');
+        return true;
+      }
+
+      // Status / delivered / tracking follow-up about the active shipment
+      if (/\b(delivered|status|where is it|when.*deliver|did it arrive|has it arrived|in transit|picked up|tracking|when did it ship)\b/.test(lower)) {
+        let msg = 'BOL ' + f.bol + ' (' + (f.carrier || 'carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D') + '): ';
+        if (f.deliveredDate) {
+          msg += 'delivered on ' + f.deliveredDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + '.';
+        } else if (/deliver/i.test(f.status)) {
+          msg += 'shows as delivered.';
+        } else {
+          msg += f.status ? ('status is ' + f.status + '.') : 'no current status is available.';
+          if (f.pickedUpDate) msg += ' Picked up ' + f.pickedUpDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + '.';
+        }
+        appendMessage('bot', msg);
+        return true;
+      }
+
+      // Cost / price follow-up about the active shipment
+      if (/\b(how much.*cost|what.*cost|the cost|the price|how much did|what did.*pay)\b/.test(lower)) {
+        appendMessage('bot', 'BOL ' + f.bol + ' cost ' + (f.cost > 0 ? '$' + f.cost.toFixed(2) : 'is not yet invoiced') + '.');
+        return true;
+      }
+
+      // Carrier follow-up about the active shipment
+      if (/^(what carrier|which carrier|who.*carrier)\b/.test(lower)) {
+        appendMessage('bot', 'BOL ' + f.bol + ' is with ' + (f.carrier || 'a carrier that is not on file') + '.');
+        return true;
+      }
+
+      // Commodity follow-up
+      if (/\b(what was the commodity|what.*shipping|what.*item|what.*moved)\b/.test(lower)) {
+        appendMessage('bot', 'BOL ' + f.bol + ' — ' + (f.commodity || 'commodity not specified') + '.');
+        return true;
+      }
+
+      // Consignee/shipper name follow-up
+      if (/\b(who was the consignee|who is the consignee|who was the shipper|who is the shipper|who.*receiv|who.*ship.*from)\b/.test(lower)) {
+        if (/shipper/.test(lower)) {
+          appendMessage('bot', 'BOL ' + f.bol + ' — Shipper: ' + (f.shipper || 'unknown') + '.');
+        } else {
+          appendMessage('bot', 'BOL ' + f.bol + ' — Consignee: ' + (f.consignee || 'unknown') + (f.consigneeCity ? ' (' + f.consigneeCity + (f.consigneeState ? ', ' + f.consigneeState.toUpperCase() : '') + ')' : '') + '.');
+        }
+        return true;
+      }
+
+      // Generic "tell me more" / pronoun reference about the active shipment
+      if (/\b(tell me more|more details|more info|show me details|i just told you|that shipment|that one|this shipment)\b/.test(lower)) {
+        const orig = f.originCity ? (f.originCity.replace(/\b\w/g, c=>c.toUpperCase()) + (f.originState ? ', ' + f.originState.toUpperCase() : '')) : '';
+        const dest = f.destCity ? (f.destCity.replace(/\b\w/g, c=>c.toUpperCase()) + (f.destState ? ', ' + f.destState.toUpperCase() : '')) : '';
+        let msg = 'BOL ' + f.bol + ' — ' + (f.carrier || 'unknown carrier') +
+          (orig && dest ? (', ' + orig + ' to ' + dest) : '') + '. ' +
+          'Consignee: ' + (f.consignee || 'unknown') + '. ' +
+          (f.cost > 0 ? 'Cost: $' + f.cost.toFixed(2) + '. ' : '') +
+          'Status: ' + (f.status || 'not available') + '.';
+        appendMessage('bot', msg);
+        return true;
+      }
+    }
+  }
+  // ── END UNIVERSAL STANDING CONTEXT CHECK ──
+
   // ── Pure greeting guard — never intercept greetings with shipment search ──
   if (/^\s*(hello|hi|hey|howdy|greetings|sup|yo|hiya|good morning|good afternoon|good evening|what's up|whats up|how are you|how's it going|hows it going|what can you do|what do you do|help me|help|its all there|it's all there|all there|all filled|all good|looks good|all set|good to go|thats right|that's right|its there|it's there|yes correct|all done|filled in|yes all|all filled in)\s*[?!.]*\s*$/i.test(t.trim())) return false;
 
@@ -11277,7 +11394,7 @@ async function clientSideSearch(t, lower) {
             .filter(s => _aggName === 'leastExpensive' ? shipFields(s).cost > 0 : true)
             .sort(_RANKED[_aggName]);
           const _singular = /\b(my|the)\b/.test(lower) && !/\b(shipments|ones|list|top \d|\d+ )/.test(lower);
-          if (_singular && _ranked.length) { window._lastSingleShipment = _ranked[0]; _ctxList = [_ranked[0]]; }
+          if (_singular && _ranked.length) { window._lastSingleShipment = _ranked[0]; setActiveShipment(_ranked[0]); _ctxList = [_ranked[0]]; }
           else { _ctxList = _ranked.slice(0, shipCtx.query.aggregateLimit || 10); }
         }
         window._lastAnalyticsResult = { list: _ctxList, query: shipCtx.query, answer: _aAnswer };
