@@ -1587,11 +1587,10 @@ async function handleChatAttachment(input) {
 
       const systemPrompt = 'You are an AI assistant for Freight and Logistics, Inc. The user has attached a document or image (a packing list, purchase order, order confirmation, or shipping document). Extract all freight-relevant information: origin address/zip, destination address/zip, weight (lbs), dimensions (L x W x H inches), number of pieces/pallets, commodity/description, any reference or PO numbers, and any special instructions. Respond with a brief summary of what you found, then list the extracted fields clearly so the user can confirm them for a freight quote. If a field is not found, say so.';
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('https://anthropic-proxy.felipe-b80.workers.dev', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
@@ -1730,18 +1729,18 @@ For small and light shipments, UPS Ground and FedEx Ground rates will automatica
 === MULTI-ITEM QUOTES ===\nWhen a customer has multiple pallets or items with different sizes or weights, collect each item one at a time. Ask: "Give me item 1 — how many pieces, the weight in lbs, and the dims (L x W x H inches)?" Then after each answer confirm it and ask for the next one. When they say done or you have all items, say the form is filled and they can hit Get Rates. Never ask for all items at once in a list. Always one item per turn, natural conversational flow."';
   try{
         const searchQuery = carrier + ' freight terminal ' + location + ' address phone';
-        const searchData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{
+        const searchData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev',{
           method:'POST',
-          headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+          headers:{'Content-Type':'application/json'},
           body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:512,tools:[{type:'web_search_20250305',name:'web_search'}],tool_choice:{type:'any'},messages:[{role:'user',content:'Search for the closest ' + carrier + ' freight terminal to ' + location + '. Return only the terminal name, address, city, state, and phone number.'}]})
         });
         const searchResult = (searchData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(' ').trim();
         if(searchResult && searchResult.length > 20){
           history.push({role:'user',content:text});
           const augmented = 'The user asked: ' + text + '\n\nWeb search result: ' + searchResult + '\n\nUsing this search result, answer the user in plain conversational prose like a freight broker. Give the actual address and phone number if found.';
-          const finalData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{
+          const finalData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev',{
             method:'POST',
-            headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+            headers:{'Content-Type':'application/json'},
             body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:512,system:'You are a freight broker assistant. Respond in plain prose only, no markdown, no bullets, no headers. Be direct and concise.',messages:[{role:'user',content:augmented}]})
           });
           const finalReply = (finalData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim()||"I had trouble finding that terminal. Try calling ABF directly or checking arcb.com.";
@@ -1754,9 +1753,9 @@ For small and light shipments, UPS Ground and FedEx Ground rates will automatica
   }
 
   try{
-    const data=await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{
+    const data=await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev',{
       method:'POST',
-      headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1024,system:_srcdocSysPmt,tools:[{type:'web_search_20250305',name:'web_search'}],messages:history})
     });
     console.log('[AI] stop_reason:', data.stop_reason, '| content types:', (data.content||[]).map(b=>b.type));
@@ -7285,7 +7284,7 @@ function goHomeTop(){
   var f=document.getElementById('public-frame');
   if(f && f.contentWindow){ try{ f.contentWindow.location.reload(); }catch(e){} }
 }
-window.flAnthropic = async function(u,o){ const opts = Object.assign({}, o); opts.headers = Object.assign({'anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'}, opts.headers||{}); const r=await fetch(u,opts); if(!r.ok){ const e=await r.text().catch(()=>''); throw new Error('AI '+r.status+': '+e.slice(0,100)); } return await r.json(); };
+window.flAnthropic = async function(u,o){ const opts = Object.assign({}, o); opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{}); const r=await fetch(u,opts); if(!r.ok){ const e=await r.text().catch(()=>''); throw new Error('AI '+r.status+': '+e.slice(0,100)); } return await r.json(); };
 // Auto-login handled in DOMContentLoaded above
 
 
@@ -8409,10 +8408,10 @@ async function handleBookingInput(text) {
         JSON.stringify(fieldsToClean);
       const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const r = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages', {
+    const r = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
       signal: controller.signal,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400,
           messages: [{ role: 'user', content: prompt }] })
       });
@@ -9171,7 +9170,7 @@ function sortShips(arr,q){
 async function parseShipQuery(text){
   const today=new Date().toISOString().split('T')[0];
   const sys='You convert a freight customer chat message into a JSON query object. Output ONLY the JSON object, no prose, no markdown fences. Fields (use null when not specified): action one of [list, detail, track, quote, documents, aggregate, help]; bol; pro; carrier; consignee; shipper; destCity; destState as 2-letter code; originCity; originState; status; mode; commodity; costMin; costMax; weightMin; weightMax; dateFrom as YYYY-MM-DD; dateTo as YYYY-MM-DD; sortField one of [cost, date, weight]; sortDir one of [asc, desc]; limit as a number; aggregate one of [count, sumCost, avgCost, byCarrier, byDestState, byOriginState, byDestCity, byOriginCity, avgTransitDays, byMonth, byWeek, topConsignees, topShippers, byMode, avgWeight, totalWeight, costByCarrier, avgCostByCarrier, transitByCarrier, laneMatrix, byStatus, heaviestShipments, mostExpensive, leastExpensive, shipmentsByDay, deliveredVsInTransit, repeatLanes, byAccessorial, byCommodity]; aggregateCarrier as string (carrier name filter to scope the aggregate to); aggregateState as string (2-letter state to scope); aggregateLimit as number (top-N for ranked results, default 10); more as boolean; refine as boolean; originZip as 5-digit string; destinationZip as 5-digit string; pieces as number; weight as number; freightClass as number; length as number; width as number; height as number; packageType as PLT or BOX; accessorials as array of strings; residentialDelivery as boolean; noDock as boolean. Rules: today is '+today+'. Convert relative date ranges to dateFrom/dateTo. For last N or N most recent set limit with sortField date sortDir desc. For biggest or most expensive set sortField cost sortDir desc. Convert full state names to 2-letter codes. A number starting with 1601 is a BOL. Another bare identifier is a PRO. For show more set more true. For of those or only the set refine true. For aggregation questions set action aggregate and pick the most specific aggregate value. Use: count for "how many"; sumCost for "total spend" or "how much have I spent"; avgCost for "average cost" or "what does it usually cost"; byCarrier for "which carrier do I use most" or "carrier breakdown"; costByCarrier for "how much do I spend per carrier" or "total by carrier"; avgCostByCarrier for "what does [carrier] usually cost" or "average cost by carrier"; transitByCarrier for "which carrier is fastest" or "transit time by carrier"; byDestState for "how many shipments to California" or "shipments by state"; byOriginState for "where do I ship from most"; byDestCity for "top cities I ship to"; byOriginCity for "where do most pickups happen"; laneMatrix for "top lanes" or "what lanes do I use"; repeatLanes for "lanes I use repeatedly" or "what routes do I do most"; topConsignees for "who do I ship to most" or "top customers"; topShippers for "top pickup locations"; byMonth for "shipments per month" or "monthly breakdown"; byWeek for "weekly breakdown"; shipmentsByDay for "what day do I ship most"; avgTransitDays for "average transit time" or "how long does shipping take"; byMode for "LTL vs white glove breakdown"; avgWeight for "average weight"; totalWeight for "total weight shipped"; heaviestShipments for "heaviest shipments"; mostExpensive for "most expensive shipments"; leastExpensive for "cheapest shipments"; byStatus for "status breakdown"; deliveredVsInTransit for "how many are delivered vs in transit"; byAccessorial for "liftgate fees", "residential charges" or "what accessorials do I use"; byCommodity for "what do I ship most" or "most common commodity". When a carrier name is mentioned alongside an aggregate (e.g. "how much does Estes usually cost"), set aggregateCarrier to that carrier name. When a state is mentioned (e.g. "shipments to California"), set destState to "ca" AND aggregate to byDestState. When user asks top N, set aggregateLimit to that number. A request for a price, rate, or quote to ship — or a message that provides origin zip, destination zip, and weight — sets action quote and also extracts originZip, destinationZip, pieces, weight, freightClass, length, width, height, packageType, accessorials, residentialDelivery, noDock. Dock to dock or no accessorials means empty accessorials array. Where is or current status sets action track. A request for documents or BOL pdf or POD sets action documents. An unrelated or general freight question sets action help.';
-  const r=await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,system:sys,messages:[{role:'user',content:text}]})});
+  const r=await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,system:sys,messages:[{role:'user',content:text}]})});
   const d=r;
   let txt=((d.content&&d.content.find(function(b){return b.type==='text';}))||{}).text||'{}';
   txt=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -10657,7 +10656,6 @@ async function aiConverse(userText) {
   showTyping();
   let _lastBotShown = '';
   const _showBot = (t) => { const n = (t||'').toString().trim(); if (n && n !== _lastBotShown) { appendMessage('bot', n); _lastBotShown = n; } };
-  const _apiKey = 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA';
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
 
   // Build message history (text-only for past turns, current message appended)
@@ -10703,9 +10701,9 @@ async function aiConverse(userText) {
 
     while (loops < 5) {
       loops++;
-      const data = await _callWithRetry('https://api.anthropic.com/v1/messages', {
+      const data = await _callWithRetry('https://anthropic-proxy.felipe-b80.workers.dev', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'x-api-key': _apiKey, 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'Content-Type': 'application/json', 'anthropic-beta': 'prompt-caching-2024-07-31' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 1024,
@@ -11030,13 +11028,10 @@ Example flow: customer says "damage claim on BOL 123" → you say "Got it. Was t
   if(chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
   try{
     console.log('Claude call starting...');
-    const r = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages', {
+    const r = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
@@ -11499,16 +11494,16 @@ async function clientSideSearch(t, lower) {
       showTyping();
       try {
         const searchQuery = carrier + ' freight terminal ' + location + ' address phone';
-        const searchData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages', {
+        const searchData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
           method: 'POST',
-          headers: {'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+          headers: {'Content-Type':'application/json'},
           body: JSON.stringify({model:'claude-sonnet-4-6',max_tokens:512,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:'Find the closest ' + carrier + ' freight terminal to ' + location + '. You MUST return ALL of these fields: 1) Terminal/service center name 2) Full street address 3) City 4) State 5) ZIP code 6) Phone number. Search specifically for the phone number if not in first result.'}]})
         });
         const searchResult = (searchData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(' ').trim();
         if (searchResult && searchResult.length > 20) {
-          const finalData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages', {
+          const finalData = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
             method: 'POST',
-            headers: {'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+            headers: {'Content-Type':'application/json'},
             body: JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:300,system:'Freight broker assistant. Plain prose only, no markdown, no bullets. Be direct.',messages:[{role:'user',content:'The user asked: ' + t + '\n\nSearch result: ' + searchResult + '\n\nGive the terminal name, full street address including city, state and zip, and phone number in one plain sentence. Always include all of these.'}]})
           });
           const reply = (finalData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim() || 'I could not find that terminal. Try arcb.com or call (800) 687-3713.';
@@ -11853,9 +11848,9 @@ async function clientSideSearch(t, lower) {
     // Route UPS/FedEx service questions to AI, not the shipments query engine
     try {
       showTyping();
-      const _svcR = await (window.parent.flAnthropic||window.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{
+      const _svcR = await (window.parent.flAnthropic||window.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev',{
         method:'POST',
-        headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+        headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:300,system:sysPrompt,messages:[{role:'user',content:t}]})
       });
       const _svcReply = _svcR && _svcR.content && _svcR.content.find(b=>b.type==='text') && _svcR.content.find(b=>b.type==='text').text;
@@ -11978,9 +11973,9 @@ async function clientSideSearch(t, lower) {
           let trackingInfo = '';
           if (pro) {
             try {
-              const tRes = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages', {
+              const tRes = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
                 method:'POST',
-                headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},
+                headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:200,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:'Search for current tracking status of ' + carrier + ' freight PRO ' + pro + '. What is the latest status and estimated delivery date?'}]})
               });
               const tText = (tRes.content||[]).map(b => {
@@ -12568,9 +12563,9 @@ async function handleInput(text) {
         showTyping();
         const _editPrompt = 'The customer wants to edit this support email draft:\n\n' + _ta.value + '\n\nTheir instruction: ' + t + '\n\nRewrite ONLY the email body (everything after the greeting line) incorporating their change. Return just the updated email body text, nothing else. No subject line, no To: line, just the body starting with "Hi Support Team,"';
         try {
-          const _er = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://api.anthropic.com/v1/messages', {
+          const _er = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: 'You are a professional email editor. Follow instructions precisely.', messages: [{ role: 'user', content: _editPrompt }] })
           });
           const _newBody = (_er.content || []).filter(function(b) { return b.type === 'text'; }).map(function(b) { return b.text; }).join('').trim();
@@ -12588,9 +12583,9 @@ async function handleInput(text) {
     // Keep full history (capped 200); the API payload is sliced to the last 20 turns below.
     if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
     try {
-      const r = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://api.anthropic.com/v1/messages', {
+      const r = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: sysPrompt, messages: chatHistory.slice(-20).map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })).filter(m => m.content) })
       });
       let text2 = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim() || 'I am having trouble connecting. Please try again.';
@@ -13398,9 +13393,9 @@ async function _handleInputFallback(text) {
       ? text + '\n\n(Use web_search to find the actual current address, phone number, and hours. Do not answer from memory.)'
       : text;
 
-    const result = await (window.parent.flAnthropic||window.flAnthropic)('https://api.anthropic.com/v1/messages', {
+    const result = await (window.parent.flAnthropic||window.flAnthropic)('https://anthropic-proxy.felipe-b80.workers.dev', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, tools: [{type:'web_search_20250305',name:'web_search'}], system: SYSTEM_PROMPT, messages: [{ role: 'user', content: userMessage }] })
     }).catch(() => null);
     removeTyping();
@@ -18455,7 +18450,7 @@ async function _spExtract(src, resultsPane, textPane, filePane) {
       ? { 'anthropic-beta':'pdfs-2024-09-25' } : {};
 
     const resp = await (window.parent.flAnthropic || window.flAnthropic)(
-      'https://api.anthropic.com/v1/messages',
+      'https://anthropic-proxy.felipe-b80.workers.dev',
       {
         method: 'POST',
         headers: Object.assign({ 'Content-Type':'application/json' }, extraHdrs),
@@ -18652,7 +18647,7 @@ async function _spAutoExtractAndRate(text) {
   const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5-digit US ZIP or 6-char Canadian postal code (e.g. V5X3A6 — preserve all letters)\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, NAO limited access pickup, IND inside delivery, APT appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
     var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
-    var resp = await flCall('https://api.anthropic.com/v1/messages', {
+    var resp = await flCall('https://anthropic-proxy.felipe-b80.workers.dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024,
