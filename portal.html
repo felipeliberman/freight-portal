@@ -9144,7 +9144,7 @@ function sortShips(arr,q){
 }
 async function parseShipQuery(text){
   const today=new Date().toISOString().split('T')[0];
-  const sys='You convert a freight customer chat message into a JSON query object. Output ONLY the JSON object, no prose, no markdown fences. Fields (use null when not specified): action one of [list, detail, track, quote, documents, aggregate, help]; bol; pro; carrier; consignee; shipper; destCity; destState as 2-letter code; originCity; originState; status; mode; commodity; costMin; costMax; weightMin; weightMax; dateFrom as YYYY-MM-DD; dateTo as YYYY-MM-DD; sortField one of [cost, date, weight]; sortDir one of [asc, desc]; limit as a number; aggregate one of [count, sumCost, avgCost, byCarrier]; more as boolean; refine as boolean; originZip as 5-digit string; destinationZip as 5-digit string; pieces as number; weight as number; freightClass as number; length as number; width as number; height as number; packageType as PLT or BOX; accessorials as array of strings; residentialDelivery as boolean; noDock as boolean. Rules: today is '+today+'. Convert relative date ranges to dateFrom/dateTo. For last N or N most recent set limit with sortField date sortDir desc. For biggest or most expensive set sortField cost sortDir desc. Convert full state names to 2-letter codes. A number starting with 1601 is a BOL. Another bare identifier is a PRO. For show more set more true. For of those or only the set refine true. For how many or total spent or average set action aggregate. A request for a price, rate, or quote to ship — or a message that provides origin zip, destination zip, and weight — sets action quote and also extracts originZip, destinationZip, pieces, weight, freightClass, length, width, height, packageType, accessorials, residentialDelivery, noDock. Dock to dock or no accessorials means empty accessorials array. Where is or current status sets action track. A request for documents or BOL pdf or POD sets action documents. An unrelated or general freight question sets action help.';
+  const sys='You convert a freight customer chat message into a JSON query object. Output ONLY the JSON object, no prose, no markdown fences. Fields (use null when not specified): action one of [list, detail, track, quote, documents, aggregate, help]; bol; pro; carrier; consignee; shipper; destCity; destState as 2-letter code; originCity; originState; status; mode; commodity; costMin; costMax; weightMin; weightMax; dateFrom as YYYY-MM-DD; dateTo as YYYY-MM-DD; sortField one of [cost, date, weight]; sortDir one of [asc, desc]; limit as a number; aggregate one of [count, sumCost, avgCost, byCarrier, byDestState, byOriginState, byDestCity, byOriginCity, avgTransitDays, byMonth, byWeek, topConsignees, topShippers, byMode, avgWeight, totalWeight, costByCarrier, avgCostByCarrier, transitByCarrier, laneMatrix, byStatus, heaviestShipments, mostExpensive, leastExpensive, shipmentsByDay, deliveredVsInTransit, repeatLanes]; aggregateCarrier as string (carrier name filter to scope the aggregate to); aggregateState as string (2-letter state to scope); aggregateLimit as number (top-N for ranked results, default 10); more as boolean; refine as boolean; originZip as 5-digit string; destinationZip as 5-digit string; pieces as number; weight as number; freightClass as number; length as number; width as number; height as number; packageType as PLT or BOX; accessorials as array of strings; residentialDelivery as boolean; noDock as boolean. Rules: today is '+today+'. Convert relative date ranges to dateFrom/dateTo. For last N or N most recent set limit with sortField date sortDir desc. For biggest or most expensive set sortField cost sortDir desc. Convert full state names to 2-letter codes. A number starting with 1601 is a BOL. Another bare identifier is a PRO. For show more set more true. For of those or only the set refine true. For aggregation questions set action aggregate and pick the most specific aggregate value. Use: count for "how many"; sumCost for "total spend" or "how much have I spent"; avgCost for "average cost" or "what does it usually cost"; byCarrier for "which carrier do I use most" or "carrier breakdown"; costByCarrier for "how much do I spend per carrier" or "total by carrier"; avgCostByCarrier for "what does [carrier] usually cost" or "average cost by carrier"; transitByCarrier for "which carrier is fastest" or "transit time by carrier"; byDestState for "how many shipments to California" or "shipments by state"; byOriginState for "where do I ship from most"; byDestCity for "top cities I ship to"; byOriginCity for "where do most pickups happen"; laneMatrix for "top lanes" or "what lanes do I use"; repeatLanes for "lanes I use repeatedly" or "what routes do I do most"; topConsignees for "who do I ship to most" or "top customers"; topShippers for "top pickup locations"; byMonth for "shipments per month" or "monthly breakdown"; byWeek for "weekly breakdown"; shipmentsByDay for "what day do I ship most"; avgTransitDays for "average transit time" or "how long does shipping take"; byMode for "LTL vs white glove breakdown"; avgWeight for "average weight"; totalWeight for "total weight shipped"; heaviestShipments for "heaviest shipments"; mostExpensive for "most expensive shipments"; leastExpensive for "cheapest shipments"; byStatus for "status breakdown"; deliveredVsInTransit for "how many are delivered vs in transit". When a carrier name is mentioned alongside an aggregate (e.g. "how much does Estes usually cost"), set aggregateCarrier to that carrier name. When a state is mentioned (e.g. "shipments to California"), set destState to "ca" AND aggregate to byDestState. When user asks top N, set aggregateLimit to that number. A request for a price, rate, or quote to ship — or a message that provides origin zip, destination zip, and weight — sets action quote and also extracts originZip, destinationZip, pieces, weight, freightClass, length, width, height, packageType, accessorials, residentialDelivery, noDock. Dock to dock or no accessorials means empty accessorials array. Where is or current status sets action track. A request for documents or BOL pdf or POD sets action documents. An unrelated or general freight question sets action help.';
   const r=await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH'+'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:400,system:sys,messages:[{role:'user',content:text}]})});
   const d=r;
   let txt=((d.content&&d.content.find(function(b){return b.type==='text';}))||{}).text||'{}';
@@ -9202,12 +9202,202 @@ function describeQuery(q,count){
   const tail=p.length?' '+p.join(', '):'';
   return 'Found '+count+' shipment'+(count===1?'':'s')+tail+':';
 }
-function summarize(list,q){
-  const n=list.length;
-  if(q.aggregate==='sumCost'){ const t=list.reduce(function(a,s){return a+shipFields(s).cost;},0); return 'Total across '+n+' shipment'+(n===1?'':'s')+': $'+t.toFixed(2)+'.'; }
-  if(q.aggregate==='avgCost'){ const t=list.reduce(function(a,s){return a+shipFields(s).cost;},0); const avg=n?t/n:0; return 'Average cost across '+n+' shipment'+(n===1?'':'s')+': $'+avg.toFixed(2)+' (total $'+t.toFixed(2)+').'; }
-  if(q.aggregate==='byCarrier'){ const m={}; list.forEach(function(s){ const c=shipFields(s).carrier||'Unknown'; m[c]=(m[c]||0)+1; }); const rows=Object.keys(m).sort(function(a,b){return m[b]-m[a];}).map(function(c){return c+': '+m[c];}); return 'Shipments by carrier ('+n+' total):\n'+rows.join('\n'); }
-  return 'You have '+n+' shipment'+(n===1?'':'s')+' matching that.';
+function summarize(list, q) {
+  const n = list.length;
+  if (!n) return 'No shipments matched that filter.';
+  const sf = shipFields;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function fmt$(v) { return '$' + Number(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function fmtN(v) { return Number(v).toLocaleString(); }
+  function topN(obj, lim) {
+    return Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0, lim||10);
+  }
+  function carrierLabel(c) {
+    return (c||'Unknown')
+      .replace('Metropolitan Warehouse & Delivery Corp','Metro W&D')
+      .replace('Less Than Truckload','').trim() || 'Unknown';
+  }
+  function stateLabel(s) { return (s||'').toUpperCase() || 'Unknown'; }
+  function transitDays(s) {
+    // Use bookDate → deliveredDate if available; fall back to null
+    const raw = s.trackingInformation || s;
+    const book = raw.bookDate || s.bookDate || s.createdDate;
+    const delivered = raw.deliveredDate || raw.actualDeliveryDate || s.deliveredDate || s.actualDeliveryDate;
+    if (!book || !delivered) return null;
+    const diff = (new Date(delivered) - new Date(book)) / 86400000;
+    return diff > 0 && diff < 60 ? Math.round(diff) : null;
+  }
+  function lines(rows) { return rows.join('\n'); }
+
+  const agg = q.aggregate;
+  const lim = q.aggregateLimit || 10;
+
+  // ── Basic counts / costs ─────────────────────────────────────────────────
+  if (agg === 'count') {
+    return 'You have ' + fmtN(n) + ' shipment' + (n===1?'':'s') + ' matching that.';
+  }
+  if (agg === 'sumCost') {
+    const t = list.reduce((a,s)=>a+sf(s).cost,0);
+    return 'Total spend across ' + fmtN(n) + ' shipment' + (n===1?'':'s') + ': ' + fmt$(t) + '.';
+  }
+  if (agg === 'avgCost') {
+    const t = list.reduce((a,s)=>a+sf(s).cost,0);
+    const avg = n ? t/n : 0;
+    return 'Average shipment cost: ' + fmt$(avg) + ' across ' + fmtN(n) + ' shipment' + (n===1?'':'s') + ' (total ' + fmt$(t) + ').';
+  }
+  if (agg === 'mostExpensive') {
+    const sorted = list.slice().sort((a,b)=>sf(b).cost-sf(a).cost).slice(0,lim);
+    return 'Your ' + sorted.length + ' most expensive shipments:\n' +
+      sorted.map((s,i)=>{ const f=sf(s); return (i+1)+'. BOL '+f.bol+' — '+fmt$(f.cost)+' ('+carrierLabel(f.carrier)+', to '+stateLabel(f.destState)+')'; }).join('\n');
+  }
+  if (agg === 'leastExpensive') {
+    const sorted = list.slice().filter(s=>sf(s).cost>0).sort((a,b)=>sf(a).cost-sf(b).cost).slice(0,lim);
+    return 'Your ' + sorted.length + ' least expensive shipments:\n' +
+      sorted.map((s,i)=>{ const f=sf(s); return (i+1)+'. BOL '+f.bol+' — '+fmt$(f.cost)+' ('+carrierLabel(f.carrier)+', to '+stateLabel(f.destState)+')'; }).join('\n');
+  }
+
+  // ── Carrier breakdowns ───────────────────────────────────────────────────
+  if (agg === 'byCarrier') {
+    const m = {}; list.forEach(s=>{ const c=carrierLabel(sf(s).carrier); m[c]=(m[c]||0)+1; });
+    const rows = topN(m, lim).map(([c,cnt])=>c+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by carrier (' + fmtN(n) + ' total):\n' + lines(rows);
+  }
+  if (agg === 'costByCarrier') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const c=carrierLabel(f.carrier); if(!m[c])m[c]={cnt:0,total:0}; m[c].cnt++; m[c].total+=f.cost; });
+    const rows = topN(Object.fromEntries(Object.entries(m).map(([c,v])=>[c,v.total])), lim)
+      .map(([c])=>c+': '+fmt$(m[c].total)+' across '+fmtN(m[c].cnt)+' shipment'+(m[c].cnt===1?'':'s'));
+    return 'Total spend by carrier:\n' + lines(rows);
+  }
+  if (agg === 'avgCostByCarrier') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const c=carrierLabel(f.carrier); if(!m[c])m[c]={cnt:0,total:0}; m[c].cnt++; m[c].total+=f.cost; });
+    const rows = Object.entries(m).filter(([,v])=>v.cnt>0)
+      .map(([c,v])=>[c, v.total/v.cnt])
+      .sort((a,b)=>b[1]-a[1]).slice(0,lim)
+      .map(([c,avg])=>{ const v=m[c]; return c+': avg '+fmt$(avg)+' ('+fmtN(v.cnt)+' shipment'+(v.cnt===1?'':'s')+', total '+fmt$(v.total)+')'; });
+    return 'Average cost per carrier:\n' + lines(rows);
+  }
+  if (agg === 'transitByCarrier') {
+    const m = {};
+    list.forEach(s=>{ const f=sf(s); const c=carrierLabel(f.carrier); const d=transitDays(s); if(d===null)return; if(!m[c])m[c]={cnt:0,total:0}; m[c].cnt++; m[c].total+=d; });
+    const rows = Object.entries(m).filter(([,v])=>v.cnt>0)
+      .map(([c,v])=>[c, v.total/v.cnt])
+      .sort((a,b)=>a[1]-b[1]).slice(0,lim)
+      .map(([c,avg])=>{ const v=m[c]; return c+': avg '+avg.toFixed(1)+' day'+(avg!==1?'s':'')+' ('+fmtN(v.cnt)+' measured)'; });
+    if (!rows.length) return 'I don\'t have enough delivery date data to calculate transit times by carrier yet.';
+    return 'Average transit time by carrier:\n' + lines(rows);
+  }
+
+  // ── Geography ────────────────────────────────────────────────────────────
+  if (agg === 'byDestState') {
+    const m = {}; list.forEach(s=>{ const st=stateLabel(sf(s).destState)||'Unknown'; m[st]=(m[st]||0)+1; });
+    const rows = topN(m, lim).map(([st,cnt])=>st+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by destination state:\n' + lines(rows);
+  }
+  if (agg === 'byOriginState') {
+    const m = {}; list.forEach(s=>{ const st=stateLabel(sf(s).originState)||'Unknown'; m[st]=(m[st]||0)+1; });
+    const rows = topN(m, lim).map(([st,cnt])=>st+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by origin state:\n' + lines(rows);
+  }
+  if (agg === 'byDestCity') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const k=(f.destCity+', '+f.destState).toUpperCase()||'Unknown'; m[k]=(m[k]||0)+1; });
+    const rows = topN(m, lim).map(([c,cnt])=>c+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Top destination cities:\n' + lines(rows);
+  }
+  if (agg === 'byOriginCity') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const k=(f.originCity+', '+f.originState).toUpperCase()||'Unknown'; m[k]=(m[k]||0)+1; });
+    const rows = topN(m, lim).map(([c,cnt])=>c+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Top origin cities:\n' + lines(rows);
+  }
+  if (agg === 'laneMatrix') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const k=stateLabel(f.originState)+' → '+stateLabel(f.destState); m[k]=(m[k]||0)+1; });
+    const rows = topN(m, lim).map(([lane,cnt])=>lane+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Top lanes by volume:\n' + lines(rows);
+  }
+  if (agg === 'repeatLanes') {
+    const m = {}; list.forEach(s=>{ const f=sf(s); const k=stateLabel(f.originState)+' → '+stateLabel(f.destState); m[k]=(m[k]||0)+1; });
+    const rows = Object.entries(m).filter(([,v])=>v>1).sort((a,b)=>b[1]-a[1]).slice(0,lim)
+      .map(([lane,cnt])=>lane+': '+fmtN(cnt)+' shipments');
+    if (!rows.length) return 'No repeated lanes found in the loaded shipments.';
+    return 'Lanes you use repeatedly:\n' + lines(rows);
+  }
+
+  // ── Consignees / Shippers ────────────────────────────────────────────────
+  if (agg === 'topConsignees') {
+    const m = {}; list.forEach(s=>{ const c=sf(s).consignee||'Unknown'; m[c]=(m[c]||0)+1; });
+    const rows = topN(m, lim).map(([c,cnt])=>c+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Top consignees (delivery destinations):\n' + lines(rows);
+  }
+  if (agg === 'topShippers') {
+    const m = {}; list.forEach(s=>{ const c=sf(s).shipper||'Unknown'; m[c]=(m[c]||0)+1; });
+    const rows = topN(m, lim).map(([c,cnt])=>c+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Top shippers (pickup origins):\n' + lines(rows);
+  }
+
+  // ── Time series ──────────────────────────────────────────────────────────
+  if (agg === 'byMonth') {
+    const m = {}; list.forEach(s=>{ const d=sf(s).date; if(!d)return; const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); m[k]=(m[k]||0)+1; });
+    const rows = Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]))
+      .map(([mo,cnt])=>{ const [yr,mn]=mo.split('-'); const label=new Date(yr,mn-1).toLocaleString('en-US',{month:'short',year:'numeric'}); return label+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'); });
+    return 'Shipments by month:\n' + lines(rows);
+  }
+  if (agg === 'byWeek') {
+    const m = {}; list.forEach(s=>{ const d=sf(s).date; if(!d)return; const monday=new Date(d); monday.setDate(d.getDate()-((d.getDay()+6)%7)); const k=monday.toISOString().split('T')[0]; m[k]=(m[k]||0)+1; });
+    const rows = Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]))
+      .map(([wk,cnt])=>'Week of '+wk+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by week:\n' + lines(rows);
+  }
+  if (agg === 'shipmentsByDay') {
+    const m = {}; list.forEach(s=>{ const d=sf(s).date; if(!d)return; const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const k=days[d.getDay()]; m[k]=(m[k]||0)+1; });
+    const order = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const rows = order.filter(d=>m[d]).map(d=>d+': '+fmtN(m[d])+' shipment'+(m[d]===1?'':'s'));
+    return 'Shipments by day of week:\n' + lines(rows);
+  }
+
+  // ── Transit ──────────────────────────────────────────────────────────────
+  if (agg === 'avgTransitDays') {
+    const measured = list.map(s=>transitDays(s)).filter(d=>d!==null);
+    if (!measured.length) return 'I don\'t have enough delivery date data to calculate average transit time. This improves as more shipments are delivered and confirmed.';
+    const avg = measured.reduce((a,v)=>a+v,0)/measured.length;
+    return 'Average transit time: ' + avg.toFixed(1) + ' days across ' + fmtN(measured.length) + ' measured shipment' + (measured.length===1?'':'s') + '.';
+  }
+
+  // ── Mode / weight ────────────────────────────────────────────────────────
+  if (agg === 'byMode') {
+    const m = {}; list.forEach(s=>{ const md=(sf(s).mode||'ltl').toUpperCase(); m[md]=(m[md]||0)+1; });
+    const rows = topN(m).map(([md,cnt])=>md+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by service type:\n' + lines(rows);
+  }
+  if (agg === 'avgWeight') {
+    const wts = list.map(s=>sf(s).weight).filter(w=>w>0);
+    if (!wts.length) return 'No weight data available for those shipments.';
+    const avg = wts.reduce((a,v)=>a+v,0)/wts.length;
+    return 'Average shipment weight: ' + fmtN(Math.round(avg)) + ' lbs across ' + fmtN(wts.length) + ' shipment' + (wts.length===1?'':'s') + '.';
+  }
+  if (agg === 'totalWeight') {
+    const total = list.reduce((a,s)=>a+sf(s).weight,0);
+    return 'Total weight shipped: ' + fmtN(Math.round(total)) + ' lbs across ' + fmtN(n) + ' shipment' + (n===1?'':'s') + '.';
+  }
+  if (agg === 'heaviestShipments') {
+    const sorted = list.slice().filter(s=>sf(s).weight>0).sort((a,b)=>sf(b).weight-sf(a).weight).slice(0,lim);
+    return 'Your ' + sorted.length + ' heaviest shipments:\n' +
+      sorted.map((s,i)=>{ const f=sf(s); return (i+1)+'. BOL '+f.bol+' — '+fmtN(f.weight)+' lbs ('+carrierLabel(f.carrier)+', '+fmt$(f.cost)+')'; }).join('\n');
+  }
+
+  // ── Status ───────────────────────────────────────────────────────────────
+  if (agg === 'byStatus') {
+    const m = {}; list.forEach(s=>{ const st=sf(s).status||'unknown'; const k=st.charAt(0).toUpperCase()+st.slice(1); m[k]=(m[k]||0)+1; });
+    const rows = topN(m).map(([st,cnt])=>st+': '+fmtN(cnt)+' shipment'+(cnt===1?'':'s'));
+    return 'Shipments by status:\n' + lines(rows);
+  }
+  if (agg === 'deliveredVsInTransit') {
+    let delivered=0, inTransit=0, other=0;
+    list.forEach(s=>{ const st=sf(s).status||''; if(/deliver/i.test(st))delivered++; else if(/transit|progress|pickup|dispatched/i.test(st))inTransit++; else other++; });
+    return 'Of your ' + fmtN(n) + ' shipments: ' + fmtN(delivered) + ' delivered, ' + fmtN(inTransit) + ' in transit, ' + fmtN(other) + ' other.';
+  }
+
+  // ── Default fallback ─────────────────────────────────────────────────────
+  return 'You have ' + fmtN(n) + ' shipment' + (n===1?'':'s') + ' matching that.';
 }
 function presentShips(q,initial){
   removeTyping();
@@ -9227,6 +9417,10 @@ async function runShipQuery(q){
   if(q.dateTo)to=new Date(q.dateTo); else to=new Date(now);
   shipCtx={from:from,to:to,page:1,totalPages:null,loaded:[],done:false,query:q,filtered:[]};
   shipShown=0;
+  // Pre-apply aggregateCarrier filter into query so matchQuery scopes it
+  if (q.aggregateCarrier && !q.carrier) {
+    q.carrier = q.aggregateCarrier;
+  }
   await ensureMatches(q.limit||SHIP_PAGE);
   presentShips(q,true);
 }
