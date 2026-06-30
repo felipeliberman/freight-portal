@@ -611,7 +611,6 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 <input type="file" id="invoice-upload" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv" multiple style="display:none" onchange="handleInvoiceUpload(this)">
 
 <script>
-const APIKEY = 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH';
 const CLOUDFLARE_WORKER = 'https://freight-email.freightandlogistics.workers.dev';
 
 let chatHistory = [];
@@ -666,9 +665,9 @@ async function callAI(userMsg) {
   if (chatHistory.length > 30) chatHistory = chatHistory.slice(-30);
   showTyping();
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetch('https://anthropic-proxy.felipe-b80.workers.dev', {
       method:'POST',
-      headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':APIKEY,'anthropic-dangerous-direct-browser-access':'true'},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:SYSTEM_PROMPT,messages:chatHistory})
     });
     const d = await r.json();
