@@ -2201,6 +2201,15 @@ function resetShipmentState(wipeConversation) {
       chatHistory = [];
       window._quotedContacts = null;
       window._quoteContainer = null;
+      // Clear shipment conversation context so "New chat" starts truly fresh
+      // (previously these survived New chat and only cleared on logout/reload).
+      if (typeof shipCtx !== 'undefined') { shipCtx = null; }
+      window._activeShipment = null;
+      window._activeShipmentSetAt = null;
+      window._lastSingleShipment = null;
+      window._lastTrackedShipment = null;
+      window._lastAnalyticsResult = null;
+      shipShown = 0;
       try {
         if (typeof rpState !== 'undefined' && rpState.tabs) {
           rpState.tabs.filter(t => t.title === 'Get a Quote')
