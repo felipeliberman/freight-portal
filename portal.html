@@ -9117,12 +9117,11 @@ function shipFields(s){
   const pickedUpDateRaw  = ti.pickupDate||ti.actualPickupDate||ti.pickedUpDate||s.pickupDate||s.actualPickupDate||'';
   // Accessorials — Primus stores these on the shipment; shape may be strings or {code,name}.
   const _acc = s.accessorials||s.accessorialList||ti.accessorials||ven.accessorials||[];
-  // Commodity from line items (freightInfo path: it.commodity || it.description). NOTE: the
-  // /book LIST endpoint often omits freightInfo entirely — commodity only arrives on the
-  // /book/{BOLId} DETAIL object. When absent here, callers use _resolveCommodity() to fetch it.
-  const commodity = items.map(function(i){return i.commodity||i.description||i.commodityDescription||'';}).filter(Boolean).join(', ')
-    || String(s.commodity||s.commodityDescription||s.productDescription||'');
-  const freightClass = items.length ? (items[0].freightClass||items[0].class||items[0].nmfc||'') : '';
+  // Commodity / item description is NOT recorded on shipment records — there is no field
+  // describing WHAT was shipped (only freight facts: weight, pieces, class, carrier, destination).
+  // This stays '' for every shipment; commodity questions answer honestly and pivot to real data.
+  const commodity = items.map(function(i){return i.commodity||i.description||i.commodityDescription||'';}).filter(Boolean).join(', ');
+  const freightClass = (items.length ? (items[0].freightClass||items[0].class||items[0].nmfc||'') : '') || String(s.class||s.freightClass||'');
   return {
     bol:String(s.BOLNumber||s.bolNumber||s.BOLId||''),
     pro:String(s.carrierPRO||(ven.PRO)||(ti.PRO)||s.proNumber||ven.pickupNumber||ti.proNumber||''),
@@ -9151,28 +9150,26 @@ function shipFields(s){
     items:items
   };
 }
-// Commodity lives on the DETAIL object (freightInfo), which the /book LIST endpoint omits. When a
-// loaded (list) shipment has no commodity, fetch its booking detail on demand, extract it, and
-// cache freightInfo back onto the object so later reads (and shipFields) resolve instantly.
-async function _resolveCommodity(s){
-  if(!s) return '';
-  let c = shipFields(s).commodity;
-  if(c) return c;
-  const bolId = s.BOLId||s.bolId||s.BOLNumber||'';
-  if(!bolId) return '';
-  try{
-    const token = await getToken();
-    const r = await fetch(PRIMUS_BASE+'/applet/v1/book/'+bolId,{headers:{'Authorization':'Bearer '+token}});
-    if(r.ok){
-      const d = await r.json();
-      const detail = (d.data && (d.data.results||d.data)) || {};
-      const items = detail.freightInfo||detail.lineItems||detail.freightInfoActual||detail.items||[];
-      c = items.map(function(i){return i.commodity||i.description||i.commodityDescription||'';}).filter(Boolean).join(', ');
-      if(items.length && !s.freightInfo) s.freightInfo = items; // cache for future shipFields reads
-    }
-  }catch(e){}
-  return c||'';
+// Item/commodity descriptions are not recorded on shipments (confirmed absent from the data — no
+// list OR detail field describes what was shipped). Commodity questions answer honestly and pivot
+// to the freight facts we DO have. Never name any internal system in customer-facing text.
+function _commodityUnavailableLine(s){
+  const f = shipFields(s);
+  const bits = [];
+  if(f.weight > 0) bits.push(f.weight.toLocaleString()+' lbs');
+  if(f.pieces > 0) bits.push(f.pieces+' piece'+(f.pieces===1?'':'s'));
+  if(f.freightClass) bits.push('freight class '+f.freightClass);
+  const dest = [f.consigneeCity, f.consigneeState ? f.consigneeState.toUpperCase() : ''].filter(Boolean).join(', ');
+  if(f.consignee) bits.push('shipped to '+f.consignee+(dest?' in '+dest:''));
+  else if(dest) bits.push('shipped to '+dest);
+  const car = (f.carrier||'').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D').replace('Less Than Truckload','').trim();
+  if(car) bits.push('via '+car);
+  return "I don't have the item description on file for BOL "+(f.bol||'that shipment')
+    + (bits.length ? ", but I can tell you it was "+bits.join(', ')+"." : ".");
 }
+// Honest response when the customer tries to search or aggregate by what was shipped.
+var _COMMODITY_SEARCH_NOTE = "We don't keep a description of what's inside each shipment on record, so I can't search by the item itself. I can pull them up by consignee name, destination, carrier, BOL or PRO number, date, or weight though — want to try one of those?";
+var _COMMODITY_AGG_NOTE = "We don't record a description of what's in each shipment, so I can't break your history down by item. I can show it by carrier, destination, weight, or freight class instead — which would help?";
 function matchQuery(s,q){
   const f=shipFields(s);
   const has=function(v){return v!==null&&v!==undefined&&v!=='';};
@@ -9186,7 +9183,10 @@ function matchQuery(s,q){
   if(has(q.originState)&&f.originState!==String(q.originState).toLowerCase())return false;
   if(has(q.status)&&!ci(f.status,q.status))return false;
   if(has(q.mode)&&!ci(f.mode,q.mode))return false;
-  if(has(q.commodity)&&!ci(f.commodity||'',q.commodity))return false;
+  // NOTE: commodity is intentionally NOT filtered — item descriptions aren't recorded on
+  // shipments, so filtering by it would exclude everything. Pure commodity searches are answered
+  // honestly upstream; a commodity term alongside other filters (e.g. "recliners to Keith") simply
+  // falls through to those real filters instead of returning nothing.
   if(has(q.costMin)&&f.cost<Number(q.costMin))return false;
   if(has(q.costMax)&&f.cost>Number(q.costMax))return false;
   if(has(q.weightMin)&&f.weight<Number(q.weightMin))return false;
@@ -11149,9 +11149,13 @@ function shipmentMatchesQuery(s, query) {
     ti.lastStatusExternal, ti.lastStatusInternal, ti.statusName, s.status
   ].filter(Boolean).map(f => String(f).toLowerCase());
 
-  // Score each field against every word in the query
+  // Score each field against every word in the query. Threshold 0.85 requires a real substring
+  // (fuzzyScore returns 0.9 for .includes, 1 for exact) rather than a loose character-subsequence —
+  // this stops a commodity/object word like "recliner" from spuriously matching dozens of unrelated
+  // consignee/carrier/status strings (the "120 of 212" false-match bug). Names/BOLs still match as
+  // substrings; commodity is not a searchable field because it isn't recorded on shipments.
   const words = query.trim().split(/\s+/).filter(w => w.length > 1);
-  return words.every(word => fields.some(f => fuzzyScore(f, word) > 0.4));
+  return words.every(word => fields.some(f => fuzzyScore(f, word) >= 0.85));
 }
 
 // ── Standing shipment context — single source of truth for "what shipment are we talking about" ──
@@ -11230,7 +11234,7 @@ function _answerSetQuery(list, lower) {
     return F.map(f => 'BOL ' + f.bol + ' — ' + (f.weight>0 ? f.weight.toLocaleString()+' lbs' : 'weight not on file')).join('; ') + '.';
   }
   if (/\bcommodit|\bcontents?\b/.test(lower)) {
-    return F.map(f => 'BOL ' + f.bol + ' — ' + (f.commodity || 'not specified')).join('; ') + '.';
+    return "I don't have item descriptions on file for those shipments — I have their weights, freight class, carriers, and destinations though.";
   }
   if (/\bdates?\b|\bwhen\b/.test(lower)) {
     return F.map(f => 'BOL ' + f.bol + ' — ' + (f.date ? f.date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'date not on file')).join('; ') + '.';
@@ -11365,12 +11369,9 @@ async function clientSideSearch(t, lower) {
         return true;
       }
 
-      // Commodity follow-up
+      // Commodity follow-up — item descriptions aren't on file; answer honestly and pivot to data.
       if (/\b(what was the commodity|what.*shipping|what.*item|what.*moved|what was shipped|what was on it|whats on it)\b/.test(lower)) {
-        showTyping();
-        const _cm = await _resolveCommodity(_active);
-        removeTyping();
-        appendMessage('bot', 'BOL ' + f.bol + ' — ' + (_cm || 'commodity not specified') + '.');
+        appendMessage('bot', _commodityUnavailableLine(_active));
         return true;
       }
 
@@ -11446,6 +11447,14 @@ async function clientSideSearch(t, lower) {
     showTyping();
     let _eq = {};
     try { _eq = await parseShipQuery(t) || {}; } catch(e) {}
+    // Pure commodity search ("did I ship a recliner") — we don't record what was shipped, so we
+    // can't search by item. Answer honestly and offer the searches that DO work, instead of
+    // returning zero-with-"look-further-back" (or a garbage fuzzy match).
+    if (_eq.commodity && !_eq.consignee && !_eq.carrier && !_eq.aggregateCarrier && !_eq.destState && !_eq.originState && !_eq.destCity && !_eq.originCity && !_eq.bol && !_eq.pro && !_eq.status) {
+      removeTyping();
+      appendMessage('bot', _COMMODITY_SEARCH_NOTE);
+      return true;
+    }
     // Existence means "ever" — load a wide window unless the question scoped a date.
     const _eNow = new Date(); const _eFromD = new Date(_eNow); _eFromD.setFullYear(_eFromD.getFullYear() - 2);
     await runShipQuery({
@@ -11509,15 +11518,17 @@ async function clientSideSearch(t, lower) {
     !/\b(quote|rate|new chat)\b/.test(lower) && !isFullHistoryQ(t, lower);
   if (isSingleFollowUp && currentCustomer) {
     const f = shipFields(_refShip);
+    // Commodity-only follow-up ("what was the commodity") — answer honestly + pivot to real data.
+    if (/commodity/i.test(lower) && !/(consignee|customer|shipper|carrier|cost|price|paid|when|date|where)/i.test(lower)) {
+      appendMessage('bot', _commodityUnavailableLine(_refShip));
+      return true;
+    }
     const carLabel = (f.carrier||'Unknown').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D').replace('Less Than Truckload','').trim() || 'Unknown';
     const _m$ = v => '$' + Number(v||0).toFixed(2);
-    // Commodity may only be on the detail object — fetch on demand when the question asks for it.
-    let _cmSingle = f.commodity;
-    if (/commodity/i.test(lower) && !_cmSingle) { showTyping(); _cmSingle = await _resolveCommodity(_refShip); removeTyping(); }
     const parts = [];
     if (/consignee|customer|where did it go|deliver/i.test(lower)) parts.push('Consignee: ' + (f.consignee||'—') + (f.consigneeCity ? (' (' + f.consigneeCity + (f.consigneeState ? ', ' + f.consigneeState.toUpperCase() : '') + ')') : ''));
     if (/shipper|where did it come|origin/i.test(lower)) parts.push('Shipper: ' + (f.shipper||'—') + (f.shipperCity ? (' (' + f.shipperCity + (f.shipperState ? ', ' + f.shipperState.toUpperCase() : '') + ')') : ''));
-    if (/commodity/i.test(lower)) parts.push('Commodity: ' + (_cmSingle||'—'));
+    if (/commodity/i.test(lower)) parts.push('item description not on file');
     if (/carrier/i.test(lower)) parts.push('Carrier: ' + carLabel);
     if (/cost|how much|price|paid/i.test(lower)) parts.push('Cost: ' + _m$(f.cost));
     if (/when|shipped|date/i.test(lower) && f.date) parts.push('Shipped: ' + f.date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}));
@@ -11623,6 +11634,13 @@ async function clientSideSearch(t, lower) {
     if (shipCtx && _savedLoaded.length && !shipCtx.loaded.length) {
       shipCtx.loaded = _savedLoaded;
     }
+    // Commodity isn't recorded on shipments — never bucket or search by it. Answer honestly and
+    // offer the breakdowns/searches that DO work, instead of "Unknown: 212" or a garbage match.
+    if (_aq && _aq.aggregate === 'byCommodity') { removeTyping(); appendMessage('bot', _COMMODITY_AGG_NOTE); return true; }
+    const _cOnly = _aq && _aq.commodity && !_aq.aggregate && !_aq.consignee && !_aq.carrier && !_aq.aggregateCarrier
+      && !_aq.destState && !_aq.originState && !_aq.destCity && !_aq.originCity && !_aq.bol && !_aq.pro && !_aq.status
+      && _aq.costMin == null && _aq.costMax == null && _aq.weightMin == null && _aq.weightMax == null;
+    if (_cOnly) { removeTyping(); appendMessage('bot', _COMMODITY_SEARCH_NOTE); return true; }
     // If parseShipQuery returned a valid aggregate action, run it against loaded data
     if (_aq && (_aq.aggregate || _aq.action === 'aggregate' || _aq.action === 'list')) {
       // Apply any filters from the parsed query to the already-loaded data
