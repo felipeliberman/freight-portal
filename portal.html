@@ -13405,6 +13405,19 @@ async function handleInput(text) {
     presentShips(merged, true);
     return;
   }
+  // Data query that named real filters (consignee, carrier, state, etc.) but was not caught
+  // by an earlier gate — parseShipQuery (Sonnet) already decided this is about the customer's
+  // own shipments, so run it through the shipment engine instead of deflecting to the general
+  // chat agent. This is what makes "have any loads gone to Keith" / "did we ship anything to
+  // Claudia" reach the data path reliably, regardless of load state.
+  const _DATA_FILTERS = ['consignee','carrier','shipper','destState','originState','destCity','originCity','status','commodity','bol','pro'];
+  const _hasDataIntent = q && q.action !== 'help' && q.action !== 'quote' &&
+    (q.aggregate || q.action === 'list' || q.action === 'aggregate' ||
+     _DATA_FILTERS.some(function(k){ return q[k] !== null && q[k] !== undefined && q[k] !== ''; }));
+  if (currentCustomer && _hasDataIntent) {
+    await runShipQuery(q);   // loads + filters + presents (list) or summarizes (aggregate)
+    return;
+  }
   // No specific handler matched — ask the AI
   await aiConverse(text);
 }
