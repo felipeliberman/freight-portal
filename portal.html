@@ -9117,8 +9117,11 @@ function shipFields(s){
   const pickedUpDateRaw  = ti.pickupDate||ti.actualPickupDate||ti.pickedUpDate||s.pickupDate||s.actualPickupDate||'';
   // Accessorials — Primus stores these on the shipment; shape may be strings or {code,name}.
   const _acc = s.accessorials||s.accessorialList||ti.accessorials||ven.accessorials||[];
-  // Commodity from line items (verified path: it.description || it.commodity)
-  const commodity = items.map(function(i){return i.description||i.commodity||i.commodityDescription||'';}).filter(Boolean).join(', ');
+  // Commodity from line items (freightInfo path: it.commodity || it.description). NOTE: the
+  // /book LIST endpoint often omits freightInfo entirely — commodity only arrives on the
+  // /book/{BOLId} DETAIL object. When absent here, callers use _resolveCommodity() to fetch it.
+  const commodity = items.map(function(i){return i.commodity||i.description||i.commodityDescription||'';}).filter(Boolean).join(', ')
+    || String(s.commodity||s.commodityDescription||s.productDescription||'');
   const freightClass = items.length ? (items[0].freightClass||items[0].class||items[0].nmfc||'') : '';
   return {
     bol:String(s.BOLNumber||s.bolNumber||s.BOLId||''),
@@ -9147,6 +9150,28 @@ function shipFields(s){
     freightClass:freightClass,
     items:items
   };
+}
+// Commodity lives on the DETAIL object (freightInfo), which the /book LIST endpoint omits. When a
+// loaded (list) shipment has no commodity, fetch its booking detail on demand, extract it, and
+// cache freightInfo back onto the object so later reads (and shipFields) resolve instantly.
+async function _resolveCommodity(s){
+  if(!s) return '';
+  let c = shipFields(s).commodity;
+  if(c) return c;
+  const bolId = s.BOLId||s.bolId||s.BOLNumber||'';
+  if(!bolId) return '';
+  try{
+    const token = await getToken();
+    const r = await fetch(PRIMUS_BASE+'/applet/v1/book/'+bolId,{headers:{'Authorization':'Bearer '+token}});
+    if(r.ok){
+      const d = await r.json();
+      const detail = (d.data && (d.data.results||d.data)) || {};
+      const items = detail.freightInfo||detail.lineItems||detail.freightInfoActual||detail.items||[];
+      c = items.map(function(i){return i.commodity||i.description||i.commodityDescription||'';}).filter(Boolean).join(', ');
+      if(items.length && !s.freightInfo) s.freightInfo = items; // cache for future shipFields reads
+    }
+  }catch(e){}
+  return c||'';
 }
 function matchQuery(s,q){
   const f=shipFields(s);
@@ -9481,7 +9506,12 @@ function presentShips(q,initial){
 }
 async function runShipQuery(q){
   const now=new Date(); let from,to;
-  if(q.dateFrom)from=new Date(q.dateFrom); else { from=new Date(now); from.setDate(from.getDate()-90); }
+  // Specific-entity searches (a named consignee/shipper) must span full history — a 90-day window
+  // would drop older matches and recreate the "2 Keith becomes 1" undercount. Generic list views
+  // keep the 90-day default; explicit dateFrom always wins.
+  if(q.dateFrom)from=new Date(q.dateFrom);
+  else if(q.consignee||q.shipper){ from=new Date(now); from.setFullYear(from.getFullYear()-2); }
+  else { from=new Date(now); from.setDate(from.getDate()-90); }
   if(q.dateTo)to=new Date(q.dateTo); else to=new Date(now);
   shipCtx={from:from,to:to,page:1,totalPages:null,loaded:[],done:false,query:q,filtered:[]};
   shipShown=0;
@@ -11210,6 +11240,36 @@ function _answerSetQuery(list, lower) {
   return header + '\n' + list.map(s => _shipDetailLine(s)).join('\n');
 }
 
+// Run an aggregate query and render it: loads the full (2yr) superset, scopes to the query's own
+// window via matchQuery's dateFrom/dateTo, states the window, and retains the ranked context for
+// follow-ups. `windowNote` is appended verbatim (the 1-year default appends a "go further" offer).
+async function _renderAggregate(q, lower, windowNote){
+  await loadWideHistory();
+  if (q.aggregateCarrier && !q.carrier) q.carrier = q.aggregateCarrier;
+  shipCtx.query = q;
+  const _aList = filteredList();
+  removeTyping();
+  let _aAnswer = summarize(_aList, q);
+  if (windowNote) _aAnswer += windowNote;
+  appendMessage('bot', _aAnswer);
+  const _RANKED = {
+    heaviestShipments: (a,b)=>shipFields(b).weight-shipFields(a).weight,
+    mostExpensive:     (a,b)=>shipFields(b).cost-shipFields(a).cost,
+    leastExpensive:    (a,b)=>shipFields(a).cost-shipFields(b).cost
+  };
+  let _ctxList = _aList;
+  const _aggName = q.aggregate;
+  if (_RANKED[_aggName]) {
+    const _ranked = _aList.slice()
+      .filter(s => _aggName === 'leastExpensive' ? shipFields(s).cost > 0 : true)
+      .sort(_RANKED[_aggName]);
+    const _singular = /\b(my|the)\b/.test(lower) && !/\b(shipments|ones|list|top \d|\d+ )/.test(lower);
+    if (_singular && _ranked.length) { window._lastSingleShipment = _ranked[0]; setActiveShipment(_ranked[0]); _ctxList = [_ranked[0]]; }
+    else { _ctxList = _ranked.slice(0, q.aggregateLimit || 10); }
+  }
+  window._lastAnalyticsResult = { list: _ctxList, query: q, answer: _aAnswer };
+}
+
 // ── PRECEDENCE CLASSIFIER — the single rule that resolves context collisions ──
 // Questions about the customer's whole shipment history (aggregates, existence, comparisons,
 // geography counts) must ALWAYS beat single-shipment context AND an open quote conversation.
@@ -11307,7 +11367,10 @@ async function clientSideSearch(t, lower) {
 
       // Commodity follow-up
       if (/\b(what was the commodity|what.*shipping|what.*item|what.*moved|what was shipped|what was on it|whats on it)\b/.test(lower)) {
-        appendMessage('bot', 'BOL ' + f.bol + ' — ' + (f.commodity || 'commodity not specified') + '.');
+        showTyping();
+        const _cm = await _resolveCommodity(_active);
+        removeTyping();
+        appendMessage('bot', 'BOL ' + f.bol + ' — ' + (_cm || 'commodity not specified') + '.');
         return true;
       }
 
@@ -11358,6 +11421,21 @@ async function clientSideSearch(t, lower) {
         return true;
       }
     }
+  }
+
+  // ── "Go back further" — re-run the PRIOR aggregate on the wider (2-year) window ──
+  // A short widen command after an aggregate ("last 2 years", "all time", "go back further")
+  // re-runs the SAME aggregate over the full history, not a fresh unrelated query.
+  const _priorAgg = window._lastAnalyticsResult && window._lastAnalyticsResult.query && window._lastAnalyticsResult.query.aggregate;
+  if (_priorAgg && currentCustomer && t.trim().split(/\s+/).length <= 8 &&
+      /\b(last (2|two) years?|past (2|two) years?|all[\s-]?time|go back further|further back|since i (started|began)|full history|entire history|everything|lifetime|wider|more history|longer)\b/i.test(lower)) {
+    showTyping();
+    const _wq = Object.assign({}, window._lastAnalyticsResult.query);
+    const _2y = new Date(); _2y.setFullYear(_2y.getFullYear() - 2);
+    _wq.dateFrom = _2y.toISOString().split('T')[0];
+    delete _wq.dateTo;
+    await _renderAggregate(_wq, lower, '\n\nThat\'s your full history on file (the last 2 years).');
+    return true;
   }
 
   // ── Existence / frequency questions — ALWAYS answer yes/no with a count ──
@@ -11433,10 +11511,13 @@ async function clientSideSearch(t, lower) {
     const f = shipFields(_refShip);
     const carLabel = (f.carrier||'Unknown').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D').replace('Less Than Truckload','').trim() || 'Unknown';
     const _m$ = v => '$' + Number(v||0).toFixed(2);
+    // Commodity may only be on the detail object — fetch on demand when the question asks for it.
+    let _cmSingle = f.commodity;
+    if (/commodity/i.test(lower) && !_cmSingle) { showTyping(); _cmSingle = await _resolveCommodity(_refShip); removeTyping(); }
     const parts = [];
     if (/consignee|customer|where did it go|deliver/i.test(lower)) parts.push('Consignee: ' + (f.consignee||'—') + (f.consigneeCity ? (' (' + f.consigneeCity + (f.consigneeState ? ', ' + f.consigneeState.toUpperCase() : '') + ')') : ''));
     if (/shipper|where did it come|origin/i.test(lower)) parts.push('Shipper: ' + (f.shipper||'—') + (f.shipperCity ? (' (' + f.shipperCity + (f.shipperState ? ', ' + f.shipperState.toUpperCase() : '') + ')') : ''));
-    if (/commodity/i.test(lower)) parts.push('Commodity: ' + (f.commodity||'—'));
+    if (/commodity/i.test(lower)) parts.push('Commodity: ' + (_cmSingle||'—'));
     if (/carrier/i.test(lower)) parts.push('Carrier: ' + carLabel);
     if (/cost|how much|price|paid/i.test(lower)) parts.push('Cost: ' + _m$(f.cost));
     if (/when|shipped|date/i.test(lower) && f.date) parts.push('Shipped: ' + f.date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}));
@@ -11548,9 +11629,9 @@ async function clientSideSearch(t, lower) {
       const _aCtx = shipCtx || {};
       if (_aq.aggregate) {
         _aq.action = 'aggregate';
-        // Bug B: a FRESH aggregate must run against the FULL dataset with a CLEAN query — never
-        // inherit a prior query's consignee/carrier/state filter (that produced "1 total: ABF").
-        // Only a genuine refine ("of those", refine=true) layers onto the existing filters.
+        // Bug B: a FRESH aggregate must run against a CLEAN query — never inherit a prior query's
+        // consignee/carrier/state filter (that produced "1 total: ABF"). Only a genuine refine
+        // ("of those", refine=true) layers onto the existing filters and keeps its window.
         if (_aq.refine === true && _aCtx.query) {
           ['carrier','consignee','shipper','destCity','destState','originCity','originState',
            'status','mode','costMin','costMax','weightMin','weightMax','dateFrom','dateTo',
@@ -11558,35 +11639,23 @@ async function clientSideSearch(t, lower) {
             if (_aq[k] !== null && _aq[k] !== undefined) _aCtx.query[k] = _aq[k];
           });
           _aCtx.query.aggregate = _aq.aggregate;
-          if (_aq.aggregateCarrier && !_aCtx.query.carrier) _aCtx.query.carrier = _aq.aggregateCarrier;
+          await _renderAggregate(_aCtx.query, lower, '');
         } else {
-          // fresh aggregate — ensure the full ~2yr history is loaded, then aggregate a clean query
-          await loadWideHistory();
-          shipCtx.query = _aq;
-          if (_aq.aggregateCarrier && !shipCtx.query.carrier) shipCtx.query.carrier = _aq.aggregateCarrier;
+          // Fresh aggregate — default window is the LAST 1 YEAR (state it + offer to widen), UNLESS
+          // the customer named a range ("this year", explicit dates) or asked for all-time/2yr.
+          const _explicitRange = !!(_aq.dateFrom || _aq.dateTo);
+          const _allTime = /\b(all[\s-]?time|last (2|two|three) years?|past (2|two|three) years?|full history|entire history|everything|since i (started|began)|lifetime|all my)\b/i.test(lower);
+          let _note = '';
+          if (!_explicitRange && _allTime) {
+            const _2y = new Date(); _2y.setFullYear(_2y.getFullYear() - 2);
+            _aq.dateFrom = _2y.toISOString().split('T')[0];
+          } else if (!_explicitRange) {
+            const _1y = new Date(); _1y.setFullYear(_1y.getFullYear() - 1);
+            _aq.dateFrom = _1y.toISOString().split('T')[0];
+            _note = '\n\nThat covers the last 12 months. Want me to go back further? Say "last 2 years" or "all time".';
+          }
+          await _renderAggregate(_aq, lower, _note);
         }
-        const _aList = filteredList();
-        removeTyping();
-        const _aAnswer = summarize(_aList, shipCtx.query);
-        appendMessage('bot', _aAnswer);
-        // Scope follow-up context to the shipments actually featured (Step 5 A/B):
-        // for ranked aggregates, save the sorted top shipment(s) — not all 34 loaded.
-        const _RANKED = {
-          heaviestShipments: (a,b)=>shipFields(b).weight-shipFields(a).weight,
-          mostExpensive:     (a,b)=>shipFields(b).cost-shipFields(a).cost,
-          leastExpensive:    (a,b)=>shipFields(a).cost-shipFields(b).cost
-        };
-        let _ctxList = _aList;
-        const _aggName = shipCtx.query.aggregate;
-        if (_RANKED[_aggName]) {
-          const _ranked = _aList.slice()
-            .filter(s => _aggName === 'leastExpensive' ? shipFields(s).cost > 0 : true)
-            .sort(_RANKED[_aggName]);
-          const _singular = /\b(my|the)\b/.test(lower) && !/\b(shipments|ones|list|top \d|\d+ )/.test(lower);
-          if (_singular && _ranked.length) { window._lastSingleShipment = _ranked[0]; setActiveShipment(_ranked[0]); _ctxList = [_ranked[0]]; }
-          else { _ctxList = _ranked.slice(0, shipCtx.query.aggregateLimit || 10); }
-        }
-        window._lastAnalyticsResult = { list: _ctxList, query: shipCtx.query, answer: _aAnswer };
         return true;
       }
     }
@@ -13331,7 +13400,14 @@ async function handleInput(text) {
     || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower)
     || (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/i.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/i.test(lower));
 
-  if (isEducational && !isAccountSpecific) {
+  // A retained-set follow-up ("what are the two bol numbers", "both consignees", "their bols")
+  // must reach clientSideSearch — otherwise the educational skip routes "what are…" to the AI,
+  // which deflects instead of answering from the held result set.
+  const _hasRetainedSet = !!(window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length);
+  const _isSetFollowUp = _hasRetainedSet && lower.trim().split(/\s+/).length <= 14 &&
+    /\b(both|the two|the three|those|these|them|their|list (them|the|those)|you (said|told me)|why (is it )?(only|just)|the bols?|bol numbers?|both bols?|what were|the (consignees?|customers?|carriers?|costs?|prices?|weights?|dates?|shippers?))\b/i.test(lower);
+
+  if (isEducational && !isAccountSpecific && !_isSetFollowUp) {
     // Falls through to main AI handler — skip clientSideSearch
   } else {
 
