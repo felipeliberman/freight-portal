@@ -10588,13 +10588,15 @@ async function _execRequoteShipment(input) {
 
 const _convoSysPrompt = `You are the AI assistant for Freight and Logistics, Inc., a full-service 3PL freight brokerage. Be natural, direct, and helpful — a knowledgeable freight expert who gets things done without drama. You are chatting with a logged-in customer.
 
+NEVER FABRICATE THE CUSTOMER'S OWN DATA — THIS IS THE MOST IMPORTANT RULE. You do NOT have this customer's actual shipment records, carrier usage, spend, shipment counts, lanes, or consignee history in this conversation. You must NEVER state a specific fact about their real shipments — never say which carrier they use most, how many shipments they have, how much they spend, what lanes they run, or name their consignees. The carrier names and rankings in this prompt (Metro W&D, Pilot, ABF, Estes, TForce, XPO, Saia, and so on) describe OUR COMPANY's general network and specialties — they are NOT this customer's usage and must NEVER be presented as this customer's own data. If the customer asks about their own shipments, carriers, spend, counts, lanes, or history, do NOT answer from memory or from this prompt — you do not have that data here. Instead say you will pull it up, for example "One moment — I'll pull that from your shipment records," and stop, OR ask them to rephrase so it can be looked up. It is ALWAYS better to defer than to state a number, carrier, or ranking you cannot verify. A confident wrong answer about their real business is the worst possible outcome — never do it.
+
 You have a web_search tool. Use it whenever the customer asks for real-world information you don't have memorized: carrier terminal locations, addresses, phone numbers, hours, service areas, transit times, or anything current. When you search, give the actual address and phone number from the results. Don't say you lack real-time access — just search and answer.
 
 For general freight questions (what is LTL, how does freight class work, what's a liftgate, accessorial costs, how claims work) just answer naturally from what you know. No need to search those.
 
 WHAT YOU KNOW:
 - We ship LTL, white glove residential (our specialty and biggest volume), truckload, drayage, small parcel, trade shows, and offer free TMS software and API integration.
-- Top carriers: Metro W&D is #1 by volume and Pilot is #2 for white glove and final-mile residential furniture. ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L, Forward Air, Southeastern and others for LTL.
+- Top carriers (our general network — NOT any one customer's usage): Metro W&D and Pilot are our white glove and final-mile residential furniture specialists. ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L, Forward Air, Southeastern and others for LTL.
 - Freight class runs 50-500 based on density, stowability, handling and liability. Furniture is typically 125-175.
 - Accessorials: liftgate delivery $75-150, residential delivery $50-100, limited access $50-100+, inside delivery, appointment, two-man.
 - Cargo insurance is priced off the declared value by our system. Standard LTL carrier liability is about $0.50/lb. R&L is always $1/lb for new furniture.
@@ -11400,6 +11402,24 @@ async function clientSideSearch(t, lower) {
     }
   }
   // ── END UNIVERSAL STANDING CONTEXT CHECK ──
+
+  // ── COMMODITY FOLLOW-UP — answer honestly from context, NEVER re-run a search ──
+  // "what was the commodity" / "what did I ship" / "what's in it" after finding shipments must
+  // give the honest item-not-recorded response for the active shipment or retained set — it must
+  // NOT re-run the prior consignee search (the "did I ship to keith → what was the commodity →
+  // re-searched Keith" bug). Only fires when we actually have a shipment/set in context.
+  if (currentCustomer && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t) &&
+      /\b(what was the commodity|what.?s the commodity|what commodity|the commodity|what did i ship|what was shipped|what am i shipping|what.?s in it|what was on it|whats on it|what were the (items?|contents?)|the contents?)\b/i.test(lower)) {
+    const _cActive = getActiveShipment();
+    const _cSet = (window._lastAnalyticsResult && window._lastAnalyticsResult.list) || null;
+    if (_cActive) { appendMessage('bot', _commodityUnavailableLine(_cActive)); return true; }
+    if (_cSet && _cSet.length === 1) { appendMessage('bot', _commodityUnavailableLine(_cSet[0])); return true; }
+    if (_cSet && _cSet.length > 1) {
+      appendMessage('bot', "I don't have item descriptions on file for those shipments, but I can tell you their weights, freight class, carriers, and destinations — want those?");
+      return true;
+    }
+    // No context — fall through to the normal (honest) commodity-search handling below.
+  }
 
   // ── RETAINED RESULT-SET FOLLOW-UP — answer about the LAST result set in any phrasing ──
   // When we hold a prior analytics/list result, a short message that references that set
