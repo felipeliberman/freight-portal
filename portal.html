@@ -9102,7 +9102,10 @@ function getCarrierTrackingUrl(scac, pro) {
 
 function shipFields(s){
   const ti=s.trackingInformation||{}, ven=s.vendor||{}, con=s.consignee||{}, shp=s.shipper||{};
-  const items = s.items || s.lineItems || [];
+  // Primus returns line items under freightInfo on the /book list endpoint — every working
+  // rendering path in this file reads freightInfo first. shipFields previously only checked
+  // s.items (empty on the list endpoint), which is why commodity came back "not specified".
+  const items = s.freightInfo || s.lineItems || s.items || s.freightInfoActual || [];
   const _rawCost=Number(s.totalDue||s.invoiceAmount||ven.cost||ven.totalCharges||s.totalCharges||s.amount||0); const cost=isNaN(_rawCost)?0:_rawCost;
   const ds=s.bookDate||ti.bookDate||s.createdDate||'';
   // Parse dates at LOCAL noon so a bare YYYY-MM-DD isn't shifted back a day by UTC parsing
@@ -9158,7 +9161,7 @@ function matchQuery(s,q){
   if(has(q.originState)&&f.originState!==String(q.originState).toLowerCase())return false;
   if(has(q.status)&&!ci(f.status,q.status))return false;
   if(has(q.mode)&&!ci(f.mode,q.mode))return false;
-  if(has(q.commodity)&&!ci((s.items&&s.items.map(function(x){return x.description||x.commodity||'';}).join(' '))||'',q.commodity))return false;
+  if(has(q.commodity)&&!ci(f.commodity||'',q.commodity))return false;
   if(has(q.costMin)&&f.cost<Number(q.costMin))return false;
   if(has(q.costMax)&&f.cost>Number(q.costMax))return false;
   if(has(q.weightMin)&&f.weight<Number(q.weightMin))return false;
@@ -9488,6 +9491,17 @@ async function runShipQuery(q){
   }
   await ensureMatches(q.limit||SHIP_PAGE);
   presentShips(q,true);
+}
+// Silently ensure the full ~2-year history is loaded (no chat output). Used by the aggregate,
+// existence, and consignee-name paths so counts are deterministic regardless of a prior narrow
+// (90-day) query. Reuses the current context when it is already at least this wide.
+async function loadWideHistory(){
+  const now=new Date(); const from=new Date(now); from.setFullYear(from.getFullYear()-2);
+  if(shipCtx&&shipCtx.loaded&&shipCtx.loaded.length&&shipCtx.from&&shipCtx.from<=from) return;
+  shipCtx={from:from,to:now,page:1,totalPages:null,loaded:[],done:false,query:{action:'list',sortField:'date',sortDir:'desc'},filtered:[]};
+  shipShown=0;
+  const deadline=Date.now()+15000;
+  while(!shipCtx.done && Date.now()<deadline){ await fetchNextBatch(); }
 }
 async function showMoreShipments(n,widen){
   if(!shipCtx||!shipCtx.query){ appendMessage('bot',"There is no list to expand yet — ask me for some shipments first."); return; }
@@ -11151,6 +11165,51 @@ function _shipContextDesc(s) {
   return 'ACTIVE SHIPMENT (the shipment currently in focus): BOL ' + (f.bol||'') + ', carrier ' + (f.carrier||'') + ', consignee ' + (f.consignee||'') + (loc ? ', to ' + loc : '') + '.';
 }
 
+// Build a real-data answer about a RETAINED result set (_lastAnalyticsResult.list). Reads
+// shipFields only — never fabricates. Picks a field-specific answer when the message asks for one
+// (bols, consignees, shippers, carriers, costs, weights, commodities, dates), else returns an
+// enriched one-line-per-shipment summary for "both / those / list them / details".
+function _answerSetQuery(list, lower) {
+  if (!list || !list.length) return '';
+  const n = list.length;
+  const F = list.map(shipFields);
+  const loc = f => [f.consigneeCity, f.consigneeState ? f.consigneeState.toUpperCase() : ''].filter(Boolean).join(', ');
+  const carLabel = c => (c||'unknown carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D').replace('Less Than Truckload','').trim() || 'unknown carrier';
+  const nWord = n === 1 ? 'shipment' : 'shipments';
+  if (/\bbols?\b|\bbol numbers?\b/.test(lower)) {
+    const parts = F.map(f => 'BOL ' + (f.bol||'(unknown)') + (loc(f) ? ' (' + loc(f) + ')' : ''));
+    return 'The ' + n + ' ' + nWord + ': ' + parts.join(' and ') + '.';
+  }
+  if (/\b(consignees?|customers?|recipients?)\b/.test(lower)) {
+    const parts = [...new Set(F.map(f => (f.consignee||'unknown') + (loc(f) ? ' (' + loc(f) + ')' : '')))];
+    return 'The ' + nWord + ' went to: ' + parts.join('; ') + '.';
+  }
+  if (/\bshippers?\b/.test(lower)) {
+    const parts = [...new Set(F.map(f => (f.shipper||'unknown') + (f.shipperCity ? ' (' + f.shipperCity + (f.shipperState ? ', ' + f.shipperState.toUpperCase() : '') + ')' : '')))];
+    return 'Shipper' + (parts.length>1?'s':'') + ': ' + parts.join('; ') + '.';
+  }
+  if (/\bcarriers?\b/.test(lower)) {
+    return F.map(f => 'BOL ' + f.bol + ' — ' + carLabel(f.carrier)).join('; ') + '.';
+  }
+  if (/\b(costs?|prices?|totals?|how much|spend|paid)\b/.test(lower)) {
+    const parts = F.map(f => 'BOL ' + f.bol + ' — ' + (f.cost>0 ? '$'+f.cost.toFixed(2) : 'not yet invoiced'));
+    const total = F.reduce((a,f)=>a+(f.cost||0),0);
+    return parts.join('; ') + (total>0 ? '. Total $'+total.toFixed(2)+'.' : '.');
+  }
+  if (/\bweights?\b|how heavy|weigh/.test(lower)) {
+    return F.map(f => 'BOL ' + f.bol + ' — ' + (f.weight>0 ? f.weight.toLocaleString()+' lbs' : 'weight not on file')).join('; ') + '.';
+  }
+  if (/\bcommodit|\bcontents?\b/.test(lower)) {
+    return F.map(f => 'BOL ' + f.bol + ' — ' + (f.commodity || 'not specified')).join('; ') + '.';
+  }
+  if (/\bdates?\b|\bwhen\b/.test(lower)) {
+    return F.map(f => 'BOL ' + f.bol + ' — ' + (f.date ? f.date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'date not on file')).join('; ') + '.';
+  }
+  // Generic — enriched line per shipment
+  const header = n === 1 ? 'Here is the shipment:' : ('Here ' + (n===2?'are both':'are the '+n) + ' ' + nWord + ':');
+  return header + '\n' + list.map(s => _shipDetailLine(s)).join('\n');
+}
+
 // ── PRECEDENCE CLASSIFIER — the single rule that resolves context collisions ──
 // Questions about the customer's whole shipment history (aggregates, existence, comparisons,
 // geography counts) must ALWAYS beat single-shipment context AND an open quote conversation.
@@ -11278,6 +11337,29 @@ async function clientSideSearch(t, lower) {
   }
   // ── END UNIVERSAL STANDING CONTEXT CHECK ──
 
+  // ── RETAINED RESULT-SET FOLLOW-UP — answer about the LAST result set in any phrasing ──
+  // When we hold a prior analytics/list result, a short message that references that set
+  // ("both", "the two", "those", "you said N", "why only one", "list them", "their consignees")
+  // or asks for a field across it (bols, consignees, carriers, costs, weights, dates, commodities)
+  // is answered from the retained list — never re-queried (which is what made the count drift
+  // 2→1) and never deflected to the AI. Runs BEFORE the knowledge-Q guard so "what are the two
+  // bol numbers" isn't misrouted as a general "what are…" question.
+  const _setList = (window._lastAnalyticsResult && window._lastAnalyticsResult.list) || null;
+  if (_setList && _setList.length && currentCustomer && !isExistenceQ(lower)) {
+    const _setWc = t.trim().split(/\s+/).length;
+    const _newTopic = /\b(quote|rate|price|new chat|invoice|invoices|claim|claims|report|reports|dashboard|book|dispatch)\b/i.test(lower) || /\b\d{7,}\b/.test(t);
+    const _setRef = /\b(both|the two|the three|the four|those|these|them|they|all of (them|those)|the \d+ shipments?|you (said|told me|mentioned)|why (is it )?(only|just)|the bols?|bol numbers?|their\b|list (them|those|these)|name them|what were (they|those)|which ones?)\b/i.test(lower);
+    const _fieldAsk = /\b(bols?|bol numbers?|consignees?|customers?|recipients?|shippers?|carriers?|costs?|prices?|totals?|weights?|dates?|commodit|contents?)\b/i.test(lower);
+    const _looksFresh = (!_setRef && _setWc > 12) || /\b(how many|all my|by carrier|by month|by state|by lane|breakdown|most expensive|heaviest|lightest|cheapest|average|avg|total (spend|weight|cost))\b/i.test(lower);
+    if (!_newTopic && !_looksFresh && !isFullHistoryQ(t, lower) && (_setRef || (_fieldAsk && _setWc <= 12))) {
+      const _setMsg = _answerSetQuery(_setList, lower);
+      if (_setMsg) {
+        appendMessage('bot', _setMsg, { shipments: _setList.slice(0,10), shipmentsList: _setList });
+        return true;
+      }
+    }
+  }
+
   // ── Existence / frequency questions — ALWAYS answer yes/no with a count ──
   // ("have I ever shipped with ABF", "do I have any shipments to TX"). Bug class #4: previously
   // these loaded history and then stopped without answering. Never claim a definitive "never"
@@ -11305,6 +11387,10 @@ async function clientSideSearch(t, lower) {
       : _eq.commodity ? ('of ' + _eq.commodity)
       : _eq.consignee ? ('to ' + _eq.consignee) : 'matching that';
     if (_matches.length) {
+      // Retain the set so follow-ups ("what are the two bol numbers", "you said 2", "both")
+      // answer from it instead of re-querying (which drifts the count) or deflecting.
+      window._lastAnalyticsResult = { list: _matches, query: (shipCtx && shipCtx.query) || _eq, answer: '' };
+      if (_matches.length === 1) { window._lastSingleShipment = _matches[0]; setActiveShipment(_matches[0]); }
       appendMessage('bot', 'Yes — ' + _matches.length + ' shipment' + (_matches.length === 1 ? '' : 's') + ' ' + _what + ' in your history.',
         { shipments: _matches.slice(0, 10), shipmentsList: _matches });
     } else {
@@ -11462,8 +11548,10 @@ async function clientSideSearch(t, lower) {
       const _aCtx = shipCtx || {};
       if (_aq.aggregate) {
         _aq.action = 'aggregate';
-        // Merge parsed filters into context query so filteredList() applies them
-        if (_aCtx.query) {
+        // Bug B: a FRESH aggregate must run against the FULL dataset with a CLEAN query — never
+        // inherit a prior query's consignee/carrier/state filter (that produced "1 total: ABF").
+        // Only a genuine refine ("of those", refine=true) layers onto the existing filters.
+        if (_aq.refine === true && _aCtx.query) {
           ['carrier','consignee','shipper','destCity','destState','originCity','originState',
            'status','mode','costMin','costMax','weightMin','weightMax','dateFrom','dateTo',
            'aggregateCarrier','aggregateState','aggregateLimit'].forEach(k => {
@@ -11472,7 +11560,10 @@ async function clientSideSearch(t, lower) {
           _aCtx.query.aggregate = _aq.aggregate;
           if (_aq.aggregateCarrier && !_aCtx.query.carrier) _aCtx.query.carrier = _aq.aggregateCarrier;
         } else {
+          // fresh aggregate — ensure the full ~2yr history is loaded, then aggregate a clean query
+          await loadWideHistory();
           shipCtx.query = _aq;
+          if (_aq.aggregateCarrier && !shipCtx.query.carrier) shipCtx.query.carrier = _aq.aggregateCarrier;
         }
         const _aList = filteredList();
         removeTyping();
@@ -11825,6 +11916,49 @@ async function clientSideSearch(t, lower) {
     return true;
   }
 
+  // ── BOL/PRO number in the message — deterministic direct lookup ──
+  // A 7+ digit number (optionally after bol/pro/#) always WINS over status keywords: look up
+  // that specific shipment, set it active, and route by intent. Must run BEFORE the statusMap
+  // loop so "pod for 160130413" / "was 160132678 delivered" aren't misread as status filters.
+  const _bolInMsg = t.match(/\b(?:bol|pro|#)?\s*#?\s*(\d{7,})\b/i);
+  if (_bolInMsg && currentCustomer) {
+    const _num = _bolInMsg[1];
+    showTyping();
+    let _s = null;
+    if (shipCtx && shipCtx.loaded && shipCtx.loaded.length) {
+      _s = shipCtx.loaded.find(sh => {
+        const f = shipFields(sh);
+        return f.bol === _num || f.pro === _num || String(sh.BOLId||'').trim() === _num;
+      }) || null;
+    }
+    if (!_s) _s = await fetchBookingByBOL(_num);
+    if (!_s) _s = await fetchBookingByPRO(_num);
+    removeTyping();
+    if (!_s) {
+      appendMessage('bot', "I couldn't find a shipment with BOL or PRO " + _num + ". Double-check the number, or tell me the approximate date.");
+      return true;
+    }
+    setActiveShipment(_s);
+    window._lastSingleShipment = _s;
+    const _bf = shipFields(_s);
+    // POD / documents intent
+    if (/\b(pod|proof of delivery|document|documents|paperwork|paper work|bol pdf|bol copy|bol document|label|receipt)\b/i.test(lower)) {
+      const bolId = _s.BOLId || _s.bolId || _s.BOLNumber || '';
+      const bol = _s.BOLNumber || _s.bolNumber || _bf.bol || '';
+      appendMessage('bot', 'Here is BOL ' + (bol || _num) + ' — opening its documents:', { shipments: [_s], singleResult: true });
+      openDocsModal(String(bolId), String(bol));
+      return true;
+    }
+    // Delivered / status / tracking / eta intent → rich tracking card (also sets _lastTrackedShipment)
+    if (/\b(delivered|deliver|status|where is it|track|tracking|eta|arrive|arrived|picked up|in transit|shipped yet|any update|update)\b/i.test(lower)) {
+      appendMessage('bot', null, { trackInline: _s });
+      return true;
+    }
+    // Bare number / detail
+    appendMessage('bot', _shipDetailLine(_s), { shipments: [_s], singleResult: true });
+    return true;
+  }
+
   // ── Status search ──
   const statusMap = {
     pod:          ['pod', 'delivered', 'delivery confirmed', 'proof of delivery'],
@@ -12122,16 +12256,22 @@ async function clientSideSearch(t, lower) {
   const consigneeMatch = lower.match(/\b(?:shipment|order|delivery)\b.{0,20}\b(?:to|for)\b\s+([a-z][a-z\s]{1,25}?)(?:\b|$)/i) ||
                          lower.match(/\b([a-zA-Z][a-zA-Z]+)(?:'s|s'|s)\s+(?:shipment|order|delivery|package|stuff|freight|goods)/i) ||
                          lower.match(/\b(?:where is|find|track|locate|status of|look up)\b.{0,20}\b([a-zA-Z][a-zA-Z\s]{2,20}?)(?:'s|s')?\s*(?:shipment|order|delivery|package)?\s*$/i);
-  if (consigneeMatch && currentCustomer && shipCtx && shipCtx.loaded && shipCtx.loaded.length) {
+  if (consigneeMatch && currentCustomer) {
     const name = (consigneeMatch[1] || consigneeMatch[2] || '').trim().toLowerCase();
     const skip = ['bol','pro','shipment','order','last','recent','all','my','the','this','that','delivery'];
     if (name.length > 2 && !skip.includes(name)) {
-      const matched = shipCtx.loaded.filter(s => {
+      showTyping();
+      // Deterministic count (Bug A2): always filter a wide (~2yr) window so the SAME name returns
+      // the SAME count every time — never a 90-day subset left over from a prior narrow query.
+      await loadWideHistory();
+      const matched = (shipCtx.loaded || []).filter(s => {
         const f = shipFields(s);
         return f.consignee.toLowerCase().includes(name) || f.shipper.toLowerCase().includes(name);
       });
+      removeTyping();
       if (matched.length > 0) {
-        removeTyping();
+        // Retain the set so follow-ups ("both", "the two bols", "you said N") answer from it.
+        window._lastAnalyticsResult = { list: matched, query: { consignee: name }, answer: '' };
         appendMessage('bot', 'Found ' + matched.length + ' shipment' + (matched.length !== 1 ? 's' : '') + ' for ' + name + ':', { shipments: matched.slice(0,10), shipmentsList: matched });
         return true;
       }
