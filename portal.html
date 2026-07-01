@@ -813,6 +813,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 }
 </style>
 <script src="https://js.stripe.com/v3/"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -5112,6 +5113,7 @@ function appendMessage(role, text, extras) {
       }
     }, 100);
   }
+  return row;
 }
 
 function renderQuotes(rates, isBox) {
@@ -9013,6 +9015,7 @@ let shipShown = 0;
 var SHIP_PAGE = 100;
 var selectedShipments = new Set();
 let waybHistory = [];   // Way B agent conversation history (user + final assistant text turns)
+let lastWaybResultSet = []; // last search_shipments result rows (for the Excel download button)
 function updateBolDownloadBtn() {
   const btn = document.getElementById('ship-dl-btn');
   if (!btn) return;
@@ -18223,7 +18226,9 @@ setTimeout(() => {
 
 const _waybSysPrompt = `You are a freight expert assistant for Freight and Logistics, Inc. You help this logged-in customer with their freight — their shipments, tracking, and questions about their shipping history.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments) and run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, or history.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), and get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, or paperwork.
+
+When a question is scoped to a time period (this year, last month, since June, the last 90 days), ALWAYS pass the matching dateFrom/dateTo on run_analytics and search_shipments, and carry that same window through follow-up questions about the same period. If you omit the dates, analytics covers their entire history on file. Each analytics result reports the exact window it used (no dates means all-time) — state that period accurately in your answer.
 
 You have NO knowledge of this customer's shipments, spend, carriers, or history from your own memory. Every fact you state about their account MUST come from a tool result in this conversation. If a tool returns no data, tell them you don't see anything matching. Never fabricate numbers, names, dates, carriers, or rankings — if you did not get it from a tool, do not state it.
 
@@ -18250,15 +18255,26 @@ const _waybTools = [
   },
   {
     name: 'run_analytics',
-    description: "Run an aggregate over this customer's shipment history. Use for counts, spend, carrier usage, top consignees, monthly volume, and destination-state breakdowns.",
+    description: "Run an aggregate over this customer's shipment history. Use for counts, spend, carrier usage, top consignees, monthly volume, and destination-state breakdowns. IMPORTANT: pass dateFrom/dateTo to scope the period the customer asked about (e.g. this year, last month) and reuse the SAME window on follow-up questions about that period. When both dates are omitted it covers all of their history on file. The result echoes back the exact window used.",
     input_schema: {
       type: 'object',
       required: ['type'],
       properties: {
         type:     { type: 'string', description: 'One of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState.' },
         carrier:  { type: 'string', description: 'Scope the aggregate to this carrier, or null.' },
-        dateFrom: { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
-        dateTo:   { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' }
+        dateFrom: { type: 'string', description: 'Earliest ship date YYYY-MM-DD. Pass this whenever the customer scopes a time period. Null means no lower bound (all history).' },
+        dateTo:   { type: 'string', description: 'Latest ship date YYYY-MM-DD. Null means no upper bound (through today).' }
+      }
+    }
+  },
+  {
+    name: 'get_documents',
+    description: "Fetch the available documents (Bill of Lading PDF, proof of delivery/POD, shipping label, invoice) for one shipment by its BOL number. Use when the customer asks for a document, POD, BOL copy, label, receipt, or paperwork for a specific shipment. The returned links are shown to the customer as clickable buttons automatically.",
+    input_schema: {
+      type: 'object',
+      required: ['bol'],
+      properties: {
+        bol: { type: 'string', description: "The shipment's BOL number." }
       }
     }
   }
@@ -18304,18 +18320,23 @@ async function _waybSearch(input) {
       status: f.status || null
     };
   });
+  if (!rows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   return { count: rows.length, shipments: rows };
 }
 
-// run_analytics — loads the full ~2yr history silently, applies optional carrier/date scope,
-// computes the requested aggregate over shipCtx.loaded, returns a plain JSON object.
+// run_analytics — loads the full ~2yr history silently, then computes the aggregate. Date
+// filtering is applied ONLY when the agent explicitly passes dateFrom and/or dateTo; with neither,
+// it aggregates over ALL loaded shipments (no date window). Every result echoes the window it used
+// (null bounds meaning all history) so the model can state the period accurately.
 async function _waybAnalytics(input) {
   input = input || {};
   await loadWideHistory();
   const carrier = input.carrier ? String(input.carrier).toLowerCase() : null;
-  const dFrom = input.dateFrom ? new Date(input.dateFrom) : null;
-  let dTo = null;
-  if (input.dateTo) { dTo = new Date(input.dateTo); dTo.setHours(23, 59, 59); }
+  // No default window: only filter on a bound the agent actually supplied.
+  let dFrom = input.dateFrom ? new Date(input.dateFrom) : null;
+  let dTo = input.dateTo ? new Date(input.dateTo) : null;
+  if (dTo) dTo.setHours(23, 59, 59);
+  const win = { dateFrom: dFrom ? dFrom.toISOString().split('T')[0] : null, dateTo: dTo ? dTo.toISOString().split('T')[0] : null };
   const F = ((shipCtx && shipCtx.loaded) || []).map(shipFields).filter(function (f) {
     if (carrier && String(f.carrier).toLowerCase().indexOf(carrier) < 0) return false;
     if (dFrom && (!f.date || f.date < dFrom)) return false;
@@ -18328,25 +18349,94 @@ async function _waybAnalytics(input) {
     let e = Object.keys(m).map(function (k) { const o = {}; o[key] = k; o.count = m[k]; return o; }).sort(function (a, b) { return b.count - a.count; });
     return slice ? e.slice(0, slice) : e;
   };
-  if (type === 'count') return { type: type, count: F.length };
-  if (type === 'sumCost') return { type: type, total: +F.reduce(function (a, f) { return a + (f.cost || 0); }, 0).toFixed(2), shipments: F.length };
-  if (type === 'avgCost') { const w = F.filter(function (f) { return f.cost > 0; }); const t = w.reduce(function (a, f) { return a + f.cost; }, 0); return { type: type, average: +(w.length ? t / w.length : 0).toFixed(2), shipments: w.length }; }
-  if (type === 'byCarrier') { const m = {}; F.forEach(function (f) { const c = carLabel(f.carrier); m[c] = (m[c] || 0) + 1; }); return { type: type, total: F.length, breakdown: rank(m, 'carrier') }; }
-  if (type === 'topConsignees') { const m = {}; F.forEach(function (f) { const c = f.consignee || 'Unknown'; m[c] = (m[c] || 0) + 1; }); return { type: type, breakdown: rank(m, 'consignee', 10) }; }
-  if (type === 'byMonth') { const m = {}; F.forEach(function (f) { if (!f.date) return; const k = f.date.getFullYear() + '-' + String(f.date.getMonth() + 1).padStart(2, '0'); m[k] = (m[k] || 0) + 1; }); const b = Object.keys(m).sort().map(function (k) { return { month: k, count: m[k] }; }); return { type: type, breakdown: b }; }
-  if (type === 'byDestState') { const m = {}; F.forEach(function (f) { const s = (f.consigneeState || '??').toUpperCase(); m[s] = (m[s] || 0) + 1; }); return { type: type, total: F.length, breakdown: rank(m, 'state') }; }
-  return { type: type, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
+  // Attach the computed window to every result so the model reports the right period.
+  const out = function (obj) { obj.type = type; obj.window = win; if (!F.length && !obj.message) obj.message = (win.dateFrom || win.dateTo) ? 'No shipments in that period.' : 'No shipments found.'; return obj; };
+  if (type === 'count') return out({ count: F.length });
+  if (type === 'sumCost') return out({ total: +F.reduce(function (a, f) { return a + (f.cost || 0); }, 0).toFixed(2), shipments: F.length });
+  if (type === 'avgCost') { const w = F.filter(function (f) { return f.cost > 0; }); const t = w.reduce(function (a, f) { return a + f.cost; }, 0); return out({ average: +(w.length ? t / w.length : 0).toFixed(2), shipments: w.length }); }
+  if (type === 'byCarrier') { const m = {}; F.forEach(function (f) { const c = carLabel(f.carrier); m[c] = (m[c] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'carrier') }); }
+  if (type === 'topConsignees') { const m = {}; F.forEach(function (f) { const c = f.consignee || 'Unknown'; m[c] = (m[c] || 0) + 1; }); return out({ breakdown: rank(m, 'consignee', 10) }); }
+  if (type === 'byMonth') { const m = {}; F.forEach(function (f) { if (!f.date) return; const k = f.date.getFullYear() + '-' + String(f.date.getMonth() + 1).padStart(2, '0'); m[k] = (m[k] || 0) + 1; }); const b = Object.keys(m).sort().map(function (k) { return { month: k, count: m[k] }; }); return out({ breakdown: b }); }
+  if (type === 'byDestState') { const m = {}; F.forEach(function (f) { const s = (f.consigneeState || '??').toUpperCase(); m[s] = (m[s] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'state') }); }
+  return { type: type, window: win, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
 }
 
-// Execute one tool_use block and shape its tool_result.
+// get_documents — fetch a shipment's documents by BOL number (the BOL number is the bolId).
+async function _waybDocuments(input) {
+  input = input || {};
+  const bol = String(input.bol || '').trim();
+  if (!bol) return { documents: [], message: 'No BOL number was provided.' };
+  let docs;
+  try { docs = await fetchDocuments(bol); }
+  catch (e) { console.error('waybAgent get_documents error:', e); return { documents: [], message: 'I could not pull up documents for BOL ' + bol + '.' }; }
+  const HIDDEN = ['DO', 'COST', 'COI'];
+  const DOC_NAMES = { 'BOL': 'Bill of Lading', 'LBL': 'Shipping Label', 'LABEL': 'Shipping Label', 'QUO': 'Quote', 'QUOTE': 'Quote', 'INV': 'Invoice', 'INVOICE': 'Invoice', 'POD': 'Proof of Delivery', 'RECEIPT': 'Receipt' };
+  const list = (docs || []).map(function (d) {
+    const typeRaw = (d.fileType || d.type || d.documentType || d.name || '').toUpperCase();
+    const url = d.url || d.fileUrl || d.documentUrl || d.link || '';
+    return { type: typeRaw, url: url, label: DOC_NAMES[typeRaw] || typeRaw || 'Document' };
+  }).filter(function (d) { return d.url && !HIDDEN.some(function (h) { return d.type === h || d.type.startsWith(h + ' '); }); });
+  if (!list.length) return { documents: [], message: 'No documents are available for BOL ' + bol + ' yet.' };
+  return { documents: list };
+}
+
+// Render document buttons and/or the Excel-download button beneath a bot message bubble.
+function _waybAttachExtras(row, docs, resultSet) {
+  if (!row) return;
+  const bubble = row.querySelector('.msg-bubble');
+  if (!bubble) return;
+  if (docs && docs.length) {
+    const dwrap = document.createElement('div');
+    dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+    docs.forEach(function (doc) {
+      if (!doc || !doc.url) return;
+      const a = document.createElement('a');
+      a.href = doc.url; a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = doc.label || doc.type || 'Document';
+      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #e5e2d9;color:#2a2a2a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;';
+      dwrap.appendChild(a);
+    });
+    if (dwrap.children.length) bubble.appendChild(dwrap);
+  }
+  if (resultSet && resultSet.length >= 10) {
+    const btn = document.createElement('button');
+    btn.textContent = 'Download as Excel';
+    btn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    btn.onclick = function () { _waybDownloadExcel(resultSet); };
+    bubble.appendChild(btn);
+  }
+}
+
+// Export a search result set as shipments-[date].xlsx (SheetJS); falls back to CSV if XLSX is absent.
+function _waybDownloadExcel(rows) {
+  const header = ['BOL', 'Carrier', 'Consignee', 'Dest City', 'Dest State', 'Date', 'Cost', 'Status'];
+  const data = (rows || []).map(function (r) { return [r.bol || '', r.carrier || '', r.consignee || '', r.destCity || '', r.destState || '', r.date || '', (r.cost != null ? r.cost : ''), r.status || '']; });
+  const fname = 'shipments-' + new Date().toISOString().split('T')[0] + '.xlsx';
+  try {
+    if (window.XLSX) {
+      const ws = XLSX.utils.aoa_to_sheet([header].concat(data));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Shipments');
+      XLSX.writeFile(wb, fname);
+      return;
+    }
+  } catch (e) { console.error('XLSX export failed, falling back to CSV:', e); }
+  const csv = [header].concat(data).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+// Execute one tool_use block; return both the raw result (for UI) and the API tool_result block.
 async function _waybExecTool(tu) {
   let result;
   try {
     if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
+    else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
   } catch (err) { console.error('waybAgent tool error (' + tu.name + '):', err); result = { error: 'tool execution failed' }; }
-  return { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) };
+  return { raw: result, block: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) } };
 }
 
 // Trim history to the cap WITHOUT ever splitting a tool_use / tool_result pair. A conversation
@@ -18368,6 +18458,8 @@ async function waybAgent(text) {
   // Snapshot for rollback: if the turn fails, discard everything it added so history stays a
   // valid, fully-paired transcript (no dangling user or unmatched tool_use).
   const _snapshot = waybHistory.slice();
+  lastWaybResultSet = [];   // reset per turn — only THIS turn's search feeds the Excel button
+  let _turnDocs = [];       // documents fetched this turn, rendered beneath the final reply
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
   try {
@@ -18399,7 +18491,12 @@ async function waybAgent(text) {
         // which is what left unmatched tool_use ids and caused the 400.
         waybHistory.push({ role: 'assistant', content: content });
         const results = [];
-        for (const tu of toolUses) results.push(await _waybExecTool(tu));
+        for (const tu of toolUses) {
+          const ex = await _waybExecTool(tu);
+          results.push(ex.block);
+          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments)) lastWaybResultSet = ex.raw.shipments;
+          if (tu.name === 'get_documents' && ex.raw && Array.isArray(ex.raw.documents)) _turnDocs = _turnDocs.concat(ex.raw.documents);
+        }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
       }
@@ -18409,7 +18506,10 @@ async function waybAgent(text) {
       const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
       waybHistory.push({ role: 'assistant', content: reply });
       waybHistory = _waybTrim(waybHistory);
-      appendMessage('bot', reply);
+      const _row = appendMessage('bot', reply);
+      // Document buttons (from get_documents) and an Excel button (when this turn's search
+      // returned 10+ shipments) render beneath the reply. Fewer than 10 → cards/text only.
+      _waybAttachExtras(_row, _turnDocs, lastWaybResultSet);
       return;
     }
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
