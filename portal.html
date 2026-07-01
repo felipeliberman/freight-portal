@@ -9012,6 +9012,7 @@ let pendingNumber = null; // stores ambiguous number awaiting clarification
 let shipShown = 0;
 var SHIP_PAGE = 100;
 var selectedShipments = new Set();
+let waybHistory = [];   // Way B agent conversation history (user + final assistant text turns)
 function updateBolDownloadBtn() {
   const btn = document.getElementById('ship-dl-btn');
   if (!btn) return;
@@ -13483,10 +13484,10 @@ async function handleInput(text) {
     window._inQuoteConvo = true; removeTyping(); await aiConverse(t); return;
   }
 
-  // ── CLIENT-SIDE SMART SEARCH ──────────────────────────────────────────────
+  // ── WAY B — tool-calling Sonnet agent (replaces clientSideSearch + aiConverse split) ──
   if (currentCustomer) {
-    const result = await clientSideSearch(t, lower);
-    if (result) return;
+    await waybAgent(t);
+    return;
   }
   } // end else-not-educational
   // ─────────────────────────────────────────────────────────────────────────
@@ -18213,6 +18214,186 @@ setTimeout(() => {
 
 // ── RATE LIMITING (handled in _supSendEmail) ──────────────────────────
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WAY B — tool-calling Sonnet agent for authenticated shipment Q&A. Replaces the
+// clientSideSearch + aiConverse split. Every fact about the customer's account must
+// come from a tool result; the model has no account data in its own context.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _waybSysPrompt = `You are a freight expert assistant for Freight and Logistics, Inc. You help this logged-in customer with their freight — their shipments, tracking, and questions about their shipping history.
+
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments) and run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, or history.
+
+You have NO knowledge of this customer's shipments, spend, carriers, or history from your own memory. Every fact you state about their account MUST come from a tool result in this conversation. If a tool returns no data, tell them you don't see anything matching. Never fabricate numbers, names, dates, carriers, or rankings — if you did not get it from a tool, do not state it.
+
+General freight education (what LTL means, how freight class works, what a liftgate is) you may answer from your own expertise. Anything specific to THIS customer's account comes only from tools.
+
+Plain conversational prose only. No bullets, no numbered lists, no markdown, no headers. Prefer 2 to 4 sentences. Do not mention any internal or backend system by name — you speak as the company.`;
+
+const _waybTools = [
+  {
+    name: 'search_shipments',
+    description: "Search and filter this customer's real shipments. Provide a natural-language query and/or explicit filters. Returns up to the requested number of matching shipments (most recent first) with bol, carrier, consignee, destination, date, cost, and status.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        query:     { type: 'string', description: 'Natural-language description of what to find (e.g. "shipments to Keith", "deliveries to Texas last month").' },
+        carrier:   { type: 'string', description: 'Carrier name to filter by, or null.' },
+        consignee: { type: 'string', description: 'Consignee/recipient name to filter by, or null.' },
+        destState: { type: 'string', description: 'Destination state as a 2-letter code, or null.' },
+        dateFrom:  { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
+        dateTo:    { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' },
+        limit:     { type: 'number', description: 'Max shipments to return (default 10), or null.' }
+      }
+    }
+  },
+  {
+    name: 'run_analytics',
+    description: "Run an aggregate over this customer's shipment history. Use for counts, spend, carrier usage, top consignees, monthly volume, and destination-state breakdowns.",
+    input_schema: {
+      type: 'object',
+      required: ['type'],
+      properties: {
+        type:     { type: 'string', description: 'One of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState.' },
+        carrier:  { type: 'string', description: 'Scope the aggregate to this carrier, or null.' },
+        dateFrom: { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
+        dateTo:   { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' }
+      }
+    }
+  }
+];
+
+// search_shipments — uses parseShipQuery to interpret the query, then the runShipQuery load
+// machinery (shipCtx + ensureMatches) WITHOUT the chat card, returning shipFields for the top N.
+async function _waybSearch(input) {
+  input = input || {};
+  let q = {};
+  if (input.query) { try { q = (await parseShipQuery(String(input.query))) || {}; } catch (e) { q = {}; } }
+  if (typeof q !== 'object' || !q) q = {};
+  // Explicit tool fields override the parse.
+  if (input.carrier)   q.carrier   = input.carrier;
+  if (input.consignee) q.consignee = input.consignee;
+  if (input.destState) q.destState = String(input.destState).toLowerCase();
+  if (input.dateFrom)  q.dateFrom  = input.dateFrom;
+  if (input.dateTo)    q.dateTo    = input.dateTo;
+  if (q.aggregateCarrier && !q.carrier) q.carrier = q.aggregateCarrier;
+  delete q.aggregate;
+  q.action = 'list';
+  if (!q.sortField) { q.sortField = 'date'; q.sortDir = 'desc'; }
+  const lim = Math.min(Math.max(Number(input.limit) || 10, 1), 25);
+  // Same window rule as runShipQuery: named entity → 2yr, otherwise 90 days, explicit dates win.
+  const now = new Date(); let from, to;
+  if (q.dateFrom) from = new Date(q.dateFrom);
+  else if (q.consignee || q.shipper) { from = new Date(now); from.setFullYear(from.getFullYear() - 2); }
+  else { from = new Date(now); from.setDate(from.getDate() - 90); }
+  to = q.dateTo ? new Date(q.dateTo) : new Date(now);
+  shipCtx = { from: from, to: to, page: 1, totalPages: null, loaded: [], done: false, query: q, filtered: [] };
+  shipShown = 0;
+  await ensureMatches(Math.max(lim, 20));
+  const rows = filteredList().slice(0, lim).map(function (s) {
+    const f = shipFields(s);
+    return {
+      bol: f.bol || null,
+      carrier: (f.carrier || '').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim() || null,
+      consignee: f.consignee || null,
+      destCity: f.consigneeCity || null,
+      destState: f.consigneeState ? f.consigneeState.toUpperCase() : null,
+      date: f.date ? f.date.toISOString().split('T')[0] : null,
+      cost: f.cost > 0 ? f.cost : null,
+      status: f.status || null
+    };
+  });
+  return { count: rows.length, shipments: rows };
+}
+
+// run_analytics — loads the full ~2yr history silently, applies optional carrier/date scope,
+// computes the requested aggregate over shipCtx.loaded, returns a plain JSON object.
+async function _waybAnalytics(input) {
+  input = input || {};
+  await loadWideHistory();
+  const carrier = input.carrier ? String(input.carrier).toLowerCase() : null;
+  const dFrom = input.dateFrom ? new Date(input.dateFrom) : null;
+  let dTo = null;
+  if (input.dateTo) { dTo = new Date(input.dateTo); dTo.setHours(23, 59, 59); }
+  const F = ((shipCtx && shipCtx.loaded) || []).map(shipFields).filter(function (f) {
+    if (carrier && String(f.carrier).toLowerCase().indexOf(carrier) < 0) return false;
+    if (dFrom && (!f.date || f.date < dFrom)) return false;
+    if (dTo && (!f.date || f.date > dTo)) return false;
+    return true;
+  });
+  const carLabel = function (c) { return (c || 'Unknown').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim() || 'Unknown'; };
+  const type = String(input.type || 'count');
+  const rank = function (m, key, slice) {
+    let e = Object.keys(m).map(function (k) { const o = {}; o[key] = k; o.count = m[k]; return o; }).sort(function (a, b) { return b.count - a.count; });
+    return slice ? e.slice(0, slice) : e;
+  };
+  if (type === 'count') return { type: type, count: F.length };
+  if (type === 'sumCost') return { type: type, total: +F.reduce(function (a, f) { return a + (f.cost || 0); }, 0).toFixed(2), shipments: F.length };
+  if (type === 'avgCost') { const w = F.filter(function (f) { return f.cost > 0; }); const t = w.reduce(function (a, f) { return a + f.cost; }, 0); return { type: type, average: +(w.length ? t / w.length : 0).toFixed(2), shipments: w.length }; }
+  if (type === 'byCarrier') { const m = {}; F.forEach(function (f) { const c = carLabel(f.carrier); m[c] = (m[c] || 0) + 1; }); return { type: type, total: F.length, breakdown: rank(m, 'carrier') }; }
+  if (type === 'topConsignees') { const m = {}; F.forEach(function (f) { const c = f.consignee || 'Unknown'; m[c] = (m[c] || 0) + 1; }); return { type: type, breakdown: rank(m, 'consignee', 10) }; }
+  if (type === 'byMonth') { const m = {}; F.forEach(function (f) { if (!f.date) return; const k = f.date.getFullYear() + '-' + String(f.date.getMonth() + 1).padStart(2, '0'); m[k] = (m[k] || 0) + 1; }); const b = Object.keys(m).sort().map(function (k) { return { month: k, count: m[k] }; }); return { type: type, breakdown: b }; }
+  if (type === 'byDestState') { const m = {}; F.forEach(function (f) { const s = (f.consigneeState || '??').toUpperCase(); m[s] = (m[s] || 0) + 1; }); return { type: type, total: F.length, breakdown: rank(m, 'state') }; }
+  return { type: type, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
+}
+
+async function waybAgent(text) {
+  showTyping();
+  const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
+  waybHistory.push({ role: 'user', content: String(text) });
+  if (waybHistory.length > 40) waybHistory = waybHistory.slice(-40);
+  // Build the API message list from stored text turns; tool_use/tool_result live only in `convo`.
+  let convo = waybHistory.slice(-20).map(function (m) { return { role: m.role, content: m.content }; });
+  try {
+    let loops = 0;
+    while (loops < 6) {
+      loops++;
+      const data = await _call('https://anthropic-proxy.felipe-b80.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1024,
+          system: _waybSysPrompt,
+          tools: _waybTools,
+          messages: convo
+        })
+      });
+      if (data && data.type === 'error') {
+        throw new Error((data.error && (data.error.type + ' ' + (data.error.message || ''))) || 'api error');
+      }
+      const content = data.content || [];
+      const textOut = content.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n').trim();
+      const toolUse = content.find(function (b) { return b.type === 'tool_use' && (b.name === 'search_shipments' || b.name === 'run_analytics'); });
+
+      if (data.stop_reason === 'tool_use' && toolUse) {
+        let result;
+        try {
+          if (toolUse.name === 'search_shipments') result = await _waybSearch(toolUse.input);
+          else if (toolUse.name === 'run_analytics') result = await _waybAnalytics(toolUse.input);
+        } catch (err) { console.error('waybAgent tool error (' + toolUse.name + '):', err); result = { error: 'tool execution failed' }; }
+        convo.push({ role: 'assistant', content: content });
+        convo.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }] });
+        continue; // loop for the model's natural follow-up using the tool result
+      }
+
+      // Final text answer.
+      removeTyping();
+      const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
+      waybHistory.push({ role: 'assistant', content: reply });
+      if (waybHistory.length > 40) waybHistory = waybHistory.slice(-40);
+      appendMessage('bot', reply);
+      return;
+    }
+    removeTyping();
+    appendMessage('bot', "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.");
+  } catch (e) {
+    console.error('waybAgent error:', e);
+    removeTyping();
+    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+  }
+}
 
 </script>
 
