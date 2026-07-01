@@ -12882,9 +12882,24 @@ async function handleInput(text) {
   // Catches the whole quote conversation, including the clarifying phase BEFORE the form opens
   // (e.g. Claude asked "which Wilmington?" and the customer replies "california").
   // Routes to the AI before any shipment/quote regex can grab a short reply.
-  // Exception: let the user explicitly leave via navigation words.
+  // Exception: let the user explicitly leave via navigation words OR any shipment-data question.
+  //
+  // A shipment-data / lookup / tracking question must LEAVE quote mode even mid-quote — otherwise
+  // the quote AI deflects it and re-arms _inQuoteConvo, the "stuck deflecting on Keith/Claudia"
+  // trap: once set, consignee follow-ups ("what about keith", "last shipment I sent to claudia")
+  // never matched the old narrow escape and stayed permanently routed to the deflecting AI.
+  const _dataQuestion =
+       /\b(track|tracking|where('?s| is| are)|status of|delivered|\bpod\b|proof of delivery|\beta\b)\b/i.test(lower)
+    || /\b(what|which|whose)\b[^?]{0,30}\b(shipment|shipments|bol|pro|consignee|carrier)\b/i.test(lower)
+    || /\b(shipment|shipments|deliveries|delivery|orders?)\b[^?]{0,20}\b(to|for|from)\b\s+[a-z]/i.test(lower)
+    || /\b(sent|shipped|delivered)\s+to\s+[a-z]/i.test(lower)
+    || /\b(last|recent|latest|most recent)\s+(shipment|delivery|order|bol)\b/i.test(lower)
+    || (!!(window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length)
+        && t.trim().split(/\s+/).length <= 8
+        && /\b(what about|how about|both of them|those ones?|list them|name them|the two|why (only|just)|their (bols?|consignees?|carriers?|costs?))\b/i.test(lower));
+
   if ((window._quoteFormOpen || window._inQuoteConvo) && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)
-      && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t)) {
+      && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t) && !_dataQuestion) {
     // Full-history analytics / existence / comparison questions and explicit BOL numbers
     // break OUT of the quote conversation (otherwise the quote AI answers them off the
     // open quote's line items — confidently wrong). The quote form stays open underneath.
@@ -12893,8 +12908,9 @@ async function handleInput(text) {
     await aiConverse(t);
     return;
   }
-  // Explicit navigation away from the quote — exit quote conversation mode
-  if (window._inQuoteConvo && /\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)) {
+  // Explicit navigation away from the quote, or a shipment-data question — exit quote conversation
+  // mode so the flag can't stay stuck and keep deflecting later shipment questions.
+  if (window._inQuoteConvo && (/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower) || _dataQuestion || isFullHistoryQ(t, lower))) {
     window._inQuoteConvo = false;
   }
 
