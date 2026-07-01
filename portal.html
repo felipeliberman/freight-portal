@@ -18338,13 +18338,38 @@ async function _waybAnalytics(input) {
   return { type: type, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
 }
 
+// Execute one tool_use block and shape its tool_result.
+async function _waybExecTool(tu) {
+  let result;
+  try {
+    if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
+    else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
+    else result = { error: 'unsupported tool: ' + tu.name };
+  } catch (err) { console.error('waybAgent tool error (' + tu.name + '):', err); result = { error: 'tool execution failed' }; }
+  return { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) };
+}
+
+// Trim history to the cap WITHOUT ever splitting a tool_use / tool_result pair. A conversation
+// must begin on a real user turn (a plain-text user message) — never on an orphaned tool_result
+// or an assistant turn — otherwise the API rejects it (tool_use ids not matched by tool_result).
+function _waybTrim(hist, cap) {
+  cap = cap || 40;
+  if (hist.length <= cap) return hist;
+  let start = hist.length - cap;
+  const isToolResult = function (m) { return Array.isArray(m.content) && m.content.some(function (b) { return b && b.type === 'tool_result'; }); };
+  while (start < hist.length && !(hist[start].role === 'user' && !isToolResult(hist[start]))) start++;
+  if (start >= hist.length) start = Math.max(0, hist.length - cap); // safety: keep last cap as-is
+  return hist.slice(start);
+}
+
 async function waybAgent(text) {
   showTyping();
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
+  // Snapshot for rollback: if the turn fails, discard everything it added so history stays a
+  // valid, fully-paired transcript (no dangling user or unmatched tool_use).
+  const _snapshot = waybHistory.slice();
   waybHistory.push({ role: 'user', content: String(text) });
-  if (waybHistory.length > 40) waybHistory = waybHistory.slice(-40);
-  // Build the API message list from stored text turns; tool_use/tool_result live only in `convo`.
-  let convo = waybHistory.slice(-20).map(function (m) { return { role: m.role, content: m.content }; });
+  waybHistory = _waybTrim(waybHistory);
   try {
     let loops = 0;
     while (loops < 6) {
@@ -18357,7 +18382,7 @@ async function waybAgent(text) {
           max_tokens: 1024,
           system: _waybSysPrompt,
           tools: _waybTools,
-          messages: convo
+          messages: waybHistory
         })
       });
       if (data && data.type === 'error') {
@@ -18365,31 +18390,35 @@ async function waybAgent(text) {
       }
       const content = data.content || [];
       const textOut = content.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n').trim();
-      const toolUse = content.find(function (b) { return b.type === 'tool_use' && (b.name === 'search_shipments' || b.name === 'run_analytics'); });
+      const toolUses = content.filter(function (b) { return b.type === 'tool_use'; });
 
-      if (data.stop_reason === 'tool_use' && toolUse) {
-        let result;
-        try {
-          if (toolUse.name === 'search_shipments') result = await _waybSearch(toolUse.input);
-          else if (toolUse.name === 'run_analytics') result = await _waybAnalytics(toolUse.input);
-        } catch (err) { console.error('waybAgent tool error (' + toolUse.name + '):', err); result = { error: 'tool execution failed' }; }
-        convo.push({ role: 'assistant', content: content });
-        convo.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }] });
-        continue; // loop for the model's natural follow-up using the tool result
+      if (data.stop_reason === 'tool_use' && toolUses.length) {
+        // Store the COMPLETE assistant message (including every tool_use block) and the paired
+        // user message with a tool_result for EACH tool_use — always together, never one without
+        // the other. Handling every tool_use (not just the first) covers parallel tool calls,
+        // which is what left unmatched tool_use ids and caused the 400.
+        waybHistory.push({ role: 'assistant', content: content });
+        const results = [];
+        for (const tu of toolUses) results.push(await _waybExecTool(tu));
+        waybHistory.push({ role: 'user', content: results });
+        continue; // loop for the model's natural follow-up using the tool results
       }
 
       // Final text answer.
       removeTyping();
       const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
       waybHistory.push({ role: 'assistant', content: reply });
-      if (waybHistory.length > 40) waybHistory = waybHistory.slice(-40);
+      waybHistory = _waybTrim(waybHistory);
       appendMessage('bot', reply);
       return;
     }
+    // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
+    waybHistory = _snapshot;
     removeTyping();
     appendMessage('bot', "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.");
   } catch (e) {
     console.error('waybAgent error:', e);
+    waybHistory = _snapshot; // discard the failed turn entirely — keeps the transcript valid
     removeTyping();
     appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
   }
