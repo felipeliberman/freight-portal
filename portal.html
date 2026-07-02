@@ -18879,7 +18879,7 @@ function _waybOpenChartTab(spec) {
   if (spec.points && spec.points.length) {
     const dl = document.createElement('button');
     dl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Data';
-    dl.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;background:#f7f5f2;border:1px solid #c8c4bc;color:#111;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    dl.style.cssText = 'background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;flex-shrink:0;';
     dl.onclick = function () { _waybDownloadChartData(spec.title, spec.points, spec.unit); };
     bar.appendChild(dl);
   }
