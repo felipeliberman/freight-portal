@@ -18809,21 +18809,39 @@ function _waybChartTip(wrap) {
   };
 }
 
+// Inject the chart entrance-animation keyframes once (CSS-only, no library). All animations run
+// a single time on render (fill both/forwards freezes the final state) and never loop, so the
+// data is readable the instant it lands — the motion is decorative, not a gate.
+function _waybEnsureChartAnim() {
+  if (document.getElementById('wayb-chart-anim')) return;
+  const st = document.createElement('style');
+  st.id = 'wayb-chart-anim';
+  st.textContent =
+    '@keyframes waybBarGrow{from{transform:scaleX(0);}to{transform:scaleX(1);}}' +
+    '@keyframes waybFadeScale{from{opacity:0;transform:scale(.9);}to{opacity:1;transform:scale(1);}}' +
+    '@keyframes waybStatIn{from{opacity:0;transform:scale(.92);}to{opacity:1;transform:scale(1);}}' +
+    '@keyframes waybRowIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}' +
+    '@keyframes waybDraw{to{stroke-dashoffset:0;}}' +
+    '@keyframes waybDotIn{from{opacity:0;}to{opacity:1;}}';
+  document.head.appendChild(st);
+}
+
 function _waybChartBars(points, unit) {
   const max = Math.max.apply(null, points.map(function (p) { return p.value; })) || 1;
   const total = points.reduce(function (a, p) { return a + p.value; }, 0) || 1;
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
   const tip = _waybChartTip(wrap);
-  points.forEach(function (p) {
+  points.forEach(function (p, i) {
     const barW = Math.max(2, Math.round((p.value / max) * 100));
     const pct = (p.value / total * 100).toFixed(1);
+    const _d = Math.min(i * 40, 200); // stagger, capped at 200ms total
     const row = document.createElement('div');
     row.style.cssText = 'min-height:36px;display:flex;flex-direction:column;justify-content:center;';
     row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:5px;gap:10px;">'
       + '<span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span>'
       + '<span style="color:#666;font-weight:600;flex-shrink:0;white-space:nowrap;">' + _waybFmtVal(p.value, unit) + ' <span style="color:#888;font-size:11px;">· ' + pct + '%</span></span></div>'
-      + '<div style="background:#efe9ec;border-radius:6px;height:10px;overflow:hidden;"><div style="width:' + barW + '%;height:100%;background:#bd27bc;border-radius:6px;"></div></div>';
+      + '<div style="background:#efe9ec;border-radius:6px;height:10px;overflow:hidden;"><div style="width:' + barW + '%;height:100%;background:#bd27bc;border-radius:6px;transform-origin:left center;animation:waybBarGrow 350ms ease-out ' + _d + 'ms both;"></div></div>';
     tip.bind(row, _waybEsc(p.label) + ' · ' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%');
     wrap.appendChild(row);
   });
@@ -18842,10 +18860,15 @@ function _waybChartLine(points, unit) {
   const pts = points.map(function (p, i) { return x(i) + ',' + y(p.value); }).join(' ');
   let dots = '', xlabels = '';
   const step = Math.ceil(n / 8);
-  points.forEach(function (p, i) { dots += '<circle cx="' + x(i) + '" cy="' + y(p.value) + '" r="4" fill="#bd27bc"/>'; if (i % step === 0 || i === n - 1) xlabels += '<text x="' + x(i) + '" y="' + (H - PADB + 18) + '" text-anchor="middle" font-size="10" fill="#777">' + _waybEsc(p.label) + '</text>'; });
+  // Dots fade in (waybDotIn, 200ms) after the line has mostly drawn (300ms delay); `both` fill
+  // keeps them hidden through the delay, then holds them visible.
+  points.forEach(function (p, i) { dots += '<circle cx="' + x(i) + '" cy="' + y(p.value) + '" r="4" fill="#bd27bc" style="animation:waybDotIn 200ms ease-out 300ms both;"/>'; if (i % step === 0 || i === n - 1) xlabels += '<text x="' + x(i) + '" y="' + (H - PADB + 18) + '" text-anchor="middle" font-size="10" fill="#777">' + _waybEsc(p.label) + '</text>'; });
+  // Line "draws" via stroke-dashoffset. Compute the true polyline length from the plotted
+  // coordinates so the dash math is exact (no pathLength attribute dependency).
+  let _len = 0; for (let i = 1; i < n; i++) { const dx = x(i) - x(i - 1), dy = y(points[i].value) - y(points[i - 1].value); _len += Math.sqrt(dx * dx + dy * dy); } _len = Math.round(_len) || 1;
   const wrap = document.createElement('div');
   wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:100%;height:auto;font-family:inherit;">' + grid
-    + '<polyline points="' + pts + '" fill="none" stroke="#bd27bc" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' + dots + xlabels + '</svg>';
+    + '<polyline points="' + pts + '" fill="none" stroke="#bd27bc" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" style="stroke-dasharray:' + _len + ';stroke-dashoffset:' + _len + ';animation:waybDraw 400ms ease-out forwards;"/>' + dots + xlabels + '</svg>';
   // Bind a tooltip to each dot: "Mon YYYY · N shipments" (label already prettified upstream).
   const tip = _waybChartTip(wrap);
   const circles = wrap.querySelectorAll('circle');
@@ -18891,7 +18914,7 @@ function _waybChartPie(points, unit, donut) {
       + '</div>';
   });
   const wrap = document.createElement('div');
-  wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="height:auto;">' + paths + hole + '</svg></div>'
+  wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="height:auto;transform-origin:center;animation:waybFadeScale 350ms ease-out both;">' + paths + hole + '</svg></div>'
     + '<div style="display:flex;flex-direction:column;gap:6px;margin-top:16px;">' + legend + '</div>';
   // Bind a tooltip to each slice: "Label · $X · XX%". Skipped in the degenerate case (a solid
   // circle, no <path> elements to bind to).
@@ -18905,7 +18928,7 @@ function _waybChartPie(points, unit, donut) {
 
 function _waybChartStat(spec) {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'padding:28px 8px;text-align:center;';
+  wrap.style.cssText = 'padding:28px 8px;text-align:center;transform-origin:center;animation:waybStatIn 300ms ease-out both;';
   wrap.innerHTML = '<div style="font-size:44px;font-weight:700;color:#bd27bc;line-height:1.1;">' + _waybEsc(_waybFmtVal(spec.stat, spec.unit)) + '</div>'
     + '<div style="font-size:13px;color:#777;margin-top:8px;">' + _waybEsc(spec.title) + '</div>';
   return wrap;
@@ -18913,8 +18936,10 @@ function _waybChartStat(spec) {
 
 function _waybChartTable(points, unit) {
   const total = points.reduce(function (a, p) { return a + p.value; }, 0);
-  let body = points.map(function (p) { return '<tr><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;color:#333;">' + _waybEsc(p.label) + '</td><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;text-align:right;color:#333;font-weight:600;">' + _waybFmtVal(p.value, unit) + '</td></tr>'; }).join('');
-  const foot = '<tr><td style="padding:8px 12px;color:#888;font-weight:600;">Total</td><td style="padding:8px 12px;text-align:right;color:#888;font-weight:600;">' + _waybFmtVal(total, unit) + '</td></tr>';
+  // Rows fade + slide up (waybRowIn), staggered 40ms each, capped at 200ms. `both` fill holds the
+  // row hidden through its delay so the cascade reads cleanly.
+  let body = points.map(function (p, i) { const _d = Math.min(i * 40, 200); return '<tr style="animation:waybRowIn 300ms ease-out ' + _d + 'ms both;"><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;color:#333;">' + _waybEsc(p.label) + '</td><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;text-align:right;color:#333;font-weight:600;">' + _waybFmtVal(p.value, unit) + '</td></tr>'; }).join('');
+  const foot = '<tr style="animation:waybRowIn 300ms ease-out ' + Math.min(points.length * 40, 200) + 'ms both;"><td style="padding:8px 12px;color:#888;font-weight:600;">Total</td><td style="padding:8px 12px;text-align:right;color:#888;font-weight:600;">' + _waybFmtVal(total, unit) + '</td></tr>';
   const wrap = document.createElement('div');
   wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">' + body + foot + '</table>';
   return wrap;
@@ -18951,6 +18976,7 @@ function _waybOpenChartTab(spec) {
   const _hasStat = (spec.chartType === 'stat' && spec.stat != null);
   const _hasPoints = Array.isArray(spec.points) && spec.points.length > 0;
   if (!_hasStat && !_hasPoints) return;
+  _waybEnsureChartAnim(); // one-time keyframe injection for chart entrance animations
   const wrap = document.createElement('div');
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;';
