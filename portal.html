@@ -18692,17 +18692,42 @@ function _waybFmtVal(v, unit) {
 function _waybEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 var _WAYB_CHART_COLORS = ['#bd27bc', '#8e1d8d', '#cf52ce', '#6b6b6b', '#d98ad8', '#4a4a4a', '#a76fa5', '#9b9690'];
 
+// One shared tooltip per chart wrap. Makes the wrap position:relative, appends a single absolute
+// tooltip div, and binds show/move/hide to any element. Positioned relative to the wrap using live
+// mouse coords (works for both HTML rows and SVG dots/slices), 8px right and 36px above the cursor.
+function _waybChartTip(wrap) {
+  wrap.style.position = 'relative';
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:absolute;pointer-events:none;background:#111;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;display:none;z-index:10;';
+  wrap.appendChild(tip);
+  const place = function (e) { const r = wrap.getBoundingClientRect(); tip.style.left = (e.clientX - r.left + 8) + 'px'; tip.style.top = (e.clientY - r.top - 36) + 'px'; };
+  return {
+    bind: function (el, html) {
+      if (!el) return;
+      el.style.cursor = 'default';
+      el.addEventListener('mouseenter', function (e) { tip.innerHTML = html; tip.style.display = 'block'; place(e); });
+      el.addEventListener('mousemove', place);
+      el.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+    }
+  };
+}
+
 function _waybChartBars(points, unit) {
   const max = Math.max.apply(null, points.map(function (p) { return p.value; })) || 1;
+  const total = points.reduce(function (a, p) { return a + p.value; }, 0) || 1;
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;gap:11px;';
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+  const tip = _waybChartTip(wrap);
   points.forEach(function (p) {
-    const pct = Math.max(2, Math.round((p.value / max) * 100));
+    const barW = Math.max(2, Math.round((p.value / max) * 100));
+    const pct = (p.value / total * 100).toFixed(1);
     const row = document.createElement('div');
-    row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px;gap:10px;">'
+    row.style.cssText = 'min-height:36px;display:flex;flex-direction:column;justify-content:center;';
+    row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:5px;gap:10px;">'
       + '<span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span>'
-      + '<span style="color:#666;font-weight:600;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + '</span></div>'
-      + '<div style="background:#efe9ec;border-radius:6px;height:10px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:#bd27bc;border-radius:6px;"></div></div>';
+      + '<span style="color:#666;font-weight:600;flex-shrink:0;white-space:nowrap;">' + _waybFmtVal(p.value, unit) + ' <span style="color:#888;font-size:11px;">· ' + pct + '%</span></span></div>'
+      + '<div style="background:#efe9ec;border-radius:6px;height:10px;overflow:hidden;"><div style="width:' + barW + '%;height:100%;background:#bd27bc;border-radius:6px;"></div></div>';
+    tip.bind(row, _waybEsc(p.label) + ' · ' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%');
     wrap.appendChild(row);
   });
   return wrap;
@@ -18720,10 +18745,14 @@ function _waybChartLine(points, unit) {
   const pts = points.map(function (p, i) { return x(i) + ',' + y(p.value); }).join(' ');
   let dots = '', xlabels = '';
   const step = Math.ceil(n / 8);
-  points.forEach(function (p, i) { dots += '<circle cx="' + x(i) + '" cy="' + y(p.value) + '" r="3.5" fill="#bd27bc"/>'; if (i % step === 0 || i === n - 1) xlabels += '<text x="' + x(i) + '" y="' + (H - PADB + 18) + '" text-anchor="middle" font-size="10" fill="#777">' + _waybEsc(p.label) + '</text>'; });
+  points.forEach(function (p, i) { dots += '<circle cx="' + x(i) + '" cy="' + y(p.value) + '" r="4" fill="#bd27bc"/>'; if (i % step === 0 || i === n - 1) xlabels += '<text x="' + x(i) + '" y="' + (H - PADB + 18) + '" text-anchor="middle" font-size="10" fill="#777">' + _waybEsc(p.label) + '</text>'; });
   const wrap = document.createElement('div');
   wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:100%;height:auto;font-family:inherit;">' + grid
     + '<polyline points="' + pts + '" fill="none" stroke="#bd27bc" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' + dots + xlabels + '</svg>';
+  // Bind a tooltip to each dot: "Mon YYYY · N shipments" (label already prettified upstream).
+  const tip = _waybChartTip(wrap);
+  const circles = wrap.querySelectorAll('circle');
+  points.forEach(function (p, i) { const noun = _waybFmtVal(p.value, unit) + (unit === 'shipments' ? ' shipments' : ''); tip.bind(circles[i], _waybEsc(p.label) + ' · ' + noun); });
   return wrap;
 }
 
@@ -18743,12 +18772,16 @@ function _waybChartPie(points, unit, donut) {
     a0 = a1;
   });
   const hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
+  // Legend BELOW the chart in a 2-column grid: colored dot + label + "$X · XX%".
   let legend = '';
-  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); legend += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span><span style="color:#888;margin-left:auto;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span></div>'; });
+  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); legend += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;min-width:0;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span><span style="color:#888;margin-left:auto;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span></div>'; });
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:20px;align-items:center;';
-  wrap.innerHTML = '<svg viewBox="0 0 240 240" width="220" height="220" style="flex-shrink:0;">' + paths + hole + '</svg>'
-    + '<div style="flex:1;min-width:180px;">' + legend + '</div>';
+  wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="max-width:380px;height:auto;">' + paths + hole + '</svg></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin-top:16px;">' + legend + '</div>';
+  // Bind a tooltip to each slice: "Label · $X · XX%".
+  const tip = _waybChartTip(wrap);
+  const slices = wrap.querySelectorAll('svg path');
+  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); tip.bind(slices[i], _waybEsc(p.label) + ' · ' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%'); });
   return wrap;
 }
 
@@ -18814,6 +18847,43 @@ function _waybOpenChartTab(spec) {
     bar.appendChild(dl);
   }
   wrap.appendChild(bar);
+
+  // KPI stat strip + total footer share the same summed value and window label, both computed
+  // straight from spec.points (engine values) — never estimated. Stat cards skip the strip/footer
+  // (the card IS the number).
+  const P = (spec.points || []);
+  const unit = spec.unit;
+  const sum = P.reduce(function (a, p) { return a + p.value; }, 0);
+  const _mY = function (s) { const m = /^(\d{4})-(\d{2})/.exec(String(s || '')); if (!m) return String(s || ''); return new Date(+m[1], +m[2] - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' }); };
+  let winLabel = 'All history';
+  if (w.dateFrom && w.dateTo) winLabel = _mY(w.dateFrom) + ' – ' + _mY(w.dateTo);
+  else if (w.dateFrom) winLabel = 'Since ' + _mY(w.dateFrom);
+  else if (w.dateTo) winLabel = 'Through ' + _mY(w.dateTo);
+
+  // FIX 1 — KPI stat strip (bar/line/table + pie/donut; not stat cards).
+  if (spec.chartType !== 'stat' && P.length) {
+    const isPie = (spec.chartType === 'pie' || spec.chartType === 'donut');
+    const pill = function (lbl, val) { return '<span style="display:inline-flex;align-items:center;background:#f7f5f2;border:1px solid #e5e2d9;border-radius:20px;padding:4px 12px;font-size:12px;color:#444;">' + (lbl ? '<span style="color:#888;margin-right:4px;">' + lbl + '</span>' : '') + val + '</span>'; };
+    const pills = [];
+    if (isPie) {
+      let dom = P[0]; P.forEach(function (p) { if (p.value > dom.value) dom = p; });
+      const domPct = Math.round(dom.value / (sum || 1) * 100);
+      pills.push(pill(unit === '$' ? 'Total spend:' : 'Total:', unit === '$' ? _waybFmtVal(sum, '$') : (_waybFmtVal(sum, unit) + (unit === 'shipments' ? ' shipments' : ''))));
+      pills.push(pill('Dominant:', _waybEsc(dom.label) + ' ' + domPct + '%'));
+      pills.push(pill('', _waybEsc(winLabel)));
+    } else {
+      if (unit === '$') pills.push(pill('Total:', _waybFmtVal(sum, '$')));
+      else if (unit === 'lbs') pills.push(pill('Total:', _waybFmtVal(sum, 'lbs')));
+      else pills.push(pill('', _waybFmtVal(sum) + ' shipments'));
+      pills.push(pill('Top:', _waybEsc(P[0].label)));
+      pills.push(pill('', _waybEsc(winLabel)));
+    }
+    const strip = document.createElement('div');
+    strip.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;';
+    strip.innerHTML = pills.join('');
+    wrap.appendChild(strip);
+  }
+
   let body;
   if (spec.chartType === 'stat') body = _waybChartStat(spec);
   else if (spec.chartType === 'line') body = _waybChartLine(spec.points, spec.unit);
@@ -18822,6 +18892,22 @@ function _waybOpenChartTab(spec) {
   else if (spec.chartType === 'table') body = _waybChartTable(spec.points, spec.unit);
   else body = _waybChartBars(spec.points, spec.unit);
   wrap.appendChild(body);
+
+  // FIX 5 — total footer row (bar + line charts only; table has its own total, pie/stat don't need one).
+  const isLine = spec.chartType === 'line';
+  const isBar = !['stat', 'line', 'pie', 'donut', 'table'].includes(spec.chartType);
+  if ((isBar || isLine) && P.length) {
+    const catN = P.length;
+    let ftxt;
+    if (unit === '$') ftxt = 'Total: ' + _waybFmtVal(sum, '$') + ' across ' + catN + ' categor' + (catN === 1 ? 'y' : 'ies') + ' · ' + winLabel;
+    else if (unit === 'lbs') ftxt = 'Total: ' + _waybFmtVal(sum, 'lbs') + ' across ' + catN + ' categor' + (catN === 1 ? 'y' : 'ies') + ' · ' + winLabel;
+    else ftxt = _waybFmtVal(sum) + ' shipments · ' + winLabel;
+    const foot = document.createElement('div');
+    foot.style.cssText = 'font-size:11px;color:#888;margin-top:8px;text-align:right;border-top:1px solid #e5e2d9;padding-top:6px;';
+    foot.textContent = ftxt;
+    wrap.appendChild(foot);
+  }
+
   openRightPanel(wrap, spec.title);
 }
 
