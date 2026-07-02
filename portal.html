@@ -18243,6 +18243,8 @@ You have tools to look up this customer's real shipment data: search_shipments (
 
 When a question is scoped to a time period (this year, last month, since June, the last 90 days), ALWAYS pass the matching dateFrom/dateTo on run_analytics and search_shipments, and carry that same window through follow-up questions about the same period. If you omit the dates, analytics covers their entire history on file. Each analytics result reports the exact window it used (no dates means all-time) — state that period accurately in your answer.
 
+CARRIER vs CONSIGNEE: a carrier is the trucking company that moves the freight (Metro / Metro W&D, Pilot, ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L, and the like). A consignee is the person or company RECEIVING the freight. When the customer asks about a carrier ("my Metro shipments", "how many with ABF"), put that name in the carrier field of search_shipments — NEVER in consignee. Only put an actual recipient's name in consignee.
+
 You have NO knowledge of this customer's shipments, spend, carriers, or history from your own memory. Every fact you state about their account MUST come from a tool result in this conversation. If a tool returns no data, tell them you don't see anything matching. Never fabricate numbers, names, dates, carriers, or rankings — if you did not get it from a tool, do not state it.
 
 You must NEVER make any statement about what carriers, consignees, or shipments are or are not in the customer's account without first calling a tool to verify. If asked about a carrier you have not searched for in this conversation, call search_shipments or run_analytics first. Do not say a carrier does not appear in the customer's history based on your own assumption.
@@ -18256,19 +18258,19 @@ Plain conversational prose only. No bullets, no numbered lists, no markdown, no 
 const _waybTools = [
   {
     name: 'search_shipments',
-    description: "Search, filter, and look up this customer's real shipments — by natural-language query and/or explicit filters, INCLUDING a specific BOL or PRO number (pass it as bol/pro to track or pull one shipment). Returns up to the requested number of matching shipments (most recent first), each with bol, carrier, consignee, destination, ship date, cost, status, and — when the backend has them — pickupDate, deliveryDate, and eta (use these to answer pickup/delivery/tracking timing questions; never estimate a date yourself).",
+    description: "Search, filter, and look up this customer's real shipments — by natural-language query and/or explicit filters, INCLUDING a specific BOL or PRO number (pass it as bol/pro to track or pull one shipment). Returns 'count' (the TOTAL number of shipments that matched — use this for how-many questions) and 'shipments' (a sample of the most recent matches; the FULL matched set is shown to the customer in the panel and is downloadable via export_excel). Each shipment has bol, carrier, consignee, destination, ship date, cost, status, and — when the backend has them — pickupDate, deliveryDate, and eta (use these for pickup/delivery/tracking timing questions; never estimate a date yourself).",
     input_schema: {
       type: 'object',
       properties: {
         query:     { type: 'string', description: 'Natural-language description of what to find (e.g. "shipments to Keith", "deliveries to Texas last month").' },
         bol:       { type: 'string', description: 'A specific BOL number to look up / track, or null.' },
         pro:       { type: 'string', description: 'A specific PRO (carrier tracking) number to look up, or null.' },
-        carrier:   { type: 'string', description: 'Carrier name to filter by, or null.' },
-        consignee: { type: 'string', description: 'Consignee/recipient name to filter by, or null.' },
+        carrier:   { type: 'string', description: 'Carrier / trucking company to filter by — e.g. Metro or Metro W&D, Pilot, ABF, Estes, TForce, XPO, Saia, AAA Cooper, R&L. ALL carrier names go HERE, never in consignee. Null if not filtering by carrier.' },
+        consignee: { type: 'string', description: 'Consignee — the person or company RECEIVING the freight (e.g. "Keith VanOrder", "Home Depot"). This is the recipient, NEVER a carrier or trucking company. Null if not filtering by recipient.' },
         destState: { type: 'string', description: 'Destination state as a 2-letter code, or null.' },
         dateFrom:  { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
         dateTo:    { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' },
-        limit:     { type: 'number', description: 'Max shipments to return (default 10), or null.' }
+        limit:     { type: 'number', description: 'Size of the sample returned to you (the full matched set is always kept for the customer). Default 25.' }
       }
     }
   },
@@ -18311,9 +18313,6 @@ async function _waybSearch(input) {
   let q = {};
   if (input.query) { try { q = (await parseShipQuery(String(input.query))) || {}; } catch (e) { q = {}; } }
   if (typeof q !== 'object' || !q) q = {};
-  // ── TEMP DIAGNOSTIC (Metro + date-range → consignee misparse) — REMOVE once fixed ──
-  try { console.log('[waybSearch] tool input =', JSON.stringify(input), '| parseShipQuery →', JSON.stringify(q)); } catch (e) {}
-  // ── END TEMP DIAGNOSTIC ──
   // Explicit tool fields override the parse. Carrier is handled separately (flexible match below).
   if (input.bol)       q.bol       = String(input.bol).trim();
   if (input.pro)       q.pro       = String(input.pro).trim();
@@ -18321,11 +18320,18 @@ async function _waybSearch(input) {
   if (input.destState) q.destState = String(input.destState).toLowerCase();
   if (input.dateFrom)  q.dateFrom  = input.dateFrom;
   if (input.dateTo)    q.dateTo    = input.dateTo;
-  const carrierF = String(input.carrier || q.carrier || q.aggregateCarrier || '').toLowerCase().trim();
+  let carrierF = String(input.carrier || q.carrier || q.aggregateCarrier || '').toLowerCase().trim();
   delete q.carrier; delete q.aggregateCarrier; delete q.aggregate;
+  // Belt-and-suspenders: the agent sometimes drops a CARRIER name into the consignee field. If no
+  // carrier was supplied but the consignee IS a known carrier, treat it as a carrier filter (a
+  // carrier is never a recipient). Only fires when carrier is empty — the exact misclassification.
+  const _CARRIER_RE = /^(metro|metro w&d|metropolitan|pilot|estes|abf|arcbest|tforce|xpo|saia|r&l|r\+l|aaa cooper|southeastern|sefl|forward air|warp|stg|central transport|pitt ohio|ward trucking|old dominion|odfl)\b/i;
+  if (!carrierF && q.consignee && _CARRIER_RE.test(String(q.consignee).trim())) {
+    carrierF = String(q.consignee).toLowerCase().trim();
+    delete q.consignee;
+  }
   q.action = 'list';
   if (!q.sortField) { q.sortField = 'date'; q.sortDir = 'desc'; }
-  const lim = Math.min(Math.max(Number(input.limit) || 10, 1), 25);
 
   // Ensure shipments are loaded BEFORE filtering. loadWideHistory reuses an existing wide (~2yr)
   // load and only fetches when shipCtx is empty or was narrowed by a prior query — this fixes
@@ -18343,11 +18349,9 @@ async function _waybSearch(input) {
     const cln = cleanCar(f.carrier).toLowerCase();
     return raw.indexOf(carrierF) >= 0 || cln.indexOf(carrierF) >= 0;
   });
-  const _top = matched.slice(0, lim);
-  if (_top.length) lastWaybResultShipments = _top; // persist raw only on a non-empty result (no clobber)
   // Safe YYYY-MM-DD from any backend date value (noon-anchored so a bare date isn't shifted a day).
   const _iso = function (v) { if (!v) return null; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) + 'T12:00:00' : v); return isNaN(d) ? null : d.toISOString().split('T')[0]; };
-  const rows = _top.map(function (s) {
+  const _mapRow = function (s) {
     const f = shipFields(s);
     const ti = s.trackingInformation || {};
     // Timing — surface ONLY what the backend actually provides (never estimate/fabricate):
@@ -18368,9 +18372,16 @@ async function _waybSearch(input) {
       deliveryDate: _del,
       eta: _eta
     };
-  });
-  if (!rows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
-  return { count: rows.length, shipments: rows };
+  };
+  // NO 25-cap: the customer's table preview and the Excel export get the FULL matched set (so a
+  // carrier search matches the analytics count, e.g. all 182 Metro). The model receives the TRUE
+  // total plus a bounded sample of the most recent — enough context without bloating tokens.
+  const allRows = matched.map(_mapRow);
+  if (matched.length) { lastWaybResultShipments = matched; lastWaybResultSet = allRows; } // full set (non-empty only, no clobber)
+  if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
+  const _MODEL_CAP = 40;
+  const preview = allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
+  return { count: matched.length, returned: preview.length, shipments: preview };
 }
 
 // run_analytics — loads the full ~2yr history silently, then computes the aggregate. Date
@@ -18657,9 +18668,10 @@ async function waybAgent(text) {
           // same turn must not clobber a good result set (that was hiding the Excel button on the
           // date-scoped path). Persist for export_excel AND capture this turn's set for the button.
           if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length) {
-            lastWaybResultSet = ex.raw.shipments;
-            _turnRows = ex.raw.shipments;
-            _turnShips = lastWaybResultShipments || []; // raw for THIS call (set inside _waybSearch)
+            // _waybSearch already set the FULL result set on the globals (non-empty only). The button
+            // and export bind the full set, NOT the bounded sample that went to the model.
+            _turnRows = lastWaybResultSet;
+            _turnShips = lastWaybResultShipments;
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
         }
