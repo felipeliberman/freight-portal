@@ -18434,8 +18434,13 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments) {
       const a = document.createElement('a');
       a.href = 'javascript:void(0)';
       a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); _waybOpenDocTab(_docUrl, _docLabel, _docType, _docBol); };
-      a.textContent = _docLabel;
-      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #e5e2d9;color:#2a2a2a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;';
+      // Match the portal's native soft-outline document button (showShipmentDetail) with a doc icon,
+      // and the welcome-pill hover convention: brand purple border/text/tint on hover (not filled).
+      const _escLabel = _docLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>' + _escLabel + '</span>';
+      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;transition:all .12s;';
+      a.onmouseenter = function () { a.style.borderColor = 'var(--ac)'; a.style.color = 'var(--ac)'; a.style.background = 'var(--ac2)'; };
+      a.onmouseleave = function () { a.style.borderColor = 'var(--bdr)'; a.style.color = 'var(--tx)'; a.style.background = '#f7f5f2'; };
       dwrap.appendChild(a);
     });
     if (dwrap.children.length) bubble.appendChild(dwrap);
