@@ -18296,6 +18296,11 @@ const _waybTools = [
         bol: { type: 'string', description: "The shipment's BOL number." }
       }
     }
+  },
+  {
+    name: 'export_excel',
+    description: "Download the customer's most recent shipment search results as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet — but only after a search_shipments has produced results in this conversation. Takes no input; it exports the latest result set.",
+    input_schema: { type: 'object', properties: {} }
   }
 ];
 
@@ -18338,10 +18343,11 @@ async function _waybSearch(input) {
     const cln = cleanCar(f.carrier).toLowerCase();
     return raw.indexOf(carrierF) >= 0 || cln.indexOf(carrierF) >= 0;
   });
-  lastWaybResultShipments = matched.slice(0, lim); // raw objects → exact My Shipments table in the preview tab
+  const _top = matched.slice(0, lim);
+  if (_top.length) lastWaybResultShipments = _top; // persist raw only on a non-empty result (no clobber)
   // Safe YYYY-MM-DD from any backend date value (noon-anchored so a bare date isn't shifted a day).
   const _iso = function (v) { if (!v) return null; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) + 'T12:00:00' : v); return isNaN(d) ? null : d.toISOString().split('T')[0]; };
-  const rows = lastWaybResultShipments.map(function (s) {
+  const rows = _top.map(function (s) {
     const f = shipFields(s);
     const ti = s.trackingInformation || {};
     // Timing — surface ONLY what the backend actually provides (never estimate/fabricate):
@@ -18511,6 +18517,15 @@ function _waybDownloadExcel(rows) {
   const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
+// export_excel tool — download the most recent (persisted) search result set on a typed request
+// ("put it in excel", "give me a spreadsheet"). Uses the same SheetJS export as the button.
+function _waybExportExcel() {
+  const rows = (lastWaybResultSet || []).slice();
+  if (!rows.length) return { ok: false, message: 'There are no search results to export yet — search for shipments first, then ask again.' };
+  try { _waybDownloadExcel(rows); } catch (e) { console.error('export_excel failed:', e); return { ok: false, message: 'The export could not be generated.' }; }
+  return { ok: true, exported: rows.length };
+}
+
 // ── Way B preview tabs ──────────────────────────────────────────────────────
 // Documents and the Excel result set open as real, draggable tabs in the existing right-panel
 // tab system (openRightPanel) — not a floating overlay. The Excel tab reuses the EXACT
@@ -18573,6 +18588,7 @@ async function _waybExecTool(tu) {
     if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
+    else if (tu.name === 'export_excel') result = _waybExportExcel();
     else result = { error: 'unsupported tool: ' + tu.name };
   } catch (err) { console.error('waybAgent tool error (' + tu.name + '):', err); result = { error: 'tool execution failed' }; }
   return { raw: result, block: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) } };
@@ -18597,10 +18613,12 @@ async function waybAgent(text) {
   // Snapshot for rollback: if the turn fails, discard everything it added so history stays a
   // valid, fully-paired transcript (no dangling user or unmatched tool_use).
   const _snapshot = waybHistory.slice();
-  lastWaybResultSet = [];   // reset per turn — only THIS turn's search feeds the Excel button
-  lastWaybResultShipments = []; // reset per turn — raw shipments for the Excel preview tab
+  // lastWaybResultSet / lastWaybResultShipments PERSIST across turns so a follow-up "put it in
+  // excel" can export the last results. The Download-as-Excel button uses the turn-local vars below.
   _waybDocStore = {};       // reset per turn — holds this turn's doc URLs (never sent to the model)
   let _turnDocs = [];       // documents fetched this turn, rendered beneath the final reply
+  let _turnRows = [];        // THIS turn's search rows — drives the Download-as-Excel button
+  let _turnShips = [];       // THIS turn's raw shipments — for the Excel preview table
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
   try {
@@ -18635,7 +18653,14 @@ async function waybAgent(text) {
         for (const tu of toolUses) {
           const ex = await _waybExecTool(tu);
           results.push(ex.block);
-          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments)) lastWaybResultSet = ex.raw.shipments;
+          // Only a NON-EMPTY search updates result state — a later empty/misparsed search in the
+          // same turn must not clobber a good result set (that was hiding the Excel button on the
+          // date-scoped path). Persist for export_excel AND capture this turn's set for the button.
+          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length) {
+            lastWaybResultSet = ex.raw.shipments;
+            _turnRows = ex.raw.shipments;
+            _turnShips = lastWaybResultShipments || []; // raw for THIS call (set inside _waybSearch)
+          }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
         }
         waybHistory.push({ role: 'user', content: results });
@@ -18650,7 +18675,7 @@ async function waybAgent(text) {
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
       // returned 10+ shipments) render beneath the reply. Fewer than 10 → cards/text only.
-      _waybAttachExtras(_row, _turnDocs, lastWaybResultSet, lastWaybResultShipments);
+      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips);
       return;
     }
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
