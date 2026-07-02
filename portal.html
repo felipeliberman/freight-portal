@@ -9189,6 +9189,10 @@ function matchQuery(s,q){
   if(has(q.originState)&&f.originState!==String(q.originState).toLowerCase())return false;
   if(has(q.status)&&!ci(f.status,q.status))return false;
   if(has(q.mode)&&!ci(f.mode,q.mode))return false;
+  // BOL / PRO exact lookup. A typed number may be either, so a q.bol (or q.pro) matches the
+  // shipment's BOL OR PRO — letting any valid identifier resolve against full loaded history.
+  if(has(q.bol)&&String(f.bol).trim()!==String(q.bol).trim()&&String(f.pro).trim()!==String(q.bol).trim())return false;
+  if(has(q.pro)&&String(f.pro).trim()!==String(q.pro).trim()&&String(f.bol).trim()!==String(q.pro).trim())return false;
   // NOTE: commodity is intentionally NOT filtered — item descriptions aren't recorded on
   // shipments, so filtering by it would exclude everything. Pure commodity searches are answered
   // honestly upstream; a commodity term alongside other filters (e.g. "recliners to Keith") simply
@@ -18252,11 +18256,13 @@ Plain conversational prose only. No bullets, no numbered lists, no markdown, no 
 const _waybTools = [
   {
     name: 'search_shipments',
-    description: "Search and filter this customer's real shipments. Provide a natural-language query and/or explicit filters. Returns up to the requested number of matching shipments (most recent first) with bol, carrier, consignee, destination, date, cost, and status.",
+    description: "Search, filter, and look up this customer's real shipments — by natural-language query and/or explicit filters, INCLUDING a specific BOL or PRO number (pass it as bol/pro to track or pull one shipment). Returns up to the requested number of matching shipments (most recent first), each with bol, carrier, consignee, destination, ship date, cost, status, and — when the backend has them — pickupDate, deliveryDate, and eta (use these to answer pickup/delivery/tracking timing questions; never estimate a date yourself).",
     input_schema: {
       type: 'object',
       properties: {
         query:     { type: 'string', description: 'Natural-language description of what to find (e.g. "shipments to Keith", "deliveries to Texas last month").' },
+        bol:       { type: 'string', description: 'A specific BOL number to look up / track, or null.' },
+        pro:       { type: 'string', description: 'A specific PRO (carrier tracking) number to look up, or null.' },
         carrier:   { type: 'string', description: 'Carrier name to filter by, or null.' },
         consignee: { type: 'string', description: 'Consignee/recipient name to filter by, or null.' },
         destState: { type: 'string', description: 'Destination state as a 2-letter code, or null.' },
@@ -18304,6 +18310,8 @@ async function _waybSearch(input) {
   try { console.log('[waybSearch] tool input =', JSON.stringify(input), '| parseShipQuery →', JSON.stringify(q)); } catch (e) {}
   // ── END TEMP DIAGNOSTIC ──
   // Explicit tool fields override the parse. Carrier is handled separately (flexible match below).
+  if (input.bol)       q.bol       = String(input.bol).trim();
+  if (input.pro)       q.pro       = String(input.pro).trim();
   if (input.consignee) q.consignee = input.consignee;
   if (input.destState) q.destState = String(input.destState).toLowerCase();
   if (input.dateFrom)  q.dateFrom  = input.dateFrom;
@@ -18331,8 +18339,16 @@ async function _waybSearch(input) {
     return raw.indexOf(carrierF) >= 0 || cln.indexOf(carrierF) >= 0;
   });
   lastWaybResultShipments = matched.slice(0, lim); // raw objects → exact My Shipments table in the preview tab
+  // Safe YYYY-MM-DD from any backend date value (noon-anchored so a bare date isn't shifted a day).
+  const _iso = function (v) { if (!v) return null; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) + 'T12:00:00' : v); return isNaN(d) ? null : d.toISOString().split('T')[0]; };
   const rows = lastWaybResultShipments.map(function (s) {
     const f = shipFields(s);
+    const ti = s.trackingInformation || {};
+    // Timing — surface ONLY what the backend actually provides (never estimate/fabricate):
+    // actual pickup, actual delivery, and (if not yet delivered) the estimated delivery ETA.
+    const _pu  = f.pickedUpDate ? f.pickedUpDate.toISOString().split('T')[0] : null;
+    const _del = f.deliveredDate ? f.deliveredDate.toISOString().split('T')[0] : null;
+    const _eta = _del ? null : _iso(s.estimatedDeliveryDate || ti.deliveryDateEstimated || ti.estimatedDeliveryDate);
     return {
       bol: f.bol || null,
       carrier: cleanCar(f.carrier) || null,
@@ -18341,7 +18357,10 @@ async function _waybSearch(input) {
       destState: f.consigneeState ? f.consigneeState.toUpperCase() : null,
       date: f.date ? f.date.toISOString().split('T')[0] : null,
       cost: f.cost > 0 ? f.cost : null,
-      status: f.status || null
+      status: f.status || null,
+      pickupDate: _pu,
+      deliveryDate: _del,
+      eta: _eta
     };
   });
   if (!rows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
@@ -18460,8 +18479,10 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments) {
     if (dwrap.children.length) bubble.appendChild(dwrap);
   }
   if (resultSet && resultSet.length >= 10) {
-    const _rows = resultSet;                 // captured now so a later turn's data can't swap it
-    const _ships = resultShipments || [];
+    // Bind THIS message's own result set to THIS button as immutable snapshots — the export must
+    // reflect the query that produced this message, never a shared global that a later load swaps.
+    const _rows = (resultSet || []).slice();
+    const _ships = (resultShipments || []).slice();
     const btn = document.createElement('button');
     btn.textContent = 'Download as Excel';
     btn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
