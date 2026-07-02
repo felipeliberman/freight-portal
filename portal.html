@@ -18546,15 +18546,17 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
   if (!row) return;
   const bubble = row.querySelector('.msg-bubble');
   if (!bubble) return;
+  // "View chart" (chart) and "Download as Excel" (result set) are grouped into a single flex row at
+  // the end so they never crowd each other; each is built here without its own margin-top.
+  let viewBtn = null, dlBtn = null;
   // Chart (from render_chart): open it in the side panel now, and leave a button to reopen it if
   // the customer closes the tab. Every value in it was computed by the engine over the full set.
   if (chart) {
     try { _waybOpenChartTab(chart); } catch (e) { console.error('render chart failed:', e); }
-    const cbtn = document.createElement('button');
-    cbtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>View chart';
-    cbtn.style.cssText = 'display:inline-flex;align-items:center;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-    cbtn.onclick = function () { _waybOpenChartTab(chart); };
-    bubble.appendChild(cbtn);
+    viewBtn = document.createElement('button');
+    viewBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>View chart';
+    viewBtn.style.cssText = 'display:inline-flex;align-items:center;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    viewBtn.onclick = function () { _waybOpenChartTab(chart); };
   }
   if (docs && docs.length) {
     const dwrap = document.createElement('div');
@@ -18586,11 +18588,18 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
     // reflect the query that produced this message, never a shared global that a later load swaps.
     const _rows = (resultSet || []).slice();
     const _ships = (resultShipments || []).slice();
-    const btn = document.createElement('button');
-    btn.textContent = 'Download as Excel';
-    btn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-    btn.onclick = function () { _waybOpenExcelTab(_rows, _ships); };
-    bubble.appendChild(btn);
+    dlBtn = document.createElement('button');
+    dlBtn.textContent = 'Download as Excel';
+    dlBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    dlBtn.onclick = function () { _waybOpenExcelTab(_rows, _ships); };
+  }
+  // FIX 4 — group both action buttons in one spaced flex row (only whichever exist this turn).
+  if (viewBtn || dlBtn) {
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;';
+    if (viewBtn) btnRow.appendChild(viewBtn);
+    if (dlBtn) btnRow.appendChild(dlBtn);
+    bubble.appendChild(btnRow);
   }
 }
 
@@ -18772,12 +18781,12 @@ function _waybChartPie(points, unit, donut) {
     a0 = a1;
   });
   const hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
-  // Legend BELOW the chart in a 2-column grid: colored dot + label + "$X · XX%".
+  // Legend BELOW the chart as a single stacked list — one row per item: dot + label + "$X · XX%".
   let legend = '';
   pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); legend += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;min-width:0;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span><span style="color:#888;margin-left:auto;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span></div>'; });
   const wrap = document.createElement('div');
-  wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="max-width:380px;height:auto;">' + paths + hole + '</svg></div>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin-top:16px;">' + legend + '</div>';
+  wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="height:auto;">' + paths + hole + '</svg></div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:16px;">' + legend + '</div>';
   // Bind a tooltip to each slice: "Label · $X · XX%".
   const tip = _waybChartTip(wrap);
   const slices = wrap.querySelectorAll('svg path');
@@ -18826,6 +18835,13 @@ function _waybDownloadChartData(title, points, unit) {
 // Assemble a chart spec into a right-panel tab: title bar (+ period + data download) and the body.
 function _waybOpenChartTab(spec) {
   if (!spec) return;
+  // FIX 3 — never open a phantom tab. If the engine gave us nothing to draw (error, or neither a
+  // stat value nor a non-empty breakdown), bail before touching the panel. The agent's prose
+  // explains why; no empty tab should appear.
+  if (spec.error) return;
+  const _hasStat = (spec.chartType === 'stat' && spec.stat != null);
+  const _hasPoints = Array.isArray(spec.points) && spec.points.length > 0;
+  if (!_hasStat && !_hasPoints) return;
   const wrap = document.createElement('div');
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;';
@@ -18875,7 +18891,10 @@ function _waybOpenChartTab(spec) {
       if (unit === '$') pills.push(pill('Total:', _waybFmtVal(sum, '$')));
       else if (unit === 'lbs') pills.push(pill('Total:', _waybFmtVal(sum, 'lbs')));
       else pills.push(pill('', _waybFmtVal(sum) + ' shipments'));
-      pills.push(pill('Top:', _waybEsc(P[0].label)));
+      // FIX 2 — "Top" is the peak item, not breakdown[0] (byMonth is chronological, so [0] is the
+      // earliest, not the highest). For ranked breakdowns [0] already IS the max, so this is safe.
+      let top = P[0]; P.forEach(function (p) { if (p.value > top.value) top = p; });
+      pills.push(pill('Top:', _waybEsc(top.label)));
       pills.push(pill('', _waybEsc(winLabel)));
     }
     const strip = document.createElement('div');
