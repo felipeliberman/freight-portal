@@ -18405,8 +18405,12 @@ function _waybAttachExtras(row, docs, resultSet) {
     dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
     docs.forEach(function (doc) {
       if (!doc || !doc.url) return;
+      // Open via a click handler with the URL held in a closure — the raw backend URL is NEVER put
+      // in the href or any visible markup, so the customer never sees the backend system name.
+      const _docUrl = doc.url;
       const a = document.createElement('a');
-      a.href = doc.url; a.target = '_blank'; a.rel = 'noopener';
+      a.href = 'javascript:void(0)';
+      a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); window.open(_docUrl, '_blank', 'noopener'); };
       a.textContent = doc.label || doc.type || 'Document';
       a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #e5e2d9;color:#2a2a2a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;';
       dwrap.appendChild(a);
