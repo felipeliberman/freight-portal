@@ -18690,7 +18690,7 @@ function _waybOpenDocTab(url, label, type, bol) {
   const frame = document.createElement('iframe');
   frame.setAttribute('title', label);
   frame.src = _proxyUrl;
-  frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid var(--bdr);border-radius:10px;background:#fff;';
+  frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;';
   wrap.appendChild(frame);
   openRightPanel(wrap, label + (bol ? ' · ' + bol : ''));
 }
