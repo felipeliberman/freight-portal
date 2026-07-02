@@ -9016,6 +9016,7 @@ var SHIP_PAGE = 100;
 var selectedShipments = new Set();
 let waybHistory = [];   // Way B agent conversation history (user + final assistant text turns)
 let lastWaybResultSet = []; // last search_shipments result rows (for the Excel download button)
+let _waybDocStore = {};     // doc URLs keyed by BOL, for button rendering — NEVER sent to the model
 function updateBolDownloadBtn() {
   const btn = document.getElementById('ship-dl-btn');
   if (!btn) return;
@@ -18234,6 +18235,8 @@ You have NO knowledge of this customer's shipments, spend, carriers, or history 
 
 You must NEVER make any statement about what carriers, consignees, or shipments are or are not in the customer's account without first calling a tool to verify. If asked about a carrier you have not searched for in this conversation, call search_shipments or run_analytics first. Do not say a carrier does not appear in the customer's history based on your own assumption.
 
+NEVER write out a document link, URL, or web address of any kind. When you fetch documents, the customer sees clickable document buttons automatically — just tell them the documents are ready (e.g. "Your Bill of Lading and proof of delivery are ready below."). Do not paste, format, or invent any link.
+
 General freight education (what LTL means, how freight class works, what a liftgate is) you may answer from your own expertise. Anything specific to THIS customer's account comes only from tools.
 
 Plain conversational prose only. No bullets, no numbered lists, no markdown, no headers. Prefer 2 to 4 sentences. Do not mention any internal or backend system by name — you speak as the company.`;
@@ -18392,7 +18395,15 @@ async function _waybDocuments(input) {
     return { type: typeRaw, url: url, label: DOC_NAMES[typeRaw] || typeRaw || 'Document' };
   }).filter(function (d) { return d.url && !HIDDEN.some(function (h) { return d.type === h || d.type.startsWith(h + ' '); }); });
   if (!list.length) return { documents: [], message: 'No documents are available for BOL ' + bol + ' yet.' };
-  return { documents: list };
+  // Keep the URLs OUT of the model-facing result — the model tends to echo them as markdown links,
+  // exposing the backend name. Stash the real {type,url,label} list for _waybAttachExtras, and
+  // return only types/labels to the model so it can describe the docs without any URL to leak.
+  _waybDocStore[bol] = list;
+  return {
+    bol: bol,
+    documents: list.map(function (d) { return { type: d.type, label: d.label }; }),
+    note: 'The document links are shown to the customer as clickable buttons automatically. Do NOT write out or repeat any link or URL — just tell them the documents are ready.'
+  };
 }
 
 // Render document buttons and/or the Excel-download button beneath a bot message bubble.
@@ -18478,6 +18489,7 @@ async function waybAgent(text) {
   // valid, fully-paired transcript (no dangling user or unmatched tool_use).
   const _snapshot = waybHistory.slice();
   lastWaybResultSet = [];   // reset per turn — only THIS turn's search feeds the Excel button
+  _waybDocStore = {};       // reset per turn — holds this turn's doc URLs (never sent to the model)
   let _turnDocs = [];       // documents fetched this turn, rendered beneath the final reply
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
@@ -18514,7 +18526,7 @@ async function waybAgent(text) {
           const ex = await _waybExecTool(tu);
           results.push(ex.block);
           if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments)) lastWaybResultSet = ex.raw.shipments;
-          if (tu.name === 'get_documents' && ex.raw && Array.isArray(ex.raw.documents)) _turnDocs = _turnDocs.concat(ex.raw.documents);
+          if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk]); }
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
