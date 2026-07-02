@@ -18583,7 +18583,7 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
     });
     if (dwrap.children.length) bubble.appendChild(dwrap);
   }
-  if (resultSet && resultSet.length >= 10) {
+  if (resultSet && resultSet.length >= 1) {
     // Bind THIS message's own result set to THIS button as immutable snapshots — the export must
     // reflect the query that produced this message, never a shared global that a later load swaps.
     const _rows = (resultSet || []).slice();
