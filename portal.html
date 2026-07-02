@@ -18781,12 +18781,19 @@ function _waybChartPie(points, unit, donut) {
     a0 = a1;
   });
   const hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
-  // Legend BELOW the chart as a single stacked list — one row per item: dot + label + "$X · XX%".
+  // Legend BELOW the chart as a single stacked column — one carrier per row: dot + name on the
+  // left, "$X · XX%" right-aligned via space-between.
   let legend = '';
-  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); legend += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;min-width:0;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span><span style="color:#888;margin-left:auto;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span></div>'; });
+  pts.forEach(function (p, i) {
+    const pct = Math.round((p.value / total) * 100);
+    legend += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;">'
+      + '<span style="display:flex;align-items:center;gap:6px;min-width:0;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span></span>'
+      + '<span style="color:#888;flex-shrink:0;text-align:right;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span>'
+      + '</div>';
+  });
   const wrap = document.createElement('div');
   wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="height:auto;">' + paths + hole + '</svg></div>'
-    + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:16px;">' + legend + '</div>';
+    + '<div style="display:flex;flex-direction:column;gap:6px;margin-top:16px;">' + legend + '</div>';
   // Bind a tooltip to each slice: "Label · $X · XX%".
   const tip = _waybChartTip(wrap);
   const slices = wrap.querySelectorAll('svg path');
