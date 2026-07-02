@@ -18670,6 +18670,9 @@ function _waybOpenExcelTab(rows, ships) {
 function _waybOpenDocTab(url, label, type, bol) {
   label = label || type || 'Document';
   const _u = url || '';
+  // Route the document through the doc-proxy Worker: it strips X-Frame-Options / CSP and forces
+  // Content-Disposition:inline so the PDF renders in the iframe instead of being blocked/downloaded.
+  const _proxyUrl = 'https://doc-proxy.felipe-b80.workers.dev?url=' + encodeURIComponent(_u);
   const wrap = document.createElement('div');
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;';
@@ -18681,12 +18684,12 @@ function _waybOpenDocTab(url, label, type, bol) {
   openBtn.title = 'Open in new tab'; openBtn.setAttribute('aria-label', 'Open in new tab');
   openBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in new tab';
   openBtn.style.cssText = 'display:inline-flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-  openBtn.onclick = function () { if (_u) window.open(_u, '_blank', 'noopener'); };
+  openBtn.onclick = function () { if (_u) window.open(_proxyUrl, '_blank', 'noopener'); };
   bar.appendChild(openBtn);
   wrap.appendChild(bar);
   const frame = document.createElement('iframe');
   frame.setAttribute('title', label);
-  frame.src = _u;
+  frame.src = _proxyUrl;
   frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid var(--bdr);border-radius:10px;background:#fff;';
   wrap.appendChild(frame);
   openRightPanel(wrap, label + (bol ? ' · ' + bol : ''));
