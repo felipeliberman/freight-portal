@@ -11113,6 +11113,12 @@ Example flow: customer says "damage claim on BOL 123" → you say "Got it. Was t
     console.log('Claude response blocks:', d.content && d.content.length);
     let text = (d.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('\n').trim() || "I am having trouble connecting. Please try again.";
     chatHistory.push({role:'assistant', content:text});
+    // Mirror into waybHistory so waybAgent has full conversational context
+    if (typeof waybHistory !== 'undefined') {
+      waybHistory.push({ role: 'user', content: t });
+      waybHistory.push({ role: 'assistant', content: text });
+      waybHistory = _waybTrim(waybHistory);
+    }
     removeTyping();
     if (window._supModeActive && text.includes('[[DRAFT]]')) {
       const _dispText = text.replace(/\[\[DRAFT\]\]/g, '').trim();
@@ -19103,6 +19109,12 @@ async function waybAgent(text) {
       removeTyping();
       const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
       waybHistory.push({ role: 'assistant', content: reply });
+      // Mirror into chatHistory so aiFreightAnswer has full conversational context
+      if (typeof chatHistory !== 'undefined') {
+        chatHistory.push({ role: 'user', content: String(text) });
+        chatHistory.push({ role: 'assistant', content: reply });
+        if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+      }
       waybHistory = _waybTrim(waybHistory);
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
