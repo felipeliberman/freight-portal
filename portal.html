@@ -10626,6 +10626,10 @@ HOW TO TALK:
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call. Hazmat is self-serve regardless of hazard class — quote and book it normally, never [[TALK]] for hazmat. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
+CONTEXT: Always use the most recent topic in the conversation as context for ambiguous follow-up questions. If the customer uses pronouns like 'they', 'them', 'their', 'it', 'there' without specifying who or what, infer the referent from the last subject discussed. Example: if you just gave an ABF terminal address and the customer asks 'are they open tomorrow?', answer about ABF — do not ask who 'they' refers to. If you genuinely cannot infer the referent, make your best guess and answer it rather than asking for clarification.
+
+CALCULATIONS: When a customer asks a hypothetical or educational question involving dimensions, weight, pallets, linear feet, or freight class — especially phrased as 'if I have X pallets' or 'how many linear feet' — answer it directly in plain prose with the actual computed answer. Do NOT open a quote form and do NOT ask for origin/destination. These are education questions, not quote requests. Example: '10 pallets at 48 inches wide = 40 linear feet. Standard LTL carriers typically allow 12 linear feet before linear foot rules apply, so 10 pallets would exceed that threshold.' Compute it yourself and answer it.
+
 BUILDING A QUOTE — you have an update_quote tool:
 When a customer wants to ship something or get a rate, use update_quote to open the quote form and fill in what you actually know. You can call it repeatedly as the conversation evolves — it only changes the fields you pass, leaving everything else intact.
 
@@ -13655,12 +13659,6 @@ async function handleInput(text) {
   const _isDefQ = /\b(what (is|are|does|do|means?)|definition of|explain|how.*work|difference between|what.*mean)/i.test(lower) && !/\b(my shipment|my order|my bol|where is|find my|show me|list my)\b/i.test(lower);
   if (_isDefQ) { q = { action: 'help' }; } else { const _actCtx = _shipContextDesc(getActiveShipment()); try { q = await parseShipQuery(t, _actCtx); } catch(e) { q = { action: 'help' }; } }
   if (!q || !q.action) q = { action: 'help' };
-
-  // Linear-foot / freight-class CALCULATION questions carry dimensions but are education, not a
-  // quote. Force them to the help path (AI answers in prose) unless real origin/dest zips are present.
-  if (/how many linear feet|linear foot rule|linear footage|what.*linear|freight class.*if|if.*weigh.*class/i.test(t) && !q.originZip && !q.destinationZip) {
-    q.action = 'help';
-  }
 
   if (q.action === 'quote') {
     removeTyping();
