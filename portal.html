@@ -18239,7 +18239,9 @@ setTimeout(() => {
 
 const _waybSysPrompt = `You are a freight expert assistant for Freight and Logistics, Inc. You help this logged-in customer with their freight — their shipments, tracking, and questions about their shipping history.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), and get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, or paperwork.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), and render_chart (draw a chart of their analytics in the side panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, or paperwork.
+
+When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
 When a question is scoped to a time period (this year, last month, since June, the last 90 days), ALWAYS pass the matching dateFrom/dateTo on run_analytics and search_shipments, and carry that same window through follow-up questions about the same period. If you omit the dates, analytics covers their entire history on file. Each analytics result reports the exact window it used (no dates means all-time) — state that period accurately in your answer.
 
@@ -18281,7 +18283,7 @@ const _waybTools = [
       type: 'object',
       required: ['type'],
       properties: {
-        type:     { type: 'string', description: 'One of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState.' },
+        type:     { type: 'string', description: 'One of: count, sumCost, avgCost, totalWeight, avgWeight, byCarrier, costByCarrier, avgCostByCarrier, topConsignees, topShippers, byMonth, byDestState, byOriginState, byDestCity, byMode, byStatus, laneMatrix.' },
         carrier:  { type: 'string', description: 'Scope the aggregate to this carrier, or null.' },
         dateFrom: { type: 'string', description: 'Earliest ship date YYYY-MM-DD. Pass this whenever the customer scopes a time period. Null means no lower bound (all history).' },
         dateTo:   { type: 'string', description: 'Latest ship date YYYY-MM-DD. Null means no upper bound (through today).' }
@@ -18303,6 +18305,29 @@ const _waybTools = [
     name: 'export_excel',
     description: "Download the customer's most recent shipment search results as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet — but only after a search_shipments has produced results in this conversation. Takes no input; it exports the latest result set.",
     input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'render_chart',
+    description: "Visualize the customer's shipment analytics as a chart in the side panel. Use this when the customer asks to see, chart, graph, plot, or visualize their data (e.g. 'chart my spend by carrier', 'show shipments by month as a bar chart', 'break down my destinations in a pie chart'). You do NOT supply any numbers — this tool runs the analytics engine over the customer's FULL matched history and computes every value itself. You only choose the chart SHAPE that fits the question and WHICH aggregate to run. Pick chartType by intent: 'bar' for comparing categories (carriers, states, cities); 'line' for a trend over time (byMonth); 'pie' or 'donut' for share-of-total across a few categories (mode, status, top carriers); 'stat' for a single headline number (count, total spend, average, total weight); 'table' when the customer wants the exact figures in rows. The result echoes back the computed data so you can also state the key numbers in prose — always give a one or two sentence spoken summary alongside the chart. If the engine reports no data for the requested period, it renders nothing and tells you so; say that plainly and never invent figures.",
+    input_schema: {
+      type: 'object',
+      required: ['chartType', 'title', 'analytics'],
+      properties: {
+        chartType: { type: 'string', description: "One of: bar, line, pie, donut, stat, table. Choose the shape that best fits the question (see guidance above)." },
+        title:     { type: 'string', description: "Short human-readable chart title, e.g. 'Spend by Carrier — 2026' or 'Shipments by Month'." },
+        analytics: {
+          type: 'object',
+          required: ['type'],
+          description: "Which aggregate the engine should compute. The chart is drawn from THIS result only.",
+          properties: {
+            type:     { type: 'string', description: "The aggregate to compute. Category breakdowns (bar/pie/donut/table): byCarrier, costByCarrier, avgCostByCarrier, byDestState, byOriginState, byDestCity, topConsignees, topShippers, byMode, byStatus, laneMatrix. Time trend (line/bar): byMonth. Single number (stat): count, sumCost, avgCost, totalWeight, avgWeight." },
+            carrier:  { type: 'string', description: "Scope the aggregate to this carrier, or null." },
+            dateFrom: { type: 'string', description: "Earliest ship date YYYY-MM-DD, or null for all history. Pass this whenever the customer scopes a time period." },
+            dateTo:   { type: 'string', description: "Latest ship date YYYY-MM-DD, or null." }
+          }
+        }
+      }
+    }
   }
 ];
 
@@ -18418,7 +18443,58 @@ async function _waybAnalytics(input) {
   if (type === 'topConsignees') { const m = {}; F.forEach(function (f) { const c = f.consignee || 'Unknown'; m[c] = (m[c] || 0) + 1; }); return out({ breakdown: rank(m, 'consignee', 10) }); }
   if (type === 'byMonth') { const m = {}; F.forEach(function (f) { if (!f.date) return; const k = f.date.getFullYear() + '-' + String(f.date.getMonth() + 1).padStart(2, '0'); m[k] = (m[k] || 0) + 1; }); const b = Object.keys(m).sort().map(function (k) { return { month: k, count: m[k] }; }); return out({ breakdown: b }); }
   if (type === 'byDestState') { const m = {}; F.forEach(function (f) { const s = (f.consigneeState || '??').toUpperCase(); m[s] = (m[s] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'state') }); }
-  return { type: type, window: win, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
+  if (type === 'byOriginState') { const m = {}; F.forEach(function (f) { const s = (f.shipperState || '??').toUpperCase(); m[s] = (m[s] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'state') }); }
+  if (type === 'byDestCity') { const m = {}; F.forEach(function (f) { const k = ((f.consigneeCity || 'Unknown') + (f.consigneeState ? ', ' + f.consigneeState.toUpperCase() : '')).trim(); m[k] = (m[k] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'city', 10) }); }
+  if (type === 'topShippers') { const m = {}; F.forEach(function (f) { const c = f.shipper || 'Unknown'; m[c] = (m[c] || 0) + 1; }); return out({ breakdown: rank(m, 'shipper', 10) }); }
+  if (type === 'byMode') { const m = {}; F.forEach(function (f) { const md = (f.mode || 'ltl').toUpperCase(); m[md] = (m[md] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'mode') }); }
+  if (type === 'byStatus') { const m = {}; F.forEach(function (f) { const st = f.status ? (f.status.charAt(0).toUpperCase() + f.status.slice(1)) : 'Unknown'; m[st] = (m[st] || 0) + 1; }); return out({ total: F.length, breakdown: rank(m, 'status') }); }
+  if (type === 'laneMatrix') { const m = {}; F.forEach(function (f) { const k = (f.shipperState || '??').toUpperCase() + ' → ' + (f.consigneeState || '??').toUpperCase(); m[k] = (m[k] || 0) + 1; }); return out({ breakdown: rank(m, 'lane', 10) }); }
+  if (type === 'costByCarrier') { const m = {}; F.forEach(function (f) { const c = carLabel(f.carrier); if (!m[c]) m[c] = { total: 0, count: 0 }; m[c].total += (f.cost || 0); m[c].count++; }); const b = Object.keys(m).map(function (c) { return { carrier: c, total: +m[c].total.toFixed(2), count: m[c].count }; }).sort(function (a, b2) { return b2.total - a.total; }); return out({ total: F.length, breakdown: b }); }
+  if (type === 'avgCostByCarrier') { const m = {}; F.forEach(function (f) { if (!(f.cost > 0)) return; const c = carLabel(f.carrier); if (!m[c]) m[c] = { total: 0, count: 0 }; m[c].total += f.cost; m[c].count++; }); const b = Object.keys(m).map(function (c) { return { carrier: c, average: +(m[c].total / m[c].count).toFixed(2), count: m[c].count }; }).sort(function (a, b2) { return b2.average - a.average; }); return out({ breakdown: b }); }
+  if (type === 'totalWeight') { return out({ total: Math.round(F.reduce(function (a, f) { return a + (f.weight || 0); }, 0)), shipments: F.length }); }
+  if (type === 'avgWeight') { const w = F.filter(function (f) { return f.weight > 0; }); const t = w.reduce(function (a, f) { return a + f.weight; }, 0); return out({ average: Math.round(w.length ? t / w.length : 0), shipments: w.length }); }
+  return { type: type, window: win, error: 'unknown analytics type — use one of: count, sumCost, avgCost, totalWeight, avgWeight, byCarrier, costByCarrier, avgCostByCarrier, topConsignees, topShippers, byMonth, byDestState, byOriginState, byDestCity, byMode, byStatus, laneMatrix' };
+}
+
+// render_chart — the agent chooses the chart SHAPE and WHICH aggregate to run; this runs the SAME
+// full-set analytics engine (_waybAnalytics) and computes every value. The model never supplies a
+// number. The normalized series is stashed on _waybChartSpec for the turn loop to render; the
+// model-facing return echoes the computed data so it can speak the figures. If the engine has no
+// data, nothing is stashed and { rendered:false } is returned so the agent says so honestly.
+let _waybChartSpec = null; // set by render_chart within a turn; picked up by the turn loop
+async function _waybRenderChart(input) {
+  input = input || {};
+  let chartType = String(input.chartType || 'bar').toLowerCase();
+  const title = String(input.title || 'Analytics').trim();
+  const a = input.analytics || {};
+  const type = String(a.type || 'count');
+  const res = await _waybAnalytics({ type: type, carrier: a.carrier || null, dateFrom: a.dateFrom || null, dateTo: a.dateTo || null });
+  if (res && res.error) return { rendered: false, error: res.error };
+  const COST = { sumCost: 1, avgCost: 1, costByCarrier: 1, avgCostByCarrier: 1 };
+  const WEIGHT = { totalWeight: 1, avgWeight: 1 };
+  const unit = COST[type] ? '$' : (WEIGHT[type] ? 'lbs' : 'shipments');
+  const STAT = { count: 'count', sumCost: 'total', avgCost: 'average', totalWeight: 'total', avgWeight: 'average' };
+  // Single-number aggregate → always a stat card, whatever shape was requested.
+  if (STAT[type]) {
+    const v = res[STAT[type]];
+    if (v == null) return { rendered: false, message: res.message || 'No data for that period.' };
+    _waybChartSpec = { chartType: 'stat', title: title, unit: unit, stat: v, window: res.window };
+    return { rendered: true, chartType: 'stat', title: title, value: v, unit: unit, window: res.window };
+  }
+  // A breakdown aggregate can't be a stat card — fall back to bar if that shape was requested.
+  if (chartType === 'stat') chartType = 'bar';
+  const rows = Array.isArray(res.breakdown) ? res.breakdown : [];
+  const prettyMonth = function (s) { const m = /^(\d{4})-(\d{2})$/.exec(String(s)); if (!m) return String(s); const d = new Date(+m[1], +m[2] - 1, 1); return d.toLocaleString('en-US', { month: 'short', year: 'numeric' }); };
+  const points = rows.map(function (r) {
+    let label = null;
+    Object.keys(r).forEach(function (k) { if (label == null && typeof r[k] === 'string') label = r[k]; });
+    label = (label == null) ? '—' : (type === 'byMonth' ? prettyMonth(label) : label);
+    const value = (r.total != null ? r.total : (r.average != null ? r.average : r.count));
+    return { label: label, value: Number(value) || 0 };
+  }).filter(function (p) { return type === 'byMonth' || p.value > 0; });
+  if (!points.length) return { rendered: false, message: res.message || 'No data to chart for that period.' };
+  _waybChartSpec = { chartType: chartType, title: title, unit: unit, points: points, window: res.window };
+  return { rendered: true, chartType: chartType, title: title, unit: unit, data: points, window: res.window };
 }
 
 // get_documents — fetch a shipment's documents. Primus keys documents by the internal BOLId, NOT
@@ -18466,10 +18542,20 @@ async function _waybDocuments(input) {
 
 // Render document buttons and/or the Excel-download button beneath a bot message bubble.
 // Clicking either opens a real, draggable right-panel tab (not a floating overlay).
-function _waybAttachExtras(row, docs, resultSet, resultShipments) {
+function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
   if (!row) return;
   const bubble = row.querySelector('.msg-bubble');
   if (!bubble) return;
+  // Chart (from render_chart): open it in the side panel now, and leave a button to reopen it if
+  // the customer closes the tab. Every value in it was computed by the engine over the full set.
+  if (chart) {
+    try { _waybOpenChartTab(chart); } catch (e) { console.error('render chart failed:', e); }
+    const cbtn = document.createElement('button');
+    cbtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>View chart';
+    cbtn.style.cssText = 'display:inline-flex;align-items:center;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    cbtn.onclick = function () { _waybOpenChartTab(chart); };
+    bubble.appendChild(cbtn);
+  }
   if (docs && docs.length) {
     const dwrap = document.createElement('div');
     dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
@@ -18592,6 +18678,153 @@ function _waybOpenDocTab(url, label, type, bol) {
   openRightPanel(wrap, label + (bol ? ' · ' + bol : ''));
 }
 
+// ── Way B chart tab ─────────────────────────────────────────────────────────
+// Self-contained inline-SVG/HTML charts (no external chart library — matches this file's
+// dependency-free, hardcoded-hex conventions). Two-tone: purple primary (#bd27bc) over neutral
+// grays; pie/donut use a purple→gray ramp so it stays on-brand. Every value comes straight from
+// _waybChartSpec, which the engine computed over the full matched set.
+function _waybFmtVal(v, unit) {
+  const n = Number(v) || 0;
+  if (unit === '$') return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (unit === 'lbs') return n.toLocaleString('en-US') + ' lbs';
+  return n.toLocaleString('en-US');
+}
+function _waybEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+var _WAYB_CHART_COLORS = ['#bd27bc', '#8e1d8d', '#cf52ce', '#6b6b6b', '#d98ad8', '#4a4a4a', '#a76fa5', '#9b9690'];
+
+function _waybChartBars(points, unit) {
+  const max = Math.max.apply(null, points.map(function (p) { return p.value; })) || 1;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:11px;';
+  points.forEach(function (p) {
+    const pct = Math.max(2, Math.round((p.value / max) * 100));
+    const row = document.createElement('div');
+    row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px;gap:10px;">'
+      + '<span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span>'
+      + '<span style="color:#666;font-weight:600;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + '</span></div>'
+      + '<div style="background:#efe9ec;border-radius:6px;height:10px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:#bd27bc;border-radius:6px;"></div></div>';
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function _waybChartLine(points, unit) {
+  const W = 620, H = 250, PADL = 52, PADR = 18, PADT = 18, PADB = 46;
+  const vals = points.map(function (p) { return p.value; });
+  const max = Math.max.apply(null, vals) || 1;
+  const n = points.length;
+  const x = function (i) { return PADL + (n <= 1 ? (W - PADL - PADR) / 2 : (i / (n - 1)) * (W - PADL - PADR)); };
+  const y = function (v) { return PADT + (1 - v / max) * (H - PADT - PADB); };
+  let grid = '', ticks = 4;
+  for (let g = 0; g <= ticks; g++) { const gv = max * g / ticks; const gy = y(gv); grid += '<line x1="' + PADL + '" y1="' + gy + '" x2="' + (W - PADR) + '" y2="' + gy + '" stroke="#ece8e2" stroke-width="1"/>'; grid += '<text x="' + (PADL - 8) + '" y="' + (gy + 4) + '" text-anchor="end" font-size="10" fill="#999">' + _waybFmtVal(Math.round(gv), unit) + '</text>'; }
+  const pts = points.map(function (p, i) { return x(i) + ',' + y(p.value); }).join(' ');
+  let dots = '', xlabels = '';
+  const step = Math.ceil(n / 8);
+  points.forEach(function (p, i) { dots += '<circle cx="' + x(i) + '" cy="' + y(p.value) + '" r="3.5" fill="#bd27bc"/>'; if (i % step === 0 || i === n - 1) xlabels += '<text x="' + x(i) + '" y="' + (H - PADB + 18) + '" text-anchor="middle" font-size="10" fill="#777">' + _waybEsc(p.label) + '</text>'; });
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:100%;height:auto;font-family:inherit;">' + grid
+    + '<polyline points="' + pts + '" fill="none" stroke="#bd27bc" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' + dots + xlabels + '</svg>';
+  return wrap;
+}
+
+function _waybChartPie(points, unit, donut) {
+  // Group tail categories into "Other" so the wheel stays readable.
+  let pts = points.slice();
+  if (pts.length > 6) { const head = pts.slice(0, 5); const tail = pts.slice(5); const other = tail.reduce(function (a, p) { return a + p.value; }, 0); head.push({ label: 'Other (' + tail.length + ')', value: other }); pts = head; }
+  const total = pts.reduce(function (a, p) { return a + p.value; }, 0) || 1;
+  const cx = 120, cy = 120, r = 104;
+  let a0 = -Math.PI / 2, paths = '';
+  const arc = function (x0, y0, x1, y1, large) { return 'M' + cx + ',' + cy + ' L' + x0.toFixed(2) + ',' + y0.toFixed(2) + ' A' + r + ',' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(2) + ',' + y1.toFixed(2) + ' Z'; };
+  pts.forEach(function (p, i) {
+    const frac = p.value / total; const a1 = a0 + frac * 2 * Math.PI;
+    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0), x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    const large = (a1 - a0) > Math.PI ? 1 : 0;
+    paths += '<path d="' + arc(x0, y0, x1, y1, large) + '" fill="' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + '"/>';
+    a0 = a1;
+  });
+  const hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
+  let legend = '';
+  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); legend += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;"><span style="width:11px;height:11px;border-radius:3px;flex-shrink:0;background:' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + ';"></span><span style="color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _waybEsc(p.label) + '</span><span style="color:#888;margin-left:auto;flex-shrink:0;">' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%</span></div>'; });
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:20px;align-items:center;';
+  wrap.innerHTML = '<svg viewBox="0 0 240 240" width="220" height="220" style="flex-shrink:0;">' + paths + hole + '</svg>'
+    + '<div style="flex:1;min-width:180px;">' + legend + '</div>';
+  return wrap;
+}
+
+function _waybChartStat(spec) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:28px 8px;text-align:center;';
+  wrap.innerHTML = '<div style="font-size:44px;font-weight:700;color:#bd27bc;line-height:1.1;">' + _waybEsc(_waybFmtVal(spec.stat, spec.unit)) + '</div>'
+    + '<div style="font-size:13px;color:#777;margin-top:8px;">' + _waybEsc(spec.title) + '</div>';
+  return wrap;
+}
+
+function _waybChartTable(points, unit) {
+  const total = points.reduce(function (a, p) { return a + p.value; }, 0);
+  let body = points.map(function (p) { return '<tr><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;color:#333;">' + _waybEsc(p.label) + '</td><td style="padding:8px 12px;border-bottom:1px solid #ece8e2;text-align:right;color:#333;font-weight:600;">' + _waybFmtVal(p.value, unit) + '</td></tr>'; }).join('');
+  const foot = '<tr><td style="padding:8px 12px;color:#888;font-weight:600;">Total</td><td style="padding:8px 12px;text-align:right;color:#888;font-weight:600;">' + _waybFmtVal(total, unit) + '</td></tr>';
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">' + body + foot + '</table>';
+  return wrap;
+}
+
+// Export the chart's underlying series (Label, Value) — SheetJS if present, else CSV.
+function _waybDownloadChartData(title, points, unit) {
+  const header = ['Label', unit === '$' ? 'Value ($)' : (unit === 'lbs' ? 'Value (lbs)' : 'Shipments')];
+  const data = (points || []).map(function (p) { return [p.label, p.value]; });
+  const base = (title || 'chart').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'chart';
+  const fname = base + '-' + new Date().toISOString().split('T')[0] + '.xlsx';
+  try {
+    if (window.XLSX) {
+      const ws = XLSX.utils.aoa_to_sheet([header].concat(data));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Chart Data');
+      XLSX.writeFile(wb, fname);
+      return;
+    }
+  } catch (e) { console.error('chart XLSX export failed, falling back to CSV:', e); }
+  const csv = [header].concat(data).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+// Assemble a chart spec into a right-panel tab: title bar (+ period + data download) and the body.
+function _waybOpenChartTab(spec) {
+  if (!spec) return;
+  const wrap = document.createElement('div');
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;';
+  const w = spec.window || {};
+  let period = '';
+  if (w.dateFrom && w.dateTo) period = w.dateFrom + ' → ' + w.dateTo;
+  else if (w.dateFrom) period = 'since ' + w.dateFrom;
+  else if (w.dateTo) period = 'through ' + w.dateTo;
+  else period = 'all history';
+  const t = document.createElement('div');
+  t.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--tx);">' + _waybEsc(spec.title) + '</div>'
+    + '<div style="font-size:11px;color:var(--mu);margin-top:2px;">' + _waybEsc(period) + '</div>';
+  bar.appendChild(t);
+  if (spec.points && spec.points.length) {
+    const dl = document.createElement('button');
+    dl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Data';
+    dl.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;background:#f7f5f2;border:1px solid #c8c4bc;color:#111;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    dl.onclick = function () { _waybDownloadChartData(spec.title, spec.points, spec.unit); };
+    bar.appendChild(dl);
+  }
+  wrap.appendChild(bar);
+  let body;
+  if (spec.chartType === 'stat') body = _waybChartStat(spec);
+  else if (spec.chartType === 'line') body = _waybChartLine(spec.points, spec.unit);
+  else if (spec.chartType === 'pie') body = _waybChartPie(spec.points, spec.unit, false);
+  else if (spec.chartType === 'donut') body = _waybChartPie(spec.points, spec.unit, true);
+  else if (spec.chartType === 'table') body = _waybChartTable(spec.points, spec.unit);
+  else body = _waybChartBars(spec.points, spec.unit);
+  wrap.appendChild(body);
+  openRightPanel(wrap, spec.title);
+}
+
 // Execute one tool_use block; return both the raw result (for UI) and the API tool_result block.
 async function _waybExecTool(tu) {
   let result;
@@ -18600,6 +18833,7 @@ async function _waybExecTool(tu) {
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
     else if (tu.name === 'export_excel') result = _waybExportExcel();
+    else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
   } catch (err) { console.error('waybAgent tool error (' + tu.name + '):', err); result = { error: 'tool execution failed' }; }
   return { raw: result, block: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) } };
@@ -18627,9 +18861,11 @@ async function waybAgent(text) {
   // lastWaybResultSet / lastWaybResultShipments PERSIST across turns so a follow-up "put it in
   // excel" can export the last results. The Download-as-Excel button uses the turn-local vars below.
   _waybDocStore = {};       // reset per turn — holds this turn's doc URLs (never sent to the model)
+  _waybChartSpec = null;    // reset per turn — holds this turn's computed chart spec (engine values)
   let _turnDocs = [];       // documents fetched this turn, rendered beneath the final reply
   let _turnRows = [];        // THIS turn's search rows — drives the Download-as-Excel button
   let _turnShips = [];       // THIS turn's raw shipments — for the Excel preview table
+  let _turnChart = null;     // THIS turn's chart spec — rendered as a right-panel tab beneath the reply
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
   try {
@@ -18674,6 +18910,7 @@ async function waybAgent(text) {
             _turnShips = lastWaybResultShipments;
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
+          if (tu.name === 'render_chart' && _waybChartSpec) _turnChart = _waybChartSpec; // engine-computed spec for this turn
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
@@ -18687,7 +18924,7 @@ async function waybAgent(text) {
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
       // returned 10+ shipments) render beneath the reply. Fewer than 10 → cards/text only.
-      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips);
+      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips, _turnChart);
       return;
     }
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
