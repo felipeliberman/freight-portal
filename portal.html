@@ -13428,7 +13428,7 @@ async function handleInput(text) {
   const isKnowledgeQuestion = /\b(what is|what are|how does|how do|tell me|explain|do i need|when do|why|difference|meaning|define|what does|is a|is an)\b/.test(lower);
   const hasQuoteData = /\d{5}/.test(lower) || /\b\d+\s*(lb|lbs|pound|kg|pallet)/.test(lower) || /\d+x\d+x\d+/.test(lower);
 
-  if (looksLikeQuote && !isKnowledgeQuestion || (looksLikeQuote && hasQuoteData)) {
+  if ((looksLikeQuote && !isKnowledgeQuestion || (looksLikeQuote && hasQuoteData)) && !_isKnowledgeQ) {
     // Open panel if not already open
     if (!window._quoteFormOpen) showQuoteForm();
     const parsed = parseQuoteChat(t);
