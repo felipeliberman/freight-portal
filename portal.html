@@ -814,6 +814,63 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 </style>
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+/* ── Way B preview pane (document iframe + Excel table) ──────────────────
+   Overlays the RIGHT portion of the chat area — slides in from the right, does not push or
+   reflow the chat. position:fixed matches the existing right-panel/modal pattern. On mobile
+   (<=768px, the portal's breakpoint) it becomes a full-screen overlay that slides up. */
+#wayb-pane{
+  position:fixed; top:var(--header-h); right:0;
+  width:min(520px,42vw); height:calc(100dvh - var(--header-h));
+  background:var(--card); border-left:1px solid var(--bdr);
+  box-shadow:-4px 0 20px rgba(0,0,0,.10); z-index:103;
+  display:flex; flex-direction:column; overflow:hidden;
+  transform:translateX(102%); transition:transform .28s ease; will-change:transform;
+}
+#wayb-pane.open{ transform:translateX(0); }
+#wayb-pane .wayb-head{
+  flex-shrink:0; display:flex; align-items:center; gap:10px;
+  padding:12px 14px; border-bottom:1px solid var(--bdr); background:var(--card);
+}
+#wayb-pane .wayb-ico{ color:var(--ac); display:flex; flex-shrink:0; }
+#wayb-pane .wayb-title{ font-size:14px; font-weight:600; color:var(--tx); line-height:1.25; word-break:break-word; }
+#wayb-pane .wayb-sub{ font-size:11px; color:var(--mu); margin-top:2px; }
+#wayb-pane .wayb-body{ flex:1; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+#wayb-pane .wayb-iframe{ width:100%; height:100%; border:none; background:#fff; }
+#wayb-pane .wayb-tablewrap{ flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; }
+#wayb-pane table.wayb-tbl{ width:100%; border-collapse:collapse; font-size:12px; }
+#wayb-pane table.wayb-tbl th{
+  position:sticky; top:0; z-index:1; background:var(--card);
+  text-align:left; padding:8px 10px; font-weight:600; color:var(--mu);
+  border-bottom:1px solid var(--bdr); white-space:nowrap;
+}
+#wayb-pane table.wayb-tbl td{ padding:8px 10px; color:var(--tx); border-bottom:1px solid #f0ede8; white-space:nowrap; }
+#wayb-pane table.wayb-tbl tbody tr:nth-child(odd) td{ background:#faf9f6; }
+#wayb-pane .wayb-btn{
+  display:inline-flex; align-items:center; gap:6px; background:var(--ac); color:#fff;
+  border:none; border-radius:8px; padding:7px 12px; font-size:12px; font-weight:600;
+  cursor:pointer; font-family:var(--font);
+}
+#wayb-pane .wayb-btn:hover{ background:#a020a0; }
+#wayb-pane .wayb-iconbtn{
+  background:rgba(0,0,0,.06); border:none; cursor:pointer; color:var(--mu);
+  width:30px; height:30px; border-radius:6px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:16px;
+}
+#wayb-pane .wayb-iconbtn:hover{ background:rgba(0,0,0,.10); }
+#wayb-pane .wayb-back{ display:none; }
+@media(max-width:768px){
+  #wayb-pane{
+    top:var(--header-h); left:0; right:0; width:100%;
+    height:calc(100dvh - var(--header-h));
+    border-left:none; box-shadow:none;
+    transform:translateY(102%);
+  }
+  #wayb-pane.open{ transform:translateY(0); }
+  #wayb-pane .wayb-close{ display:none; }
+  #wayb-pane .wayb-back{ display:flex; }
+}
+</style>
 </head>
 <body>
 
@@ -18419,10 +18476,11 @@ function _waybAttachExtras(row, docs, resultSet) {
       // Open via a click handler with the URL held in a closure — the raw backend URL is NEVER put
       // in the href or any visible markup, so the customer never sees the backend system name.
       const _docUrl = doc.url;
+      const _docLabel = doc.label || doc.type || 'Document';
       const a = document.createElement('a');
       a.href = 'javascript:void(0)';
-      a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); window.open(_docUrl, '_blank', 'noopener'); };
-      a.textContent = doc.label || doc.type || 'Document';
+      a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); openWaybPane('doc', { url: _docUrl, label: _docLabel, type: doc.type }); };
+      a.textContent = _docLabel;
       a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #e5e2d9;color:#2a2a2a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;';
       dwrap.appendChild(a);
     });
@@ -18432,7 +18490,7 @@ function _waybAttachExtras(row, docs, resultSet) {
     const btn = document.createElement('button');
     btn.textContent = 'Download as Excel';
     btn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-    btn.onclick = function () { _waybDownloadExcel(resultSet); };
+    btn.onclick = function () { openWaybPane('excel', { rows: resultSet }); };
     bubble.appendChild(btn);
   }
 }
@@ -18455,6 +18513,117 @@ function _waybDownloadExcel(rows) {
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+// ── Way B preview pane ──────────────────────────────────────────────────────
+// A right-side overlay for previewing a document (iframe) or the search result set (Excel table).
+// Slides in over the right of the chat without reflowing it; full-screen slide-up on mobile.
+var _WAYB_ICON_DOC = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+var _WAYB_ICON_TBL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>';
+
+function _waybEnsurePane() {
+  let pane = document.getElementById('wayb-pane');
+  if (pane) return pane;
+  pane = document.createElement('div');
+  pane.id = 'wayb-pane';
+  pane.innerHTML =
+    '<div class="wayb-head">' +
+      '<button class="wayb-iconbtn wayb-back" title="Back" aria-label="Back to chat">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>' +
+      '</button>' +
+      '<span class="wayb-ico" id="wayb-ico"></span>' +
+      '<div style="flex:1;min-width:0;"><div class="wayb-title" id="wayb-title"></div><div class="wayb-sub" id="wayb-sub" style="display:none;"></div></div>' +
+      '<span id="wayb-actions" style="display:flex;align-items:center;gap:8px;"></span>' +
+      '<button class="wayb-iconbtn wayb-close" title="Close" aria-label="Close">&#10005;</button>' +
+    '</div>' +
+    '<div class="wayb-body" id="wayb-body"></div>';
+  document.body.appendChild(pane);
+  pane.querySelector('.wayb-close').onclick = closeWaybPane;
+  pane.querySelector('.wayb-back').onclick = closeWaybPane;
+  return pane;
+}
+
+function closeWaybPane() {
+  const pane = document.getElementById('wayb-pane');
+  if (!pane) return;
+  pane.classList.remove('open');
+  // Clear the iframe/table after the slide-out so a stale document is not left loaded/visible.
+  setTimeout(function () { const b = document.getElementById('wayb-body'); if (b && !pane.classList.contains('open')) b.innerHTML = ''; }, 320);
+}
+
+// kind 'doc': payload {url,label,type} → iframe + open-in-new-tab escape hatch.
+// kind 'excel': payload {rows} → scrollable table + Download button (SheetJS export).
+function openWaybPane(kind, payload) {
+  payload = payload || {};
+  const pane = _waybEnsurePane();
+  const ico = document.getElementById('wayb-ico');
+  const titleEl = document.getElementById('wayb-title');
+  const subEl = document.getElementById('wayb-sub');
+  const actions = document.getElementById('wayb-actions');
+  const body = document.getElementById('wayb-body');
+  actions.innerHTML = ''; body.innerHTML = ''; subEl.style.display = 'none';
+
+  if (kind === 'doc') {
+    ico.innerHTML = _WAYB_ICON_DOC;
+    titleEl.textContent = payload.label || payload.type || 'Document';
+    const _u = payload.url || '';               // URL lives here only — never rendered as chat text
+    const openBtn = document.createElement('button');
+    openBtn.className = 'wayb-iconbtn'; openBtn.title = 'Open in new tab'; openBtn.setAttribute('aria-label', 'Open in new tab');
+    openBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+    openBtn.onclick = function () { if (_u) window.open(_u, '_blank', 'noopener'); };
+    actions.appendChild(openBtn);
+    const frame = document.createElement('iframe');
+    frame.className = 'wayb-iframe';
+    frame.setAttribute('title', titleEl.textContent);
+    frame.src = _u;
+    body.appendChild(frame);
+  } else if (kind === 'excel') {
+    const rows = payload.rows || [];
+    ico.innerHTML = _WAYB_ICON_TBL;
+    titleEl.textContent = 'shipments-' + new Date().toISOString().split('T')[0] + '.xlsx';
+    subEl.textContent = rows.length + ' shipment' + (rows.length === 1 ? '' : 's');
+    subEl.style.display = '';
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'wayb-btn';
+    dlBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download';
+    dlBtn.onclick = function () { _waybDownloadExcel(rows); };
+    actions.appendChild(dlBtn);
+    body.appendChild(_waybBuildTable(rows));
+  } else { return; }
+
+  requestAnimationFrame(function () { pane.classList.add('open'); });
+}
+
+// Active statuses → brand purple; delivered/POD → muted gray. No greens/ambers.
+function _waybStatusColor(st) {
+  const s = String(st || '').toLowerCase();
+  if (/deliver|pod/.test(s)) return 'var(--mu)';
+  if (/dispatch|schedul|transit|picked|out for|en route|booked/.test(s)) return 'var(--ac)';
+  return 'var(--tx)';
+}
+
+function _waybBuildTable(rows) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wayb-tablewrap';
+  const money = function (v) { return (v == null || v === '') ? '&mdash;' : ('$' + Number(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')); };
+  const esc = function (v) { const d = document.createElement('div'); d.textContent = (v == null ? '' : String(v)); return d.innerHTML; };
+  const cols = ['BOL', 'Carrier', 'Consignee', 'Dest', 'Date', 'Cost', 'Status'];
+  let html = '<table class="wayb-tbl"><thead><tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>';
+  (rows || []).forEach(function (r) {
+    const dest = [r.destCity, r.destState].filter(Boolean).join(', ');
+    html += '<tr>' +
+      '<td>' + esc(r.bol) + '</td>' +
+      '<td>' + esc(r.carrier) + '</td>' +
+      '<td>' + esc(r.consignee) + '</td>' +
+      '<td>' + esc(dest) + '</td>' +
+      '<td>' + esc(r.date) + '</td>' +
+      '<td>' + money(r.cost) + '</td>' +
+      '<td style="color:' + _waybStatusColor(r.status) + ';font-weight:600;">' + esc(r.status) + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  return wrap;
 }
 
 // Execute one tool_use block; return both the raw result (for UI) and the API tool_result block.
