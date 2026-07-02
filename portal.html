@@ -18300,6 +18300,9 @@ async function _waybSearch(input) {
   let q = {};
   if (input.query) { try { q = (await parseShipQuery(String(input.query))) || {}; } catch (e) { q = {}; } }
   if (typeof q !== 'object' || !q) q = {};
+  // ── TEMP DIAGNOSTIC (Metro + date-range → consignee misparse) — REMOVE once fixed ──
+  try { console.log('[waybSearch] tool input =', JSON.stringify(input), '| parseShipQuery →', JSON.stringify(q)); } catch (e) {}
+  // ── END TEMP DIAGNOSTIC ──
   // Explicit tool fields override the parse. Carrier is handled separately (flexible match below).
   if (input.consignee) q.consignee = input.consignee;
   if (input.destState) q.destState = String(input.destState).toLowerCase();
