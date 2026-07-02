@@ -18232,6 +18232,8 @@ When a question is scoped to a time period (this year, last month, since June, t
 
 You have NO knowledge of this customer's shipments, spend, carriers, or history from your own memory. Every fact you state about their account MUST come from a tool result in this conversation. If a tool returns no data, tell them you don't see anything matching. Never fabricate numbers, names, dates, carriers, or rankings — if you did not get it from a tool, do not state it.
 
+You must NEVER make any statement about what carriers, consignees, or shipments are or are not in the customer's account without first calling a tool to verify. If asked about a carrier you have not searched for in this conversation, call search_shipments or run_analytics first. Do not say a carrier does not appear in the customer's history based on your own assumption.
+
 General freight education (what LTL means, how freight class works, what a liftgate is) you may answer from your own expertise. Anything specific to THIS customer's account comes only from tools.
 
 Plain conversational prose only. No bullets, no numbered lists, no markdown, no headers. Prefer 2 to 4 sentences. Do not mention any internal or backend system by name — you speak as the company.`;
@@ -18280,38 +18282,45 @@ const _waybTools = [
   }
 ];
 
-// search_shipments — uses parseShipQuery to interpret the query, then the runShipQuery load
-// machinery (shipCtx + ensureMatches) WITHOUT the chat card, returning shipFields for the top N.
+// search_shipments — interprets the query with parseShipQuery, ensures the customer's history is
+// loaded, then filters shipCtx.loaded and returns shipFields for the top N (most recent first).
 async function _waybSearch(input) {
   input = input || {};
   let q = {};
   if (input.query) { try { q = (await parseShipQuery(String(input.query))) || {}; } catch (e) { q = {}; } }
   if (typeof q !== 'object' || !q) q = {};
-  // Explicit tool fields override the parse.
-  if (input.carrier)   q.carrier   = input.carrier;
+  // Explicit tool fields override the parse. Carrier is handled separately (flexible match below).
   if (input.consignee) q.consignee = input.consignee;
   if (input.destState) q.destState = String(input.destState).toLowerCase();
   if (input.dateFrom)  q.dateFrom  = input.dateFrom;
   if (input.dateTo)    q.dateTo    = input.dateTo;
-  if (q.aggregateCarrier && !q.carrier) q.carrier = q.aggregateCarrier;
-  delete q.aggregate;
+  const carrierF = String(input.carrier || q.carrier || q.aggregateCarrier || '').toLowerCase().trim();
+  delete q.carrier; delete q.aggregateCarrier; delete q.aggregate;
   q.action = 'list';
   if (!q.sortField) { q.sortField = 'date'; q.sortDir = 'desc'; }
   const lim = Math.min(Math.max(Number(input.limit) || 10, 1), 25);
-  // Same window rule as runShipQuery: named entity → 2yr, otherwise 90 days, explicit dates win.
-  const now = new Date(); let from, to;
-  if (q.dateFrom) from = new Date(q.dateFrom);
-  else if (q.consignee || q.shipper) { from = new Date(now); from.setFullYear(from.getFullYear() - 2); }
-  else { from = new Date(now); from.setDate(from.getDate() - 90); }
-  to = q.dateTo ? new Date(q.dateTo) : new Date(now);
-  shipCtx = { from: from, to: to, page: 1, totalPages: null, loaded: [], done: false, query: q, filtered: [] };
-  shipShown = 0;
-  await ensureMatches(Math.max(lim, 20));
-  const rows = filteredList().slice(0, lim).map(function (s) {
+
+  // Ensure shipments are loaded BEFORE filtering. loadWideHistory reuses an existing wide (~2yr)
+  // load and only fetches when shipCtx is empty or was narrowed by a prior query — this fixes
+  // zero-results for a carrier like Metro whose shipments span the full history.
+  await loadWideHistory();
+  shipCtx.query = q;
+
+  // Case-insensitive SUBSTRING carrier match against BOTH the raw name and the cleaned label, so
+  // "Metro" and "Metro W&D" both match "Metropolitan Warehouse & Delivery Corp".
+  const cleanCar = function (c) { return (c || '').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim(); };
+  const matched = filteredList().filter(function (s) {
+    if (!carrierF) return true;
+    const f = shipFields(s);
+    const raw = String(f.carrier || '').toLowerCase();
+    const cln = cleanCar(f.carrier).toLowerCase();
+    return raw.indexOf(carrierF) >= 0 || cln.indexOf(carrierF) >= 0;
+  });
+  const rows = matched.slice(0, lim).map(function (s) {
     const f = shipFields(s);
     return {
       bol: f.bol || null,
-      carrier: (f.carrier || '').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim() || null,
+      carrier: cleanCar(f.carrier) || null,
       consignee: f.consignee || null,
       destCity: f.consigneeCity || null,
       destState: f.consigneeState ? f.consigneeState.toUpperCase() : null,
@@ -18361,13 +18370,19 @@ async function _waybAnalytics(input) {
   return { type: type, window: win, error: 'unknown analytics type — use one of: count, sumCost, avgCost, byCarrier, topConsignees, byMonth, byDestState' };
 }
 
-// get_documents — fetch a shipment's documents by BOL number (the BOL number is the bolId).
+// get_documents — fetch a shipment's documents. Primus keys documents by the internal BOLId, NOT
+// the BOL number, so resolve the shipment (from the loaded set, else fetch it) and use its BOLId.
 async function _waybDocuments(input) {
   input = input || {};
   const bol = String(input.bol || '').trim();
   if (!bol) return { documents: [], message: 'No BOL number was provided.' };
+  let ship = ((shipCtx && shipCtx.loaded) || []).find(function (s) {
+    return String(s.BOLNumber || s.bolNumber || '').trim() === bol;
+  }) || null;
+  if (!ship) { try { ship = await fetchBookingByBOL(bol); } catch (e) { ship = null; } }
+  const bolId = (ship && (ship.BOLId || ship.bolId || ship.id)) || bol; // fall back to the number only as a last resort
   let docs;
-  try { docs = await fetchDocuments(bol); }
+  try { docs = await fetchDocuments(bolId); }
   catch (e) { console.error('waybAgent get_documents error:', e); return { documents: [], message: 'I could not pull up documents for BOL ' + bol + '.' }; }
   const HIDDEN = ['DO', 'COST', 'COI'];
   const DOC_NAMES = { 'BOL': 'Bill of Lading', 'LBL': 'Shipping Label', 'LABEL': 'Shipping Label', 'QUO': 'Quote', 'QUOTE': 'Quote', 'INV': 'Invoice', 'INVOICE': 'Invoice', 'POD': 'Proof of Delivery', 'RECEIPT': 'Receipt' };
