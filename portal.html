@@ -18401,11 +18401,21 @@ async function _waybDocuments(input) {
   catch (e) { console.error('waybAgent get_documents error:', e); return { documents: [], message: 'I could not pull up documents for BOL ' + bol + '.' }; }
   const HIDDEN = ['DO', 'COST', 'COI'];
   const DOC_NAMES = { 'BOL': 'Bill of Lading', 'LBL': 'Shipping Label', 'LABEL': 'Shipping Label', 'QUO': 'Quote', 'QUOTE': 'Quote', 'INV': 'Invoice', 'INVOICE': 'Invoice', 'POD': 'Proof of Delivery', 'RECEIPT': 'Receipt' };
+  const _tc = function (s) { return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); }); };
+  const _seenLbl = {};
   const list = (docs || []).map(function (d) {
     const typeRaw = (d.fileType || d.type || d.documentType || d.name || '').toUpperCase();
     const url = d.url || d.fileUrl || d.documentUrl || d.link || '';
-    return { type: typeRaw, url: url, label: DOC_NAMES[typeRaw] || typeRaw || 'Document' };
-  }).filter(function (d) { return d.url && !HIDDEN.some(function (h) { return d.type === h || d.type.startsWith(h + ' '); }); });
+    // Title-case any unmapped type so "REWEIGH" reads as "Reweigh", consistent with mapped labels.
+    return { type: typeRaw, url: url, label: DOC_NAMES[typeRaw] || _tc(typeRaw) || 'Document' };
+  }).filter(function (d) {
+    if (!d.url) return false;
+    if (HIDDEN.some(function (h) { return d.type === h || d.type.startsWith(h + ' '); })) return false;
+    const k = d.label.toLowerCase();
+    if (_seenLbl[k]) return false;   // dedupe by label — one button per document type (e.g. a single Invoice)
+    _seenLbl[k] = true;
+    return true;
+  });
   if (!list.length) return { documents: [], message: 'No documents are available for BOL ' + bol + ' yet.' };
   // Keep the URLs OUT of the model-facing result — the model tends to echo them as markdown links,
   // exposing the backend name. Stash the real {type,url,label} list for _waybAttachExtras, and
@@ -18437,13 +18447,14 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments) {
       const a = document.createElement('a');
       a.href = 'javascript:void(0)';
       a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); _waybOpenDocTab(_docUrl, _docLabel, _docType, _docBol); };
-      // Match the portal's native soft-outline document button (showShipmentDetail) with a doc icon,
-      // and the welcome-pill hover convention: brand purple border/text/tint on hover (not filled).
+      // Two-tone at rest: purple document icon, neutral text, light fill, readable border; purple on
+      // hover. Hex is hardcoded on purpose — CSS var() does NOT resolve in JS-set inline styles in
+      // this codebase, which is why the var(--bdr)/var(--ac) version rendered borderless and flat.
       const _escLabel = _docLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      a.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>' + _escLabel + '</span>';
-      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;font-family:var(--font);cursor:pointer;transition:all .12s;';
-      a.onmouseenter = function () { a.style.borderColor = 'var(--ac)'; a.style.color = 'var(--ac)'; a.style.background = 'var(--ac2)'; };
-      a.onmouseleave = function () { a.style.borderColor = 'var(--bdr)'; a.style.color = 'var(--tx)'; a.style.background = '#f7f5f2'; };
+      a.innerHTML = '<span style="color:#bd27bc;display:inline-flex;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>' + _escLabel + '</span>';
+      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #c8c4bc;color:#111111;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:all .12s;';
+      a.onmouseenter = function () { a.style.borderColor = '#bd27bc'; a.style.color = '#bd27bc'; a.style.background = '#fdf0fd'; };
+      a.onmouseleave = function () { a.style.borderColor = '#c8c4bc'; a.style.color = '#111111'; a.style.background = '#f7f5f2'; };
       dwrap.appendChild(a);
     });
     if (dwrap.children.length) bubble.appendChild(dwrap);
