@@ -17773,6 +17773,23 @@ function _vmHandleFinal(text) {
 // naturally instead of stumbling ("$1,234.56" → "1,234 dollars and 56 cents", a 9+ digit BOL as
 // separate digits, etc.). Applied immediately before the text is sent to the voice proxy.
 function _ttsClean(text) {
+  // Expand US state abbreviations so Rachel says "Texas" not "TX"
+  const _states = {
+    'AL':'Alabama','AK':'Alaska','AZ':'Arizona','AR':'Arkansas','CA':'California',
+    'CO':'Colorado','CT':'Connecticut','DE':'Delaware','FL':'Florida','GA':'Georgia',
+    'HI':'Hawaii','ID':'Idaho','IL':'Illinois','IN':'Indiana','IA':'Iowa',
+    'KS':'Kansas','KY':'Kentucky','LA':'Louisiana','ME':'Maine','MD':'Maryland',
+    'MA':'Massachusetts','MI':'Michigan','MN':'Minnesota','MS':'Mississippi','MO':'Missouri',
+    'MT':'Montana','NE':'Nebraska','NV':'Nevada','NH':'New Hampshire','NJ':'New Jersey',
+    'NM':'New Mexico','NY':'New York','NC':'North Carolina','ND':'North Dakota','OH':'Ohio',
+    'OK':'Oklahoma','OR':'Oregon','PA':'Pennsylvania','RI':'Rhode Island','SC':'South Carolina',
+    'SD':'South Dakota','TN':'Tennessee','TX':'Texas','UT':'Utah','VT':'Vermont',
+    'VA':'Virginia','WA':'Washington','WV':'West Virginia','WI':'Wisconsin','WY':'Wyoming',
+    'DC':'Washington D.C.'
+  };
+  text = text.replace(/\b([A-Z]{2})\b(?=[\s,\.\)"]|$)/g, function(match, code) {
+    return _states[code] || match;
+  });
   return text
     // $1,234.56 → "1,234 dollars and 56 cents"
     .replace(/\$(\d[\d,]*)\.(\d{2})\b/g, (_, dollars, cents) =>
