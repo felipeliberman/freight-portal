@@ -16737,7 +16737,7 @@ async function showReports() {
     }
 
     removeTyping();
-    appendMessage('bot', 'Here are your shipping reports for the last 30 days:', { reports: allShipments });
+    appendMessage('bot', 'Here are your shipping reports for the last 30 days. You can also ask me things like "show me spend by carrier as a chart", "shipments by month", "my top consignees", or "spend last 3 months" — I\'ll pull it up as a chart right in the panel.', { reports: allShipments });
   } catch(e) {
     removeTyping();
     appendMessage('bot', 'Could not load reports. Please try again.');
