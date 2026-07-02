@@ -17769,6 +17769,26 @@ function _vmHandleFinal(text) {
 // Speak an agent reply aloud via ElevenLabs TTS, then resume listening.
 // (Invoked from the appendMessage bot-render hook.) A speakToken guards against
 // multi-message turns / barge / exit: only the latest reply's completion resumes.
+// Normalize text for TTS so ElevenLabs reads money, decimals, percents, and long BOL numbers
+// naturally instead of stumbling ("$1,234.56" → "1,234 dollars and 56 cents", a 9+ digit BOL as
+// separate digits, etc.). Applied immediately before the text is sent to the voice proxy.
+function _ttsClean(text) {
+  return text
+    // $1,234.56 → "1,234 dollars and 56 cents"
+    .replace(/\$(\d[\d,]*)\.(\d{2})\b/g, (_, dollars, cents) =>
+      dollars + ' dollars and ' + (cents === '00' ? 'zero' : parseInt(cents, 10)) + ' cents')
+    // $1,234 (no cents) → "1,234 dollars"
+    .replace(/\$(\d[\d,]*)\b/g, (_, n) => n + ' dollars')
+    // 3.5 → "3 point 5" (avoid decimal stumble on non-money numbers)
+    .replace(/\b(\d+)\.(\d+)\b/g, '$1 point $2')
+    // % → " percent"
+    .replace(/%/g, ' percent')
+    // # → "number"
+    .replace(/#(\d)/g, 'number $1')
+    // BOL numbers — read as individual digits to avoid "one hundred sixty million..."
+    .replace(/\bBOL\s+(\d{9,})/gi, (_, n) => 'BOL ' + n.split('').join(' '));
+}
+
 async function _vmSpeakReply(text) {
   if (!_vm.active) return;
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
@@ -17795,7 +17815,15 @@ async function _vmSpeakReply(text) {
     const resp = await fetch('https://elevenlabs-proxy.felipe-b80.workers.dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean, voice_id: '21m00Tcm4TlvDq8ikWAM' })
+      body: JSON.stringify({
+        text: _ttsClean(clean),
+        voice_id: '21m00Tcm4TlvDq8ikWAM',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          speed: 1.2
+        }
+      })
     });
     if (!resp.ok || !_vm.active || _vm.speakToken !== tok) { resume(); return; }
     const blob = await resp.blob();
