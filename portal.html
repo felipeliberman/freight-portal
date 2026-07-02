@@ -2200,6 +2200,9 @@ function resetShipmentState(wipeConversation) {
     } catch(e) {}
     if (wipeConversation) {
       chatHistory = [];
+      // Clear the Way B agent history at the same time so both agents' shared memory resets
+      // together on new chat (they mirror each other; otherwise stale waybAgent turns bleed across).
+      if (typeof waybHistory !== 'undefined') waybHistory = [];
       window._quotedContacts = null;
       window._quoteContainer = null;
       // Clear shipment conversation context so "New chat" starts truly fresh
@@ -11019,6 +11022,7 @@ RESPONSE RULES - MUST FOLLOW:
 - Direct confident broker voice. Just answer. No hedging.
 - Numbers formatted: $1,234.56. Dates as "June 5". Carrier names consistent: Metro W&D, Pilot, ABF, Estes, TForce, XPO, Saia, AAA Cooper.
 - When something needs a human: give a 1-sentence answer then say "Reach out to our team to handle this — call (800) 687-3713 or email support@freightandlogistics.com."
+- You do NOT have a calculator or any embedded tool. If asked about linear feet, freight class, or any calculation, compute the answer yourself and state it directly in plain prose. Never tell the customer to use a calculator or refer them to a tool you don't have.
 
 TONE RULES:
 - Never speak negatively about any service we offer. We handle everything well.
@@ -13651,6 +13655,12 @@ async function handleInput(text) {
   const _isDefQ = /\b(what (is|are|does|do|means?)|definition of|explain|how.*work|difference between|what.*mean)/i.test(lower) && !/\b(my shipment|my order|my bol|where is|find my|show me|list my)\b/i.test(lower);
   if (_isDefQ) { q = { action: 'help' }; } else { const _actCtx = _shipContextDesc(getActiveShipment()); try { q = await parseShipQuery(t, _actCtx); } catch(e) { q = { action: 'help' }; } }
   if (!q || !q.action) q = { action: 'help' };
+
+  // Linear-foot / freight-class CALCULATION questions carry dimensions but are education, not a
+  // quote. Force them to the help path (AI answers in prose) unless real origin/dest zips are present.
+  if (/how many linear feet|linear foot rule|linear footage|what.*linear|freight class.*if|if.*weigh.*class/i.test(t) && !q.originZip && !q.destinationZip) {
+    q.action = 'help';
+  }
 
   if (q.action === 'quote') {
     removeTyping();
@@ -17783,6 +17793,11 @@ function _vmHandleFinal(text) {
 // naturally instead of stumbling ("$1,234.56" → "1,234 dollars and 56 cents", a 9+ digit BOL as
 // separate digits, etc.). Applied immediately before the text is sent to the voice proxy.
 function _ttsClean(text) {
+  // Expand street direction abbreviations
+  text = text.replace(/\bNW\b/g, 'Northwest');
+  text = text.replace(/\bNE\b/g, 'Northeast');
+  text = text.replace(/\bSW\b/g, 'Southwest');
+  text = text.replace(/\bSE\b/g, 'Southeast');
   // Expand US state abbreviations so Rachel says "Texas" not "TX"
   const _states = {
     'AL':'Alabama','AK':'Alaska','AZ':'Arizona','AR':'Arkansas','CA':'California',
