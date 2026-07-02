@@ -18771,16 +18771,27 @@ function _waybChartPie(points, unit, donut) {
   if (pts.length > 6) { const head = pts.slice(0, 5); const tail = pts.slice(5); const other = tail.reduce(function (a, p) { return a + p.value; }, 0); head.push({ label: 'Other (' + tail.length + ')', value: other }); pts = head; }
   const total = pts.reduce(function (a, p) { return a + p.value; }, 0) || 1;
   const cx = 120, cy = 120, r = 104;
-  let a0 = -Math.PI / 2, paths = '';
-  const arc = function (x0, y0, x1, y1, large) { return 'M' + cx + ',' + cy + ' L' + x0.toFixed(2) + ',' + y0.toFixed(2) + ' A' + r + ',' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(2) + ',' + y1.toFixed(2) + ' Z'; };
-  pts.forEach(function (p, i) {
-    const frac = p.value / total; const a1 = a0 + frac * 2 * Math.PI;
-    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0), x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-    const large = (a1 - a0) > Math.PI ? 1 : 0;
-    paths += '<path d="' + arc(x0, y0, x1, y1, large) + '" fill="' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + '"/>';
-    a0 = a1;
-  });
-  const hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
+  // Degenerate case: one data point, or one item holds 100% of the total. The arc math would
+  // produce a zero/full-sweep path that renders nothing, so draw a solid filled circle instead.
+  const maxVal = Math.max.apply(null, pts.map(function (p) { return p.value; }));
+  const degenerate = (pts.length === 1) || (maxVal === total);
+  let paths = '', hole = '';
+  if (degenerate) {
+    let di = 0; pts.forEach(function (p, i) { if (p.value > pts[di].value) di = i; });
+    paths = '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + _WAYB_CHART_COLORS[di % _WAYB_CHART_COLORS.length] + '"/>';
+    hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
+  } else {
+    let a0 = -Math.PI / 2;
+    const arc = function (x0, y0, x1, y1, large) { return 'M' + cx + ',' + cy + ' L' + x0.toFixed(2) + ',' + y0.toFixed(2) + ' A' + r + ',' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(2) + ',' + y1.toFixed(2) + ' Z'; };
+    pts.forEach(function (p, i) {
+      const frac = p.value / total; const a1 = a0 + frac * 2 * Math.PI;
+      const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0), x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+      const large = (a1 - a0) > Math.PI ? 1 : 0;
+      paths += '<path d="' + arc(x0, y0, x1, y1, large) + '" fill="' + _WAYB_CHART_COLORS[i % _WAYB_CHART_COLORS.length] + '"/>';
+      a0 = a1;
+    });
+    hole = donut ? '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#fff"/>' : '';
+  }
   // Legend BELOW the chart as a single stacked column — one carrier per row: dot + name on the
   // left, "$X · XX%" right-aligned via space-between.
   let legend = '';
@@ -18794,10 +18805,13 @@ function _waybChartPie(points, unit, donut) {
   const wrap = document.createElement('div');
   wrap.innerHTML = '<div style="text-align:center;"><svg viewBox="0 0 240 240" width="100%" style="height:auto;">' + paths + hole + '</svg></div>'
     + '<div style="display:flex;flex-direction:column;gap:6px;margin-top:16px;">' + legend + '</div>';
-  // Bind a tooltip to each slice: "Label · $X · XX%".
-  const tip = _waybChartTip(wrap);
-  const slices = wrap.querySelectorAll('svg path');
-  pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); tip.bind(slices[i], _waybEsc(p.label) + ' · ' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%'); });
+  // Bind a tooltip to each slice: "Label · $X · XX%". Skipped in the degenerate case (a solid
+  // circle, no <path> elements to bind to).
+  if (!degenerate) {
+    const tip = _waybChartTip(wrap);
+    const slices = wrap.querySelectorAll('svg path');
+    pts.forEach(function (p, i) { const pct = Math.round((p.value / total) * 100); tip.bind(slices[i], _waybEsc(p.label) + ' · ' + _waybFmtVal(p.value, unit) + ' · ' + pct + '%'); });
+  }
   return wrap;
 }
 
