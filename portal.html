@@ -18306,6 +18306,24 @@ async function _waybSearch(input) {
   await loadWideHistory();
   shipCtx.query = q;
 
+  // ── TEMP DIAGNOSTIC (Metro zero-results) — REMOVE once fixed ──
+  try {
+    console.log('[waybSearch] loaded.length=', (shipCtx && shipCtx.loaded ? shipCtx.loaded.length : 0),
+      '| carrierF=', JSON.stringify(carrierF), '| parsed q=', JSON.stringify(q),
+      '| filteredList.length=', (typeof filteredList === 'function' ? filteredList().length : 'n/a'));
+    ((shipCtx && shipCtx.loaded) || []).slice(0, 5).forEach(function (s, i) {
+      const ti = s.trackingInformation || {}, ven = s.vendor || {};
+      console.log('[waybSearch] ship#' + i +
+        ' carrier=' + JSON.stringify(s.carrier) +
+        ' carrierName=' + JSON.stringify(s.carrierName) +
+        ' vendor.name=' + JSON.stringify(ven.name) +
+        ' vendor.companyName=' + JSON.stringify(ven.companyName) +
+        ' ti.carrierName=' + JSON.stringify(ti.carrierName) +
+        ' shipFields.carrier=' + JSON.stringify(shipFields(s).carrier));
+    });
+  } catch (e) { console.warn('[waybSearch] diag log failed', e); }
+  // ── END TEMP DIAGNOSTIC ──
+
   // Case-insensitive SUBSTRING carrier match against BOTH the raw name and the cleaned label, so
   // "Metro" and "Metro W&D" both match "Metropolitan Warehouse & Delivery Corp".
   const cleanCar = function (c) { return (c || '').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim(); };
