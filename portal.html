@@ -3153,7 +3153,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   payTooltip.textContent = 'Check a box next to an unpaid invoice to select it for payment';
   payTooltip.style.cssText = 'position:absolute;bottom:calc(100% + 8px);right:0;background:#1a1a1a;color:#fff;font-size:11px;padding:7px 10px;border-radius:7px;white-space:normal;width:200px;line-height:1.4;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;text-align:left;font-weight:400;';
   payBtn.appendChild(payTooltip);
-  payBtn.onclick = () => {
+  payBtn.onclick = async () => {
     const unpaidSelected = [...selectedInvoices].filter(key => {
       const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
       return inv && !getInvoiceFields(inv).isPaid;
@@ -3164,6 +3164,30 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       return;
     }
     const invsToPay = (window._currentInvoiceList || []).filter(i => unpaidSelected.includes(getInvoiceFields(i).invNum));
+    // Resolve each selected invoice's QBO Id + Balance by its DocNumber before
+    // opening the Stripe modal, so the payment can be recorded back to QBO on success.
+    const lbl = payBtn.querySelector('.pay-btn-label');
+    const prevLbl = lbl ? lbl.innerHTML : '';
+    if (lbl) lbl.textContent = 'Loading…';
+    payBtn.disabled = true;
+    try {
+      await Promise.all(invsToPay.map(async inv => {
+        const docNum = getInvoiceFields(inv).invNum;
+        inv._qboId = ''; inv._qboBalance = null;
+        try {
+          const res = await fetch('https://qbo-api.felipe-b80.workers.dev/invoices?docNumber=' + encodeURIComponent(docNum), { headers: { 'Accept': 'application/json' } });
+          const data = await res.json().catch(() => ({}));
+          const q0 = (data && data.invoices && data.invoices[0]) || null;
+          if (q0) {
+            inv._qboId = String(q0.Id || '');
+            inv._qboBalance = (q0.Balance != null && !isNaN(Number(q0.Balance))) ? Number(q0.Balance) : null;
+          }
+        } catch (e) { console.error('[QBO lookup] failed for invoice', docNum, e); }
+      }));
+    } finally {
+      payBtn.disabled = false;
+      if (lbl) lbl.innerHTML = prevLbl;
+    }
     showStripePaymentModal(invsToPay);
   };
   btnGroup.appendChild(payBtn);
@@ -3444,6 +3468,30 @@ function getInvoiceFields(inv) {
     status:    isPaid ? 'PAID' : 'UNPAID',
     docUrl:    inv.docUrl   || inv.url || '',
   };
+}
+
+// Record each paid invoice back to QuickBooks Online after Stripe succeeds, using
+// the QBO Id resolved at pay time (see the Pay Selected handler). The payment
+// amount is the QBO Balance, falling back to the invoice total. Best-effort — never
+// blocks the success UI, since Stripe has already captured the funds.
+async function _recordQboPayments(invoices, stripePaymentIntentId) {
+  const paymentDate = new Date().toISOString().split('T')[0];
+  await Promise.all((invoices || []).map(inv => {
+    if (!inv._qboId) return Promise.resolve(null);
+    const amount = (inv._qboBalance != null && !isNaN(inv._qboBalance))
+      ? Number(inv._qboBalance)
+      : (parseFloat(getInvoiceFields(inv).rawAmt) || 0);
+    return fetch('https://qbo-api.felipe-b80.workers.dev/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceId: inv._qboId,
+        amount,
+        paymentDate,
+        stripePaymentIntentId: stripePaymentIntentId || null
+      })
+    }).then(r => r.json()).catch(e => { console.error('[QBO payment] failed for invoice', inv._qboId, e); return null; });
+  }));
 }
 
 function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
@@ -3833,11 +3881,13 @@ function showStripePaymentModal(invoices) {
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
         // Confirm ACH with linked payment method and customer
-        const { error } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
+        const { error, paymentIntent } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
           payment_method: window._achPaymentMethod,
           customer: window._stripeCustomerId || undefined
         });
         if (error) throw new Error(error.message);
+        // Record the payment against each invoice in QuickBooks Online (best-effort).
+        await _recordQboPayments(invoices, paymentIntent && paymentIntent.id);
         // Send confirmation email
         await fetch(WORKER + '/send-confirmation', {
           method: 'POST',
@@ -3878,6 +3928,8 @@ function showStripePaymentModal(invoices) {
       const cardBrand = pmDetails.brand || (paymentIntent.payment_method_types && paymentIntent.payment_method_types[0] === 'card' ? 'card' : '');
       const cardLast4 = pmDetails.last4 || '';
       const confirmationId = paymentIntent.id || '';
+      // Record the payment against each invoice in QuickBooks Online (best-effort).
+      await _recordQboPayments(invoices, confirmationId);
       // Send confirmation email
       await fetch(WORKER + '/send-confirmation', {
         method: 'POST',
