@@ -1147,9 +1147,9 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield;}
 input[type=number]{-moz-appearance:textfield;}
 /* Shipments table scrollbar */
 .ship-table-wrap::-webkit-scrollbar{height:5px;}
-.ship-table-wrap::-webkit-scrollbar-track{background:#f5f3ff;border-radius:4px;}
-.ship-table-wrap::-webkit-scrollbar-thumb{background:#c4b5fd;border-radius:4px;}
-.ship-table-wrap::-webkit-scrollbar-thumb:hover{background:#7c3aed;}
+.ship-table-wrap::-webkit-scrollbar-track{background:#ece9e2;border-radius:4px;}
+.ship-table-wrap::-webkit-scrollbar-thumb{background:#d3d1c7;border-radius:4px;}
+.ship-table-wrap::-webkit-scrollbar-thumb:hover{background:#b8b5aa;}
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;margin:0!important;display:none!important;}
 .track-status{font-size:14px;font-weight:700;color:var(--tx);margin-bottom:3px;}
@@ -3230,7 +3230,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     container.appendChild(agingDiv);
   }
 
-  wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#c4b5fd #f5f3ff;';
+  wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#d3d1c7 #ece9e2;';
 
   const table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:700px;';
@@ -4331,7 +4331,7 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
   if (singleResult) {
     // Just render a clean single-row grid with no header or footer
     const wrap = document.createElement('div');
-    wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#c4b5fd #f5f3ff;';
+    wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#d3d1c7 #ece9e2;';
     const table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:980px;';
     const cols = ['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total',''];
@@ -4540,7 +4540,7 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
     container.appendChild(wrap);
     return container;
   }
-  wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#c4b5fd #f5f3ff;';
+  wrap.className = 'ship-table-wrap'; wrap.style.cssText = 'overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);scrollbar-width:thin;scrollbar-color:#d3d1c7 #ece9e2;';
   const table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:980px;';
   const cols = ['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total',''];
@@ -16205,7 +16205,7 @@ function showQuoteForm(prefill, silent) {
     if (firstRow&&firstRow.querySelector('.li-len')&&firstRow.querySelector('.li-len').value) filled++;
     const pct = Math.round(filled/5*100);
     const bar = container.querySelector('#qt-prog-bar'), txt = container.querySelector('#qt-prog-txt');
-    if (bar) { bar.style.width=pct+'%'; bar.style.background='var(--ac)'; }
+    if (bar) { bar.style.width=pct+'%'; bar.style.background='#d3d1c7'; }
     if (txt) { txt.textContent = pct===100?'✓ Ready':''+filled+' of 5 fields'; txt.style.color=pct===100?'var(--ac)':'var(--mu)'; }
     // Update hero header stats
     const hdrRoute  = document.getElementById('qt-hdr-route');
