@@ -7338,7 +7338,7 @@ function setLoggedIn(on){
       if(day===1) subs.push('Happy Monday. Time to roll.');
       var sub=subs[Math.floor(Math.random()*subs.length)];
       var fullNm=currentCustomer&&(currentCustomer.name||currentCustomer.firstName)||null;
-      if(fullNm){var w=fullNm.trim().split(/\s+/);fullNm=w.length>2?w[0]+' '+w[1]:fullNm;}
+      if(fullNm){var w=fullNm.trim().split(/\s+/);fullNm=w.length>2?w[0]+' '+w[1]:fullNm;fullNm=fullNm.replace(/[.,\s]+$/,'');}
       var g=document.getElementById('welcome-greeting');
       var n=document.getElementById('welcome-name');
       var s=document.getElementById('welcome-subline');
@@ -9004,7 +9004,7 @@ function applyGreeting(){
   var s=document.getElementById("welcome-subline");
   if(!g||!n) return;
   var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
-  if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;}
+  if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;nm=nm.replace(/[.,\s]+$/,'');}
   var pick=pickGreeting();
   g.textContent=pick.greet+", "+(nm||"there")+".";
   n.textContent="";
@@ -15745,7 +15745,7 @@ function showQuoteForm(prefill, silent) {
   progressWrap.id = 'qt-prog-wrap';
   progressWrap.style.cssText = 'padding:6px 12px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-shrink:0;display:flex;align-items:center;gap:8px;';
   progressWrap.innerHTML =
-    '<div style="flex:1;background:#e5e2d9;border-radius:4px;height:3px;overflow:hidden;"><div id="qt-prog-bar" style="height:100%;background:var(--ac);border-radius:4px;transition:width .3s;width:0%;"></div></div>' +
+    '<div style="flex:1;background:#e5e2d9;border-radius:4px;height:3px;overflow:hidden;"><div id="qt-prog-bar" style="height:100%;background:#d3d1c7;border-radius:4px;transition:width .3s;width:0%;"></div></div>' +
     '<div id="qt-prog-txt" style="font-size:10px;color:var(--mu);white-space:nowrap;">0 of 5 fields</div>';
   container.appendChild(progressWrap);
 
