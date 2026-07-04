@@ -701,13 +701,15 @@ function fillFormField(key, value) {
 }
 
 function welcomeSend() {
+  if(typeof killMovie==='function') killMovie({});
   const ta=document.getElementById('welcome-textarea');
   const t=ta.value.trim(); if(!t) return;
   ta.value=''; ta.style.height='auto';
   showChatArea(); appendUser(t); callAI(t);
 }
-function welcomeSendText(t) { showChatArea(); appendUser(t); callAI(t); }
+function welcomeSendText(t) { if(typeof killMovie==='function') killMovie({}); showChatArea(); appendUser(t); callAI(t); }
 function sendMsg() {
+  if(typeof killMovie==='function') killMovie({});
   const ta=document.getElementById('input-textarea');
   const t=ta.value.trim(); if(!t) return;
   ta.value=''; ta.style.height='auto';
@@ -715,6 +717,7 @@ function sendMsg() {
 }
 
 function startOnboarding() {
+  if(typeof killMovie==='function') killMovie({});
   isOnboarding=true;
   openFormPanel();
   showChatArea();
@@ -751,7 +754,7 @@ function openRightPanel(title, content) {
   document.getElementById('right-resizer').classList.add('visible');
 }
 function closeRightPanel() {
-  if (typeof killMovie==='function') killMovie();
+  if (typeof killMovie==='function') killMovie({toWelcome:true});
   const rp = document.getElementById('right-panel');
   rp.classList.remove('open');
   rp.style.width = '';
@@ -1527,138 +1530,146 @@ function _wireArea(ta){
   ta.addEventListener('drop', e=>{ const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f){ e.preventDefault(); spExtractFile(f); } });
 }
 
-// ── Auto-play demo movie (scripted, zero API; reuses Layer-3 renders) ───────
+// ── Auto-play demo movie — plays in the REAL center chat, one code path ─────
+// Uses the same welcome→chat transition and appendUser/appendBot/showTyping that
+// a real first message uses. Ghost nodes are tagged [data-ghost] so a kill can
+// remove exactly the ghost content and leave real content untouched. The right
+// panel opens ONLY for cards (quote / booking / SmartPaste result).
+const _SLIP_EXTRACT = {shipper:{name:'Lakefront Office Supply Co.',city:'Chicago',state:'IL',zip:'60607'},consignee:{name:'Peachtree Furnishings LLC',city:'Atlanta',state:'GA',zip:'30318'},items:[{pieces:2,weight:1200,length:48,width:40,height:48,packageType:'PLT',freightClass:'92.5',commodity:'Task office chairs'}],pickupDate:'2026-06-11',poNumber:'77413',unclear:[]};
+
+let _movieTimers=[], _movieRunning=false;
 function _movieKilled(){ return sessionStorage.getItem('fl_movie_killed')==='1'; }
-let _movieTimers=[];
 function _mt(fn,delay){ const t=setTimeout(fn,delay); _movieTimers.push(t); return t; }
-function killMovie(){
-  sessionStorage.setItem('fl_movie_killed','1');
-  _movieTimers.forEach(clearTimeout); _movieTimers=[];
-  const inl=document.getElementById('movie-inline'); if(inl) inl.remove();
+
+function _stopGhost(o){
+  o=o||{};
+  const t=document.getElementById('typing-ind'); if(t) t.remove();
+  document.querySelectorAll('#messages [data-ghost]').forEach(n=>n.remove());
+  const wta=document.getElementById('welcome-textarea');
+  if(wta){ if(wta.getAttribute('data-ghost')==='1'){ wta.value=''; wta.style.height='auto'; } wta.removeAttribute('data-ghost'); }
   const rp=document.getElementById('right-panel');
   if(rp && rp.getAttribute('data-movie')==='1'){
-    rp.classList.remove('open'); rp.style.width=''; rp.removeAttribute('data-movie');
+    rp.removeAttribute('data-movie'); rp.classList.remove('open'); rp.style.width='';
     const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
     const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
   }
+  if(o.toWelcome){
+    const w=document.getElementById('welcome'); if(w) w.style.display='';
+    const c=document.getElementById('chat-area'); if(c) c.style.display='none';
+  }
 }
-function _movieSlideIn(slot,node){ node.style.opacity='0'; node.style.transform='translateY(8px)'; node.style.transition='opacity .3s, transform .3s'; slot.appendChild(node); requestAnimationFrame(()=>{ node.style.opacity='1'; node.style.transform='none'; }); }
-function _movieBubbleUser(chat,text,cb){
-  const row=document.createElement('div'); row.style.cssText='display:flex;justify-content:flex-end;margin-bottom:12px;';
-  const b=document.createElement('div'); b.style.cssText='background:#bd27bc;color:#fff;border-radius:14px;border-bottom-right-radius:4px;padding:9px 13px;font-size:13px;max-width:82%;line-height:1.5;';
-  row.appendChild(b); chat.appendChild(row); chat.scrollTop=chat.scrollHeight;
-  let i=0; (function type(){ if(_movieKilled())return; b.textContent=text.slice(0,i); chat.scrollTop=chat.scrollHeight; if(i++<text.length){ _mt(type,38); } else if(cb){ _mt(cb,400); } })();
+// Permanently stop the ghost for the session. No-op once the movie is not running,
+// so real-use closeRightPanel / input focus never wipe real chat.
+function killMovie(o){
+  if(_movieKilled() && !_movieRunning) return;
+  sessionStorage.setItem('fl_movie_killed','1');
+  _movieTimers.forEach(clearTimeout); _movieTimers=[];
+  _movieRunning=false;
+  _stopGhost(o||{});
 }
-function _movieTyping(chat){
-  const row=document.createElement('div'); row.id='movie-typing'; row.style.cssText='display:flex;margin-bottom:12px;';
-  row.innerHTML='<div style="background:#fff;border:1px solid #e5e2d9;border-radius:14px;border-bottom-left-radius:4px;padding:11px 14px;display:flex;gap:4px;"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
-  chat.appendChild(row); chat.scrollTop=chat.scrollHeight;
-}
-function _movieBubbleBot(chat,text){
-  const t=document.getElementById('movie-typing'); if(t) t.remove();
-  const row=document.createElement('div'); row.style.cssText='display:flex;margin-bottom:12px;';
-  row.innerHTML='<div style="background:#fff;border:1px solid #e5e2d9;border-radius:14px;border-bottom-left-radius:4px;padding:9px 13px;font-size:13px;color:#111;max-width:82%;line-height:1.5;">'+escHtml(text)+'</div>';
-  chat.appendChild(row); chat.scrollTop=chat.scrollHeight;
-}
+
+// Ghost wrappers around the REAL render fns; tag the produced node so kill can find it.
+function _tag(){ const m=document.getElementById('messages'); if(m&&m.lastChild&&m.lastChild.setAttribute) m.lastChild.setAttribute('data-ghost','1'); }
+function _ghostUser(t){ appendUser(t); _tag(); }
+function _ghostBot(t){ appendBot(t); _tag(); }
+function _ghostTyping(){ showTyping(); const ti=document.getElementById('typing-ind'); if(ti) ti.setAttribute('data-ghost','1'); }
+function _panelMovie(title,node){ openRightPanel(title,node); const rp=document.getElementById('right-panel'); if(rp) rp.setAttribute('data-movie','1'); }
+
 function _movieConfirmCard(){
-  const c=document.createElement('div'); c.style.cssText='background:#fff;border:1px solid #bd27bc;border-radius:12px;padding:16px;';
-  c.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><div style="width:26px;height:26px;border-radius:50%;background:#fdf0fd;border:1px solid #bd27bc;display:flex;align-items:center;justify-content:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div><div style="font-size:13px;font-weight:700;color:#111;">Shipment saved</div></div>'
+  const c=document.createElement('div'); c.style.cssText='padding:16px;';
+  c.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><div style="width:26px;height:26px;border-radius:50%;background:#fdf0fd;border:1px solid #bd27bc;display:flex;align-items:center;justify-content:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div><div style="font-size:14px;font-weight:700;color:#111;">Shipment saved</div></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
     +_kv('BOL#','FL-2024-8842')+_kv('Carrier','TForce Freight')+_kv('Lane','Chicago → Atlanta')+_kv('Total','$534.80')
-    +'</div><div style="margin-top:10px;">'+_sampleBadge()+'</div>';
+    +'</div><div style="margin-top:12px;">'+_sampleBadge()+'</div>';
+  c.appendChild(_ctaBlock());
   return c;
 }
-function _movieSlipCard(){
-  const c=document.createElement('div'); c.style.cssText='background:#fff;border:1px solid #e5e2d9;border-radius:12px;padding:12px;text-align:center;';
-  c.innerHTML='<div style="font-size:11px;color:#706c63;margin-bottom:8px;">Packing slip dropped in</div><img src="sample-slip.png" alt="Sample packing slip" style="max-width:100%;border:1px solid #e5e2d9;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08);">';
-  return c;
+
+// Return the welcome screen to its true initial state (raw — does NOT trigger kill).
+function _movieSoftReset(){
+  const m=document.getElementById('messages'); if(m) m.innerHTML='';
+  const w=document.getElementById('welcome'); if(w) w.style.display='';
+  const c=document.getElementById('chat-area'); if(c) c.style.display='none';
+  const wta=document.getElementById('welcome-textarea'); if(wta){ wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost'); }
+  const rp=document.getElementById('right-panel'); if(rp){ rp.classList.remove('open'); rp.style.width=''; rp.removeAttribute('data-movie'); }
+  const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
+  const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
 }
-function _movieAnimateExtract(slot,cb){
-  const fields=[['Origin','Chicago, IL 60607'],['Destination','Atlanta, GA 30303'],['Pieces','2 pallets'],['Weight','1,200 lbs'],['Commodity','Office chairs'],['Freight class','92.5']];
-  const card=document.createElement('div'); card.style.cssText='background:#fff;border:1px solid #e5e2d9;border-radius:12px;padding:14px 16px;';
-  card.innerHTML='<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:#bd27bc;margin-bottom:10px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Reading your packing slip…</div>';
-  const list=document.createElement('div'); card.appendChild(list);
-  slot.innerHTML=''; _movieSlideIn(slot,card);
+
+function runMovie(){
+  if(_movieKilled())return;
+  _movieRunning=true;
+  _movieSoftReset();
+  const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
+  const wta=document.getElementById('welcome-textarea'); if(!wta) return;
+  const line='I need to ship 2 pallets of office chairs from Chicago to Atlanta, about 1,200 lbs';
+  wta.setAttribute('data-ghost','1');
   let i=0;
-  (function reveal(){ if(_movieKilled())return; if(i>=fields.length){ if(cb)_mt(cb,400); return; }
-    const f=fields[i++]; const row=document.createElement('div');
-    row.style.cssText='display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #ececec;opacity:0;transform:translateY(4px);transition:all .25s;';
-    row.innerHTML='<span style="font-size:11px;color:#706c63;">'+f[0]+'</span><span style="font-size:12px;font-weight:600;color:#111;">'+f[1]+'</span>';
-    list.appendChild(row); requestAnimationFrame(()=>{ row.style.opacity='1'; row.style.transform='none'; });
-    _mt(reveal,430);
+  (function type(){
+    if(_movieKilled())return;
+    wta.value=line.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
+    if(i++<line.length) _mt(type,40); else _mt(send,550);
   })();
+
+  function send(){
+    if(_movieKilled())return;
+    // exactly the welcomeSend transition: clear textarea, collapse hero → chat thread, user bubble
+    wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost');
+    showChatArea();
+    _ghostUser(line);
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Here are sample rates for that lane. TForce is best at $534.80, three-day transit — these are sample numbers.');
+        _panelMovie('Sample Quote', renderQuoteCard('chi_atl'));
+        _mt(book,1900);
+      },1100);
+    },550);
+  }
+  function book(){
+    if(_movieKilled())return;
+    _ghostUser('Book the TForce option');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Saved. Your BOL is FL-2024-8842 — TForce Freight, ready when you are.');
+        _panelMovie('Shipment saved', _movieConfirmCard());
+        _mt(slip,2000);
+      },1000);
+    },550);
+  }
+  function slip(){
+    if(_movieKilled())return;
+    _ghostUser('[Shared a document: sample-packing-slip.png]');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Read it. Pulled the shipment straight off your packing slip — Chicago to Atlanta, two pallets, 1,200 pounds.');
+        _panelMovie("Here's your shipment", renderExtractedCard(_SLIP_EXTRACT));
+        _mt(end,2200);
+      },1200);
+    },550);
+  }
+  function end(){
+    if(_movieKilled())return;
+    _ghostBot('This is your portal — quote, book, and read documents right in chat. Open a free account to see your live rates.');
+    const m=document.getElementById('messages'); const row=m&&m.lastChild; const bub=row&&row.children[1];
+    if(bub){ bub.style.flexDirection='column'; bub.style.alignItems='flex-start';
+      const b=document.createElement('button'); b.textContent='Open a free account →';
+      b.style.cssText='margin-top:8px;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+      b.onclick=startOnboarding; bub.appendChild(b);
+    }
+    _mt(restart,3400);
+  }
 }
-function _movieEndCard(){
-  const c=document.createElement('div'); c.style.cssText='background:#fdf0fd;border:1px solid rgba(189,39,188,.25);border-radius:12px;padding:20px 16px;text-align:center;';
-  c.innerHTML='<div style="font-size:15px;font-weight:600;color:#111;margin-bottom:6px;">This is your portal.</div><div style="font-size:12px;color:#706c63;margin-bottom:14px;line-height:1.5;">Quote, book, track, and read documents — all in chat. Sample data shown; live rates come with your free account.</div>';
-  const b=document.createElement('button'); b.textContent='Open a free account →'; b.style.cssText='background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;'; b.onclick=startOnboarding;
-  c.appendChild(b); return c;
-}
-function runMovie(chat,slot){
-  if(_movieKilled())return;
-  chat.innerHTML=''; slot.innerHTML='';
-  const restart=()=>{ if(_movieKilled())return; _mt(()=>runMovie(chat,slot),400); };
-  _movieBubbleUser(chat,'I need to ship 2 pallets of office chairs from Chicago to Atlanta, about 1,200 lbs', ()=>{
-    _movieTyping(chat);
-    _mt(()=>{
-      _movieBubbleBot(chat,'Here are sample rates for that lane. TForce comes in best at $534.80, three-day transit.');
-      const c=renderQuoteCard('chi_atl',{cta:false}); c.style.padding='0'; _movieSlideIn(slot,c);
-      _mt(()=>{
-        _movieBubbleUser(chat,'Book the TForce option', ()=>{
-          _movieTyping(chat);
-          _mt(()=>{
-            _movieBubbleBot(chat,'Saved. Your BOL is FL-2024-8842 — TForce Freight, ready when you are.');
-            slot.innerHTML=''; _movieSlideIn(slot,_movieConfirmCard());
-            _mt(()=>{
-              _movieBubbleBot(chat,'Have a packing slip? Drop it in and I read the details automatically.');
-              slot.innerHTML=''; _movieSlideIn(slot,_movieSlipCard());
-              _mt(()=>{ _movieAnimateExtract(slot, ()=>{
-                _mt(()=>{ slot.innerHTML=''; _movieSlideIn(slot,_movieEndCard()); _mt(restart,3000); }, 700);
-              }); }, 1500);
-            }, 1600);
-          }, 1000);
-        });
-      }, 1700);
-    }, 1000);
-  });
-}
-function startMovieDesktop(){
-  if(_movieKilled())return;
-  const wrap=document.createElement('div'); wrap.style.cssText='display:flex;flex-direction:column;padding:16px;gap:14px;';
-  const sub=document.createElement('div'); sub.style.cssText='font-size:12px;color:#706c63;line-height:1.5;'; sub.textContent='A quick look at quoting, booking, and reading a packing slip — all in chat.';
-  const chat=document.createElement('div'); chat.style.cssText='max-height:300px;overflow-y:auto;';
-  const slot=document.createElement('div');
-  wrap.appendChild(sub); wrap.appendChild(chat); wrap.appendChild(slot);
-  openRightPanel('See it in action', wrap);
-  const rp=document.getElementById('right-panel'); if(rp) rp.setAttribute('data-movie','1');
-  runMovie(chat,slot);
-}
-function startMovieMobile(){
-  if(_movieKilled())return;
-  const pills=document.querySelector('.welcome-pills'); if(!pills) return;
-  if(document.getElementById('movie-inline'))return;
-  const box=document.createElement('div'); box.id='movie-inline';
-  box.style.cssText='width:100%;max-width:600px;margin:4px auto 16px;border:1px solid #e5e2d9;border-radius:14px;background:#fff;overflow:hidden;';
-  const hd=document.createElement('div'); hd.style.cssText='padding:10px 14px;border-bottom:1px solid #e5e2d9;font-size:12px;font-weight:600;color:#111;display:flex;justify-content:space-between;align-items:center;';
-  hd.innerHTML='<span>See it in action</span>';
-  const x=document.createElement('button'); x.textContent='✕'; x.style.cssText='background:none;border:none;color:#b0ac9f;font-size:14px;cursor:pointer;'; x.onclick=killMovie; hd.appendChild(x);
-  const chat=document.createElement('div'); chat.style.cssText='padding:14px;max-height:340px;overflow-y:auto;';
-  const slot=document.createElement('div'); slot.style.cssText='padding:0 14px 14px;';
-  box.appendChild(hd); box.appendChild(chat); box.appendChild(slot);
-  pills.insertAdjacentElement('afterend', box);
-  runMovie(chat,slot);
-}
-function startMovie(){
-  if(_movieKilled())return;
-  if(window.matchMedia && window.matchMedia('(max-width:768px)').matches) startMovieMobile(); else startMovieDesktop();
-}
+
+function startMovie(){ if(!_movieKilled()) runMovie(); }
 
 // ── Init: wire SmartPaste, kill-switches, and schedule the movie ───────────
 document.addEventListener('DOMContentLoaded', function(){
   _wireArea(document.getElementById('welcome-textarea'));
   _wireArea(document.getElementById('input-textarea'));
-  ['welcome-textarea','input-textarea'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('focus',killMovie); el.addEventListener('keydown',killMovie); } });
-  document.querySelectorAll('.welcome-pill').forEach(p=>p.addEventListener('click',killMovie));
+  const wta=document.getElementById('welcome-textarea');
+  if(wta){ wta.addEventListener('focus',()=>killMovie({toWelcome:true})); wta.addEventListener('keydown',()=>killMovie({toWelcome:true})); }
+  const ita=document.getElementById('input-textarea');
+  if(ita){ ita.addEventListener('focus',()=>killMovie({})); ita.addEventListener('keydown',()=>killMovie({})); }
   if(!_movieKilled()) _mt(startMovie, 2000);
 });
 </script>
