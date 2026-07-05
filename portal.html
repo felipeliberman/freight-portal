@@ -18625,11 +18625,17 @@ async function _waybInvoices(input) {
     bol: String(input.bol || '').trim(),
     summarize: function (rows) {
       const s = summarizeInvoices(rows);
-      // Store the FULL invoice set for export (type-agnostic lastWaybExport) — no cap, no URLs, no backend names.
+      // Wiring B: the invoice action button opens the REAL renderInvoices panel (stat cards, aging,
+      // Pay Invoices, its own Excel) — identical to the native Invoices tab, by construction. Capture
+      // the raw invoice objects so the panel is built from the exact same data. The 6-column .data
+      // projection stays only as a generic-exporter/CSV fallback. No URLs, no backend names.
+      const _raw = (rows || []).slice();
       lastWaybExport = {
         sheetName: 'Invoices', filenameBase: 'invoices',
         header: ['Invoice #', 'BOL', 'Status', 'Amount', 'Date', 'Due'],
-        data: s.invoices.map(function (inv) { return [inv.invNum || '', inv.bolNum || '', inv.status || '', (inv.amount != null ? inv.amount : ''), inv.date || '', inv.due || '']; })
+        data: s.invoices.map(function (inv) { return [inv.invNum || '', inv.bolNum || '', inv.status || '', (inv.amount != null ? inv.amount : ''), inv.date || '', inv.due || '']; }),
+        buttonLabel: 'View invoices',
+        openPanel: function () { openRightPanel(renderInvoices(_raw, _raw), 'Invoices (' + _raw.length + ')'); }
       };
       return { total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
     }
@@ -18718,9 +18724,12 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart, exportS
   if (exportSpec && exportSpec.data && exportSpec.data.length) {
     const _spec = exportSpec;
     exportBtn = document.createElement('button');
-    exportBtn.textContent = 'Download as Excel';
+    // A type may supply its own real-panel opener (e.g. invoices → the native renderInvoices tab with
+    // Pay/Excel). If it does, the button opens that panel; otherwise it falls back to the generic
+    // export tab (shipments/other types), unchanged.
+    exportBtn.textContent = _spec.buttonLabel || 'Download as Excel';
     exportBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-    exportBtn.onclick = function () { _waybOpenExportTab(_spec); };
+    exportBtn.onclick = (typeof _spec.openPanel === 'function') ? _spec.openPanel : function () { _waybOpenExportTab(_spec); };
   }
   // FIX 4 — group both action buttons in one spaced flex row (only whichever exist this turn).
   if (viewBtn || dlBtn || exportBtn) {
@@ -19249,7 +19258,10 @@ async function waybAgent(text) {
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
           if (tu.name === 'render_chart' && _waybChartSpec) _turnChart = _waybChartSpec; // engine-computed spec for this turn
-          if (tu.name === 'export_excel' && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport; // last shown set, rendered as a panel + Download button
+          // Surface the action button after export_excel OR get_invoices (so "show my invoices" gets a
+          // "View invoices" button). For get_invoices, require the invoice openPanel so a stale prior
+          // export (e.g. shipments) never leaks a wrong button onto a not-found invoice reply.
+          if (((tu.name === 'export_excel') || (tu.name === 'get_invoices' && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
