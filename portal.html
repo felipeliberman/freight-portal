@@ -9845,6 +9845,23 @@ async function openDocsFor(id){
   appendMessage('bot','Here is '+(bol||id)+' — opening its documents:',{shipments:[s], singleResult:true});
   openDocsModal(String(bolId),String(bol));
 }
+
+// Resolve a shipment from a BOL (loaded set first, else API) and open its DETAIL modal — reuses
+// fetchBookingByBOL + showShipmentDetail. Used by the Claims panel BOL link so it matches clicking a
+// shipment row in My Shipments (which opens the detail view).
+async function openShipmentDetailByBOL(bol){
+  const _b = String(bol || '').trim();
+  if (!_b) return;
+  let s = null;
+  if (shipCtx && shipCtx.loaded && shipCtx.loaded.length) {
+    s = shipCtx.loaded.find(function (sh) {
+      return String(sh.BOLNumber || '').trim() === _b || String(sh.bolNumber || '').trim() === _b || String(sh.BOLId || '').trim() === _b;
+    }) || null;
+  }
+  if (!s) { try { s = await fetchBookingByBOL(_b); } catch (e) { s = null; } }
+  if (s) { showShipmentDetail(s); }
+  else { appendMessage('bot', "I couldn't pull up the shipment for BOL " + _b + " — it may not be in your history."); }
+}
 // ── CONVERSATIONAL AI — Sonnet with web_search and a proper tool-use loop ──────
 // This is the natural-conversation brain. Claude decides when to search the web.
 // Handles multi-turn tool use: calls a tool, gets results, continues until done.
@@ -16799,12 +16816,12 @@ function renderClaims(claims) {
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid var(--bdr);' + (i%2===1 ? 'background:var(--bg);' : '');
     const _cf = getClaimFields(c);
-    const _bolId  = c.BOLId || c.BOLNumber || '';   // internal id for the doc fetch
     const _bolNum = c.BOLNumber || c.BOLId || '';   // display number
-    // BOL as a purple clickable link that opens that BOL's documents — reuses the SAME
-    // openDocsModal(bolId, bolNum) opener the Shipments panel uses. Plain '—' when the claim has no BOL.
+    // BOL as a purple clickable link that opens the SHIPMENT DETAIL view for that BOL — the same detail
+    // modal the My Shipments row opens (openShipmentDetailByBOL → showShipmentDetail). Plain '—' when
+    // the claim has no BOL.
     const _bolCell = _bolNum
-      ? `<span onclick="openDocsModal('${_bolId}','${_bolNum}')" style="color:#bd27bc;font-weight:600;cursor:pointer;">${_bolNum}</span>`
+      ? `<span onclick="openShipmentDetailByBOL('${_bolNum}')" style="color:#bd27bc;font-weight:600;cursor:pointer;">${_bolNum}</span>`
       : '<span style="color:var(--tx);font-weight:500;">—</span>';
     const type = _cf.type;
     const amt = _cf.amount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
