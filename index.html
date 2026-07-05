@@ -1281,8 +1281,30 @@ const DEMO_QUOTES = {
   dal_den: { lane:'Dallas, TX → Denver, CO', summary:'3 pallets · retail fixtures · 900 lbs', options:[
     {carrier:'ABF Freight', price:388.60, days:2, service:'Standard LTL', best:true},
     {carrier:'Estes Express', price:401.20, days:3, service:'Standard LTL'},
-    {carrier:'R&L Carriers', price:427.40, days:2, service:'Standard LTL'} ] }
+    {carrier:'R&L Carriers', price:427.40, days:2, service:'Standard LTL'} ] },
+  ocala_clt: { lane:'Ocala, FL → Charlotte, NC', summary:'1 pallet · 800 lbs · class 70', options:[
+    {carrier:'ABF Freight', price:247.60, days:2, service:'Standard LTL', best:true},
+    {carrier:'Estes Express', price:263.40, days:2, service:'Standard LTL'},
+    {carrier:'Southeastern Freight', price:281.90, days:3, service:'Standard LTL'} ] }
 };
+
+// Canned freight-knowledge Q&A for the movie's closing act (all sample/scripted, zero API).
+// A2 (index 1) has a:null and is built at play time from DEMO_QUOTES.ocala_clt — the number lives
+// in the canonical demo dataset (single source of truth), never string-literaled here.
+const DEMO_QA = [
+  { q:"Where's the closest ABF terminal to Ocala?",
+    a:"ABF has a service center right in Ocala — center #312 at 841 NW 24th Court, 34475. So anything moving in or out of the Ocala area on ABF originates from a local terminal, not railed in from Orlando or Tampa. Want me to check ABF's transit on a specific lane?" },
+  { q:"Yeah — Ocala to Charlotte, one pallet, 800 lbs, class 70.",
+    a:null },
+  { q:"Is there a residential fee if it delivers to a home?",
+    a:"Yes — residential delivery adds an accessorial, plus a liftgate if there's no dock. I flag both automatically when I detect a residential ZIP, so the quote's accurate up front — no surprise reweighs or rebills." },
+  { q:"Nice. How do I get set up?",
+    a:"Takes about two minutes — open a free account and you'll get live rates from 50+ carriers, plus booking, tracking, and reports all from this chat." }
+];
+function _abfOcalaAnswer(){
+  const q=DEMO_QUOTES.ocala_clt; const o=q.options.find(x=>x.carrier==='ABF Freight')||q.options[0];
+  return "ABF standard runs about "+o.days+" business days on that lane. I'm seeing about $"+o.price.toFixed(2)+" for a single 800 lb pallet at class 70 — that's a sample rate, live rates come with your account. Want the full carrier comparison?";
+}
 
 // ── Daily-rolling usage limits (localStorage, resets each calendar day) ─────
 const DEMO_MSG_LIMIT = 15, DEMO_EXTRACT_LIMIT = 2;
@@ -1585,6 +1607,16 @@ function _movieConfirmCard(){
   return c;
 }
 
+// Append the "Open a free account" CTA button inside the last (ghost) assistant bubble.
+function _appendMovieCTA(){
+  const m=document.getElementById('messages'); const row=m&&m.lastChild; const bub=row&&row.children[1];
+  if(!bub) return;
+  bub.style.flexDirection='column'; bub.style.alignItems='flex-start';
+  const b=document.createElement('button'); b.textContent='Open a free account →';
+  b.style.cssText='margin-top:8px;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+  b.onclick=startOnboarding; bub.appendChild(b);
+}
+
 // Return the welcome screen to its true initial state (raw — does NOT trigger kill).
 function _movieSoftReset(){
   const m=document.getElementById('messages'); if(m) m.innerHTML='';
@@ -1643,20 +1675,29 @@ function runMovie(){
       _mt(()=>{ if(_movieKilled())return; removeTyping();
         _ghostBot('Read it. Pulled the shipment straight off your packing slip — Chicago to Atlanta, two pallets, 1,200 pounds.');
         _panelMovie("Here's your shipment", renderExtractedCard(_SLIP_EXTRACT));
-        _mt(end,2200);
+        _mt(qa,2200);
       },1200);
     },550);
   }
-  function end(){
+  // Act 4 — "Ask the assistant anything": four scripted freight-knowledge exchanges in the
+  // center chat. Chat-only (no panel card). Q4's answer carries the account CTA and ends the loop.
+  function qa(){
     if(_movieKilled())return;
-    _ghostBot('This is your portal — quote, book, and read documents right in chat. Open a free account to see your live rates.');
-    const m=document.getElementById('messages'); const row=m&&m.lastChild; const bub=row&&row.children[1];
-    if(bub){ bub.style.flexDirection='column'; bub.style.alignItems='flex-start';
-      const b=document.createElement('button'); b.textContent='Open a free account →';
-      b.style.cssText='margin-top:8px;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
-      b.onclick=startOnboarding; bub.appendChild(b);
-    }
-    _mt(restart,3400);
+    let j=0;
+    (function step(){
+      if(_movieKilled())return;
+      const item=DEMO_QA[j];
+      const answer=item.a || _abfOcalaAnswer();
+      const isLast=(j===DEMO_QA.length-1);
+      _ghostUser(item.q);
+      _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+        _mt(()=>{ if(_movieKilled())return; removeTyping();
+          _ghostBot(answer);
+          if(isLast){ _appendMovieCTA(); _mt(restart,3400); }
+          else { j++; _mt(step,1500); }
+        },1100);
+      },550);
+    })();
   }
 }
 
