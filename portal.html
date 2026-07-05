@@ -2911,13 +2911,11 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   titleSection.style.cssText = 'margin-bottom:16px;border-radius:14px;background:var(--card);border:1px solid var(--bdr);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;';
 
   const _st = v => (v==null?'':typeof v==='object'?(v.name||v.code||''):String(v));
-  const paid    = allInvoices.filter(i => { const f = getInvoiceFields(i); return f.isPaid; }).length;
-  const overdue = 0;
-  const unpaid  = allInvoices.length - paid;
-  const outstanding = allInvoices.reduce((sum, i) => {
-    const f = getInvoiceFields(i);
-    return f.isPaid ? sum : sum + (parseFloat(f.rawAmt) || 0);
-  }, 0);
+  const _invSummary = summarizeInvoices(allInvoices);
+  const paid    = _invSummary.paid;
+  const overdue = 0; // pre-existing display stub — the Overdue tile intentionally shows 0
+  const unpaid  = _invSummary.unpaid;
+  const outstanding = _invSummary.outstandingBalance;
 
   // Track active filter
   let activeFilter = 'all';
@@ -3206,21 +3204,15 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   // ── Aging Report ─────────────────────────────────────────────────────────
   const now = new Date();
   const unpaidInvs = allInvoices.filter(i => !getInvoiceFields(i).isPaid);
+  // Bucket assignment comes from the shared summarizeInvoices() chokepoint (same math the
+  // get_invoices tool uses); presentation (label/color/bg) is applied here.
+  const _agingSrc = _invSummary.agingBuckets;
   const agingBuckets = [
-    { label: 'Current',  color: 'var(--mu)', bg: 'transparent', invs: [] },
-    { label: '1-30 days', color: 'var(--mu)', bg: 'transparent', invs: [] },
-    { label: '31-60 days', color: 'var(--mu)', bg: '#f9f8f5', invs: [] },
-    { label: '60+ days',  color: 'var(--mu)', bg: 'transparent', invs: [] },
+    { label: 'Current',  color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[0].invs },
+    { label: '1-30 days', color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[1].invs },
+    { label: '31-60 days', color: 'var(--mu)', bg: '#f9f8f5', invs: _agingSrc[2].invs },
+    { label: '60+ days',  color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[3].invs },
   ];
-  unpaidInvs.forEach(inv => {
-    const f = getInvoiceFields(inv);
-    const due = f.due ? new Date(f.due) : null;
-    const days = due ? Math.floor((now - due) / 86400000) : -1;
-    if (days <= 0)       agingBuckets[0].invs.push(inv);
-    else if (days <= 30) agingBuckets[1].invs.push(inv);
-    else if (days <= 60) agingBuckets[2].invs.push(inv);
-    else                 agingBuckets[3].invs.push(inv);
-  });
 
   if (unpaidInvs.length > 0) {
     const agingDiv = document.createElement('div');
@@ -3467,6 +3459,36 @@ function getInvoiceFields(inv) {
     isPaid,
     status:    isPaid ? 'PAID' : 'UNPAID',
     docUrl:    inv.docUrl   || inv.url || '',
+  };
+}
+
+// Canonical invoice roll-up — the SINGLE source of paid/unpaid/outstanding/aging math, shared by
+// the invoice panel (renderInvoices) and the get_invoices agent tool so the two can never drift.
+// Keys on the invoice feed's status.paid via getInvoiceFields, never a QBO balance.
+function summarizeInvoices(list) {
+  list = list || [];
+  const now = new Date();
+  const unpaidList = list.filter(i => !getInvoiceFields(i).isPaid);
+  const buckets = [[], [], [], []]; // current, 1-30, 31-60, 60+
+  unpaidList.forEach(inv => {
+    const f = getInvoiceFields(inv);
+    const due = f.due ? new Date(f.due) : null;
+    const days = due ? Math.floor((now - due) / 86400000) : -1;
+    if (days <= 0) buckets[0].push(inv);
+    else if (days <= 30) buckets[1].push(inv);
+    else if (days <= 60) buckets[2].push(inv);
+    else buckets[3].push(inv);
+  });
+  const outstandingBalance = +unpaidList.reduce((s, i) => s + (parseFloat(getInvoiceFields(i).rawAmt) || 0), 0).toFixed(2);
+  return {
+    total: list.length,
+    paid: list.length - unpaidList.length,
+    unpaid: unpaidList.length,
+    overdue: buckets[1].length + buckets[2].length + buckets[3].length,
+    outstandingBalance: outstandingBalance,
+    aging: { current: buckets[0].length, '1-30': buckets[1].length, '31-60': buckets[2].length, '60+': buckets[3].length },
+    agingBuckets: buckets.map(function (invs) { return { invs: invs }; }),
+    invoices: list.map(function (i) { const f = getInvoiceFields(i); return { invNum: f.invNum, bolNum: f.bolNum, status: f.status, amount: parseFloat(f.rawAmt) || 0, date: f.date, due: f.due }; })
   };
 }
 
@@ -11966,133 +11988,8 @@ async function clientSideSearch(t, lower) {
     return true;
   }
 
-  // ── Invoice search — check FIRST before shipment searches ──
-  const isInvoiceQuery = /\b(invoice|invoices|inv)\b/.test(lower);
-  if (isInvoiceQuery && currentCustomer) {
-    showTyping();
-    let invoices;
-    try { invoices = await fetchInvoices(); } catch(e) { removeTyping(); appendMessage('bot', 'Could not load invoices. Please try again.'); return true; }
-    removeTyping();
-
-    // Invoice number lookup: "invoice 138828" or "invoice #138828"
-    const invNumMatch = lower.match(/(?:invoice|inv)\s*#?\s*(\d{4,})/i);
-    if (invNumMatch) {
-      const num = invNumMatch[1];
-      const found = invoices.filter(inv => String(inv.invoiceNumber) === num);
-      if (found.length) {
-        appendMessage('bot', 'Found invoice #' + num + ' — click ↓ to download:', { invoices: found, invoicesList: found });
-      } else {
-        appendMessage('bot', 'I couldn\'t find invoice #' + num + '. Check the number and try again.');
-      }
-      return true;
-    }
-
-    // Paid/Unpaid filter
-    if (/\bunpaid\b/.test(lower)) {
-      const found = invoices.filter(inv => !(inv.status && inv.status.paid));
-      appendMessage('bot', 'Found ' + found.length + ' unpaid invoice' + (found.length !== 1 ? 's' : '') + ' — click ↓ to download:', { invoices: found, invoicesList: found });
-      return true;
-    }
-    if (/\bpaid\b/.test(lower)) {
-      const found = invoices.filter(inv => inv.status && inv.status.paid);
-      appendMessage('bot', 'Found ' + found.length + ' paid invoice' + (found.length !== 1 ? 's' : '') + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-
-    // Total spend / how much
-    if (/\b(how much|total|spent|spend|sum|balance|owe|outstanding)\b/.test(lower)) {
-      const total = invoices.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      const unpaidTotal = invoices.filter(i=>!getInvoiceFields(i).isPaid).reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      const paidTotal = total - unpaidTotal;
-      appendMessage('bot', 'Here is your invoice summary: ' +
-        '• **Total billed:** $' + total.toFixed(2) + ' across ' + invoices.length + ' invoices\n' +
-        '• **Paid:** $' + paidTotal.toFixed(2) + '\n' +
-        '• **Outstanding:** $' + unpaidTotal.toFixed(2));
-      return true;
-    }
-
-    // Aging report
-    if (/\b(aging|overdue|age|old|oldest|30|60|90)\b/.test(lower)) {
-      const now = new Date();
-      const buckets = { '0-30': [], '31-60': [], '61-90': [], '90+': [] };
-      invoices.filter(i=>!getInvoiceFields(i).isPaid).forEach(inv => {
-        const f = getInvoiceFields(inv);
-        const due = f.due ? new Date(f.due) : null;
-        const days = due ? Math.floor((now - due) / 86400000) : 0;
-        if (days <= 0) buckets['0-30'].push(inv);
-        else if (days <= 30) buckets['31-60'].push(inv);
-        else if (days <= 60) buckets['61-90'].push(inv);
-        else buckets['90+'].push(inv);
-      });
-      const lines = Object.entries(buckets).map(([k,arr]) => {
-        const total = arr.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-        return '- ' + k + ': ' + arr.length + ' invoice' + (arr.length!==1?'s':'') + ' - $' + total.toFixed(2);
-      });
-      appendMessage('bot', 'Invoice aging (unpaid only): ' + lines.join(', '));
-      return true;
-    }
-
-    // Amount filter
-    const overMatch  = lower.match(/(?:over|more than|greater than|above)\s*\$?\s*(\d+)/i);
-    const underMatch = lower.match(/(?:under|less than|below)\s*\$?\s*(\d+)/i);
-    if (overMatch) {
-      const amt = parseFloat(overMatch[1]);
-      const found = invoices.filter(inv => (parseFloat(getInvoiceFields(inv).rawAmt) || 0) > amt);
-      const total = found.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' over $' + amt + ' totaling $' + total.toFixed(2) + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-    if (underMatch) {
-      const amt = parseFloat(underMatch[1]);
-      const found = invoices.filter(inv => (parseFloat(getInvoiceFields(inv).rawAmt) || 0) < amt);
-      appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' under $' + amt + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-
-    // Most expensive
-    if (/\b(biggest|largest|most expensive|highest)\b/.test(lower)) {
-      const sorted = [...invoices].sort((a,b) => (parseFloat(getInvoiceFields(b).rawAmt)||0) - (parseFloat(getInvoiceFields(a).rawAmt)||0));
-      const top = sorted.slice(0,5);
-      appendMessage('bot', 'Your 5 largest invoices:', { invoices: top, invoicesList: top });
-      return true;
-    }
-
-    // By consignee
-    const forMatch = lower.match(/(?:for|to)\s+([a-z\s]{3,})/i);
-    if (forMatch) {
-      const name = forMatch[1].trim();
-      const found = invoices.filter(inv => {
-        const en = inv._enriched || {};
-        return (en.consignee||'').toLowerCase().includes(name.toLowerCase());
-      });
-      if (found.length) {
-        const total = found.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-        appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length!==1?'s':'') + ' for "' + name + '" totaling $' + total.toFixed(2) + ':', { invoices: found, invoicesList: found });
-        return true;
-      }
-    }
-
-    // Name/carrier/BOL search within invoices
-    const nameSearch = lower
-      .replace(/\b(invoice|invoices|inv|for|my|show|find|search|get|all)\b/g, '')
-      .trim();
-    if (nameSearch.length > 1) {
-      const words = nameSearch.split(/\s+/).filter(w => w.length > 1);
-      const found = invoices.filter(inv => {
-        const en = inv._enriched || {};
-        const fields = [en.consignee, en.shipper, en.carrier, inv.bolNum, String(inv.invoiceNumber || '')].join(' ').toLowerCase();
-        return words.every(w => fields.includes(w));
-      });
-      if (found.length) {
-        appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' matching "' + nameSearch + '":', { invoices: found, invoicesList: found });
-        return true;
-      }
-    }
-
-    // Generic — show all invoices
-    appendMessage('bot', 'Here are your invoices — click ↓ to download any:', { invoices, invoicesList: invoices });
-    return true;
-  }
+  // (Dead invoice-search intercept removed — clientSideSearch is no longer called; invoice/payment
+  // questions now reach the get_invoices tool in the waybAgent loop.)
 
   // ── BOL patterns ──
   const bolMatch = lower.match(/(?:bol|bill\s*of\s*lading|shipment|find|look\s*up|search|where\s*is|status\s*of|what\s*happened\s*to)\s*#?\s*(\d{6,})/i)
@@ -18386,7 +18283,7 @@ const _waybSysPrompt = `You are a freight expert assistant for Freight and Logis
 
 CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the customer under any circumstances. You speak as Freight and Logistics, Inc. only. If you cannot help with something, say so without referencing any external system.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), and render_chart (draw a chart of their analytics in the side panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, or paperwork.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), and get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, or whether something is paid. Report payment status and amounts ONLY from what get_invoices returns; if it reports nothing for an invoice, say you could not find it rather than guessing.
 
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
@@ -18451,6 +18348,11 @@ const _waybTools = [
         bol: { type: 'string', description: "The shipment's BOL number." }
       }
     }
+  },
+  {
+    name: 'get_invoices',
+    description: "Look up this customer's invoices and payment status: paid, unpaid and overdue counts, total outstanding balance, invoice aging (current, 1-30, 31-60, 60+ days), and per-invoice number, BOL, PAID or UNPAID status, amount, invoice date and due date. Use this for any question about whether invoices are paid, what is still owed, or what is overdue. Pass an optional bol to check the invoice for one shipment. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
+    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' } } }
   },
   {
     name: 'export_excel',
@@ -18689,6 +18591,39 @@ async function _waybDocuments(input) {
     documents: list.map(function (d) { return { type: d.type, label: d.label }; }),
     note: 'The document links are shown to the customer as clickable buttons automatically. Do NOT write out or repeat any link or URL — just tell them the documents are ready.'
   };
+}
+
+// Shared read-tool scaffold: fetch a feed the UI already uses, run each row through the SAME
+// extractor the panel renders with, optionally scope to one BOL, and return a compact, model-safe
+// payload. Anti-fabrication: an empty result returns {found:false,message}, never invented data.
+// Anti-leak: the supplied extractor/summarize must never include URLs or backend system names.
+async function _waybReadFeed(opts) {
+  opts = opts || {};
+  let rows;
+  try { rows = await opts.load(); }
+  catch (e) { console.error('waybAgent ' + opts.label + ' load error:', e); return { found: false, message: 'I could not pull up your ' + opts.label + ' just now.' }; }
+  let items = (rows || []).map(opts.extract || function (x) { return x; });
+  const bol = opts.bol ? String(opts.bol).trim() : '';
+  if (bol && opts.keyOf) items = items.filter(function (it) { return String(opts.keyOf(it)) === bol; });
+  if (!items.length) return { found: false, message: bol ? ('I could not find any ' + opts.label + ' for BOL ' + bol + '.') : ('No ' + opts.label + ' on file.') };
+  return Object.assign({ found: true }, opts.summarize(items));
+}
+
+// get_invoices — reuse the invoice feed (fetchInvoices) + the SAME summarizeInvoices() chokepoint the
+// invoice panel uses, so the agent and the panel report identical paid/unpaid/aging. Returns no URLs.
+async function _waybInvoices(input) {
+  input = input || {};
+  return _waybReadFeed({
+    label: 'invoices',
+    load: function () { return fetchInvoices(); },
+    extract: function (inv) { return inv; },
+    keyOf: function (inv) { return getInvoiceFields(inv).bolNum; },
+    bol: String(input.bol || '').trim(),
+    summarize: function (rows) {
+      const s = summarizeInvoices(rows);
+      return { total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
+    }
+  });
 }
 
 // Render document buttons and/or the Excel-download button beneath a bot message bubble.
@@ -19138,6 +19073,7 @@ async function _waybExecTool(tu) {
     if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
+    else if (tu.name === 'get_invoices') result = await _waybInvoices(tu.input);
     else if (tu.name === 'export_excel') result = _waybExportExcel();
     else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
