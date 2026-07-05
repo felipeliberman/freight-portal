@@ -18310,7 +18310,7 @@ const _waybTools = [
         destState: { type: 'string', description: 'Destination state as a 2-letter code, or null.' },
         dateFrom:  { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
         dateTo:    { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' },
-        limit:     { type: 'number', description: 'Size of the sample returned to you (the full matched set is always kept for the customer). Default 25.' }
+        limit:     { type: 'number', description: "The specific number of shipments the customer asked to SEE (e.g. 'last 6', 'top 10', '5 most recent') — the chat, the View-shipments panel, AND the Excel export all honor it. OMIT it for broad or 'all' requests (e.g. 'all my Metro shipments', 'my shipments') so everything matching is returned, not capped." }
       }
     }
   },
@@ -18445,17 +18445,18 @@ async function _waybSearch(input) {
   // carrier search matches the analytics count, e.g. all 182 Metro). The model receives the TRUE
   // total plus a bounded sample of the most recent — enough context without bloating tokens.
   const allRows = matched.map(_mapRow);
-  // SCOPED set for the panel / export / title. A "last N" (or "N most recent" / "top N") request sets
-  // q.limit, so sort by the query's sort (date desc by default) and take those N — the panel then
-  // shows exactly the N, not the full history. A pure filter query (no q.limit) keeps the full matched
-  // set unchanged (e.g. "all my Metro shipments" still shows all Metro). The returned count stays the
-  // TRUE total (matched.length) so the model's prose can say "your 6 most recent of 213 on file".
+  // ONE effective "show N" signal, from the parsed query (q.limit) OR the tool's limit param
+  // (input.limit) — so the chat sample, the panel, the title, and the export can never disagree.
+  // >0 → sort by the query's sort (date desc default) and take those N; 0/omitted → a broad/all
+  // request, keep the full matched set (e.g. "all my Metro shipments" shows all Metro). The returned
+  // count stays the TRUE total (matched.length) so prose can say "your 6 most recent of 213 on file".
+  const _effLimit = Number(q.limit) || Number(input.limit) || 0;
   let scoped = matched;
-  if (q.limit && Number(q.limit) > 0) {
+  if (_effLimit > 0) {
     const _sf = q.sortField || 'date';
     const _dir = (q.sortDir === 'asc') ? 1 : -1;
     const _sortVal = function (s) { const f = shipFields(s); return _sf === 'cost' ? (f.cost || 0) : _sf === 'weight' ? (f.weight || 0) : (f.date ? f.date.getTime() : 0); };
-    scoped = matched.slice().sort(function (a, b) { return (_sortVal(a) - _sortVal(b)) * _dir; }).slice(0, Number(q.limit));
+    scoped = matched.slice().sort(function (a, b) { return (_sortVal(a) - _sortVal(b)) * _dir; }).slice(0, _effLimit);
   }
   const scopedRows = scoped.map(_mapRow);
   if (matched.length) {
@@ -18471,11 +18472,9 @@ async function _waybSearch(input) {
   }
   if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   const _MODEL_CAP = 40;
-  // Limit query → the model sees the scoped subset (so its prose describes the right N); pure filter
-  // query → the existing bounded sample of the full set (unchanged).
-  const preview = (q.limit && Number(q.limit) > 0)
-    ? scopedRows.slice(0, _MODEL_CAP)
-    : allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
+  // Same effective limit as the panel/export → the chat sample and the panel always match. No explicit
+  // N → a bounded sample of the full matched set (the panel still shows all via scoped = matched).
+  const preview = _effLimit > 0 ? scopedRows.slice(0, _MODEL_CAP) : allRows.slice(0, 25);
   return { count: matched.length, returned: preview.length, shipments: preview };
 }
 
