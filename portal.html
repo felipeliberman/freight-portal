@@ -18638,7 +18638,7 @@ async function _waybInvoices(input) {
 
 // Render document buttons and/or the Excel-download button beneath a bot message bubble.
 // Clicking either opens a real, draggable right-panel tab (not a floating overlay).
-function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
+function _waybAttachExtras(row, docs, resultSet, resultShipments, chart, exportSpec) {
   if (!row) return;
   const bubble = row.querySelector('.msg-bubble');
   if (!bubble) return;
@@ -18689,12 +18689,23 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
     dlBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
     dlBtn.onclick = function () { _waybOpenExcelTab(_rows, _ships); };
   }
+  // export_excel tool → a "Download as Excel" button beneath the reply that opens the type-agnostic
+  // export panel (preview + Download). Same styling as the search-results Download button.
+  let exportBtn = null;
+  if (exportSpec && exportSpec.data && exportSpec.data.length) {
+    const _spec = exportSpec;
+    exportBtn = document.createElement('button');
+    exportBtn.textContent = 'Download as Excel';
+    exportBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    exportBtn.onclick = function () { _waybOpenExportTab(_spec); };
+  }
   // FIX 4 — group both action buttons in one spaced flex row (only whichever exist this turn).
-  if (viewBtn || dlBtn) {
+  if (viewBtn || dlBtn || exportBtn) {
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;';
     if (viewBtn) btnRow.appendChild(viewBtn);
     if (dlBtn) btnRow.appendChild(dlBtn);
+    if (exportBtn) btnRow.appendChild(exportBtn);
     bubble.appendChild(btnRow);
   }
 }
@@ -18731,13 +18742,14 @@ function _waybDownloadExcel(rows) {
   _waybExportSheet(WAYB_SHIP_EXPORT_HEADER, (rows || []).map(_waybShipExportRow), 'Shipments', 'shipments');
 }
 
-// export_excel tool — download the most recent (persisted) search result set on a typed request
-// ("put it in excel", "give me a spreadsheet"). Uses the same SheetJS export as the button.
+// export_excel tool — surface the most recent (persisted) result set on a typed request
+// ("put it in excel", "give me a spreadsheet"). Does NOT download; the finalize step renders a
+// "Download as Excel" button + preview panel beneath the reply (see _turnExport / _waybOpenExportTab),
+// matching the search-results Download pattern — the customer clicks to download.
 function _waybExportExcel() {
   const spec = lastWaybExport;
   if (!spec || !spec.data || !spec.data.length) return { ok: false, message: 'There is nothing to export yet — show me your shipments or invoices first, then ask to export.' };
-  try { _waybExportSheet(spec.header, spec.data, spec.sheetName, spec.filenameBase); } catch (e) { console.error('export_excel failed:', e); return { ok: false, message: 'The export could not be generated.' }; }
-  return { ok: true, exported: spec.data.length, sheet: spec.sheetName };
+  return { ok: true, shown: spec.data.length, sheet: spec.sheetName };
 }
 
 // ── Way B preview tabs ──────────────────────────────────────────────────────
@@ -18765,6 +18777,44 @@ function _waybOpenExcelTab(rows, ships) {
   wrap.appendChild(bar);
   // EXACT My Shipments styling — reuse renderShipments over the raw shipment objects.
   wrap.appendChild(renderShipments(ships, ships, 0, false));
+  openRightPanel(wrap, fname);
+}
+
+// Type-agnostic export set → a right-panel tab titled with the filename, containing a generic preview
+// table built straight from spec.header + spec.data (works for shipments, invoices, and later claims —
+// no per-type code) plus a Download button that runs the single shared SheetJS writer. No backend
+// names or URLs are ever in spec, so nothing sensitive is rendered or leaked.
+function _waybOpenExportTab(spec) {
+  spec = spec || {}; const header = spec.header || []; const data = spec.data || [];
+  const fname = (spec.filenameBase || 'export') + '-' + new Date().toISOString().split('T')[0] + '.xlsx';
+  const esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  const wrap = document.createElement('div');
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;';
+  const meta = document.createElement('div');
+  meta.style.cssText = 'font-size:12px;color:var(--mu);';
+  meta.textContent = data.length + ' row' + (data.length === 1 ? '' : 's');
+  bar.appendChild(meta);
+  const dl = document.createElement('button');
+  dl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download';
+  dl.style.cssText = 'display:inline-flex;align-items:center;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+  dl.onclick = function () { _waybExportSheet(header, data, spec.sheetName, spec.filenameBase); };
+  bar.appendChild(dl);
+  wrap.appendChild(bar);
+  // Generic preview table — header row + all data rows, styled to match the portal's other tables.
+  const tableWrap = document.createElement('div');
+  tableWrap.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:10px;overflow:auto;max-height:calc(100dvh - 200px);';
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#faf9f6;">';
+  header.forEach(function (h) { html += '<th style="text-align:left;padding:10px 14px;font-weight:500;color:var(--mu);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--bdr);white-space:nowrap;">' + esc(h) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  data.forEach(function (rowCells) {
+    html += '<tr>';
+    (rowCells || []).forEach(function (c) { html += '<td style="padding:9px 14px;color:var(--tx);border-bottom:0.5px solid #eee8dd;white-space:nowrap;">' + esc(c) + '</td>'; });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  tableWrap.innerHTML = html;
+  wrap.appendChild(tableWrap);
   openRightPanel(wrap, fname);
 }
 
@@ -19130,6 +19180,7 @@ async function waybAgent(text) {
   let _turnRows = [];        // THIS turn's search rows — drives the Download-as-Excel button
   let _turnShips = [];       // THIS turn's raw shipments — for the Excel preview table
   let _turnChart = null;     // THIS turn's chart spec — rendered as a right-panel tab beneath the reply
+  let _turnExport = null;    // THIS turn's export spec (from export_excel) — drives the Download-as-Excel button/panel
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
   try {
@@ -19175,6 +19226,7 @@ async function waybAgent(text) {
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
           if (tu.name === 'render_chart' && _waybChartSpec) _turnChart = _waybChartSpec; // engine-computed spec for this turn
+          if (tu.name === 'export_excel' && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport; // last shown set, rendered as a panel + Download button
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
@@ -19194,7 +19246,7 @@ async function waybAgent(text) {
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
       // returned 10+ shipments) render beneath the reply. Fewer than 10 → cards/text only.
-      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips, _turnChart);
+      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips, _turnChart, _turnExport);
       return;
     }
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
