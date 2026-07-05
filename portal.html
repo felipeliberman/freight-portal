@@ -13442,25 +13442,15 @@ async function handleInput(text) {
 
   // ── Quote in progress handled earlier (guard moved up near top of handleInput) ──
 
-  // ── EDUCATIONAL / CONVERSATIONAL INTENT — goes to Claude, not shipment search ──
-  const isEducational = /^(tell me|what is|what are|what's|explain|how does|how do|how is|how are|about|describe|define|why|when should|can you explain|help me understand|i want to know|i'd like to know|do you know|what do you think|give me info|info about|information about|learn about)/i.test(lower.trim())
-    || /\b(difference between|vs\.|versus|compare|pros and cons|advantages|disadvantages|better for|when to use)\b/i.test(lower);
-
-  // Override isEducational for account-specific questions that need data
+  // Account-specific detection — retained ONLY to keep the quote-intent guard below from pulling
+  // data questions ("my carrier", "when will it deliver") into the quote conversation. The former
+  // isEducational→skip-waybAgent switchboard has been removed: the data-vs-question decision is now
+  // the agent's (waybAgent has search_shipments / get_invoices / run_analytics AND web_search for
+  // general questions), so a logged-in customer's non-quote message falls through to waybAgent by
+  // default (below). "what is LTL?" → waybAgent answers in prose; "my last 6 shipments" → search_shipments.
   const isAccountSpecific = /\b(my (carrier|shipment|lane|invoice|top|spend|volume|bol|pro)|which carrier|top lane|my lane|how many shipment|shipment count|what.*owe|my invoice|when will|will it deliver|will.*arrive|eta for|\d{7,}|is.*address|is.*residential|is.*limited|do i need.*liftgate|carriers.*on|on.*lane|fl.*ca|fl.*ny|fl.*pa|fl.*mi|fl.*va)\b/i.test(lower)
     || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower)
     || (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/i.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/i.test(lower));
-
-  // A retained-set follow-up ("what are the two bol numbers", "both consignees", "their bols")
-  // must reach clientSideSearch — otherwise the educational skip routes "what are…" to the AI,
-  // which deflects instead of answering from the held result set.
-  const _hasRetainedSet = !!(window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length);
-  const _isSetFollowUp = _hasRetainedSet && lower.trim().split(/\s+/).length <= 14 &&
-    /\b(both|the two|the three|those|these|them|their|list (them|the|those)|you (said|told me)|why (is it )?(only|just)|the bols?|bol numbers?|both bols?|what were|the (consignees?|customers?|carriers?|costs?|prices?|weights?|dates?|shippers?))\b/i.test(lower);
-
-  if (isEducational && !isAccountSpecific && !_isSetFollowUp) {
-    // Falls through to main AI handler — skip clientSideSearch
-  } else {
 
   // ── Quote intent — catch BEFORE shipment search so quote requests (even misspelled
   // or bare, like "yo I need a quot" or "quote") never leak into the shipment fuzzy search.
@@ -13485,7 +13475,6 @@ async function handleInput(text) {
     await waybAgent(t);
     return;
   }
-  } // end else-not-educational
   // ─────────────────────────────────────────────────────────────────────────
 
   // New quote request (explicit)
