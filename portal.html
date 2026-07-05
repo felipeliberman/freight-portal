@@ -12231,14 +12231,9 @@ async function clientSideSearch(t, lower) {
   }
 
   // ── Damage / claim questions ──
-  const isClaimQuery = /\b(damage|damaged|claim|freight claim|broke|broken|missing|shortage|short ship|lost|destroy|destroyed|file.*claim|claim.*file)\b/.test(lower);
-  if (isClaimQuery && currentCustomer) {
-    const bolMatch = lower.match(/\b([a-z]{0,3}\d{6,})\b/i);
-    let msg = 'To file a freight claim, start by noting the damage on the delivery receipt before the driver leaves — photos of the damaged packaging and product are essential. Then submit through the Email Support form in the left navigation menu, selecting Freight Claim, and attach your photos and commercial invoice. We handle the claim with the carrier on your behalf and will follow up if anything additional is needed.';
-    if (bolMatch) msg = 'For BOL ' + bolMatch[0] + ' — ' + msg.charAt(0).toLowerCase() + msg.slice(1);
-    appendMessage('bot', msg);
-    return true;
-  }
+  // (Dead claim intercept removed — clientSideSearch is no longer called; claim-status/amount questions
+  // now reach the get_claims tool in the waybAgent loop, and filing a new claim goes through the
+  // support-mode [[DRAFT]] flow.)
 
   // ── Late shipment / overdue ──
   const isLateQuery = /\b(late|overdue|delayed|delay|past due|not delivered|hasn.?t arrived|where is|behind schedule|expected.*delivery|delivery.*expected|eta|estimated.*arrival|arrival.*estimated|when.*deliver|deliver.*when|when.*arrive|arrive.*when|when will|will it.*deliver|will.*be.*deliver)\b/.test(lower) && !/\b(invoice|invoices|payment|show me|list|all)\b/.test(lower);
@@ -16638,6 +16633,43 @@ async function fetchInvoices(dateFrom, dateTo) {
 
 
 // ── REPORTS ───────────────────────────────────────────────────────────────────
+// Canonical open-claim extractor — factored out of renderClaims so the Claims panel AND get_claims
+// read identical fields (no drift). bol/type/amount are the fields the panel already renders today
+// (known-good). status/carrier/fileDate field names are best-effort and must be verified against a
+// live openclaims payload; since this is the OPEN-claims feed, status defaults to 'Open'.
+function getClaimFields(c) {
+  c = c || {};
+  return {
+    bol:      c.BOLNumber || c.BOLId || '—',
+    type:     c.claimTypeName || 'Unknown',
+    amount:   parseFloat(c.claimAmount) || 0,
+    status:   c.claimStatusName || c.claimStatus || c.statusName || c.status || 'Open',
+    carrier:  c.carrierName || c.carrier || '',
+    fileDate: c.claimDate || c.dateFiled || c.filedDate || c.createdDate || ''
+  };
+}
+
+// Paginated fetch of the customer's open claims — lifted from showClaims so the Claims panel and
+// get_claims share one fetch (no drift).
+async function fetchOpenClaims() {
+  const token = await getToken();
+  let all = [], pg = 1, tpgs = 1;
+  while (pg <= tpgs && pg <= 10) {
+    const r = await fetch(PRIMUS_BASE + '/applet/v1/book/openclaims?limit=50&page=' + pg, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!r.ok) break;
+    const d = await r.json();
+    const results = (d.data && d.data.results) || [];
+    const paging  = (d.data && d.data.pagingDetails) || {};
+    if (pg === 1) tpgs = Math.ceil((paging.totalResults || results.length) / 50) || 1;
+    results.forEach(function (c) { all.push(c); });
+    if (!results.length) break;
+    pg++;
+  }
+  return all;
+}
+
 async function showClaims() {
   if (needsLogin('Claims')) return;
   showChatArea();
@@ -16650,21 +16682,7 @@ async function showClaims() {
   showTyping();
 
   try {
-    const token = await getToken();
-    let allClaims = [], pg = 1, tpgs = 1;
-    while (pg <= tpgs && pg <= 10) {
-      const r = await fetch(PRIMUS_BASE + '/applet/v1/book/openclaims?limit=50&page=' + pg, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!r.ok) break;
-      const d = await r.json();
-      const results = (d.data && d.data.results) || [];
-      const paging  = (d.data && d.data.pagingDetails) || {};
-      if (pg === 1) tpgs = Math.ceil((paging.totalResults || results.length) / 50) || 1;
-      results.forEach(c => allClaims.push(c));
-      if (!results.length) break;
-      pg++;
-    }
+    const allClaims = await fetchOpenClaims();
     removeTyping();
     appendMessage('bot', `Here are your open claims (${allClaims.length} found):`, { claims: allClaims, claimsLabel: 'Open Claims' });
   } catch(e) {
@@ -16723,7 +16741,7 @@ function renderClaims(claims) {
   const container = document.createElement('div');
   claims = claims || [];
 
-  const totalAmount = claims.reduce((s,c) => s + (parseFloat(c.claimAmount)||0), 0);
+  const totalAmount = claims.reduce((s,c) => s + getClaimFields(c).amount, 0);
 
   // ── Dashboard header — matches renderShipments() style exactly ──
   const titleSection = document.createElement('div');
@@ -16744,7 +16762,7 @@ function renderClaims(claims) {
   const headerRight = document.createElement('div');
   headerRight.style.cssText = 'display:flex;flex:2;justify-content:space-around;gap:4px;min-width:0;';
 
-  const types = [...new Set(claims.map(c => c.claimTypeName || 'Unknown'))];
+  const types = [...new Set(claims.map(c => getClaimFields(c).type))];
   [
     { label: 'Total Claimed', val: '$' + totalAmount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), color: 'var(--tx)' },
     { label: 'Claim Types',   val: types.length,  color: 'var(--tx)' },
@@ -16780,9 +16798,10 @@ function renderClaims(claims) {
   claims.forEach((c, i) => {
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid var(--bdr);' + (i%2===1 ? 'background:var(--bg);' : '');
-    const bol = c.BOLNumber || c.BOLId || '—';
-    const type = c.claimTypeName || 'Unknown';
-    const amt = (parseFloat(c.claimAmount)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const _cf = getClaimFields(c);
+    const bol = _cf.bol;
+    const type = _cf.type;
+    const amt = _cf.amount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     // "Other"/"Unknown" (and other catch-all labels) are neutral gray; named types keep amber.
     const _genericType = /^(other|unknown|n\/a|none)$/i.test(String(type).trim());
     const _typeBg = _genericType ? '#f1efe8' : '#fef3c7';
@@ -18273,7 +18292,7 @@ const _waybSysPrompt = `You are a freight expert assistant for Freight and Logis
 
 CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the customer under any circumstances. You speak as Freight and Logistics, Inc. only. If you cannot help with something, say so without referencing any external system.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), and get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, or whether something is paid. Report payment status and amounts ONLY from what get_invoices returns; if it reports nothing for an invoice, say you could not find it rather than guessing. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment), and get_claims (the customer's OPEN freight claims — open count, total claimed, and each claim's BOL, type, status, amount, carrier and file date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, whether something is paid, or claims. Report payment status, claim status, and amounts ONLY from what get_invoices/get_claims return; if they report nothing, say you could not find it rather than guessing. get_claims is for READING existing claims — to FILE a new damage/loss claim, that is the separate support draft flow, not this tool. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
 
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
@@ -18343,6 +18362,11 @@ const _waybTools = [
     name: 'get_invoices',
     description: "Look up this customer's invoices and payment status: paid, unpaid and overdue counts, total outstanding balance, invoice aging (current, 1-30, 31-60, 60+ days), and per-invoice number, BOL, PAID or UNPAID status, amount, invoice date and due date. Use this for any question about whether invoices are paid, what is still owed, or what is overdue. The summary AND the 'View invoices' panel/export are BOTH scoped to the 'status' filter. Set status from the customer's request: 'unpaid' for \"just the unpaid\" or \"what I owe\", 'paid' for paid ones, 'overdue' for \"past due\", or 'all' (default). If they refer to a subset just shown (e.g. \"just those\", \"only the six\") set status to that subset ONLY when it is unambiguous which slice they mean. If you cannot tell which subset they mean, ASK which one — do NOT fall back to 'all', do NOT export the full set, and NEVER tell the customer to filter the spreadsheet themselves (that is not acceptable). Pass an optional bol to check one shipment. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
     input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' }, status: { type: 'string', enum: ['all', 'unpaid', 'paid', 'overdue'], description: "Which slice to return AND export: 'all' (default), 'unpaid', 'paid', or 'overdue' (unpaid past its due date)." } } }
+  },
+  {
+    name: 'get_claims',
+    description: "Look up this customer's OPEN freight claims: how many are open, total amount claimed, and per-claim BOL, claim type, status, amount, carrier, and file date. Use this for any question about claim status, claim amounts, or how many claims are open. The reply includes a 'View claims' button that opens the real Claims panel. Pass an optional bol to check one shipment's claim. This is for READING existing claims — FILING a new damage/loss claim is handled separately by the support draft flow, not here. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
+    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' } } }
   },
   {
     name: 'export_excel',
@@ -18665,6 +18689,39 @@ async function _waybInvoices(input) {
         openPanel: function () { openRightPanel(renderInvoices(_raw, _raw), _titleWord + ' (' + _raw.length + ')'); }
       };
       return { status: status, total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
+    }
+  });
+}
+
+// get_claims — reuse the openclaims feed (fetchOpenClaims) + the SAME getClaimFields extractor the
+// Claims panel uses, so the agent and the panel read identical fields (no drift). The "View claims"
+// button opens the REAL renderClaims panel. Returns no URLs, no backend names.
+async function _waybClaims(input) {
+  input = input || {};
+  return _waybReadFeed({
+    label: 'open claims',
+    load: function () { return fetchOpenClaims(); },
+    extract: function (c) { return c; },                 // keep raw claim objects for renderClaims
+    keyOf: function (c) { return getClaimFields(c).bol; },
+    bol: String(input.bol || '').trim(),
+    summarize: function (rows) {
+      const f = rows.map(getClaimFields);
+      const totalClaimed = +f.reduce(function (a, c) { return a + (c.amount || 0); }, 0).toFixed(2);
+      // Wiring B: the button opens the REAL renderClaims panel (rich header + table) over the raw claim
+      // objects. renderClaims has no in-panel Excel, so lastWaybExport.data also carries the rows for
+      // the unified exporter as a fallback.
+      lastWaybExport = {
+        sheetName: 'Open Claims', filenameBase: 'claims',
+        header: ['BOL', 'Claim Type', 'Status', 'Amount', 'Carrier', 'Filed'],
+        data: f.map(function (c) { return [c.bol || '', c.type || '', c.status || '', (c.amount != null ? c.amount : ''), c.carrier || '', c.fileDate || '']; }),
+        buttonLabel: 'View claims',
+        openPanel: function () { openRightPanel(renderClaims(rows), 'Open Claims (' + rows.length + ')'); }
+      };
+      return {
+        openCount: f.length,
+        totalClaimed: totalClaimed,
+        claims: f.map(function (c) { return { bol: c.bol, type: c.type, status: c.status, amount: c.amount, carrier: c.carrier, fileDate: c.fileDate }; })
+      };
     }
   });
 }
@@ -19205,6 +19262,7 @@ async function _waybExecTool(tu) {
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
     else if (tu.name === 'get_invoices') result = await _waybInvoices(tu.input);
+    else if (tu.name === 'get_claims') result = await _waybClaims(tu.input);
     else if (tu.name === 'export_excel') result = _waybExportExcel();
     else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
@@ -19287,7 +19345,7 @@ async function waybAgent(text) {
           // Surface the action button after export_excel OR get_invoices (so "show my invoices" gets a
           // "View invoices" button). For get_invoices, require the invoice openPanel so a stale prior
           // export (e.g. shipments) never leaks a wrong button onto a not-found invoice reply.
-          if (((tu.name === 'export_excel') || (tu.name === 'get_invoices' && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
+          if (((tu.name === 'export_excel') || ((tu.name === 'get_invoices' || tu.name === 'get_claims') && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
