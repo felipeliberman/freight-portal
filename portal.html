@@ -13464,6 +13464,14 @@ async function handleInput(text) {
     || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower)
     || (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/i.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/i.test(lower));
 
+  // ── Saved-quotes lookup — route to the read tool (list_saved_quotes), NOT a new quote. Must run
+  // BEFORE _wantsQuote, whose /\bquotes?\b/ would otherwise start a fresh quote. Only matches when a
+  // possessive/history word precedes "quote(s)" ("saved/past/previous/my quotes"), so a fresh
+  // "quote me LA to Miami" still falls through to _wantsQuote and starts a new quote.
+  if (currentCustomer && /\b(saved|past|previous|my)\s+quotes?\b/i.test(lower)) {
+    await waybAgent(t); return;
+  }
+
   // ── Quote intent — catch BEFORE shipment search so quote requests (even misspelled
   // or bare, like "yo I need a quot" or "quote") never leak into the shipment fuzzy search.
   const _wantsQuote =
@@ -18315,7 +18323,7 @@ const _waybSysPrompt = `You are a freight expert assistant for Freight and Logis
 
 CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the customer under any circumstances. You speak as Freight and Logistics, Inc. only. If you cannot help with something, say so without referencing any external system.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment), and get_claims (the customer's OPEN freight claims — open count, total claimed, and each claim's BOL, type, status, amount, carrier and file date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, whether something is paid, or claims. Report payment status, claim status, and amounts ONLY from what get_invoices/get_claims return; if they report nothing, say you could not find it rather than guessing. get_claims is for READING existing claims — to FILE a new damage/loss claim, that is the separate support draft flow, not this tool. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment), get_claims (the customer's OPEN freight claims — open count, total claimed, and each claim's BOL, type, status, amount, carrier and file date; pass a bol to check one shipment), and list_saved_quotes (the customer's SAVED quotes — count and each quote's origin, destination, weight, carrier, price and saved date; opens the real Saved Quotes panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, whether something is paid, claims, or their saved/past quotes. Report payment status, claim status, and amounts ONLY from what get_invoices/get_claims return; if they report nothing, say you could not find it rather than guessing. get_claims is for READING existing claims — to FILE a new damage/loss claim, that is the separate support draft flow, not this tool. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
 
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
@@ -18390,6 +18398,11 @@ const _waybTools = [
     name: 'get_claims',
     description: "Look up this customer's OPEN freight claims: how many are open, total amount claimed, and per-claim BOL, claim type, status, amount, carrier, and file date. Use this for any question about claim status, claim amounts, or how many claims are open. The reply includes a 'View claims' button that opens the real Claims panel. Pass an optional bol to check one shipment's claim. This is for READING existing claims — FILING a new damage/loss claim is handled separately by the support draft flow, not here. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
     input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' } } }
+  },
+  {
+    name: 'list_saved_quotes',
+    description: "List the customer's SAVED quotes (rates they saved earlier). Returns how many are saved and, per quote, its origin, destination, weight, carrier, price, and when it was saved. Use for 'show my saved quotes', 'my past/previous quotes', 'what quotes did I save'. The reply includes a 'View saved quotes' button that opens the real Saved Quotes panel. This LISTS existing saved quotes — it does NOT start a new quote. Report ONLY what this returns; if there are none, say the customer has no saved quotes.",
+    input_schema: { type: 'object', properties: {} }
   },
   {
     name: 'export_excel',
@@ -18745,6 +18758,32 @@ async function _waybClaims(input) {
         totalClaimed: totalClaimed,
         claims: f.map(function (c) { return { bol: c.bol, type: c.type, status: c.status, amount: c.amount, carrier: c.carrier, fileDate: c.fileDate }; })
       };
+    }
+  });
+}
+
+// list_saved_quotes — read the existing getSavedQuotes() (localStorage) via the shared scaffold. The
+// "View saved quotes" button opens the REAL Saved Quotes panel (showSavedQuotes). Price/carrier use the
+// same expressions the panel uses. No URLs, no backend names.
+async function _waybSavedQuotes(input) {
+  return _waybReadFeed({
+    label: 'saved quotes',
+    load: function () { return getSavedQuotes(); },
+    summarize: function (rows) {
+      const _q = rows.map(function (q) {
+        const price = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo && q.rates[0].billTo.total) || q.rates[0].total || q.rates[0]._price)) || null;
+        const carrier = q.carrierName || (q.rates && q.rates[0] && (q.rates[0]._name || q.rates[0].name)) || '';
+        const weight = q.weight || (q.items && q.items[0] && q.items[0].weight) || null;
+        return { id: q.id || null, origin: q.originZip || '', dest: q.destZip || '', weight: weight, carrier: carrier, price: (price != null ? Number(price) : null), savedAt: q.savedAt || '' };
+      });
+      lastWaybExport = {
+        sheetName: 'Saved Quotes', filenameBase: 'saved-quotes',
+        header: ['Origin', 'Destination', 'Weight', 'Carrier', 'Price', 'Saved'],
+        data: _q.map(function (x) { return [x.origin, x.dest, (x.weight != null ? x.weight : ''), x.carrier, (x.price != null ? x.price : ''), x.savedAt]; }),
+        buttonLabel: 'View saved quotes',
+        openPanel: function () { showSavedQuotes(); }   // opens the REAL Saved Quotes panel
+      };
+      return { count: _q.length, quotes: _q };
     }
   });
 }
@@ -19286,6 +19325,7 @@ async function _waybExecTool(tu) {
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
     else if (tu.name === 'get_invoices') result = await _waybInvoices(tu.input);
     else if (tu.name === 'get_claims') result = await _waybClaims(tu.input);
+    else if (tu.name === 'list_saved_quotes') result = await _waybSavedQuotes(tu.input);
     else if (tu.name === 'export_excel') result = _waybExportExcel();
     else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
@@ -19368,7 +19408,7 @@ async function waybAgent(text) {
           // Surface the action button after export_excel OR get_invoices (so "show my invoices" gets a
           // "View invoices" button). For get_invoices, require the invoice openPanel so a stale prior
           // export (e.g. shipments) never leaks a wrong button onto a not-found invoice reply.
-          if (((tu.name === 'export_excel') || ((tu.name === 'get_invoices' || tu.name === 'get_claims') && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
+          if (((tu.name === 'export_excel') || ((tu.name === 'get_invoices' || tu.name === 'get_claims' || tu.name === 'list_saved_quotes') && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
