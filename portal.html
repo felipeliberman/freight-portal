@@ -13802,7 +13802,10 @@ function showSavedQuotes() {
     const p = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0)) || 0;
     return sum + Number(p);
   }, 0);
-  const mostRecent = quotes.length ? new Date(Math.max(...quotes.map(q => q.savedAt||0))).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+  // savedAt is an ISO string, so Math.max on the raw values coerced them to NaN → "Invalid Date".
+  // Parse each to a timestamp (the SAME new Date(q.savedAt) the per-card code uses), then format it.
+  const _savedTs = quotes.map(function (q) { return new Date(q.savedAt).getTime(); }).filter(function (t) { return !isNaN(t); });
+  const mostRecent = _savedTs.length ? new Date(Math.max.apply(null, _savedTs)).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
   const carriers = new Set(quotes.map(q => q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
 
   const hdr = document.createElement('div');
@@ -13886,7 +13889,10 @@ function showSavedQuotes() {
     card.onmouseout  = () => card.style.boxShadow = 'none';
 
     const savedDate = new Date(q.savedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    const ageDays = q.savedAt ? Math.floor((Date.now() - q.savedAt) / (1000*60*60*24)) : 0;
+    // Parse savedAt (ISO string) to a timestamp before subtracting — same fix as the LAST SAVED stat.
+    // An invalid/missing date → ageDays 0 → not flagged stale (treated as fresh, never crashes).
+    const _qTs = q.savedAt ? new Date(q.savedAt).getTime() : NaN;
+    const ageDays = !isNaN(_qTs) ? Math.floor((Date.now() - _qTs) / (1000*60*60*24)) : 0;
     const isStale = ageDays >= 3;
     const acc = (q.accessorials || []).map(c=>(ACC_LABEL[c]||c)).join(', ') || 'Dock to Dock';
     const displayPrice = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0));
@@ -19582,7 +19588,8 @@ function mobShowSavedQuotes() {
     var container = document.createElement('div');
     container.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
     var totalValue = quotes.reduce(function(sum,q){ var p=q.price||(q.rates&&q.rates[0]&&((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0))||0; return sum+Number(p); },0);
-    var mostRecent = quotes.length ? new Date(Math.max(...quotes.map(q=>q.savedAt||0))).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+    var _savedTs = quotes.map(function (q) { return new Date(q.savedAt).getTime(); }).filter(function (t) { return !isNaN(t); });
+    var mostRecent = _savedTs.length ? new Date(Math.max.apply(null, _savedTs)).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
     var carriers = new Set(quotes.map(q=>q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
     var hdr = document.createElement('div');
     hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
