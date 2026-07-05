@@ -16799,7 +16799,13 @@ function renderClaims(claims) {
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid var(--bdr);' + (i%2===1 ? 'background:var(--bg);' : '');
     const _cf = getClaimFields(c);
-    const bol = _cf.bol;
+    const _bolId  = c.BOLId || c.BOLNumber || '';   // internal id for the doc fetch
+    const _bolNum = c.BOLNumber || c.BOLId || '';   // display number
+    // BOL as a purple clickable link that opens that BOL's documents — reuses the SAME
+    // openDocsModal(bolId, bolNum) opener the Shipments panel uses. Plain '—' when the claim has no BOL.
+    const _bolCell = _bolNum
+      ? `<span onclick="openDocsModal('${_bolId}','${_bolNum}')" style="color:#bd27bc;font-weight:600;cursor:pointer;">${_bolNum}</span>`
+      : '<span style="color:var(--tx);font-weight:500;">—</span>';
     const type = _cf.type;
     const amt = _cf.amount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     // "Other"/"Unknown" (and other catch-all labels) are neutral gray; named types keep amber.
@@ -16807,7 +16813,7 @@ function renderClaims(claims) {
     const _typeBg = _genericType ? '#f1efe8' : '#fef3c7';
     const _typeFg = _genericType ? '#5f5e5a' : '#92400e';
     tr.innerHTML = `
-      <td style="padding:10px 14px;color:var(--tx);font-weight:500;">${bol}</td>
+      <td style="padding:10px 14px;">${_bolCell}</td>
       <td style="padding:10px 14px;">
         <span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:${_typeBg};color:${_typeFg};">${type}</span>
       </td>
