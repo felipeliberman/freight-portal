@@ -18447,7 +18447,13 @@ async function _waybSearch(input) {
   const allRows = matched.map(_mapRow);
   if (matched.length) {
     lastWaybResultShipments = matched; lastWaybResultSet = allRows; // full set (non-empty only, no clobber)
-    lastWaybExport = { sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: allRows.map(_waybShipExportRow) };
+    lastWaybExport = {
+      sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: allRows.map(_waybShipExportRow),
+      buttonLabel: 'View shipments',
+      // Open the REAL My Shipments panel (its own Excel + controls) from the raw shipment objects —
+      // identical to the native tab by construction, same mechanism as the invoices openPanel.
+      openPanel: function () { openRightPanel(renderShipments(matched, matched, 0, false), 'My Shipments (' + matched.length + ')'); }
+    };
   }
   if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   const _MODEL_CAP = 40;
@@ -19254,11 +19260,10 @@ async function waybAgent(text) {
           // Only a NON-EMPTY search updates result state — a later empty/misparsed search in the
           // same turn must not clobber a good result set (that was hiding the Excel button on the
           // date-scoped path). Persist for export_excel AND capture this turn's set for the button.
-          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length) {
-            // _waybSearch already set the FULL result set on the globals (non-empty only). The button
-            // and export bind the full set, NOT the bounded sample that went to the model.
-            _turnRows = lastWaybResultSet;
-            _turnShips = lastWaybResultShipments;
+          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length && lastWaybExport && lastWaybExport.openPanel) {
+            // _waybSearch set lastWaybExport (with a "View shipments" openPanel) over the FULL matched
+            // set. Surface the button beneath the reply — the same mechanism invoices use.
+            _turnExport = lastWaybExport;
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
           if (tu.name === 'render_chart' && _waybChartSpec) _turnChart = _waybChartSpec; // engine-computed spec for this turn
