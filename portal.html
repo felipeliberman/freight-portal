@@ -18445,19 +18445,37 @@ async function _waybSearch(input) {
   // carrier search matches the analytics count, e.g. all 182 Metro). The model receives the TRUE
   // total plus a bounded sample of the most recent — enough context without bloating tokens.
   const allRows = matched.map(_mapRow);
+  // SCOPED set for the panel / export / title. A "last N" (or "N most recent" / "top N") request sets
+  // q.limit, so sort by the query's sort (date desc by default) and take those N — the panel then
+  // shows exactly the N, not the full history. A pure filter query (no q.limit) keeps the full matched
+  // set unchanged (e.g. "all my Metro shipments" still shows all Metro). The returned count stays the
+  // TRUE total (matched.length) so the model's prose can say "your 6 most recent of 213 on file".
+  let scoped = matched;
+  if (q.limit && Number(q.limit) > 0) {
+    const _sf = q.sortField || 'date';
+    const _dir = (q.sortDir === 'asc') ? 1 : -1;
+    const _sortVal = function (s) { const f = shipFields(s); return _sf === 'cost' ? (f.cost || 0) : _sf === 'weight' ? (f.weight || 0) : (f.date ? f.date.getTime() : 0); };
+    scoped = matched.slice().sort(function (a, b) { return (_sortVal(a) - _sortVal(b)) * _dir; }).slice(0, Number(q.limit));
+  }
+  const scopedRows = scoped.map(_mapRow);
   if (matched.length) {
-    lastWaybResultShipments = matched; lastWaybResultSet = allRows; // full set (non-empty only, no clobber)
+    lastWaybResultShipments = scoped; lastWaybResultSet = scopedRows; // this turn's result set = the scoped subset
     lastWaybExport = {
-      sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: allRows.map(_waybShipExportRow),
+      sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: scopedRows.map(_waybShipExportRow),
       buttonLabel: 'View shipments',
-      // Open the REAL My Shipments panel (its own Excel + controls) from the raw shipment objects —
-      // identical to the native tab by construction, same mechanism as the invoices openPanel.
-      openPanel: function () { openRightPanel(renderShipments(matched, matched, 0, false), 'My Shipments (' + matched.length + ')'); }
+      // Open the REAL My Shipments panel (its own Excel + controls) over the SCOPED set — a "last 6"
+      // request opens "My Shipments (6)"; a pure filter query opens the full matched set. Same
+      // mechanism as the invoices openPanel.
+      openPanel: function () { openRightPanel(renderShipments(scoped, scoped, 0, false), 'My Shipments (' + scoped.length + ')'); }
     };
   }
   if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   const _MODEL_CAP = 40;
-  const preview = allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
+  // Limit query → the model sees the scoped subset (so its prose describes the right N); pure filter
+  // query → the existing bounded sample of the full set (unchanged).
+  const preview = (q.limit && Number(q.limit) > 0)
+    ? scopedRows.slice(0, _MODEL_CAP)
+    : allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
   return { count: matched.length, returned: preview.length, shipments: preview };
 }
 
