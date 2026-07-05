@@ -18284,7 +18284,7 @@ const _waybSysPrompt = `You are a freight expert assistant for Freight and Logis
 
 CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the customer under any circumstances. You speak as Freight and Logistics, Inc. only. If you cannot help with something, say so without referencing any external system.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), and get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, or whether something is paid. Report payment status and amounts ONLY from what get_invoices returns; if it reports nothing for an invoice, say you could not find it rather than guessing.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), and get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, or whether something is paid. Report payment status and amounts ONLY from what get_invoices returns; if it reports nothing for an invoice, say you could not find it rather than guessing. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
 
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
@@ -18352,12 +18352,12 @@ const _waybTools = [
   },
   {
     name: 'get_invoices',
-    description: "Look up this customer's invoices and payment status: paid, unpaid and overdue counts, total outstanding balance, invoice aging (current, 1-30, 31-60, 60+ days), and per-invoice number, BOL, PAID or UNPAID status, amount, invoice date and due date. Use this for any question about whether invoices are paid, what is still owed, or what is overdue. Pass an optional bol to check the invoice for one shipment. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
-    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' } } }
+    description: "Look up this customer's invoices and payment status: paid, unpaid and overdue counts, total outstanding balance, invoice aging (current, 1-30, 31-60, 60+ days), and per-invoice number, BOL, PAID or UNPAID status, amount, invoice date and due date. Use this for any question about whether invoices are paid, what is still owed, or what is overdue. The summary AND the 'View invoices' panel/export are BOTH scoped to the 'status' filter. Set status from the customer's request: 'unpaid' for \"just the unpaid\" or \"what I owe\", 'paid' for paid ones, 'overdue' for \"past due\", or 'all' (default). If they refer to a subset just shown (e.g. \"just those\", \"only the six\") set status to that subset ONLY when it is unambiguous which slice they mean. If you cannot tell which subset they mean, ASK which one — do NOT fall back to 'all', do NOT export the full set, and NEVER tell the customer to filter the spreadsheet themselves (that is not acceptable). Pass an optional bol to check one shipment. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
+    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' }, status: { type: 'string', enum: ['all', 'unpaid', 'paid', 'overdue'], description: "Which slice to return AND export: 'all' (default), 'unpaid', 'paid', or 'overdue' (unpaid past its due date)." } } }
   },
   {
     name: 'export_excel',
-    description: "Download the most recent results you showed the customer — shipments or invoices — as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet, right after a search_shipments or get_invoices in this conversation. Takes no input; it exports whichever result set was shown last.",
+    description: "Download the most recent results you showed the customer — shipments or invoices — as an Excel (.xlsx) file, EXACTLY as last shown. Call this only when the customer wants the currently-shown set in Excel. IMPORTANT — do NOT use this for a filtered subset: if the customer asks for a narrower slice of invoices (\"just the unpaid\", \"only the overdue\", \"the paid ones\", \"just the 6\", or anything narrower than what is shown), you MUST call get_invoices with the matching status filter FIRST to re-scope the set, then that subset becomes what gets exported — never export the previously shown full set for a subset request. Takes no input; it exports whichever result set was shown last.",
     input_schema: { type: 'object', properties: {} }
   },
   {
@@ -18615,8 +18615,21 @@ async function _waybReadFeed(opts) {
 
 // get_invoices — reuse the invoice feed (fetchInvoices) + the SAME summarizeInvoices() chokepoint the
 // invoice panel uses, so the agent and the panel report identical paid/unpaid/aging. Returns no URLs.
+// Select the raw invoice subset for a status filter, REUSING summarizeInvoices' own paid/aging
+// categorization — no new paid/overdue logic here, so the slice can never drift from the panel.
+// unpaid = every unpaid bucket; overdue = the non-current unpaid buckets; paid = getInvoiceFields.isPaid.
+function _invoiceSlice(list, status) {
+  const b = summarizeInvoices(list || []).agingBuckets; // [current, 1-30, 31-60, 60+], each { invs }
+  if (status === 'unpaid')  return b[0].invs.concat(b[1].invs, b[2].invs, b[3].invs);
+  if (status === 'overdue') return b[1].invs.concat(b[2].invs, b[3].invs);
+  if (status === 'paid')    return (list || []).filter(function (i) { return getInvoiceFields(i).isPaid; });
+  return (list || []).slice(); // 'all'
+}
+
 async function _waybInvoices(input) {
   input = input || {};
+  const _statusRaw = String(input.status || 'all').toLowerCase();
+  const status = (['unpaid', 'paid', 'overdue'].indexOf(_statusRaw) >= 0) ? _statusRaw : 'all';
   return _waybReadFeed({
     label: 'invoices',
     load: function () { return fetchInvoices(); },
@@ -18624,20 +18637,22 @@ async function _waybInvoices(input) {
     keyOf: function (inv) { return getInvoiceFields(inv).bolNum; },
     bol: String(input.bol || '').trim(),
     summarize: function (rows) {
-      const s = summarizeInvoices(rows);
-      // Wiring B: the invoice action button opens the REAL renderInvoices panel (stat cards, aging,
-      // Pay Invoices, its own Excel) — identical to the native Invoices tab, by construction. Capture
-      // the raw invoice objects so the panel is built from the exact same data. The 6-column .data
-      // projection stays only as a generic-exporter/CSV fallback. No URLs, no backend names.
-      const _raw = (rows || []).slice();
+      // Scope to the requested status slice, then summarize the SLICE so the summary, the exported
+      // sheet, and the real-panel view all reflect exactly what the customer asked for.
+      const _raw = _invoiceSlice(rows, status);
+      const s = summarizeInvoices(_raw);
+      const _titleWord = status === 'unpaid' ? 'Unpaid Invoices' : status === 'paid' ? 'Paid Invoices' : status === 'overdue' ? 'Overdue Invoices' : 'Invoices';
+      const _fileWord = status === 'all' ? 'invoices' : status + '-invoices';
+      // Wiring B: the button opens the REAL renderInvoices panel (stat cards, aging, Pay, its own Excel),
+      // built from the exact filtered raw rows. The 6-column .data stays as a generic-exporter fallback.
       lastWaybExport = {
-        sheetName: 'Invoices', filenameBase: 'invoices',
+        sheetName: _titleWord, filenameBase: _fileWord,
         header: ['Invoice #', 'BOL', 'Status', 'Amount', 'Date', 'Due'],
         data: s.invoices.map(function (inv) { return [inv.invNum || '', inv.bolNum || '', inv.status || '', (inv.amount != null ? inv.amount : ''), inv.date || '', inv.due || '']; }),
-        buttonLabel: 'View invoices',
-        openPanel: function () { openRightPanel(renderInvoices(_raw, _raw), 'Invoices (' + _raw.length + ')'); }
+        buttonLabel: status === 'all' ? 'View invoices' : ('View ' + status + ' invoices'),
+        openPanel: function () { openRightPanel(renderInvoices(_raw, _raw), _titleWord + ' (' + _raw.length + ')'); }
       };
-      return { total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
+      return { status: status, total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
     }
   });
 }
