@@ -2303,9 +2303,9 @@ async function lookupZip(zip) {
     if (_isCanadianPostal(zip)) {
       // Geocodio resolves at FSA (3-char prefix) level — full LDUs often 422
       const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
-      const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+      const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
         + encodeURIComponent(fsa)
-        + '&country=CA&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+        + '&country=CA&limit=1');
       if (!r.ok) return { city: '', state: '' };
       const d = await r.json();
       const ac = d.results && d.results[0] && d.results[0].address_components;
@@ -5709,7 +5709,7 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
   if (hasRSD || !consigneeStreet) { onProceed(); return; }  // skip geocodio if already flagged or no address to check
   const fullAddr = [consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip].filter(Boolean).join(' ');
   try {
-    const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+    const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&limit=1';
     const gr = await fetch(gUrl);
     if (gr.ok) {
       const gd = await gr.json();
@@ -6900,7 +6900,7 @@ function lookupLocation() {
   res.style.position = 'relative';
 
   // Geocode first to get lat/lng for accurate map centering
-  fetch('https://api.geocod.io/v1.12/geocode?q=' + encoded + '&api_key=' + GEOCODIO_KEY + '&limit=1')
+  fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encoded + '&limit=1')
     .then(r => r.json())
     .then(gd => {
       const r0 = gd && gd.results && gd.results[0];
@@ -8576,7 +8576,7 @@ async function _geocodioResidentialCheck(street, city, state, zip) {
   if (!_street) return { residential: false };
   try {
     const _addr = [_street, city, state, zip].filter(Boolean).join(' ').trim();
-    const _r = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+    const _r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addr) + '&fields=zip4&limit=1');
     if (!_r.ok) return { residential: false };
     const _d = await _r.json();
     const _r0 = _d.results && _d.results[0];
@@ -11886,7 +11886,7 @@ async function clientSideSearch(t, lower) {
     if (queryAddr) {
       showTyping();
       try {
-        const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(queryAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+        const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(queryAddr) + '&fields=zip4&limit=1';
         const gr = await fetch(gUrl);
         if (gr.ok) {
           const gd = await gr.json();
@@ -14612,8 +14612,8 @@ function showBookingPanel(rate, shipmentData) {
       try {
         btn.textContent = 'Checking address...';
         btn.disabled = true;
-        const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(fullDeliveryAddr) +
-          '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+        const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(fullDeliveryAddr) +
+          '&fields=zip4&limit=1';
         const gr = await fetch(gUrl);
         if (gr.ok) {
           const gd = await gr.json();
@@ -15960,9 +15960,9 @@ function showQuoteForm(prefill, silent) {
     try {
       if (_isCanadianPostal(zip)) {
         const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
-        const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+        const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
           + encodeURIComponent(fsa)
-          + '&country=CA&api_key=' + GEOCODIO_KEY + '&limit=1');
+          + '&country=CA&limit=1');
         if (r.ok) {
           const d = await r.json();
           const ac = d.results && d.results[0] && d.results[0].address_components;
@@ -15976,7 +15976,6 @@ function showQuoteForm(prefill, silent) {
   }
 
   // ── Geocodio RDI residential check ──────────────────────────────────────────
-  const GEOCODIO_KEY = 'ac756697506a2de2a23696336660c729c62f052';
   let _rdiTimer = null;
   let _rdiTimer2 = null;
 
@@ -16066,7 +16065,7 @@ function showQuoteForm(prefill, silent) {
       const _cityEl = container.querySelector('#qt-dest-city');
       const _cityVal = _cityEl ? _cityEl.textContent.trim() : '';
       const _addrQ = _cityVal ? (_cityVal + ' ' + zip) : zip;
-      const url = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&api_key=' + GEOCODIO_KEY + '&limit=1';
+      const url = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&limit=1';
       const r = await fetch(url);
       if (!r.ok) return;
       const d = await r.json();
@@ -16096,7 +16095,7 @@ function showQuoteForm(prefill, silent) {
       const _cityEl = container.querySelector('#qt-origin-city');
       const _cityVal = _cityEl ? _cityEl.textContent.trim() : '';
       const _addrQ = _cityVal ? (_cityVal + ' ' + zip) : zip;
-      const url = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&api_key=' + GEOCODIO_KEY + '&limit=1';
+      const url = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&limit=1';
       const r = await fetch(url);
       if (!r.ok) return;
       const d = await r.json();
@@ -17074,13 +17073,12 @@ function renderReports(shipments) {
     const zipCache = {};
     allZips.forEach(z => { const ll = zipToLL(z); if (ll) zipCache[z] = ll; });
     const missing = allZips.filter(z => !zipCache[z]);
-    const GEO_KEY = 'ac756697506a2de2a23696336660c729c62f052';
     (async function resolveAndRender() {
       if (missing.length > 0) {
         try {
           for (let i = 0; i < missing.length; i += 100) {
             const chunk = missing.slice(i, i+100);
-            const res = await fetch('https://api.geocod.io/v1.7/geocode?api_key=' + GEO_KEY, {
+            const res = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.7/geocode', {
               method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(chunk)
             });
             if (res.ok) {
@@ -17354,13 +17352,12 @@ const STATE_CENTERS_GEO = {
   wrap.style.position = 'relative';
 
   var zipCityCache = {};
-  var GEO_KEY2 = 'ac756697506a2de2a23696336660c729c62f052';
   var allMapZips = Array.from(new Set(unique.reduce(function(a,l) { return a.concat([l.oZip,l.dZip]); }, []).filter(Boolean)));
   (async function loadCityNames() {
     try {
       for (var i = 0; i < allMapZips.length; i += 50) {
         var chunk = allMapZips.slice(i, i+50);
-        var res = await fetch('https://api.geocod.io/v1.7/geocode?api_key=' + GEO_KEY2, {
+        var res = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.7/geocode', {
           method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(chunk)
         });
         if (res.ok) {
