@@ -18655,10 +18655,18 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart, exportS
     viewBtn.onclick = function () { _waybOpenChartTab(chart); };
   }
   if (docs && docs.length) {
-    const dwrap = document.createElement('div');
-    dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+    // Group document buttons by BOL so, when docs span several shipments, the user can tell which
+    // doc belongs to which shipment. A "BOL <n>" subheading shows only when 2+ distinct BOLs are
+    // present (a single shipment stays a clean flat button row, as before).
+    const _byBol = {}; const _bolOrder = [];
     docs.forEach(function (doc) {
       if (!doc || !doc.url) return;
+      const k = doc.bol || '';
+      if (!_byBol[k]) { _byBol[k] = []; _bolOrder.push(k); }
+      _byBol[k].push(doc);
+    });
+    const _multi = _bolOrder.filter(function (k) { return k; }).length > 1;
+    const _mkDocBtn = function (doc) {
       // Open via a click handler with the URL held in a closure — the raw backend URL is NEVER put
       // in the href or any visible markup, so the customer never sees the backend system name.
       const _docUrl = doc.url;
@@ -18675,9 +18683,24 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart, exportS
       a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #c8c4bc;color:#111111;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:all .12s;';
       a.onmouseenter = function () { a.style.borderColor = '#bd27bc'; a.style.color = '#bd27bc'; a.style.background = '#fdf0fd'; };
       a.onmouseleave = function () { a.style.borderColor = '#c8c4bc'; a.style.color = '#111111'; a.style.background = '#f7f5f2'; };
-      dwrap.appendChild(a);
+      return a;
+    };
+    const container = document.createElement('div');
+    container.style.cssText = 'margin-top:10px;display:flex;flex-direction:column;gap:10px;';
+    _bolOrder.forEach(function (k) {
+      const groupWrap = document.createElement('div');
+      if (_multi && k) {
+        const lbl = document.createElement('div');
+        lbl.style.cssText = 'font-size:11px;font-weight:600;color:var(--mu);margin-bottom:5px;';
+        lbl.textContent = 'BOL ' + k;
+        groupWrap.appendChild(lbl);
+      }
+      const dwrap = document.createElement('div');
+      dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;';
+      _byBol[k].forEach(function (doc) { dwrap.appendChild(_mkDocBtn(doc)); });
+      if (dwrap.children.length) { groupWrap.appendChild(dwrap); container.appendChild(groupWrap); }
     });
-    if (dwrap.children.length) bubble.appendChild(dwrap);
+    if (container.children.length) bubble.appendChild(container);
   }
   if (resultSet && resultSet.length >= 1) {
     // Bind THIS message's own result set to THIS button as immutable snapshots — the export must
