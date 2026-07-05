@@ -9094,6 +9094,7 @@ var selectedShipments = new Set();
 let waybHistory = [];   // Way B agent conversation history (user + final assistant text turns)
 let lastWaybResultSet = []; // last search_shipments result rows (sanitized, for the SheetJS export)
 let lastWaybResultShipments = []; // last search_shipments RAW shipment objects (for the exact My Shipments table)
+let lastWaybExport = null; // last exportable result set (type-agnostic): { sheetName, filenameBase, header, data(2D) } — set by whatever the agent most recently showed (shipments or invoices)
 let _waybDocStore = {};     // doc URLs keyed by BOL, for button rendering — NEVER sent to the model
 function updateBolDownloadBtn() {
   const btn = document.getElementById('ship-dl-btn');
@@ -18356,7 +18357,7 @@ const _waybTools = [
   },
   {
     name: 'export_excel',
-    description: "Download the customer's most recent shipment search results as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet — but only after a search_shipments has produced results in this conversation. Takes no input; it exports the latest result set.",
+    description: "Download the most recent results you showed the customer — shipments or invoices — as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet, right after a search_shipments or get_invoices in this conversation. Takes no input; it exports whichever result set was shown last.",
     input_schema: { type: 'object', properties: {} }
   },
   {
@@ -18455,7 +18456,10 @@ async function _waybSearch(input) {
   // carrier search matches the analytics count, e.g. all 182 Metro). The model receives the TRUE
   // total plus a bounded sample of the most recent — enough context without bloating tokens.
   const allRows = matched.map(_mapRow);
-  if (matched.length) { lastWaybResultShipments = matched; lastWaybResultSet = allRows; } // full set (non-empty only, no clobber)
+  if (matched.length) {
+    lastWaybResultShipments = matched; lastWaybResultSet = allRows; // full set (non-empty only, no clobber)
+    lastWaybExport = { sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: allRows.map(_waybShipExportRow) };
+  }
   if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   const _MODEL_CAP = 40;
   const preview = allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
@@ -18621,6 +18625,12 @@ async function _waybInvoices(input) {
     bol: String(input.bol || '').trim(),
     summarize: function (rows) {
       const s = summarizeInvoices(rows);
+      // Store the FULL invoice set for export (type-agnostic lastWaybExport) — no cap, no URLs, no backend names.
+      lastWaybExport = {
+        sheetName: 'Invoices', filenameBase: 'invoices',
+        header: ['Invoice #', 'BOL', 'Status', 'Amount', 'Date', 'Due'],
+        data: s.invoices.map(function (inv) { return [inv.invNum || '', inv.bolNum || '', inv.status || '', (inv.amount != null ? inv.amount : ''), inv.date || '', inv.due || '']; })
+      };
       return { total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
     }
   });
@@ -18689,33 +18699,45 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
   }
 }
 
-// Export a search result set as shipments-[date].xlsx (SheetJS); falls back to CSV if XLSX is absent.
-function _waybDownloadExcel(rows) {
-  const header = ['BOL', 'Carrier', 'Consignee', 'Dest City', 'Dest State', 'Date', 'Cost', 'Status'];
-  const data = (rows || []).map(function (r) { return [r.bol || '', r.carrier || '', r.consignee || '', r.destCity || '', r.destState || '', r.date || '', (r.cost != null ? r.cost : ''), r.status || '']; });
-  const fname = 'shipments-' + new Date().toISOString().split('T')[0] + '.xlsx';
+// Shipment export columns — shared by the panel Download button AND the search_shipments export set,
+// so the two projections can never drift.
+const WAYB_SHIP_EXPORT_HEADER = ['BOL', 'Carrier', 'Consignee', 'Dest City', 'Dest State', 'Date', 'Cost', 'Status'];
+function _waybShipExportRow(r) {
+  return [r.bol || '', r.carrier || '', r.consignee || '', r.destCity || '', r.destState || '', r.date || '', (r.cost != null ? r.cost : ''), r.status || ''];
+}
+
+// ONE generic client-side sheet writer (SheetJS; CSV fallback if XLSX is absent). EVERY export path —
+// the panel Download button, the shipment "in excel", the invoice "in excel" — goes through here.
+function _waybExportSheet(header, data, sheetName, filenameBase) {
+  const fname = (filenameBase || 'export') + '-' + new Date().toISOString().split('T')[0] + '.xlsx';
   try {
     if (window.XLSX) {
-      const ws = XLSX.utils.aoa_to_sheet([header].concat(data));
+      const ws = XLSX.utils.aoa_to_sheet([header].concat(data || []));
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Shipments');
+      XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
       XLSX.writeFile(wb, fname);
       return;
     }
   } catch (e) { console.error('XLSX export failed, falling back to CSV:', e); }
-  const csv = [header].concat(data).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
+  const csv = [header].concat(data || []).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
+// Panel Download-button path (shipment rows) — delegates to the single writer above so its columns
+// match the shipment "in excel" export exactly.
+function _waybDownloadExcel(rows) {
+  _waybExportSheet(WAYB_SHIP_EXPORT_HEADER, (rows || []).map(_waybShipExportRow), 'Shipments', 'shipments');
+}
+
 // export_excel tool — download the most recent (persisted) search result set on a typed request
 // ("put it in excel", "give me a spreadsheet"). Uses the same SheetJS export as the button.
 function _waybExportExcel() {
-  const rows = (lastWaybResultSet || []).slice();
-  if (!rows.length) return { ok: false, message: 'There are no search results to export yet — search for shipments first, then ask again.' };
-  try { _waybDownloadExcel(rows); } catch (e) { console.error('export_excel failed:', e); return { ok: false, message: 'The export could not be generated.' }; }
-  return { ok: true, exported: rows.length };
+  const spec = lastWaybExport;
+  if (!spec || !spec.data || !spec.data.length) return { ok: false, message: 'There is nothing to export yet — show me your shipments or invoices first, then ask to export.' };
+  try { _waybExportSheet(spec.header, spec.data, spec.sheetName, spec.filenameBase); } catch (e) { console.error('export_excel failed:', e); return { ok: false, message: 'The export could not be generated.' }; }
+  return { ok: true, exported: spec.data.length, sheet: spec.sheetName };
 }
 
 // ── Way B preview tabs ──────────────────────────────────────────────────────
