@@ -493,7 +493,6 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       </div>
 
       <div class="welcome-pills">
-        <div class="welcome-pill" onclick="window.open('demo.html','_blank')">Explore the demo</div>
         <div class="welcome-pill" onclick="welcomeSendText('I need a rate — what information do you need from me?')">Get a rate</div>
         <div class="welcome-pill" onclick="welcomeSendText('I need to track a shipment')">Track a shipment</div>
         <div class="welcome-pill" onclick="startOnboarding()">Open an account</div>
@@ -612,8 +611,6 @@ RESPONSE RULES:
 - Plain prose only. No markdown, no bullets, no bold, no emojis.
 - Never start with "I". Never say "certainly", "great question", "of course", "absolutely".
 - Be a confident, knowledgeable freight broker.
-
-WHEN SOMEONE ASKS ABOUT THE DEMO: Tell them there is a full interactive demo at demo.html where they can explore the portal with sample shipment data, invoices, reports, and the AI assistant. Say: "You can explore the full portal demo — it shows exactly what you get once your account is active. Want me to walk you through what to expect, or would you like to open an account now?"
 
 YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat.
 
@@ -800,7 +797,6 @@ function openSvcPanel(key) {
     <div class="svc-feature-list">${feats}</div>
     <button class="svc-cta-btn" onclick="startOnboarding()">Open an Account — It Takes 5 Minutes</button>
     <button class="svc-secondary-btn" onclick="chatAboutService('${key}')">Ask about this →</button>
-    <div style="margin-top:10px;text-align:center;"><a href="demo.html" target="_blank" style="font-size:11px;color:var(--mu);text-decoration:none;border-bottom:1px solid var(--bdr);" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">See it in the portal demo →</a></div>
   </div>`;
   const _titles={ltl:'LTL Freight',wg:'White Glove',ground:'Ground & Parcel',tms:'TMS Platform',api:'API Integration'};
   openRightPanel(_titles[key]||key, html);
