@@ -175,6 +175,12 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   resize:none;font-family:var(--sans);line-height:1.5;
   min-height:42px;max-height:120px;display:block;outline:none;
 }
+.movie-hint{display:none;align-items:center;gap:8px;justify-content:center;margin-top:8px;font-size:12px;color:var(--mu);}
+body.movie-live .movie-hint{display:flex;}
+.movie-hint .dot{width:6px;height:6px;border-radius:50%;background:var(--ac);}
+.movie-hint .takeover{background:none;border:none;color:var(--ac);font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;padding:0;}
+.movie-hint .takeover:hover{text-decoration:underline;}
+body.movie-live #input-textarea{border-color:var(--ac);}
 .inp-foot{display:flex;align-items:center;padding:5px 10px;}
 #btn-send{
   width:36px;height:36px;background:var(--ac);border:none;
@@ -493,6 +499,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
         </div>
+        <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
       </div>
 
       <div class="welcome-pills">
@@ -563,6 +570,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
             </button>
           </div>
         </div>
+        <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
       </div>
     </div>
   </div>
@@ -1579,6 +1587,8 @@ function _stopGhost(o){
     const w=document.getElementById('welcome'); if(w) w.style.display='';
     const c=document.getElementById('chat-area'); if(c) c.style.display='none';
   }
+  document.body.classList.remove('movie-live');
+  var _ita2=document.getElementById('input-textarea'); if(_ita2) _ita2.placeholder='Type your message…';
 }
 // Permanently stop the ghost for the session. No-op once the movie is not running,
 // so real-use closeRightPanel / input focus never wipe real chat.
@@ -1589,6 +1599,7 @@ function killMovie(o){
   _movieRunning=false;
   _stopGhost(o||{});
 }
+function demoTakeOver(){ killMovie({toWelcome:true}); var w=document.getElementById('welcome-textarea'); if(w) w.focus(); }
 
 // Ghost wrappers around the REAL render fns; tag the produced node so kill can find it.
 function _tag(){ const m=document.getElementById('messages'); if(m&&m.lastChild&&m.lastChild.setAttribute) m.lastChild.setAttribute('data-ghost','1'); }
@@ -1631,6 +1642,8 @@ function _movieSoftReset(){
 function runMovie(){
   if(_movieKilled())return;
   _movieRunning=true;
+  document.body.classList.add('movie-live');
+  var _ita=document.getElementById('input-textarea'); if(_ita) _ita.placeholder='Type to jump in anytime…';
   _movieSoftReset();
   const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
   const wta=document.getElementById('welcome-textarea'); if(!wta) return;
