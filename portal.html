@@ -1879,7 +1879,10 @@ document.addEventListener('DOMContentLoaded',()=>{
       </div>
     </div>
         <div id="welcome-input-wrap" style="position:relative;">
-      <textarea id="welcome-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:80px;min-height:72px;"></textarea>
+      <textarea id="welcome-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:80px;padding-left:44px;min-height:72px;"></textarea>
+      <button onclick="attachForQuote()" title="Attach a packing slip, BOL, or photo — we'll read it and pull a quote" style="position:absolute;bottom:10px;left:10px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
       <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
       </button>
@@ -1952,7 +1955,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       <div class="inp-wrap" style="position:relative;">
         <textarea id="input-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:90px;padding-left:44px;min-height:72px;"></textarea>
         <input type="file" id="chat-file-input" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
-        <button onclick="document.getElementById('chat-file-input').click()" title="Attach a document or screenshot" style="position:absolute;bottom:10px;left:10px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
+        <button onclick="attachForQuote()" title="Attach a document or screenshot" style="position:absolute;bottom:10px;left:10px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
         <div id="voice-wave" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -1985,7 +1988,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));">
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="file" id="mob-ships-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
-      <button onclick="document.getElementById('mob-ships-file').click()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+      <button onclick="attachForQuote()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input id="mob-ships-input" type="text" placeholder="Ask about a shipment..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobShipsAsk()">
@@ -2008,7 +2011,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;height:0;overflow:hidden;border-top:none;">
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
-      <button onclick="document.getElementById('mob-content-file').click()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+      <button onclick="attachForQuote()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input id="mob-content-input" type="text" placeholder="Ask a question..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobContentAsk()">
@@ -2303,9 +2306,9 @@ async function lookupZip(zip) {
     if (_isCanadianPostal(zip)) {
       // Geocodio resolves at FSA (3-char prefix) level — full LDUs often 422
       const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
-      const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+      const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
         + encodeURIComponent(fsa)
-        + '&country=CA&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+        + '&country=CA&limit=1');
       if (!r.ok) return { city: '', state: '' };
       const d = await r.json();
       const ac = d.results && d.results[0] && d.results[0].address_components;
@@ -2911,13 +2914,11 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   titleSection.style.cssText = 'margin-bottom:16px;border-radius:14px;background:var(--card);border:1px solid var(--bdr);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;';
 
   const _st = v => (v==null?'':typeof v==='object'?(v.name||v.code||''):String(v));
-  const paid    = allInvoices.filter(i => { const f = getInvoiceFields(i); return f.isPaid; }).length;
-  const overdue = 0;
-  const unpaid  = allInvoices.length - paid;
-  const outstanding = allInvoices.reduce((sum, i) => {
-    const f = getInvoiceFields(i);
-    return f.isPaid ? sum : sum + (parseFloat(f.rawAmt) || 0);
-  }, 0);
+  const _invSummary = summarizeInvoices(allInvoices);
+  const paid    = _invSummary.paid;
+  const overdue = 0; // pre-existing display stub — the Overdue tile intentionally shows 0
+  const unpaid  = _invSummary.unpaid;
+  const outstanding = _invSummary.outstandingBalance;
 
   // Track active filter
   let activeFilter = 'all';
@@ -3153,7 +3154,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   payTooltip.textContent = 'Check a box next to an unpaid invoice to select it for payment';
   payTooltip.style.cssText = 'position:absolute;bottom:calc(100% + 8px);right:0;background:#1a1a1a;color:#fff;font-size:11px;padding:7px 10px;border-radius:7px;white-space:normal;width:200px;line-height:1.4;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;text-align:left;font-weight:400;';
   payBtn.appendChild(payTooltip);
-  payBtn.onclick = () => {
+  payBtn.onclick = async () => {
     const unpaidSelected = [...selectedInvoices].filter(key => {
       const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
       return inv && !getInvoiceFields(inv).isPaid;
@@ -3164,6 +3165,30 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       return;
     }
     const invsToPay = (window._currentInvoiceList || []).filter(i => unpaidSelected.includes(getInvoiceFields(i).invNum));
+    // Resolve each selected invoice's QBO Id + Balance by its DocNumber before
+    // opening the Stripe modal, so the payment can be recorded back to QBO on success.
+    const lbl = payBtn.querySelector('.pay-btn-label');
+    const prevLbl = lbl ? lbl.innerHTML : '';
+    if (lbl) lbl.textContent = 'Loading…';
+    payBtn.disabled = true;
+    try {
+      await Promise.all(invsToPay.map(async inv => {
+        const docNum = getInvoiceFields(inv).invNum;
+        inv._qboId = ''; inv._qboBalance = null;
+        try {
+          const res = await fetch('https://qbo-api.felipe-b80.workers.dev/invoices?docNumber=' + encodeURIComponent(docNum), { headers: { 'Accept': 'application/json' } });
+          const data = await res.json().catch(() => ({}));
+          const q0 = (data && data.invoices && data.invoices[0]) || null;
+          if (q0) {
+            inv._qboId = String(q0.Id || '');
+            inv._qboBalance = (q0.Balance != null && !isNaN(Number(q0.Balance))) ? Number(q0.Balance) : null;
+          }
+        } catch (e) { console.error('[QBO lookup] failed for invoice', docNum, e); }
+      }));
+    } finally {
+      payBtn.disabled = false;
+      if (lbl) lbl.innerHTML = prevLbl;
+    }
     showStripePaymentModal(invsToPay);
   };
   btnGroup.appendChild(payBtn);
@@ -3182,21 +3207,15 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   // ── Aging Report ─────────────────────────────────────────────────────────
   const now = new Date();
   const unpaidInvs = allInvoices.filter(i => !getInvoiceFields(i).isPaid);
+  // Bucket assignment comes from the shared summarizeInvoices() chokepoint (same math the
+  // get_invoices tool uses); presentation (label/color/bg) is applied here.
+  const _agingSrc = _invSummary.agingBuckets;
   const agingBuckets = [
-    { label: 'Current',  color: 'var(--mu)', bg: 'transparent', invs: [] },
-    { label: '1-30 days', color: 'var(--mu)', bg: 'transparent', invs: [] },
-    { label: '31-60 days', color: 'var(--mu)', bg: '#f9f8f5', invs: [] },
-    { label: '60+ days',  color: 'var(--mu)', bg: 'transparent', invs: [] },
+    { label: 'Current',  color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[0].invs },
+    { label: '1-30 days', color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[1].invs },
+    { label: '31-60 days', color: 'var(--mu)', bg: '#f9f8f5', invs: _agingSrc[2].invs },
+    { label: '60+ days',  color: 'var(--mu)', bg: 'transparent', invs: _agingSrc[3].invs },
   ];
-  unpaidInvs.forEach(inv => {
-    const f = getInvoiceFields(inv);
-    const due = f.due ? new Date(f.due) : null;
-    const days = due ? Math.floor((now - due) / 86400000) : -1;
-    if (days <= 0)       agingBuckets[0].invs.push(inv);
-    else if (days <= 30) agingBuckets[1].invs.push(inv);
-    else if (days <= 60) agingBuckets[2].invs.push(inv);
-    else                 agingBuckets[3].invs.push(inv);
-  });
 
   if (unpaidInvs.length > 0) {
     const agingDiv = document.createElement('div');
@@ -3444,6 +3463,60 @@ function getInvoiceFields(inv) {
     status:    isPaid ? 'PAID' : 'UNPAID',
     docUrl:    inv.docUrl   || inv.url || '',
   };
+}
+
+// Canonical invoice roll-up — the SINGLE source of paid/unpaid/outstanding/aging math, shared by
+// the invoice panel (renderInvoices) and the get_invoices agent tool so the two can never drift.
+// Keys on the invoice feed's status.paid via getInvoiceFields, never a QBO balance.
+function summarizeInvoices(list) {
+  list = list || [];
+  const now = new Date();
+  const unpaidList = list.filter(i => !getInvoiceFields(i).isPaid);
+  const buckets = [[], [], [], []]; // current, 1-30, 31-60, 60+
+  unpaidList.forEach(inv => {
+    const f = getInvoiceFields(inv);
+    const due = f.due ? new Date(f.due) : null;
+    const days = due ? Math.floor((now - due) / 86400000) : -1;
+    if (days <= 0) buckets[0].push(inv);
+    else if (days <= 30) buckets[1].push(inv);
+    else if (days <= 60) buckets[2].push(inv);
+    else buckets[3].push(inv);
+  });
+  const outstandingBalance = +unpaidList.reduce((s, i) => s + (parseFloat(getInvoiceFields(i).rawAmt) || 0), 0).toFixed(2);
+  return {
+    total: list.length,
+    paid: list.length - unpaidList.length,
+    unpaid: unpaidList.length,
+    overdue: buckets[1].length + buckets[2].length + buckets[3].length,
+    outstandingBalance: outstandingBalance,
+    aging: { current: buckets[0].length, '1-30': buckets[1].length, '31-60': buckets[2].length, '60+': buckets[3].length },
+    agingBuckets: buckets.map(function (invs) { return { invs: invs }; }),
+    invoices: list.map(function (i) { const f = getInvoiceFields(i); return { invNum: f.invNum, bolNum: f.bolNum, status: f.status, amount: parseFloat(f.rawAmt) || 0, date: f.date, due: f.due }; })
+  };
+}
+
+// Record each paid invoice back to QuickBooks Online after Stripe succeeds, using
+// the QBO Id resolved at pay time (see the Pay Selected handler). The payment
+// amount is the QBO Balance, falling back to the invoice total. Best-effort — never
+// blocks the success UI, since Stripe has already captured the funds.
+async function _recordQboPayments(invoices, stripePaymentIntentId) {
+  const paymentDate = new Date().toISOString().split('T')[0];
+  await Promise.all((invoices || []).map(inv => {
+    if (!inv._qboId) return Promise.resolve(null);
+    const amount = (inv._qboBalance != null && !isNaN(inv._qboBalance))
+      ? Number(inv._qboBalance)
+      : (parseFloat(getInvoiceFields(inv).rawAmt) || 0);
+    return fetch('https://qbo-api.felipe-b80.workers.dev/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceId: inv._qboId,
+        amount,
+        paymentDate,
+        stripePaymentIntentId: stripePaymentIntentId || null
+      })
+    }).then(r => r.json()).catch(e => { console.error('[QBO payment] failed for invoice', inv._qboId, e); return null; });
+  }));
 }
 
 function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
@@ -3833,11 +3906,13 @@ function showStripePaymentModal(invoices) {
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
         // Confirm ACH with linked payment method and customer
-        const { error } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
+        const { error, paymentIntent } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
           payment_method: window._achPaymentMethod,
           customer: window._stripeCustomerId || undefined
         });
         if (error) throw new Error(error.message);
+        // Record the payment against each invoice in QuickBooks Online (best-effort).
+        await _recordQboPayments(invoices, paymentIntent && paymentIntent.id);
         // Send confirmation email
         await fetch(WORKER + '/send-confirmation', {
           method: 'POST',
@@ -3878,6 +3953,8 @@ function showStripePaymentModal(invoices) {
       const cardBrand = pmDetails.brand || (paymentIntent.payment_method_types && paymentIntent.payment_method_types[0] === 'card' ? 'card' : '');
       const cardLast4 = pmDetails.last4 || '';
       const confirmationId = paymentIntent.id || '';
+      // Record the payment against each invoice in QuickBooks Online (best-effort).
+      await _recordQboPayments(invoices, confirmationId);
       // Send confirmation email
       await fetch(WORKER + '/send-confirmation', {
         method: 'POST',
@@ -5657,7 +5734,7 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
   if (hasRSD || !consigneeStreet) { onProceed(); return; }  // skip geocodio if already flagged or no address to check
   const fullAddr = [consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip].filter(Boolean).join(' ');
   try {
-    const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+    const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&limit=1';
     const gr = await fetch(gUrl);
     if (gr.ok) {
       const gd = await gr.json();
@@ -6848,7 +6925,7 @@ function lookupLocation() {
   res.style.position = 'relative';
 
   // Geocode first to get lat/lng for accurate map centering
-  fetch('https://api.geocod.io/v1.12/geocode?q=' + encoded + '&api_key=' + GEOCODIO_KEY + '&limit=1')
+  fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encoded + '&limit=1')
     .then(r => r.json())
     .then(gd => {
       const r0 = gd && gd.results && gd.results[0];
@@ -8524,7 +8601,7 @@ async function _geocodioResidentialCheck(street, city, state, zip) {
   if (!_street) return { residential: false };
   try {
     const _addr = [_street, city, state, zip].filter(Boolean).join(' ').trim();
-    const _r = await fetch('https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1');
+    const _r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addr) + '&fields=zip4&limit=1');
     if (!_r.ok) return { residential: false };
     const _d = await _r.json();
     const _r0 = _d.results && _d.results[0];
@@ -9006,8 +9083,11 @@ function applyGreeting(){
   var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
   if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;nm=nm.replace(/[.,\s]+$/,'');}
   var pick=pickGreeting();
-  g.textContent=pick.greet+", "+(nm||"there")+".";
-  n.textContent="";
+  // Greeting in its own span, name in #welcome-name, separator supplied by the static #welcome-sep
+  // (", ") on desktop. No trailing period — appending one here left "Brothers." + the leftover ", "
+  // separator = "Brothers.,". On mobile the separator is hidden, so the comma rides with the greeting.
+  g.textContent=pick.greet+(window.innerWidth<=768?",":"");
+  n.textContent=nm||"there";
   if(s) s.textContent=pick.sub;
 }
 // ===== Conversational shipment query engine =====
@@ -9020,6 +9100,7 @@ var selectedShipments = new Set();
 let waybHistory = [];   // Way B agent conversation history (user + final assistant text turns)
 let lastWaybResultSet = []; // last search_shipments result rows (sanitized, for the SheetJS export)
 let lastWaybResultShipments = []; // last search_shipments RAW shipment objects (for the exact My Shipments table)
+let lastWaybExport = null; // last exportable result set (type-agnostic): { sheetName, filenameBase, header, data(2D) } — set by whatever the agent most recently showed (shipments or invoices)
 let _waybDocStore = {};     // doc URLs keyed by BOL, for button rendering — NEVER sent to the model
 function updateBolDownloadBtn() {
   const btn = document.getElementById('ship-dl-btn');
@@ -9769,6 +9850,23 @@ async function openDocsFor(id){
   setActiveShipment(s); // standing context
   appendMessage('bot','Here is '+(bol||id)+' — opening its documents:',{shipments:[s], singleResult:true});
   openDocsModal(String(bolId),String(bol));
+}
+
+// Resolve a shipment from a BOL (loaded set first, else API) and open its DETAIL modal — reuses
+// fetchBookingByBOL + showShipmentDetail. Used by the Claims panel BOL link so it matches clicking a
+// shipment row in My Shipments (which opens the detail view).
+async function openShipmentDetailByBOL(bol){
+  const _b = String(bol || '').trim();
+  if (!_b) return;
+  let s = null;
+  if (shipCtx && shipCtx.loaded && shipCtx.loaded.length) {
+    s = shipCtx.loaded.find(function (sh) {
+      return String(sh.BOLNumber || '').trim() === _b || String(sh.bolNumber || '').trim() === _b || String(sh.BOLId || '').trim() === _b;
+    }) || null;
+  }
+  if (!s) { try { s = await fetchBookingByBOL(_b); } catch (e) { s = null; } }
+  if (s) { showShipmentDetail(s); }
+  else { appendMessage('bot', "I couldn't pull up the shipment for BOL " + _b + " — it may not be in your history."); }
 }
 // ── CONVERSATIONAL AI — Sonnet with web_search and a proper tool-use loop ──────
 // This is the natural-conversation brain. Claude decides when to search the web.
@@ -11834,7 +11932,7 @@ async function clientSideSearch(t, lower) {
     if (queryAddr) {
       showTyping();
       try {
-        const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(queryAddr) + '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+        const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(queryAddr) + '&fields=zip4&limit=1';
         const gr = await fetch(gUrl);
         if (gr.ok) {
           const gd = await gr.json();
@@ -11914,133 +12012,8 @@ async function clientSideSearch(t, lower) {
     return true;
   }
 
-  // ── Invoice search — check FIRST before shipment searches ──
-  const isInvoiceQuery = /\b(invoice|invoices|inv)\b/.test(lower);
-  if (isInvoiceQuery && currentCustomer) {
-    showTyping();
-    let invoices;
-    try { invoices = await fetchInvoices(); } catch(e) { removeTyping(); appendMessage('bot', 'Could not load invoices. Please try again.'); return true; }
-    removeTyping();
-
-    // Invoice number lookup: "invoice 138828" or "invoice #138828"
-    const invNumMatch = lower.match(/(?:invoice|inv)\s*#?\s*(\d{4,})/i);
-    if (invNumMatch) {
-      const num = invNumMatch[1];
-      const found = invoices.filter(inv => String(inv.invoiceNumber) === num);
-      if (found.length) {
-        appendMessage('bot', 'Found invoice #' + num + ' — click ↓ to download:', { invoices: found, invoicesList: found });
-      } else {
-        appendMessage('bot', 'I couldn\'t find invoice #' + num + '. Check the number and try again.');
-      }
-      return true;
-    }
-
-    // Paid/Unpaid filter
-    if (/\bunpaid\b/.test(lower)) {
-      const found = invoices.filter(inv => !(inv.status && inv.status.paid));
-      appendMessage('bot', 'Found ' + found.length + ' unpaid invoice' + (found.length !== 1 ? 's' : '') + ' — click ↓ to download:', { invoices: found, invoicesList: found });
-      return true;
-    }
-    if (/\bpaid\b/.test(lower)) {
-      const found = invoices.filter(inv => inv.status && inv.status.paid);
-      appendMessage('bot', 'Found ' + found.length + ' paid invoice' + (found.length !== 1 ? 's' : '') + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-
-    // Total spend / how much
-    if (/\b(how much|total|spent|spend|sum|balance|owe|outstanding)\b/.test(lower)) {
-      const total = invoices.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      const unpaidTotal = invoices.filter(i=>!getInvoiceFields(i).isPaid).reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      const paidTotal = total - unpaidTotal;
-      appendMessage('bot', 'Here is your invoice summary: ' +
-        '• **Total billed:** $' + total.toFixed(2) + ' across ' + invoices.length + ' invoices\n' +
-        '• **Paid:** $' + paidTotal.toFixed(2) + '\n' +
-        '• **Outstanding:** $' + unpaidTotal.toFixed(2));
-      return true;
-    }
-
-    // Aging report
-    if (/\b(aging|overdue|age|old|oldest|30|60|90)\b/.test(lower)) {
-      const now = new Date();
-      const buckets = { '0-30': [], '31-60': [], '61-90': [], '90+': [] };
-      invoices.filter(i=>!getInvoiceFields(i).isPaid).forEach(inv => {
-        const f = getInvoiceFields(inv);
-        const due = f.due ? new Date(f.due) : null;
-        const days = due ? Math.floor((now - due) / 86400000) : 0;
-        if (days <= 0) buckets['0-30'].push(inv);
-        else if (days <= 30) buckets['31-60'].push(inv);
-        else if (days <= 60) buckets['61-90'].push(inv);
-        else buckets['90+'].push(inv);
-      });
-      const lines = Object.entries(buckets).map(([k,arr]) => {
-        const total = arr.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-        return '- ' + k + ': ' + arr.length + ' invoice' + (arr.length!==1?'s':'') + ' - $' + total.toFixed(2);
-      });
-      appendMessage('bot', 'Invoice aging (unpaid only): ' + lines.join(', '));
-      return true;
-    }
-
-    // Amount filter
-    const overMatch  = lower.match(/(?:over|more than|greater than|above)\s*\$?\s*(\d+)/i);
-    const underMatch = lower.match(/(?:under|less than|below)\s*\$?\s*(\d+)/i);
-    if (overMatch) {
-      const amt = parseFloat(overMatch[1]);
-      const found = invoices.filter(inv => (parseFloat(getInvoiceFields(inv).rawAmt) || 0) > amt);
-      const total = found.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-      appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' over $' + amt + ' totaling $' + total.toFixed(2) + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-    if (underMatch) {
-      const amt = parseFloat(underMatch[1]);
-      const found = invoices.filter(inv => (parseFloat(getInvoiceFields(inv).rawAmt) || 0) < amt);
-      appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' under $' + amt + ':', { invoices: found, invoicesList: found });
-      return true;
-    }
-
-    // Most expensive
-    if (/\b(biggest|largest|most expensive|highest)\b/.test(lower)) {
-      const sorted = [...invoices].sort((a,b) => (parseFloat(getInvoiceFields(b).rawAmt)||0) - (parseFloat(getInvoiceFields(a).rawAmt)||0));
-      const top = sorted.slice(0,5);
-      appendMessage('bot', 'Your 5 largest invoices:', { invoices: top, invoicesList: top });
-      return true;
-    }
-
-    // By consignee
-    const forMatch = lower.match(/(?:for|to)\s+([a-z\s]{3,})/i);
-    if (forMatch) {
-      const name = forMatch[1].trim();
-      const found = invoices.filter(inv => {
-        const en = inv._enriched || {};
-        return (en.consignee||'').toLowerCase().includes(name.toLowerCase());
-      });
-      if (found.length) {
-        const total = found.reduce((s,i)=>s+(parseFloat(getInvoiceFields(i).rawAmt)||0),0);
-        appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length!==1?'s':'') + ' for "' + name + '" totaling $' + total.toFixed(2) + ':', { invoices: found, invoicesList: found });
-        return true;
-      }
-    }
-
-    // Name/carrier/BOL search within invoices
-    const nameSearch = lower
-      .replace(/\b(invoice|invoices|inv|for|my|show|find|search|get|all)\b/g, '')
-      .trim();
-    if (nameSearch.length > 1) {
-      const words = nameSearch.split(/\s+/).filter(w => w.length > 1);
-      const found = invoices.filter(inv => {
-        const en = inv._enriched || {};
-        const fields = [en.consignee, en.shipper, en.carrier, inv.bolNum, String(inv.invoiceNumber || '')].join(' ').toLowerCase();
-        return words.every(w => fields.includes(w));
-      });
-      if (found.length) {
-        appendMessage('bot', 'Found ' + found.length + ' invoice' + (found.length !== 1 ? 's' : '') + ' matching "' + nameSearch + '":', { invoices: found, invoicesList: found });
-        return true;
-      }
-    }
-
-    // Generic — show all invoices
-    appendMessage('bot', 'Here are your invoices — click ↓ to download any:', { invoices, invoicesList: invoices });
-    return true;
-  }
+  // (Dead invoice-search intercept removed — clientSideSearch is no longer called; invoice/payment
+  // questions now reach the get_invoices tool in the waybAgent loop.)
 
   // ── BOL patterns ──
   const bolMatch = lower.match(/(?:bol|bill\s*of\s*lading|shipment|find|look\s*up|search|where\s*is|status\s*of|what\s*happened\s*to)\s*#?\s*(\d{6,})/i)
@@ -12281,14 +12254,9 @@ async function clientSideSearch(t, lower) {
   }
 
   // ── Damage / claim questions ──
-  const isClaimQuery = /\b(damage|damaged|claim|freight claim|broke|broken|missing|shortage|short ship|lost|destroy|destroyed|file.*claim|claim.*file)\b/.test(lower);
-  if (isClaimQuery && currentCustomer) {
-    const bolMatch = lower.match(/\b([a-z]{0,3}\d{6,})\b/i);
-    let msg = 'To file a freight claim, start by noting the damage on the delivery receipt before the driver leaves — photos of the damaged packaging and product are essential. Then submit through the Email Support form in the left navigation menu, selecting Freight Claim, and attach your photos and commercial invoice. We handle the claim with the carrier on your behalf and will follow up if anything additional is needed.';
-    if (bolMatch) msg = 'For BOL ' + bolMatch[0] + ' — ' + msg.charAt(0).toLowerCase() + msg.slice(1);
-    appendMessage('bot', msg);
-    return true;
-  }
+  // (Dead claim intercept removed — clientSideSearch is no longer called; claim-status/amount questions
+  // now reach the get_claims tool in the waybAgent loop, and filing a new claim goes through the
+  // support-mode [[DRAFT]] flow.)
 
   // ── Late shipment / overdue ──
   const isLateQuery = /\b(late|overdue|delayed|delay|past due|not delivered|hasn.?t arrived|where is|behind schedule|expected.*delivery|delivery.*expected|eta|estimated.*arrival|arrival.*estimated|when.*deliver|deliver.*when|when.*arrive|arrive.*when|when will|will it.*deliver|will.*be.*deliver)\b/.test(lower) && !/\b(invoice|invoices|payment|show me|list|all)\b/.test(lower);
@@ -13492,25 +13460,23 @@ async function handleInput(text) {
 
   // ── Quote in progress handled earlier (guard moved up near top of handleInput) ──
 
-  // ── EDUCATIONAL / CONVERSATIONAL INTENT — goes to Claude, not shipment search ──
-  const isEducational = /^(tell me|what is|what are|what's|explain|how does|how do|how is|how are|about|describe|define|why|when should|can you explain|help me understand|i want to know|i'd like to know|do you know|what do you think|give me info|info about|information about|learn about)/i.test(lower.trim())
-    || /\b(difference between|vs\.|versus|compare|pros and cons|advantages|disadvantages|better for|when to use)\b/i.test(lower);
-
-  // Override isEducational for account-specific questions that need data
+  // Account-specific detection — retained ONLY to keep the quote-intent guard below from pulling
+  // data questions ("my carrier", "when will it deliver") into the quote conversation. The former
+  // isEducational→skip-waybAgent switchboard has been removed: the data-vs-question decision is now
+  // the agent's (waybAgent has search_shipments / get_invoices / run_analytics AND web_search for
+  // general questions), so a logged-in customer's non-quote message falls through to waybAgent by
+  // default (below). "what is LTL?" → waybAgent answers in prose; "my last 6 shipments" → search_shipments.
   const isAccountSpecific = /\b(my (carrier|shipment|lane|invoice|top|spend|volume|bol|pro)|which carrier|top lane|my lane|how many shipment|shipment count|what.*owe|my invoice|when will|will it deliver|will.*arrive|eta for|\d{7,}|is.*address|is.*residential|is.*limited|do i need.*liftgate|carriers.*on|on.*lane|fl.*ca|fl.*ny|fl.*pa|fl.*mi|fl.*va)\b/i.test(lower)
     || /\b(average cost|avg cost|cost per|per carrier|per shipment|by month|by week|by carrier|by state|by lane|by city|monthly|weekly|heaviest|lightest|most expensive|least expensive|cheapest|total spend|total weight|total cost|transit time|top \d|busiest|delivered vs|vs delivered|in transit vs|how many.*delivered|how many.*transit|freight spend|average shipment|shipment cost|shipment weight|most used|accessorial|compare to|compared to|usually take|do i ship|ship most)\b/i.test(lower)
     || (/\b(compare|comparison|versus|vs\.?|cheaper|faster|slower|better|worse|which is)\b/i.test(lower) && /\b(metro w&d|metropolitan|estes|abf|arcbest|tforce|xpo|saia|fedex freight|old dominion|odfl|r\+l|aaa cooper|forward air|southeastern|sefl|pilot|warp|central transport|pitt ohio|ward)\b/i.test(lower));
 
-  // A retained-set follow-up ("what are the two bol numbers", "both consignees", "their bols")
-  // must reach clientSideSearch — otherwise the educational skip routes "what are…" to the AI,
-  // which deflects instead of answering from the held result set.
-  const _hasRetainedSet = !!(window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length);
-  const _isSetFollowUp = _hasRetainedSet && lower.trim().split(/\s+/).length <= 14 &&
-    /\b(both|the two|the three|those|these|them|their|list (them|the|those)|you (said|told me)|why (is it )?(only|just)|the bols?|bol numbers?|both bols?|what were|the (consignees?|customers?|carriers?|costs?|prices?|weights?|dates?|shippers?))\b/i.test(lower);
-
-  if (isEducational && !isAccountSpecific && !_isSetFollowUp) {
-    // Falls through to main AI handler — skip clientSideSearch
-  } else {
+  // ── Saved-quotes lookup — route to the read tool (list_saved_quotes), NOT a new quote. Must run
+  // BEFORE _wantsQuote, whose /\bquotes?\b/ would otherwise start a fresh quote. Only matches when a
+  // possessive/history word precedes "quote(s)" ("saved/past/previous/my quotes"), so a fresh
+  // "quote me LA to Miami" still falls through to _wantsQuote and starts a new quote.
+  if (currentCustomer && /\b(saved|past|previous|my)\s+quotes?\b/i.test(lower)) {
+    await waybAgent(t); return;
+  }
 
   // ── Quote intent — catch BEFORE shipment search so quote requests (even misspelled
   // or bare, like "yo I need a quot" or "quote") never leak into the shipment fuzzy search.
@@ -13535,7 +13501,6 @@ async function handleInput(text) {
     await waybAgent(t);
     return;
   }
-  } // end else-not-educational
   // ─────────────────────────────────────────────────────────────────────────
 
   // New quote request (explicit)
@@ -13843,7 +13808,10 @@ function showSavedQuotes() {
     const p = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0)) || 0;
     return sum + Number(p);
   }, 0);
-  const mostRecent = quotes.length ? new Date(Math.max(...quotes.map(q => q.savedAt||0))).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+  // savedAt is an ISO string, so Math.max on the raw values coerced them to NaN → "Invalid Date".
+  // Parse each to a timestamp (the SAME new Date(q.savedAt) the per-card code uses), then format it.
+  const _savedTs = quotes.map(function (q) { return new Date(q.savedAt).getTime(); }).filter(function (t) { return !isNaN(t); });
+  const mostRecent = _savedTs.length ? new Date(Math.max.apply(null, _savedTs)).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
   const carriers = new Set(quotes.map(q => q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
 
   const hdr = document.createElement('div');
@@ -13927,7 +13895,10 @@ function showSavedQuotes() {
     card.onmouseout  = () => card.style.boxShadow = 'none';
 
     const savedDate = new Date(q.savedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    const ageDays = q.savedAt ? Math.floor((Date.now() - q.savedAt) / (1000*60*60*24)) : 0;
+    // Parse savedAt (ISO string) to a timestamp before subtracting — same fix as the LAST SAVED stat.
+    // An invalid/missing date → ageDays 0 → not flagged stale (treated as fresh, never crashes).
+    const _qTs = q.savedAt ? new Date(q.savedAt).getTime() : NaN;
+    const ageDays = !isNaN(_qTs) ? Math.floor((Date.now() - _qTs) / (1000*60*60*24)) : 0;
     const isStale = ageDays >= 3;
     const acc = (q.accessorials || []).map(c=>(ACC_LABEL[c]||c)).join(', ') || 'Dock to Dock';
     const displayPrice = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0));
@@ -14560,8 +14531,8 @@ function showBookingPanel(rate, shipmentData) {
       try {
         btn.textContent = 'Checking address...';
         btn.disabled = true;
-        const gUrl = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(fullDeliveryAddr) +
-          '&fields=zip4&api_key=ac756697506a2de2a23696336660c729c62f052&limit=1';
+        const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(fullDeliveryAddr) +
+          '&fields=zip4&limit=1';
         const gr = await fetch(gUrl);
         if (gr.ok) {
           const gd = await gr.json();
@@ -15908,9 +15879,9 @@ function showQuoteForm(prefill, silent) {
     try {
       if (_isCanadianPostal(zip)) {
         const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
-        const r = await fetch('https://api.geocod.io/v1.12/geocode?q='
+        const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
           + encodeURIComponent(fsa)
-          + '&country=CA&api_key=' + GEOCODIO_KEY + '&limit=1');
+          + '&country=CA&limit=1');
         if (r.ok) {
           const d = await r.json();
           const ac = d.results && d.results[0] && d.results[0].address_components;
@@ -15924,7 +15895,6 @@ function showQuoteForm(prefill, silent) {
   }
 
   // ── Geocodio RDI residential check ──────────────────────────────────────────
-  const GEOCODIO_KEY = 'ac756697506a2de2a23696336660c729c62f052';
   let _rdiTimer = null;
   let _rdiTimer2 = null;
 
@@ -16014,7 +15984,7 @@ function showQuoteForm(prefill, silent) {
       const _cityEl = container.querySelector('#qt-dest-city');
       const _cityVal = _cityEl ? _cityEl.textContent.trim() : '';
       const _addrQ = _cityVal ? (_cityVal + ' ' + zip) : zip;
-      const url = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&api_key=' + GEOCODIO_KEY + '&limit=1';
+      const url = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&limit=1';
       const r = await fetch(url);
       if (!r.ok) return;
       const d = await r.json();
@@ -16044,7 +16014,7 @@ function showQuoteForm(prefill, silent) {
       const _cityEl = container.querySelector('#qt-origin-city');
       const _cityVal = _cityEl ? _cityEl.textContent.trim() : '';
       const _addrQ = _cityVal ? (_cityVal + ' ' + zip) : zip;
-      const url = 'https://api.geocod.io/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&api_key=' + GEOCODIO_KEY + '&limit=1';
+      const url = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(_addrQ) + '&fields=zip4&limit=1';
       const r = await fetch(url);
       if (!r.ok) return;
       const d = await r.json();
@@ -16700,6 +16670,43 @@ async function fetchInvoices(dateFrom, dateTo) {
 
 
 // ── REPORTS ───────────────────────────────────────────────────────────────────
+// Canonical open-claim extractor — factored out of renderClaims so the Claims panel AND get_claims
+// read identical fields (no drift). bol/type/amount are the fields the panel already renders today
+// (known-good). status/carrier/fileDate field names are best-effort and must be verified against a
+// live openclaims payload; since this is the OPEN-claims feed, status defaults to 'Open'.
+function getClaimFields(c) {
+  c = c || {};
+  return {
+    bol:      c.BOLNumber || c.BOLId || '—',
+    type:     c.claimTypeName || 'Unknown',
+    amount:   parseFloat(c.claimAmount) || 0,
+    status:   c.claimStatusName || c.claimStatus || c.statusName || c.status || 'Open',
+    carrier:  c.carrierName || c.carrier || '',
+    fileDate: c.claimDate || c.dateFiled || c.filedDate || c.createdDate || ''
+  };
+}
+
+// Paginated fetch of the customer's open claims — lifted from showClaims so the Claims panel and
+// get_claims share one fetch (no drift).
+async function fetchOpenClaims() {
+  const token = await getToken();
+  let all = [], pg = 1, tpgs = 1;
+  while (pg <= tpgs && pg <= 10) {
+    const r = await fetch(PRIMUS_BASE + '/applet/v1/book/openclaims?limit=50&page=' + pg, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!r.ok) break;
+    const d = await r.json();
+    const results = (d.data && d.data.results) || [];
+    const paging  = (d.data && d.data.pagingDetails) || {};
+    if (pg === 1) tpgs = Math.ceil((paging.totalResults || results.length) / 50) || 1;
+    results.forEach(function (c) { all.push(c); });
+    if (!results.length) break;
+    pg++;
+  }
+  return all;
+}
+
 async function showClaims() {
   if (needsLogin('Claims')) return;
   showChatArea();
@@ -16712,21 +16719,7 @@ async function showClaims() {
   showTyping();
 
   try {
-    const token = await getToken();
-    let allClaims = [], pg = 1, tpgs = 1;
-    while (pg <= tpgs && pg <= 10) {
-      const r = await fetch(PRIMUS_BASE + '/applet/v1/book/openclaims?limit=50&page=' + pg, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!r.ok) break;
-      const d = await r.json();
-      const results = (d.data && d.data.results) || [];
-      const paging  = (d.data && d.data.pagingDetails) || {};
-      if (pg === 1) tpgs = Math.ceil((paging.totalResults || results.length) / 50) || 1;
-      results.forEach(c => allClaims.push(c));
-      if (!results.length) break;
-      pg++;
-    }
+    const allClaims = await fetchOpenClaims();
     removeTyping();
     appendMessage('bot', `Here are your open claims (${allClaims.length} found):`, { claims: allClaims, claimsLabel: 'Open Claims' });
   } catch(e) {
@@ -16785,7 +16778,7 @@ function renderClaims(claims) {
   const container = document.createElement('div');
   claims = claims || [];
 
-  const totalAmount = claims.reduce((s,c) => s + (parseFloat(c.claimAmount)||0), 0);
+  const totalAmount = claims.reduce((s,c) => s + getClaimFields(c).amount, 0);
 
   // ── Dashboard header — matches renderShipments() style exactly ──
   const titleSection = document.createElement('div');
@@ -16806,7 +16799,7 @@ function renderClaims(claims) {
   const headerRight = document.createElement('div');
   headerRight.style.cssText = 'display:flex;flex:2;justify-content:space-around;gap:4px;min-width:0;';
 
-  const types = [...new Set(claims.map(c => c.claimTypeName || 'Unknown'))];
+  const types = [...new Set(claims.map(c => getClaimFields(c).type))];
   [
     { label: 'Total Claimed', val: '$' + totalAmount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), color: 'var(--tx)' },
     { label: 'Claim Types',   val: types.length,  color: 'var(--tx)' },
@@ -16842,15 +16835,22 @@ function renderClaims(claims) {
   claims.forEach((c, i) => {
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid var(--bdr);' + (i%2===1 ? 'background:var(--bg);' : '');
-    const bol = c.BOLNumber || c.BOLId || '—';
-    const type = c.claimTypeName || 'Unknown';
-    const amt = (parseFloat(c.claimAmount)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const _cf = getClaimFields(c);
+    const _bolNum = c.BOLNumber || c.BOLId || '';   // display number
+    // BOL as a purple clickable link that opens the SHIPMENT DETAIL view for that BOL — the same detail
+    // modal the My Shipments row opens (openShipmentDetailByBOL → showShipmentDetail). Plain '—' when
+    // the claim has no BOL.
+    const _bolCell = _bolNum
+      ? `<span onclick="openShipmentDetailByBOL('${_bolNum}')" style="color:#bd27bc;font-weight:600;cursor:pointer;">${_bolNum}</span>`
+      : '<span style="color:var(--tx);font-weight:500;">—</span>';
+    const type = _cf.type;
+    const amt = _cf.amount.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     // "Other"/"Unknown" (and other catch-all labels) are neutral gray; named types keep amber.
     const _genericType = /^(other|unknown|n\/a|none)$/i.test(String(type).trim());
     const _typeBg = _genericType ? '#f1efe8' : '#fef3c7';
     const _typeFg = _genericType ? '#5f5e5a' : '#92400e';
     tr.innerHTML = `
-      <td style="padding:10px 14px;color:var(--tx);font-weight:500;">${bol}</td>
+      <td style="padding:10px 14px;">${_bolCell}</td>
       <td style="padding:10px 14px;">
         <span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:${_typeBg};color:${_typeFg};">${type}</span>
       </td>
@@ -17022,13 +17022,12 @@ function renderReports(shipments) {
     const zipCache = {};
     allZips.forEach(z => { const ll = zipToLL(z); if (ll) zipCache[z] = ll; });
     const missing = allZips.filter(z => !zipCache[z]);
-    const GEO_KEY = 'ac756697506a2de2a23696336660c729c62f052';
     (async function resolveAndRender() {
       if (missing.length > 0) {
         try {
           for (let i = 0; i < missing.length; i += 100) {
             const chunk = missing.slice(i, i+100);
-            const res = await fetch('https://api.geocod.io/v1.7/geocode?api_key=' + GEO_KEY, {
+            const res = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.7/geocode', {
               method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(chunk)
             });
             if (res.ok) {
@@ -17302,13 +17301,12 @@ const STATE_CENTERS_GEO = {
   wrap.style.position = 'relative';
 
   var zipCityCache = {};
-  var GEO_KEY2 = 'ac756697506a2de2a23696336660c729c62f052';
   var allMapZips = Array.from(new Set(unique.reduce(function(a,l) { return a.concat([l.oZip,l.dZip]); }, []).filter(Boolean)));
   (async function loadCityNames() {
     try {
       for (var i = 0; i < allMapZips.length; i += 50) {
         var chunk = allMapZips.slice(i, i+50);
-        var res = await fetch('https://api.geocod.io/v1.7/geocode?api_key=' + GEO_KEY2, {
+        var res = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.7/geocode', {
           method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(chunk)
         });
         if (res.ok) {
@@ -18337,7 +18335,7 @@ const _waybSysPrompt = `You are a freight expert assistant for Freight and Logis
 
 CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the customer under any circumstances. You speak as Freight and Logistics, Inc. only. If you cannot help with something, say so without referencing any external system.
 
-You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), and render_chart (draw a chart of their analytics in the side panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, or paperwork.
+You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment), get_claims (the customer's OPEN freight claims — open count, total claimed, and each claim's BOL, type, status, amount, carrier and file date; pass a bol to check one shipment), and list_saved_quotes (the customer's SAVED quotes — count and each quote's origin, destination, weight, carrier, price and saved date; opens the real Saved Quotes panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, whether something is paid, claims, or their saved/past quotes. Report payment status, claim status, and amounts ONLY from what get_invoices/get_claims return; if they report nothing, say you could not find it rather than guessing. get_claims is for READING existing claims — to FILE a new damage/loss claim, that is the separate support draft flow, not this tool. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
 
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
@@ -18374,7 +18372,7 @@ const _waybTools = [
         destState: { type: 'string', description: 'Destination state as a 2-letter code, or null.' },
         dateFrom:  { type: 'string', description: 'Earliest ship date YYYY-MM-DD, or null.' },
         dateTo:    { type: 'string', description: 'Latest ship date YYYY-MM-DD, or null.' },
-        limit:     { type: 'number', description: 'Size of the sample returned to you (the full matched set is always kept for the customer). Default 25.' }
+        limit:     { type: 'number', description: "The specific number of shipments the customer asked to SEE (e.g. 'last 6', 'top 10', '5 most recent') — the chat, the View-shipments panel, AND the Excel export all honor it. OMIT it for broad or 'all' requests (e.g. 'all my Metro shipments', 'my shipments') so everything matching is returned, not capped." }
       }
     }
   },
@@ -18404,8 +18402,23 @@ const _waybTools = [
     }
   },
   {
+    name: 'get_invoices',
+    description: "Look up this customer's invoices and payment status: paid, unpaid and overdue counts, total outstanding balance, invoice aging (current, 1-30, 31-60, 60+ days), and per-invoice number, BOL, PAID or UNPAID status, amount, invoice date and due date. Use this for any question about whether invoices are paid, what is still owed, or what is overdue. The summary AND the 'View invoices' panel/export are BOTH scoped to the 'status' filter. Set status from the customer's request: 'unpaid' for \"just the unpaid\" or \"what I owe\", 'paid' for paid ones, 'overdue' for \"past due\", or 'all' (default). If they refer to a subset just shown (e.g. \"just those\", \"only the six\") set status to that subset ONLY when it is unambiguous which slice they mean. If you cannot tell which subset they mean, ASK which one — do NOT fall back to 'all', do NOT export the full set, and NEVER tell the customer to filter the spreadsheet themselves (that is not acceptable). Pass an optional bol to check one shipment. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
+    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' }, status: { type: 'string', enum: ['all', 'unpaid', 'paid', 'overdue'], description: "Which slice to return AND export: 'all' (default), 'unpaid', 'paid', or 'overdue' (unpaid past its due date)." } } }
+  },
+  {
+    name: 'get_claims',
+    description: "Look up this customer's OPEN freight claims: how many are open, total amount claimed, and per-claim BOL, claim type, status, amount, carrier, and file date. Use this for any question about claim status, claim amounts, or how many claims are open. The reply includes a 'View claims' button that opens the real Claims panel. Pass an optional bol to check one shipment's claim. This is for READING existing claims — FILING a new damage/loss claim is handled separately by the support draft flow, not here. Report ONLY what this returns; if found is false, say you could not find it — never guess.",
+    input_schema: { type: 'object', properties: { bol: { type: 'string', description: 'Optional BOL number to scope to one shipment, or null.' } } }
+  },
+  {
+    name: 'list_saved_quotes',
+    description: "List the customer's SAVED quotes (rates they saved earlier). Returns how many are saved and, per quote, its origin, destination, weight, carrier, price, and when it was saved. Use for 'show my saved quotes', 'my past/previous quotes', 'what quotes did I save'. The reply includes a 'View saved quotes' button that opens the real Saved Quotes panel. This LISTS existing saved quotes — it does NOT start a new quote. Report ONLY what this returns; if there are none, say the customer has no saved quotes.",
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
     name: 'export_excel',
-    description: "Download the customer's most recent shipment search results as an Excel (.xlsx) file. Call this when the customer asks to put the results in Excel, download them, export them, or get a spreadsheet — but only after a search_shipments has produced results in this conversation. Takes no input; it exports the latest result set.",
+    description: "Download the most recent results you showed the customer — shipments or invoices — as an Excel (.xlsx) file, EXACTLY as last shown. Call this only when the customer wants the currently-shown set in Excel. IMPORTANT — do NOT use this for a filtered subset: if the customer asks for a narrower slice of invoices (\"just the unpaid\", \"only the overdue\", \"the paid ones\", \"just the 6\", or anything narrower than what is shown), you MUST call get_invoices with the matching status filter FIRST to re-scope the set, then that subset becomes what gets exported — never export the previously shown full set for a subset request. Takes no input; it exports whichever result set was shown last.",
     input_schema: { type: 'object', properties: {} }
   },
   {
@@ -18504,10 +18517,36 @@ async function _waybSearch(input) {
   // carrier search matches the analytics count, e.g. all 182 Metro). The model receives the TRUE
   // total plus a bounded sample of the most recent — enough context without bloating tokens.
   const allRows = matched.map(_mapRow);
-  if (matched.length) { lastWaybResultShipments = matched; lastWaybResultSet = allRows; } // full set (non-empty only, no clobber)
+  // ONE effective "show N" signal, from the parsed query (q.limit) OR the tool's limit param
+  // (input.limit) — so the chat sample, the panel, the title, and the export can never disagree.
+  // >0 → sort by the query's sort (date desc default) and take those N; 0/omitted → a broad/all
+  // request, keep the full matched set (e.g. "all my Metro shipments" shows all Metro). The returned
+  // count stays the TRUE total (matched.length) so prose can say "your 6 most recent of 213 on file".
+  const _effLimit = Number(q.limit) || Number(input.limit) || 0;
+  let scoped = matched;
+  if (_effLimit > 0) {
+    const _sf = q.sortField || 'date';
+    const _dir = (q.sortDir === 'asc') ? 1 : -1;
+    const _sortVal = function (s) { const f = shipFields(s); return _sf === 'cost' ? (f.cost || 0) : _sf === 'weight' ? (f.weight || 0) : (f.date ? f.date.getTime() : 0); };
+    scoped = matched.slice().sort(function (a, b) { return (_sortVal(a) - _sortVal(b)) * _dir; }).slice(0, _effLimit);
+  }
+  const scopedRows = scoped.map(_mapRow);
+  if (matched.length) {
+    lastWaybResultShipments = scoped; lastWaybResultSet = scopedRows; // this turn's result set = the scoped subset
+    lastWaybExport = {
+      sheetName: 'Shipments', filenameBase: 'shipments', header: WAYB_SHIP_EXPORT_HEADER, data: scopedRows.map(_waybShipExportRow),
+      buttonLabel: 'View shipments',
+      // Open the REAL My Shipments panel (its own Excel + controls) over the SCOPED set — a "last 6"
+      // request opens "My Shipments (6)"; a pure filter query opens the full matched set. Same
+      // mechanism as the invoices openPanel.
+      openPanel: function () { openRightPanel(renderShipments(scoped, scoped, 0, false), 'My Shipments (' + scoped.length + ')'); }
+    };
+  }
   if (!allRows.length) return { count: 0, shipments: [], message: 'No shipments found matching that.' };
   const _MODEL_CAP = 40;
-  const preview = allRows.slice(0, Math.min(Math.max(Number(input.limit) || 25, 1), _MODEL_CAP));
+  // Same effective limit as the panel/export → the chat sample and the panel always match. No explicit
+  // N → a bounded sample of the full matched set (the panel still shows all via scoped = matched).
+  const preview = _effLimit > 0 ? scopedRows.slice(0, _MODEL_CAP) : allRows.slice(0, 25);
   return { count: matched.length, returned: preview.length, shipments: preview };
 }
 
@@ -18642,9 +18681,128 @@ async function _waybDocuments(input) {
   };
 }
 
+// Shared read-tool scaffold: fetch a feed the UI already uses, run each row through the SAME
+// extractor the panel renders with, optionally scope to one BOL, and return a compact, model-safe
+// payload. Anti-fabrication: an empty result returns {found:false,message}, never invented data.
+// Anti-leak: the supplied extractor/summarize must never include URLs or backend system names.
+async function _waybReadFeed(opts) {
+  opts = opts || {};
+  let rows;
+  try { rows = await opts.load(); }
+  catch (e) { console.error('waybAgent ' + opts.label + ' load error:', e); return { found: false, message: 'I could not pull up your ' + opts.label + ' just now.' }; }
+  let items = (rows || []).map(opts.extract || function (x) { return x; });
+  const bol = opts.bol ? String(opts.bol).trim() : '';
+  if (bol && opts.keyOf) items = items.filter(function (it) { return String(opts.keyOf(it)) === bol; });
+  if (!items.length) return { found: false, message: bol ? ('I could not find any ' + opts.label + ' for BOL ' + bol + '.') : ('No ' + opts.label + ' on file.') };
+  return Object.assign({ found: true }, opts.summarize(items));
+}
+
+// get_invoices — reuse the invoice feed (fetchInvoices) + the SAME summarizeInvoices() chokepoint the
+// invoice panel uses, so the agent and the panel report identical paid/unpaid/aging. Returns no URLs.
+// Select the raw invoice subset for a status filter, REUSING summarizeInvoices' own paid/aging
+// categorization — no new paid/overdue logic here, so the slice can never drift from the panel.
+// unpaid = every unpaid bucket; overdue = the non-current unpaid buckets; paid = getInvoiceFields.isPaid.
+function _invoiceSlice(list, status) {
+  const b = summarizeInvoices(list || []).agingBuckets; // [current, 1-30, 31-60, 60+], each { invs }
+  if (status === 'unpaid')  return b[0].invs.concat(b[1].invs, b[2].invs, b[3].invs);
+  if (status === 'overdue') return b[1].invs.concat(b[2].invs, b[3].invs);
+  if (status === 'paid')    return (list || []).filter(function (i) { return getInvoiceFields(i).isPaid; });
+  return (list || []).slice(); // 'all'
+}
+
+async function _waybInvoices(input) {
+  input = input || {};
+  const _statusRaw = String(input.status || 'all').toLowerCase();
+  const status = (['unpaid', 'paid', 'overdue'].indexOf(_statusRaw) >= 0) ? _statusRaw : 'all';
+  return _waybReadFeed({
+    label: 'invoices',
+    load: function () { return fetchInvoices(); },
+    extract: function (inv) { return inv; },
+    keyOf: function (inv) { return getInvoiceFields(inv).bolNum; },
+    bol: String(input.bol || '').trim(),
+    summarize: function (rows) {
+      // Scope to the requested status slice, then summarize the SLICE so the summary, the exported
+      // sheet, and the real-panel view all reflect exactly what the customer asked for.
+      const _raw = _invoiceSlice(rows, status);
+      const s = summarizeInvoices(_raw);
+      const _titleWord = status === 'unpaid' ? 'Unpaid Invoices' : status === 'paid' ? 'Paid Invoices' : status === 'overdue' ? 'Overdue Invoices' : 'Invoices';
+      const _fileWord = status === 'all' ? 'invoices' : status + '-invoices';
+      // Wiring B: the button opens the REAL renderInvoices panel (stat cards, aging, Pay, its own Excel),
+      // built from the exact filtered raw rows. The 6-column .data stays as a generic-exporter fallback.
+      lastWaybExport = {
+        sheetName: _titleWord, filenameBase: _fileWord,
+        header: ['Invoice #', 'BOL', 'Status', 'Amount', 'Date', 'Due'],
+        data: s.invoices.map(function (inv) { return [inv.invNum || '', inv.bolNum || '', inv.status || '', (inv.amount != null ? inv.amount : ''), inv.date || '', inv.due || '']; }),
+        buttonLabel: status === 'all' ? 'View invoices' : ('View ' + status + ' invoices'),
+        openPanel: function () { openRightPanel(renderInvoices(_raw, _raw), _titleWord + ' (' + _raw.length + ')'); }
+      };
+      return { status: status, total: s.total, paid: s.paid, unpaid: s.unpaid, overdue: s.overdue, outstandingBalance: s.outstandingBalance, aging: s.aging, invoices: s.invoices };
+    }
+  });
+}
+
+// get_claims — reuse the openclaims feed (fetchOpenClaims) + the SAME getClaimFields extractor the
+// Claims panel uses, so the agent and the panel read identical fields (no drift). The "View claims"
+// button opens the REAL renderClaims panel. Returns no URLs, no backend names.
+async function _waybClaims(input) {
+  input = input || {};
+  return _waybReadFeed({
+    label: 'open claims',
+    load: function () { return fetchOpenClaims(); },
+    extract: function (c) { return c; },                 // keep raw claim objects for renderClaims
+    keyOf: function (c) { return getClaimFields(c).bol; },
+    bol: String(input.bol || '').trim(),
+    summarize: function (rows) {
+      const f = rows.map(getClaimFields);
+      const totalClaimed = +f.reduce(function (a, c) { return a + (c.amount || 0); }, 0).toFixed(2);
+      // Wiring B: the button opens the REAL renderClaims panel (rich header + table) over the raw claim
+      // objects. renderClaims has no in-panel Excel, so lastWaybExport.data also carries the rows for
+      // the unified exporter as a fallback.
+      lastWaybExport = {
+        sheetName: 'Open Claims', filenameBase: 'claims',
+        header: ['BOL', 'Claim Type', 'Status', 'Amount', 'Carrier', 'Filed'],
+        data: f.map(function (c) { return [c.bol || '', c.type || '', c.status || '', (c.amount != null ? c.amount : ''), c.carrier || '', c.fileDate || '']; }),
+        buttonLabel: 'View claims',
+        openPanel: function () { openRightPanel(renderClaims(rows), 'Open Claims (' + rows.length + ')'); }
+      };
+      return {
+        openCount: f.length,
+        totalClaimed: totalClaimed,
+        claims: f.map(function (c) { return { bol: c.bol, type: c.type, status: c.status, amount: c.amount, carrier: c.carrier, fileDate: c.fileDate }; })
+      };
+    }
+  });
+}
+
+// list_saved_quotes — read the existing getSavedQuotes() (localStorage) via the shared scaffold. The
+// "View saved quotes" button opens the REAL Saved Quotes panel (showSavedQuotes). Price/carrier use the
+// same expressions the panel uses. No URLs, no backend names.
+async function _waybSavedQuotes(input) {
+  return _waybReadFeed({
+    label: 'saved quotes',
+    load: function () { return getSavedQuotes(); },
+    summarize: function (rows) {
+      const _q = rows.map(function (q) {
+        const price = q.price || (q.rates && q.rates[0] && ((q.rates[0].billTo && q.rates[0].billTo.total) || q.rates[0].total || q.rates[0]._price)) || null;
+        const carrier = q.carrierName || (q.rates && q.rates[0] && (q.rates[0]._name || q.rates[0].name)) || '';
+        const weight = q.weight || (q.items && q.items[0] && q.items[0].weight) || null;
+        return { id: q.id || null, origin: q.originZip || '', dest: q.destZip || '', weight: weight, carrier: carrier, price: (price != null ? Number(price) : null), savedAt: q.savedAt || '' };
+      });
+      lastWaybExport = {
+        sheetName: 'Saved Quotes', filenameBase: 'saved-quotes',
+        header: ['Origin', 'Destination', 'Weight', 'Carrier', 'Price', 'Saved'],
+        data: _q.map(function (x) { return [x.origin, x.dest, (x.weight != null ? x.weight : ''), x.carrier, (x.price != null ? x.price : ''), x.savedAt]; }),
+        buttonLabel: 'View saved quotes',
+        openPanel: function () { showSavedQuotes(); }   // opens the REAL Saved Quotes panel
+      };
+      return { count: _q.length, quotes: _q };
+    }
+  });
+}
+
 // Render document buttons and/or the Excel-download button beneath a bot message bubble.
 // Clicking either opens a real, draggable right-panel tab (not a floating overlay).
-function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
+function _waybAttachExtras(row, docs, resultSet, resultShipments, chart, exportSpec) {
   if (!row) return;
   const bubble = row.querySelector('.msg-bubble');
   if (!bubble) return;
@@ -18661,10 +18819,18 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
     viewBtn.onclick = function () { _waybOpenChartTab(chart); };
   }
   if (docs && docs.length) {
-    const dwrap = document.createElement('div');
-    dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+    // Group document buttons by BOL so, when docs span several shipments, the user can tell which
+    // doc belongs to which shipment. A "BOL <n>" subheading shows only when 2+ distinct BOLs are
+    // present (a single shipment stays a clean flat button row, as before).
+    const _byBol = {}; const _bolOrder = [];
     docs.forEach(function (doc) {
       if (!doc || !doc.url) return;
+      const k = doc.bol || '';
+      if (!_byBol[k]) { _byBol[k] = []; _bolOrder.push(k); }
+      _byBol[k].push(doc);
+    });
+    const _multi = _bolOrder.filter(function (k) { return k; }).length > 1;
+    const _mkDocBtn = function (doc) {
       // Open via a click handler with the URL held in a closure — the raw backend URL is NEVER put
       // in the href or any visible markup, so the customer never sees the backend system name.
       const _docUrl = doc.url;
@@ -18681,9 +18847,24 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
       a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#f7f5f2;border:1px solid #c8c4bc;color:#111111;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:all .12s;';
       a.onmouseenter = function () { a.style.borderColor = '#bd27bc'; a.style.color = '#bd27bc'; a.style.background = '#fdf0fd'; };
       a.onmouseleave = function () { a.style.borderColor = '#c8c4bc'; a.style.color = '#111111'; a.style.background = '#f7f5f2'; };
-      dwrap.appendChild(a);
+      return a;
+    };
+    const container = document.createElement('div');
+    container.style.cssText = 'margin-top:10px;display:flex;flex-direction:column;gap:10px;';
+    _bolOrder.forEach(function (k) {
+      const groupWrap = document.createElement('div');
+      if (_multi && k) {
+        const lbl = document.createElement('div');
+        lbl.style.cssText = 'font-size:11px;font-weight:600;color:var(--mu);margin-bottom:5px;';
+        lbl.textContent = 'BOL ' + k;
+        groupWrap.appendChild(lbl);
+      }
+      const dwrap = document.createElement('div');
+      dwrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;';
+      _byBol[k].forEach(function (doc) { dwrap.appendChild(_mkDocBtn(doc)); });
+      if (dwrap.children.length) { groupWrap.appendChild(dwrap); container.appendChild(groupWrap); }
     });
-    if (dwrap.children.length) bubble.appendChild(dwrap);
+    if (container.children.length) bubble.appendChild(container);
   }
   if (resultSet && resultSet.length >= 1) {
     // Bind THIS message's own result set to THIS button as immutable snapshots — the export must
@@ -18695,43 +18876,70 @@ function _waybAttachExtras(row, docs, resultSet, resultShipments, chart) {
     dlBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
     dlBtn.onclick = function () { _waybOpenExcelTab(_rows, _ships); };
   }
+  // export_excel tool → a "Download as Excel" button beneath the reply that opens the type-agnostic
+  // export panel (preview + Download). Same styling as the search-results Download button.
+  let exportBtn = null;
+  if (exportSpec && exportSpec.data && exportSpec.data.length) {
+    const _spec = exportSpec;
+    exportBtn = document.createElement('button');
+    // A type may supply its own real-panel opener (e.g. invoices → the native renderInvoices tab with
+    // Pay/Excel). If it does, the button opens that panel; otherwise it falls back to the generic
+    // export tab (shipments/other types), unchanged.
+    exportBtn.textContent = _spec.buttonLabel || 'Download as Excel';
+    exportBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    exportBtn.onclick = (typeof _spec.openPanel === 'function') ? _spec.openPanel : function () { _waybOpenExportTab(_spec); };
+  }
   // FIX 4 — group both action buttons in one spaced flex row (only whichever exist this turn).
-  if (viewBtn || dlBtn) {
+  if (viewBtn || dlBtn || exportBtn) {
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;';
     if (viewBtn) btnRow.appendChild(viewBtn);
     if (dlBtn) btnRow.appendChild(dlBtn);
+    if (exportBtn) btnRow.appendChild(exportBtn);
     bubble.appendChild(btnRow);
   }
 }
 
-// Export a search result set as shipments-[date].xlsx (SheetJS); falls back to CSV if XLSX is absent.
-function _waybDownloadExcel(rows) {
-  const header = ['BOL', 'Carrier', 'Consignee', 'Dest City', 'Dest State', 'Date', 'Cost', 'Status'];
-  const data = (rows || []).map(function (r) { return [r.bol || '', r.carrier || '', r.consignee || '', r.destCity || '', r.destState || '', r.date || '', (r.cost != null ? r.cost : ''), r.status || '']; });
-  const fname = 'shipments-' + new Date().toISOString().split('T')[0] + '.xlsx';
+// Shipment export columns — shared by the panel Download button AND the search_shipments export set,
+// so the two projections can never drift.
+const WAYB_SHIP_EXPORT_HEADER = ['BOL', 'Carrier', 'Consignee', 'Dest City', 'Dest State', 'Date', 'Cost', 'Status'];
+function _waybShipExportRow(r) {
+  return [r.bol || '', r.carrier || '', r.consignee || '', r.destCity || '', r.destState || '', r.date || '', (r.cost != null ? r.cost : ''), r.status || ''];
+}
+
+// ONE generic client-side sheet writer (SheetJS; CSV fallback if XLSX is absent). EVERY export path —
+// the panel Download button, the shipment "in excel", the invoice "in excel" — goes through here.
+function _waybExportSheet(header, data, sheetName, filenameBase) {
+  const fname = (filenameBase || 'export') + '-' + new Date().toISOString().split('T')[0] + '.xlsx';
   try {
     if (window.XLSX) {
-      const ws = XLSX.utils.aoa_to_sheet([header].concat(data));
+      const ws = XLSX.utils.aoa_to_sheet([header].concat(data || []));
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Shipments');
+      XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
       XLSX.writeFile(wb, fname);
       return;
     }
   } catch (e) { console.error('XLSX export failed, falling back to CSV:', e); }
-  const csv = [header].concat(data).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
+  const csv = [header].concat(data || []).map(function (row) { return row.map(function (c) { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = fname.replace(/\.xlsx$/, '.csv'); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-// export_excel tool — download the most recent (persisted) search result set on a typed request
-// ("put it in excel", "give me a spreadsheet"). Uses the same SheetJS export as the button.
+// Panel Download-button path (shipment rows) — delegates to the single writer above so its columns
+// match the shipment "in excel" export exactly.
+function _waybDownloadExcel(rows) {
+  _waybExportSheet(WAYB_SHIP_EXPORT_HEADER, (rows || []).map(_waybShipExportRow), 'Shipments', 'shipments');
+}
+
+// export_excel tool — surface the most recent (persisted) result set on a typed request
+// ("put it in excel", "give me a spreadsheet"). Does NOT download; the finalize step renders a
+// "Download as Excel" button + preview panel beneath the reply (see _turnExport / _waybOpenExportTab),
+// matching the search-results Download pattern — the customer clicks to download.
 function _waybExportExcel() {
-  const rows = (lastWaybResultSet || []).slice();
-  if (!rows.length) return { ok: false, message: 'There are no search results to export yet — search for shipments first, then ask again.' };
-  try { _waybDownloadExcel(rows); } catch (e) { console.error('export_excel failed:', e); return { ok: false, message: 'The export could not be generated.' }; }
-  return { ok: true, exported: rows.length };
+  const spec = lastWaybExport;
+  if (!spec || !spec.data || !spec.data.length) return { ok: false, message: 'There is nothing to export yet — show me your shipments or invoices first, then ask to export.' };
+  return { ok: true, shown: spec.data.length, sheet: spec.sheetName };
 }
 
 // ── Way B preview tabs ──────────────────────────────────────────────────────
@@ -18759,6 +18967,44 @@ function _waybOpenExcelTab(rows, ships) {
   wrap.appendChild(bar);
   // EXACT My Shipments styling — reuse renderShipments over the raw shipment objects.
   wrap.appendChild(renderShipments(ships, ships, 0, false));
+  openRightPanel(wrap, fname);
+}
+
+// Type-agnostic export set → a right-panel tab titled with the filename, containing a generic preview
+// table built straight from spec.header + spec.data (works for shipments, invoices, and later claims —
+// no per-type code) plus a Download button that runs the single shared SheetJS writer. No backend
+// names or URLs are ever in spec, so nothing sensitive is rendered or leaked.
+function _waybOpenExportTab(spec) {
+  spec = spec || {}; const header = spec.header || []; const data = spec.data || [];
+  const fname = (spec.filenameBase || 'export') + '-' + new Date().toISOString().split('T')[0] + '.xlsx';
+  const esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  const wrap = document.createElement('div');
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;';
+  const meta = document.createElement('div');
+  meta.style.cssText = 'font-size:12px;color:var(--mu);';
+  meta.textContent = data.length + ' row' + (data.length === 1 ? '' : 's');
+  bar.appendChild(meta);
+  const dl = document.createElement('button');
+  dl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download';
+  dl.style.cssText = 'display:inline-flex;align-items:center;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+  dl.onclick = function () { _waybExportSheet(header, data, spec.sheetName, spec.filenameBase); };
+  bar.appendChild(dl);
+  wrap.appendChild(bar);
+  // Generic preview table — header row + all data rows, styled to match the portal's other tables.
+  const tableWrap = document.createElement('div');
+  tableWrap.style.cssText = 'background:var(--card);border:1px solid var(--bdr);border-radius:10px;overflow:auto;max-height:calc(100dvh - 200px);';
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#faf9f6;">';
+  header.forEach(function (h) { html += '<th style="text-align:left;padding:10px 14px;font-weight:500;color:var(--mu);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--bdr);white-space:nowrap;">' + esc(h) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  data.forEach(function (rowCells) {
+    html += '<tr>';
+    (rowCells || []).forEach(function (c) { html += '<td style="padding:9px 14px;color:var(--tx);border-bottom:0.5px solid #eee8dd;white-space:nowrap;">' + esc(c) + '</td>'; });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  tableWrap.innerHTML = html;
+  wrap.appendChild(tableWrap);
   openRightPanel(wrap, fname);
 }
 
@@ -19089,6 +19335,9 @@ async function _waybExecTool(tu) {
     if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
+    else if (tu.name === 'get_invoices') result = await _waybInvoices(tu.input);
+    else if (tu.name === 'get_claims') result = await _waybClaims(tu.input);
+    else if (tu.name === 'list_saved_quotes') result = await _waybSavedQuotes(tu.input);
     else if (tu.name === 'export_excel') result = _waybExportExcel();
     else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
@@ -19123,6 +19372,7 @@ async function waybAgent(text) {
   let _turnRows = [];        // THIS turn's search rows — drives the Download-as-Excel button
   let _turnShips = [];       // THIS turn's raw shipments — for the Excel preview table
   let _turnChart = null;     // THIS turn's chart spec — rendered as a right-panel tab beneath the reply
+  let _turnExport = null;    // THIS turn's export spec (from export_excel) — drives the Download-as-Excel button/panel
   waybHistory.push({ role: 'user', content: String(text) });
   waybHistory = _waybTrim(waybHistory);
   try {
@@ -19160,14 +19410,17 @@ async function waybAgent(text) {
           // Only a NON-EMPTY search updates result state — a later empty/misparsed search in the
           // same turn must not clobber a good result set (that was hiding the Excel button on the
           // date-scoped path). Persist for export_excel AND capture this turn's set for the button.
-          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length) {
-            // _waybSearch already set the FULL result set on the globals (non-empty only). The button
-            // and export bind the full set, NOT the bounded sample that went to the model.
-            _turnRows = lastWaybResultSet;
-            _turnShips = lastWaybResultShipments;
+          if (tu.name === 'search_shipments' && ex.raw && Array.isArray(ex.raw.shipments) && ex.raw.shipments.length && lastWaybExport && lastWaybExport.openPanel) {
+            // _waybSearch set lastWaybExport (with a "View shipments" openPanel) over the FULL matched
+            // set. Surface the button beneath the reply — the same mechanism invoices use.
+            _turnExport = lastWaybExport;
           }
           if (tu.name === 'get_documents') { const _dk = String((tu.input && tu.input.bol) || '').trim(); if (_dk && _waybDocStore[_dk]) _turnDocs = _turnDocs.concat(_waybDocStore[_dk].map(function (d) { return Object.assign({ bol: _dk }, d); })); }
           if (tu.name === 'render_chart' && _waybChartSpec) _turnChart = _waybChartSpec; // engine-computed spec for this turn
+          // Surface the action button after export_excel OR get_invoices (so "show my invoices" gets a
+          // "View invoices" button). For get_invoices, require the invoice openPanel so a stale prior
+          // export (e.g. shipments) never leaks a wrong button onto a not-found invoice reply.
+          if (((tu.name === 'export_excel') || ((tu.name === 'get_invoices' || tu.name === 'get_claims' || tu.name === 'list_saved_quotes') && lastWaybExport && lastWaybExport.openPanel)) && lastWaybExport && lastWaybExport.data && lastWaybExport.data.length) _turnExport = lastWaybExport;
         }
         waybHistory.push({ role: 'user', content: results });
         continue; // loop for the model's natural follow-up using the tool results
@@ -19187,7 +19440,7 @@ async function waybAgent(text) {
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
       // returned 10+ shipments) render beneath the reply. Fewer than 10 → cards/text only.
-      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips, _turnChart);
+      _waybAttachExtras(_row, _turnDocs, _turnRows, _turnShips, _turnChart, _turnExport);
       return;
     }
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
@@ -19341,7 +19594,8 @@ function mobShowSavedQuotes() {
     var container = document.createElement('div');
     container.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
     var totalValue = quotes.reduce(function(sum,q){ var p=q.price||(q.rates&&q.rates[0]&&((q.rates[0].billTo&&q.rates[0].billTo.total)||q.rates[0].total||q.rates[0]._price||0))||0; return sum+Number(p); },0);
-    var mostRecent = quotes.length ? new Date(Math.max(...quotes.map(q=>q.savedAt||0))).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+    var _savedTs = quotes.map(function (q) { return new Date(q.savedAt).getTime(); }).filter(function (t) { return !isNaN(t); });
+    var mostRecent = _savedTs.length ? new Date(Math.max.apply(null, _savedTs)).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
     var carriers = new Set(quotes.map(q=>q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
     var hdr = document.createElement('div');
     hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
@@ -19626,9 +19880,9 @@ function mobShipsAsk() {
 
 // ── SmartPaste ───────────────────────────────────────────────────────────────
 
-function showSmartPastePanel(autoText) {
+function showSmartPastePanel(autoText, autoFile) {
   const existing = document.getElementById('sp-overlay');
-  if (existing) { existing.remove(); if (!autoText) return; }
+  if (existing) { existing.remove(); if (!autoText && !autoFile) return; }
 
   const overlay = document.createElement('div');
   overlay.id = 'sp-overlay';
@@ -19752,11 +20006,34 @@ function showSmartPastePanel(autoText) {
     await _spExtract({ type:'file', file:_spSelectedFile }, resultsPane, textPane, filePane);
   };
 
-  if (autoText) {
+  if (autoFile) {
+    _spShowTab('file');
+    setTimeout(function() {
+      _spExtract({ type:'file', file:autoFile }, resultsPane, textPane, filePane);
+    }, 0);
+  } else if (autoText) {
     setTimeout(function() {
       _spExtract({ type:'text', text:autoText }, resultsPane, textPane, filePane);
     }, 0);
   }
+}
+
+// Shared entry point for every "attach a doc and pull a quote" affordance (welcome screen,
+// chat input bar, both mobile input bars). Funnels straight into the SmartPaste extract→rates flow.
+function attachForQuote() {
+  var inp = document.getElementById('fl-attach-input');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file'; inp.id = 'fl-attach-input';
+    inp.accept = 'image/jpeg,image/jpg,image/png,.pdf';
+    inp.style.display = 'none';
+    inp.onchange = function() {
+      var f = inp.files && inp.files[0]; inp.value = '';
+      if (f) showSmartPastePanel(null, f);
+    };
+    document.body.appendChild(inp);
+  }
+  inp.click();
 }
 
 async function _spExtract(src, resultsPane, textPane, filePane) {
@@ -19830,10 +20107,11 @@ async function _spExtract(src, resultsPane, textPane, filePane) {
 function _spShowResults(data, resultsPane) {
   const sh  = data.shipper   || {};
   const co  = data.consignee || {};
-  const it  = (data.items && data.items[0]) || {};
+  const items = (data.items && data.items.length) ? data.items : [{}];
   const unc = data.unclear   || [];
 
-  const needsWeight  = unc.includes('weight')  || !it.weight;
+  const _itemNeedsWeight = i => unc.includes('weight') || !i.weight;
+  const anyNeedsWeight = items.some(_itemNeedsWeight);
   const needsDestZip = unc.includes('destZip') || !co.zip;
 
   function _spInp(id, label, val, type, warn) {
@@ -19857,9 +20135,29 @@ function _spShowResults(data, resultsPane) {
     return '<div style="display:grid;grid-template-columns:' + cols + ';gap:6px;margin-bottom:7px;">' + cells.join('') + '</div>';
   }
 
-  const warnBox = (needsWeight || needsDestZip)
+  const warnBox = (anyNeedsWeight || needsDestZip)
     ? '<div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#92400e;">⚠ Fields marked above are unclear or missing — please fill them in before getting rates.</div>'
     : '';
+
+  // One "Freight Details" block per handling unit, with indexed field IDs so every
+  // line item survives into _applyQuoteFields (which auto-adds a row per item).
+  const freightHtml = items.map(function(it, i) {
+    return _spSec('Freight Details' + (items.length > 1 ? ' — Item ' + (i + 1) : ''),
+      _spGrid('1fr 1fr 1fr 1fr 1fr',
+        _spCol('sp-pcs-' + i, 'Pieces',       it.pieces),
+        _spCol('sp-wgt-' + i, 'Weight (lbs)', it.weight, null, _itemNeedsWeight(it)),
+        _spCol('sp-len-' + i, 'L (in)',        it.length),
+        _spCol('sp-wid-' + i, 'W (in)',        it.width),
+        _spCol('sp-hgt-' + i, 'H (in)',        it.height)
+      ) +
+      _spGrid('1fr 1fr',
+        _spCol('sp-cls-' + i,  'Freight Class', it.freightClass),
+        _spCol('sp-nmfc-' + i, 'NMFC',          it.nmfc)
+      ) +
+      _spInp('sp-comm-' + i, 'Commodity Description', it.commodity, 'text')
+    );
+  }).join('') +
+  _spSec('Reference', _spInp('sp-po', 'PO Number', data.poNumber, 'text'));
 
   resultsPane.innerHTML =
     '<div style="font-size:12px;color:#706c63;margin-bottom:12px;">Review the extracted info — edit anything that looks off, then click Use This Info.</div>' +
@@ -19883,21 +20181,7 @@ function _spShowResults(data, resultsPane) {
       ) +
       _spInp('sp-co-phone', 'Phone', co.phone, 'tel')
     ) +
-    _spSec('Freight Details',
-      _spGrid('1fr 1fr 1fr 1fr 1fr',
-        _spCol('sp-pcs', 'Pieces',       it.pieces),
-        _spCol('sp-wgt', 'Weight (lbs)', it.weight, null, needsWeight),
-        _spCol('sp-len', 'L (in)',        it.length),
-        _spCol('sp-wid', 'W (in)',        it.width),
-        _spCol('sp-hgt', 'H (in)',        it.height)
-      ) +
-      _spGrid('1fr 1fr 1fr',
-        _spCol('sp-cls',  'Freight Class', it.freightClass),
-        _spCol('sp-nmfc', 'NMFC',          it.nmfc),
-        _spCol('sp-po',   'PO Number',     data.poNumber)
-      ) +
-      _spInp('sp-comm', 'Commodity Description', it.commodity, 'text')
-    ) +
+    freightHtml +
     warnBox +
     '<button id="sp-use-btn" style="width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);margin-bottom:8px;">Use This Info — Get Rates</button>' +
     '<button onclick="document.getElementById(\'sp-overlay\').remove()" style="width:100%;background:none;border:none;color:#706c63;font-size:12px;cursor:pointer;font-family:var(--font);padding:4px;">Cancel</button>';
@@ -19908,17 +20192,20 @@ function _spShowResults(data, resultsPane) {
 function _spApply(rawData) {
   const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
 
+  const rawItems = (rawData.items && rawData.items.length) ? rawData.items : [{}];
   const originZip = g('sp-sh-zip');
   const destZip   = g('sp-co-zip');
-  const weight    = parseFloat(g('sp-wgt')) || 0;
 
   if (!destZip || destZip.length < 5) {
     const el = document.getElementById('sp-co-zip');
     if (el) { el.style.borderColor='#dc2626'; el.style.background='#fff1f2'; el.focus(); } return;
   }
-  if (!weight) {
-    const el = document.getElementById('sp-wgt');
-    if (el) { el.style.borderColor='#dc2626'; el.style.background='#fff1f2'; el.focus(); } return;
+  // Require weight on EVERY item — focus the first offending field.
+  for (let i = 0; i < rawItems.length; i++) {
+    if (!(parseFloat(g('sp-wgt-' + i)) || 0)) {
+      const el = document.getElementById('sp-wgt-' + i);
+      if (el) { el.style.borderColor='#dc2626'; el.style.background='#fff1f2'; el.focus(); } return;
+    }
   }
 
   window._smartPasteBookingData = {
@@ -19944,7 +20231,20 @@ function _spApply(rawData) {
     if (qTab) { rpState.activeId = qTab.id; if (typeof renderPanel === 'function') renderPanel(); }
   }
 
-  const it = (rawData.items && rawData.items[0]) || {};
+  const builtItems = rawItems.map(function(rawIt, i) {
+    return {
+      pieces:       parseInt(g('sp-pcs-' + i))   || 1,
+      weight:       parseFloat(g('sp-wgt-' + i)) || 0,
+      length:       parseFloat(g('sp-len-' + i)) || 48,
+      width:        parseFloat(g('sp-wid-' + i)) || 40,
+      height:       parseFloat(g('sp-hgt-' + i)) || 48,
+      freightClass: g('sp-cls-' + i)  || '',
+      commodity:    g('sp-comm-' + i) || '',
+      type:         (rawIt && rawIt.packageType) || 'PLT',
+      stc:          g('sp-nmfc-' + i) || ''
+    };
+  });
+  const totalWeight = builtItems.reduce(function(s, it) { return s + (it.weight || 0); }, 0);
 
   setTimeout(function() {
     if (typeof _applyQuoteFields === 'function') {
@@ -19952,24 +20252,14 @@ function _spApply(rawData) {
         originZip:  originZip,
         destZip:    destZip,
         pickupDate: rawData.pickupDate || '',
-        items: [{
-          pieces:       parseInt(g('sp-pcs'))   || 1,
-          weight:       weight,
-          length:       parseFloat(g('sp-len')) || 48,
-          width:        parseFloat(g('sp-wid')) || 40,
-          height:       parseFloat(g('sp-hgt')) || 48,
-          freightClass: g('sp-cls')  || '',
-          commodity:    g('sp-comm') || '',
-          type:         it.packageType || 'PLT',
-          stc:          g('sp-nmfc') || ''
-        }],
+        items: builtItems,
         getRates: true
       });
     }
     if (typeof appendMsg === 'function') {
       const from = g('sp-sh-name') || originZip || 'shipper';
       const to   = g('sp-co-name') || destZip;
-      appendMsg('bot', 'Got it — pulling rates for ' + weight + ' lbs from ' + from + ' to ' + to + '. Once you pick a carrier, the booking form will be pre-filled with all the address and contact details.');
+      appendMsg('bot', 'Got it — pulling rates for ' + totalWeight + ' lbs from ' + from + ' to ' + to + '. Once you pick a carrier, the booking form will be pre-filled with all the address and contact details.');
     }
   }, 300);
 }
