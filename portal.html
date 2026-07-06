@@ -9080,8 +9080,11 @@ function applyGreeting(){
   var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
   if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;nm=nm.replace(/[.,\s]+$/,'');}
   var pick=pickGreeting();
-  g.textContent=pick.greet+", "+(nm||"there")+".";
-  n.textContent="";
+  // Greeting in its own span, name in #welcome-name, separator supplied by the static #welcome-sep
+  // (", ") on desktop. No trailing period — appending one here left "Brothers." + the leftover ", "
+  // separator = "Brothers.,". On mobile the separator is hidden, so the comma rides with the greeting.
+  g.textContent=pick.greet+(window.innerWidth<=768?",":"");
+  n.textContent=nm||"there";
   if(s) s.textContent=pick.sub;
 }
 // ===== Conversational shipment query engine =====
