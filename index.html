@@ -486,6 +486,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();welcomeSend();}"></textarea>
         <div class="welcome-input-footer">
+          <button type="button" onclick="document.getElementById('sp-file-in').click()" title="Attach a packing slip, BOL, or rate sheet" style="background:none;border:none;cursor:pointer;color:#706c63;padding:5px;display:flex;align-items:center;margin-right:auto;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
           <button id="welcome-send" onclick="welcomeSend()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
@@ -493,8 +496,10 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
       </div>
 
       <div class="welcome-pills">
+        <div class="welcome-pill" onclick="pillSampleQuote()">Get a sample quote</div>
+        <div class="welcome-pill" onclick="pillSampleTrack()">Track a shipment</div>
+        <div class="welcome-pill" onclick="pillPasteSlip()">Paste a packing slip</div>
         <div class="welcome-pill" onclick="welcomeSendText('I need a rate — what information do you need from me?')">Get a rate</div>
-        <div class="welcome-pill" onclick="welcomeSendText('I need to track a shipment')">Track a shipment</div>
         <div class="welcome-pill" onclick="startOnboarding()">Open an account</div>
       </div>
 
@@ -538,6 +543,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
           <div class="svc-tile-name">Talk to Our Team</div>
         </div>
       </div>
+
     </div>
 
     <!-- CHAT -->
@@ -549,6 +555,9 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
             oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
           <div class="inp-foot">
+            <button type="button" onclick="document.getElementById('sp-file-in').click()" title="Attach a packing slip, BOL, or rate sheet" style="background:none;border:none;cursor:pointer;color:#706c63;padding:5px;display:flex;align-items:center;margin-right:auto;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
             <button id="btn-send" onclick="sendMsg()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </button>
@@ -595,6 +604,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 </div>
 
 <input type="file" id="invoice-upload" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv" multiple style="display:none" onchange="handleInvoiceUpload(this)">
+<input type="file" id="sp-file-in" accept="image/jpeg,image/jpg,image/png,.pdf" style="display:none" onchange="if(this.files[0]){spExtractFile(this.files[0]);this.value='';}">
 
 <script>
 const CLOUDFLARE_WORKER = 'https://freight-email.freightandlogistics.workers.dev';
@@ -611,6 +621,8 @@ RESPONSE RULES:
 - Plain prose only. No markdown, no bullets, no bold, no emojis.
 - Never start with "I". Never say "certainly", "great question", "of course", "absolutely".
 - Be a confident, knowledgeable freight broker.
+
+SHOWING SAMPLES IN THE SIDE PANEL: You can display real sample cards in the side panel by placing a token at the very END of your message. Emit one when someone asks what a quote, tracking, or the portal looks like, or asks a rate or pricing question. Quote scenarios: [[DEMO:quote:chi_atl]] (Chicago to Atlanta, 2 pallets office chairs, 1,200 lbs), [[DEMO:quote:la_mia]] (Los Angeles to Miami, white glove sofa), [[DEMO:quote:dal_den]] (Dallas to Denver, 3 pallets LTL). Tracking: [[DEMO:track:BOL]] where BOL is one of FL-2024-8840 (in transit), FL-2024-8822 (pending pickup), FL-2024-8834 (claim filed), FL-2024-8839, FL-2024-8841, FL-2024-8838, FL-2024-8837, FL-2024-8836. Full list: [[DEMO:shipments]]. When answering a rate question, STILL give the helpful Option C prose answer AND emit the closest quote token, and note the numbers shown are sample rates — real live rates come once their account is active. Never invent or estimate a specific dollar rate yourself; the sample card holds the only numbers you may show.
 
 YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat.
 
@@ -647,6 +659,8 @@ After collecting all info, tell them to hit Submit on the form and that our onbo
 As you collect answers, emit [[FILL:field_id:value]] tokens at the END of your message. Field IDs: company, contact_name, contact_title, email, phone, city, state, ap_name, ap_email, signature.`;
 
 async function callAI(userMsg) {
+  if (isAtMsgLimit()) { showLimitCard(); return; }
+  bumpDemoMsg();
   chatHistory.push({role:'user', content:userMsg});
   if (chatHistory.length > 30) chatHistory = chatHistory.slice(-30);
   showTyping();
@@ -665,7 +679,13 @@ async function callAI(userMsg) {
     const fillRe = /\[\[FILL:([^:]+):([^\]]*)\]\]/g;
     let m;
     while ((m=fillRe.exec(text))!==null) fillFormField(m[1],m[2]);
-    appendBot(text.replace(/\[\[FILL:[^\]]*\]\]/g,'').trim());
+    const demoRe = /\[\[DEMO:([a-z]+):?([^\]]*)\]\]/gi;
+    let dm; const demoCalls = [];
+    while ((dm=demoRe.exec(text))!==null) demoCalls.push([dm[1].toLowerCase(), dm[2].trim()]);
+    const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').trim();
+    appendBot(clean);
+    demoCalls.forEach(c=>handleDemoToken(c[0], c[1]));
+    maybeShowRemainingNudge();
   } catch(e) {
     removeTyping();
     appendBot('Having a moment of trouble — please try again or call us at (800) 687-3713 and we will help you right away.');
@@ -681,13 +701,15 @@ function fillFormField(key, value) {
 }
 
 function welcomeSend() {
+  if(typeof killMovie==='function') killMovie({});
   const ta=document.getElementById('welcome-textarea');
   const t=ta.value.trim(); if(!t) return;
   ta.value=''; ta.style.height='auto';
   showChatArea(); appendUser(t); callAI(t);
 }
-function welcomeSendText(t) { showChatArea(); appendUser(t); callAI(t); }
+function welcomeSendText(t) { if(typeof killMovie==='function') killMovie({}); showChatArea(); appendUser(t); callAI(t); }
 function sendMsg() {
+  if(typeof killMovie==='function') killMovie({});
   const ta=document.getElementById('input-textarea');
   const t=ta.value.trim(); if(!t) return;
   ta.value=''; ta.style.height='auto';
@@ -695,6 +717,7 @@ function sendMsg() {
 }
 
 function startOnboarding() {
+  if(typeof killMovie==='function') killMovie({});
   isOnboarding=true;
   openFormPanel();
   showChatArea();
@@ -731,6 +754,7 @@ function openRightPanel(title, content) {
   document.getElementById('right-resizer').classList.add('visible');
 }
 function closeRightPanel() {
+  if (typeof killMovie==='function') killMovie({toWelcome:true});
   const rp = document.getElementById('right-panel');
   rp.classList.remove('open');
   rp.style.width = '';
@@ -1222,6 +1246,473 @@ async function doIndexLogin() {
     btn.textContent='Sign In →'; btn.disabled=false;
   }
 }
+
+/* ============================================================================
+   DEMO LAYER — sample data, shared render functions, chat DEMO tokens,
+   daily-rolling limits, live SmartPaste, and the auto-play demo movie.
+   Every rate/BOL/date on screen comes from DEMO_DATA / DEMO_QUOTES below.
+   The AI never invents numbers. Hardcoded hex only (CSS vars don't resolve
+   in JS-set inline styles in this codebase).
+   ============================================================================ */
+
+// ── Sample data (curated subset of the portal's shipments) ─────────────────
+const DEMO_DATA = [
+  {"bol":"FL-2024-8840","pro":"892-441-7733","carrier":"Pilot Freight","status":"In Transit","statusColor":"#dbeafe","statusTx":"#1e40af","origin":"Dallas, TX","dest":"New York, NY","consignee":"Metro Home Goods","shipper":"Southern Dist. Center","date":"Jun 12, 2026","eta":"Jun 17, 2026","service":"White Glove","pieces":2,"weight":480,"dims":"84×42×38 / 60×36×30","commodity":"King Bed Frame + Nightstands","cost":687.0,"ref":"PO-44820","notes":"Appointment required"},
+  {"bol":"FL-2024-8839","pro":"TF-992-3341","carrier":"TForce Freight","status":"In Transit","statusColor":"#dbeafe","statusTx":"#1e40af","origin":"Chicago, IL","dest":"Atlanta, GA","consignee":"Prestige Office Supply","shipper":"Midwest Fulfillment LLC","date":"Jun 11, 2026","eta":"Jun 15, 2026","service":"LTL","pieces":4,"weight":1240,"dims":"4 pallets","commodity":"Office Chairs — Mixed","cost":534.8,"ref":"ORD-7741","notes":"Dock delivery"},
+  {"bol":"FL-2024-8822","pro":"MET-008-3312","carrier":"Metropolitan W&D","status":"Pending Pickup","statusColor":"#fef9c3","statusTx":"#854d0e","origin":"Los Angeles, CA","dest":"San Francisco, CA","consignee":"Bay Area Home Design","shipper":"Pacific Warehouse Co.","date":"Jun 14, 2026","eta":"Jun 17, 2026","service":"White Glove","pieces":2,"weight":310,"dims":"2 pallets","commodity":"Sofa + Coffee Table","cost":412.0,"ref":"BAHD-1101","notes":"Scheduled pickup today"},
+  {"bol":"FL-2024-8834","pro":"PIL-119-4453","carrier":"Pilot Freight","status":"Claim Filed","statusColor":"#fee2e2","statusTx":"#991b1b","origin":"Miami, FL","dest":"Tampa, FL","consignee":"Sunshine Interiors","shipper":"Florida Dist. Co.","date":"May 31, 2026","eta":"May 31, 2026","service":"White Glove","pieces":1,"weight":95,"dims":"42×24×60","commodity":"Floor Mirror — Oversized","cost":312.0,"ref":"SI-8871","notes":"Damage on delivery receipt — claim in progress"},
+  {"bol":"FL-2024-8841","pro":"517-883-4421","carrier":"Metropolitan W&D","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Los Angeles, CA","dest":"Miami, FL","consignee":"Suncoast Furniture Gallery","shipper":"Pacific Warehouse Co.","date":"Jun 06, 2026","eta":"Jun 06, 2026","service":"White Glove","pieces":1,"weight":220,"dims":"72×38×42","commodity":"Sofa — 3 Seat","cost":412.5,"ref":"PO-44821","notes":"Room of choice, debris removal"},
+  {"bol":"FL-2024-8838","pro":"ABF-554-8821","carrier":"ABF Freight","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Phoenix, AZ","dest":"Seattle, WA","consignee":"Northwest Retail Inc.","shipper":"Desert Logistics Hub","date":"Jun 08, 2026","eta":"Jun 08, 2026","service":"LTL","pieces":2,"weight":860,"dims":"2 pallets","commodity":"Display Shelving Units","cost":398.2,"ref":"NW-2241","notes":""},
+  {"bol":"FL-2024-8837","pro":"XPO-771-2209","carrier":"XPO Logistics","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Houston, TX","dest":"Denver, CO","consignee":"Rocky Mtn. Furnishings","shipper":"Gulf Coast Warehouse","date":"Jun 06, 2026","eta":"Jun 06, 2026","service":"LTL","pieces":1,"weight":320,"dims":"60×30×36","commodity":"Dining Table — Glass Top","cost":287.5,"ref":"RMF-0091","notes":"Liftgate delivery"},
+  {"bol":"FL-2024-8836","pro":"EST-334-9981","carrier":"Estes Express","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Los Angeles, CA","dest":"Chicago, IL","consignee":"Lakeview Home Center","shipper":"Pacific Warehouse Co.","date":"Jun 04, 2026","eta":"Jun 04, 2026","service":"LTL","pieces":6,"weight":1880,"dims":"Boxes — various","commodity":"Bedroom Set — Queen","cost":621.4,"ref":"LHC-5531","notes":""}
+];
+
+// ── Canned quote scenarios (all rates hardcoded; never AI-generated) ───────
+const DEMO_QUOTES = {
+  chi_atl: { lane:'Chicago, IL → Atlanta, GA', summary:'2 pallets · office chairs · 1,200 lbs', options:[
+    {carrier:'TForce Freight', price:534.80, days:3, service:'Standard LTL', best:true},
+    {carrier:'Estes Express', price:571.20, days:4, service:'Standard LTL'},
+    {carrier:'XPO Logistics', price:598.40, days:3, service:'Standard LTL'},
+    {carrier:'Saia LTL Freight', price:612.00, days:2, service:'Guaranteed LTL'} ] },
+  la_mia: { lane:'Los Angeles, CA → Miami, FL', summary:'1 pallet · 3-seat sofa · 220 lbs · white glove', options:[
+    {carrier:'Metropolitan W&D', price:412.50, days:6, service:'White Glove', best:true},
+    {carrier:'Pilot Freight', price:458.00, days:5, service:'White Glove'},
+    {carrier:'Forward Air', price:489.00, days:7, service:'White Glove'} ] },
+  dal_den: { lane:'Dallas, TX → Denver, CO', summary:'3 pallets · retail fixtures · 900 lbs', options:[
+    {carrier:'ABF Freight', price:388.60, days:2, service:'Standard LTL', best:true},
+    {carrier:'Estes Express', price:401.20, days:3, service:'Standard LTL'},
+    {carrier:'R&L Carriers', price:427.40, days:2, service:'Standard LTL'} ] },
+  ocala_clt: { lane:'Ocala, FL → Charlotte, NC', summary:'1 pallet · 800 lbs · class 70', options:[
+    {carrier:'ABF Freight', price:247.60, days:2, service:'Standard LTL', best:true},
+    {carrier:'Estes Express', price:263.40, days:2, service:'Standard LTL'},
+    {carrier:'Southeastern Freight', price:281.90, days:3, service:'Standard LTL'} ] }
+};
+
+// Canned freight-knowledge Q&A for the movie's closing act (all sample/scripted, zero API).
+// A2 (index 1) has a:null and is built at play time from DEMO_QUOTES.ocala_clt — the number lives
+// in the canonical demo dataset (single source of truth), never string-literaled here.
+const DEMO_QA = [
+  { q:"Where's the closest ABF terminal to Ocala?",
+    a:"ABF has a service center right in Ocala — center #312 at 841 NW 24th Court, 34475. So anything moving in or out of the Ocala area on ABF originates from a local terminal, not railed in from Orlando or Tampa. Want me to check ABF's transit on a specific lane?" },
+  { q:"Yeah — Ocala to Charlotte, one pallet, 800 lbs, class 70.",
+    a:null },
+  { q:"Is there a residential fee if it delivers to a home?",
+    a:"Yes — residential delivery adds an accessorial, plus a liftgate if there's no dock. I flag both automatically when I detect a residential ZIP, so the quote's accurate up front — no surprise reweighs or rebills." },
+  { q:"Nice. How do I get set up?",
+    a:"Takes about two minutes — open a free account and you'll get live rates from 50+ carriers, plus booking, tracking, and reports all from this chat." }
+];
+function _abfOcalaAnswer(){
+  const q=DEMO_QUOTES.ocala_clt; const o=q.options.find(x=>x.carrier==='ABF Freight')||q.options[0];
+  return "ABF standard runs about "+o.days+" business days on that lane. I'm seeing about $"+o.price.toFixed(2)+" for a single 800 lb pallet at class 70 — that's a sample rate, live rates come with your account. Want the full carrier comparison?";
+}
+
+// ── Daily-rolling usage limits (localStorage, resets each calendar day) ─────
+const DEMO_MSG_LIMIT = 15, DEMO_EXTRACT_LIMIT = 2;
+function _todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _getUsage(){ let u; try{ u=JSON.parse(localStorage.getItem('fl_demo_usage')||'null'); }catch(e){ u=null; } if(!u || u.date!==_todayStr()) u={date:_todayStr(), msgs:0, extracts:0}; return u; }
+function _saveUsage(u){ try{ localStorage.setItem('fl_demo_usage', JSON.stringify(u)); }catch(e){} }
+function isAtMsgLimit(){ return _getUsage().msgs >= DEMO_MSG_LIMIT; }
+function bumpDemoMsg(){ const u=_getUsage(); u.msgs++; _saveUsage(u); return u.msgs; }
+function canExtract(){ return _getUsage().extracts < DEMO_EXTRACT_LIMIT; }
+function bumpExtract(){ const u=_getUsage(); u.extracts++; _saveUsage(u); return u.extracts; }
+
+function showLimitCard(){
+  const msgs=document.getElementById('messages'); if(!msgs) return;
+  if(document.getElementById('demo-limit-card')) return;
+  const div=document.createElement('div'); div.id='demo-limit-card';
+  div.style.cssText='margin:16px 0;background:#f9f8f5;border:1.5px solid #bd27bc;border-radius:12px;padding:16px;text-align:center;';
+  div.innerHTML='<div style="font-size:13px;font-weight:600;color:#111;margin-bottom:4px;">You’ve reached today’s demo limit</div>'
+    +'<div style="font-size:12px;color:#706c63;margin-bottom:12px;line-height:1.55;">Open a free account for unlimited chat, or call us at (800) 687-3713. You can also come back tomorrow — the demo resets daily.</div>'
+    +'<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'
+      +'<button onclick="startOnboarding()" style="background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Open a free account</button>'
+      +'<a href="tel:8006873713" style="background:#fff;color:#111;border:1px solid #e5e2d9;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:600;text-decoration:none;">Call (800) 687-3713</a>'
+    +'</div>';
+  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight;
+}
+function maybeShowRemainingNudge(){
+  const rem=DEMO_MSG_LIMIT-_getUsage().msgs;
+  if(rem===3){ const msgs=document.getElementById('messages'); if(!msgs) return;
+    const n=document.createElement('div'); n.style.cssText='text-align:center;font-size:11px;color:#b0ac9f;padding:6px 12px;';
+    n.textContent='3 messages left on the demo today — open a free account for unlimited chat.';
+    msgs.appendChild(n); msgs.scrollTop=msgs.scrollHeight; }
+}
+
+// ── Shared render helpers (used by BOTH chat tokens AND the movie) ──────────
+function _sampleBadge(){
+  return '<div style="display:inline-flex;align-items:center;gap:5px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;color:#bd27bc;letter-spacing:.02em;">'
+    +'<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+    +'Sample data</div>';
+}
+function _ctaBlock(){
+  const d=document.createElement('div');
+  d.style.cssText='margin-top:12px;padding:14px;background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;text-align:center;';
+  d.innerHTML='<div style="font-size:12px;color:#706c63;margin-bottom:8px;line-height:1.5;">Open a free account to pull live rates from 50+ carriers for your own lanes.</div>';
+  const b=document.createElement('button'); b.textContent='Open a free account for live rates';
+  b.style.cssText='background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+  b.onclick=startOnboarding; d.appendChild(b); return d;
+}
+function _kv(k,v){ return '<div style="background:#fff;border:1px solid #e5e2d9;border-radius:8px;padding:8px 10px;"><div style="font-size:9px;color:#b0ac9f;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">'+k+'</div><div style="font-size:12px;font-weight:600;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+v+'</div></div>'; }
+
+function renderQuoteCard(id, opts){
+  opts=opts||{};
+  const q=DEMO_QUOTES[id]||DEMO_QUOTES.chi_atl;
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()+'<span style="font-size:10px;color:#b0ac9f;">Sample rates</span></div>';
+  html+='<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:10px 14px;margin-bottom:12px;">'
+    +'<div style="font-size:10px;font-weight:600;color:#706c63;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Your Shipment</div>'
+    +'<div style="font-size:13px;color:#111;font-weight:500;">'+q.lane+'</div>'
+    +'<div style="font-size:11px;color:#706c63;margin-top:1px;">'+q.summary+'</div></div>';
+  html+='<div style="font-size:10px;font-weight:600;color:#706c63;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">'+q.options.length+' carriers available</div>';
+  wrap.innerHTML=html;
+  q.options.forEach((o,idx)=>{
+    const best=!!o.best;
+    const card=document.createElement('div');
+    card.style.cssText='border:1px solid '+(best?'#bd27bc':'#e5e2d9')+';border-radius:10px;overflow:hidden;margin-bottom:8px;background:#fff;';
+    card.innerHTML='<div style="padding:6px 14px;background:'+(best?'rgba(189,39,188,.06)':'#faf9f6')+';border-bottom:1px solid #e5e2d9;display:flex;justify-content:space-between;align-items:center;">'
+      +'<span style="font-size:10px;font-weight:700;color:'+(best?'#bd27bc':'#706c63')+';text-transform:uppercase;letter-spacing:.04em;">'+(best?'Best Rate':'Option '+(idx+1))+'</span>'
+      +'<span style="font-size:10px;color:#b0ac9f;">Sample rate</span></div>'
+      +'<div style="padding:12px 14px;display:flex;align-items:center;gap:12px;">'
+        +'<div style="flex:1;"><div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px;">'+o.carrier+'</div>'
+        +'<div style="font-size:11px;color:#706c63;">'+o.service+'</div>'
+        +'<div style="font-size:11px;color:#706c63;">'+o.days+(o.days===1?' day':' days')+' transit</div></div>'
+        +'<div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:#111;">$'+o.price.toFixed(2)+'</div></div>'
+      +'</div>';
+    wrap.appendChild(card);
+  });
+  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
+  return wrap;
+}
+
+function renderTrackingCard(s, opts){
+  opts=opts||{};
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  const isDone=s.status==='Delivered', isTransit=s.status==='In Transit', isClaim=s.status==='Claim Filed';
+  const steps=[
+    {label:'Booked', date:s.date, done:true},
+    {label:'Dispatched', date:s.date, done:true},
+    {label:'Picked Up', date:'', done:isTransit||isDone||isClaim},
+    {label:'In Transit', date:'', done:isTransit||isDone||isClaim},
+    {label:'Delivered', date:(isDone||isClaim)?s.eta:'', done:isDone||isClaim}
+  ];
+  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()
+    +'<span style="font-size:11px;font-weight:600;color:'+s.statusTx+';background:'+s.statusColor+';padding:2px 9px;border-radius:10px;">'+s.status+'</span></div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">'
+    +_kv('BOL#',s.bol)+_kv('PRO#',s.pro)+_kv('Total','$'+s.cost.toFixed(2))+_kv('Carrier',s.carrier)+'</div>';
+  html+='<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;margin-bottom:14px;">'
+    +'<div style="font-size:13px;font-weight:600;color:#111;">'+s.origin+' → '+s.dest+'</div>'
+    +'<div style="font-size:11px;color:#706c63;margin-top:2px;">'+s.service+' · '+s.commodity+' · '+s.pieces+' pc · '+s.weight+' lbs</div></div>';
+  html+='<div style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Shipment Timeline</div><div style="margin-bottom:14px;">';
+  steps.forEach((st,idx)=>{
+    const done=st.done;
+    html+='<div style="display:flex;gap:10px;align-items:flex-start;">'
+      +'<div style="display:flex;flex-direction:column;align-items:center;">'
+        +'<div style="width:18px;height:18px;border-radius:50%;background:'+(done?'#bd27bc':'#fff')+';border:2px solid '+(done?'#bd27bc':'#e5e2d9')+';display:flex;align-items:center;justify-content:center;">'
+          +(done?'<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':'')+'</div>'
+        +(idx<steps.length-1?'<div style="width:2px;height:22px;background:'+(done?'#bd27bc':'#e5e2d9')+';"></div>':'')
+      +'</div>'
+      +'<div style="padding-bottom:'+(idx<steps.length-1?'6px':'0')+';"><div style="font-size:12px;font-weight:600;color:'+(done?'#111':'#b0ac9f')+';">'+st.label+'</div>'
+        +(st.date?'<div style="font-size:10px;color:#706c63;">'+st.date+'</div>':'')+'</div></div>';
+  });
+  html+='</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px;">'
+    +'<div style="background:#fff;border:1px solid #e5e2d9;border-radius:10px;padding:12px;"><div style="font-size:9px;font-weight:700;color:#bd27bc;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Shipper</div><div style="font-size:12px;font-weight:600;color:#111;">'+s.shipper+'</div><div style="font-size:11px;color:#706c63;margin-top:3px;">'+s.origin+'</div></div>'
+    +'<div style="background:#fff;border:1px solid #e5e2d9;border-radius:10px;padding:12px;"><div style="font-size:9px;font-weight:700;color:#bd27bc;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Consignee</div><div style="font-size:12px;font-weight:600;color:#111;">'+s.consignee+'</div><div style="font-size:11px;color:#706c63;margin-top:3px;">'+s.dest+'</div></div></div>';
+  if(s.notes) html+='<div style="font-size:11px;color:#706c63;margin-bottom:4px;">Notes: '+s.notes+'</div>';
+  wrap.innerHTML=html;
+  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
+  return wrap;
+}
+
+function renderShipmentList(ships, opts){
+  opts=opts||{};
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()+'<span style="font-size:11px;color:#706c63;">'+ships.length+' shipments</span></div>';
+  html+='<div style="overflow-x:auto;border:1px solid #e5e2d9;border-radius:10px;"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:540px;">';
+  html+='<thead><tr style="background:#faf9f6;">'+['BOL#','Status','Mode','Lane','Carrier','Total'].map(h=>'<th style="text-align:left;padding:8px 10px;font-size:9px;font-weight:700;color:#706c63;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid #e5e2d9;white-space:nowrap;">'+h+'</th>').join('')+'</tr></thead><tbody>';
+  ships.forEach((s,i)=>{
+    html+='<tr data-demoidx="'+i+'" style="cursor:pointer;border-bottom:1px solid #e5e2d9;'+(i%2?'background:#faf9f6;':'')+'">'
+      +'<td style="padding:8px 10px;font-weight:600;color:#bd27bc;white-space:nowrap;">'+s.bol+'</td>'
+      +'<td style="padding:8px 10px;"><span style="font-size:10px;font-weight:600;color:'+s.statusTx+';background:'+s.statusColor+';padding:1px 7px;border-radius:9px;white-space:nowrap;">'+s.status+'</span></td>'
+      +'<td style="padding:8px 10px;"><span style="background:#f0ede6;border:1px solid #e5e2d9;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">'+(s.service==='White Glove'?'WG':'LTL')+'</span></td>'
+      +'<td style="padding:8px 10px;color:#706c63;white-space:nowrap;">'+s.origin+' → '+s.dest+'</td>'
+      +'<td style="padding:8px 10px;color:#706c63;white-space:nowrap;">'+s.carrier+'</td>'
+      +'<td style="padding:8px 10px;font-weight:600;white-space:nowrap;">$'+s.cost.toFixed(2)+'</td></tr>';
+  });
+  html+='</tbody></table></div>';
+  wrap.innerHTML=html;
+  wrap.querySelectorAll('tr[data-demoidx]').forEach(tr=>{
+    tr.onclick=()=>{ const idx=+tr.getAttribute('data-demoidx'); openRightPanel('Shipment '+ships[idx].bol, renderTrackingCard(ships[idx])); };
+  });
+  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
+  return wrap;
+}
+
+function handleDemoToken(kind, arg){
+  if(kind==='quote'){ const id=(arg in DEMO_QUOTES)?arg:'chi_atl'; openRightPanel('Sample Quote', renderQuoteCard(id)); }
+  else if(kind==='track'){ const s=DEMO_DATA.find(x=>x.bol===arg)||DEMO_DATA[0]; openRightPanel('Tracking '+s.bol, renderTrackingCard(s)); }
+  else if(kind==='shipments'){ openRightPanel('Sample Shipments', renderShipmentList(DEMO_DATA)); }
+}
+
+// ── Welcome-pill handlers (deterministic, no API cost) ─────────────────────
+function pillSampleQuote(){
+  killMovie(); showChatArea();
+  appendUser('Can I see a sample quote?');
+  appendBot('Here is a sample rate comparison for a Chicago to Atlanta LTL shipment — two pallets of office chairs, about 1,200 pounds. These are sample numbers; open a free account and we pull live rates from 50+ carriers for your own lanes.');
+  openRightPanel('Sample Quote', renderQuoteCard('chi_atl'));
+}
+function pillSampleTrack(){
+  killMovie(); showChatArea();
+  const s=DEMO_DATA.find(x=>x.bol==='FL-2024-8840');
+  appendUser('Track a shipment');
+  appendBot('Here is a sample shipment in transit from Dallas to New York. This is sample tracking data — once your account is active you would see your own shipments here live.');
+  openRightPanel('Tracking '+s.bol, renderTrackingCard(s));
+}
+function pillPasteSlip(){
+  killMovie(); showChatArea();
+  appendBot('Paste or drop a packing slip, bill of lading, or rate sheet right into the chat and I will read the shipment details off it. Want to see how it works? Try a sample packing slip below.');
+  const msgs=document.getElementById('messages'); if(msgs){
+    const b=document.createElement('button'); b.textContent='Try a sample packing slip';
+    b.style.cssText='display:block;margin:0 0 16px 38px;background:#fff;color:#bd27bc;border:1px solid #bd27bc;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+    b.onclick=runSampleSlip; msgs.appendChild(b); msgs.scrollTop=msgs.scrollHeight;
+  }
+  const ta=document.getElementById('input-textarea'); if(ta) ta.focus();
+}
+
+// ── Live SmartPaste (real Anthropic vision extraction via the proxy) ────────
+const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (null for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5 digits only\n- freightClass: string like "70" or "125"\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+
+function _spToBase64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=e=>res(e.target.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(file); }); }
+
+async function spExtractFile(file){
+  killMovie();
+  if(!file) return;
+  if(!/^(image\/(jpeg|jpg|png)|application\/pdf)$/i.test(file.type)){ showChatArea(); appendBot('Please share a JPG, PNG, or PDF and I will read the shipment details from it.'); return; }
+  if(isAtMsgLimit()){ showChatArea(); showLimitCard(); return; }
+  if(!canExtract()){ showChatArea(); appendBot('You have used your document reads for today. Open a free account for unlimited SmartPaste, or call (800) 687-3713 — the demo resets tomorrow.'); return; }
+  showChatArea();
+  appendUser('[Shared a document: '+file.name+']');
+  bumpDemoMsg(); bumpExtract();
+  showTyping();
+  try{
+    const b64=await _spToBase64(file);
+    const isPdf=file.type==='application/pdf';
+    const userContent = isPdf
+      ? [{type:'document', source:{type:'base64', media_type:'application/pdf', data:b64}}, {type:'text', text:'Extract all shipment information from this document.'}]
+      : [{type:'image', source:{type:'base64', media_type:file.type, data:b64}}, {type:'text', text:'Extract all shipment information from this image.'}];
+    const headers={'Content-Type':'application/json'}; if(isPdf) headers['anthropic-beta']='pdfs-2024-09-25';
+    const r=await fetch('https://anthropic-proxy.felipe-b80.workers.dev', {method:'POST', headers:headers, body:JSON.stringify({model:'claude-sonnet-4-6', max_tokens:1024, system:_SP_SYS, messages:[{role:'user', content:userContent}]})});
+    const d=await r.json();
+    removeTyping();
+    if(!r.ok) throw new Error('extract failed');
+    const raw=(d.content&&d.content[0]&&d.content[0].text)||'';
+    let ex; try{ ex=JSON.parse(raw.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim()); }catch(e){ throw new Error('parse'); }
+    appendBot('Read it. Here is the shipment I pulled from that document — review it in the panel. Open a free account and I will rate it live across 50+ carriers.');
+    openRightPanel("Here's your shipment", renderExtractedCard(ex));
+  }catch(e){
+    removeTyping();
+    appendBot('Had trouble reading that one. Try a clearer photo or PDF, or type the details and I will take it from there.');
+  }
+}
+
+function renderExtractedCard(ex){
+  ex=ex||{};
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  const sh=ex.shipper||{}, co=ex.consignee||{}, it=(ex.items&&ex.items[0])||{};
+  function fld(label,val){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #ececec;"><span style="font-size:11px;color:#706c63;">'+label+'</span><span style="font-size:12px;font-weight:500;color:#111;text-align:right;">'+((val===0||val)?val:'—')+'</span></div>'; }
+  function addr(a){ if(!a) return '—'; return [a.name,[a.city,a.state].filter(Boolean).join(', '),a.zip].filter(Boolean).join(' · ')||'—'; }
+  const dims=[it.length,it.width,it.height].filter(v=>v!=null&&v!=='').join(' × ');
+  let html='<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#bd27bc;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Extracted from your document</span></div>';
+  html+='<div style="background:#fff;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;margin-bottom:12px;">'
+    +fld('Origin',addr(sh))+fld('Destination',addr(co))+fld('Pieces',it.pieces)+fld('Weight', it.weight?it.weight+' lbs':null)
+    +fld('Dimensions', dims?dims+' in':null)+fld('Commodity',it.commodity)+fld('Freight class',it.freightClass)+fld('Package type',it.packageType)
+    +fld('Pickup date',ex.pickupDate)+fld('PO number',ex.poNumber)+'</div>';
+  if(ex.unclear&&ex.unclear.length) html+='<div style="font-size:11px;color:#854d0e;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;margin-bottom:8px;">A couple of fields were unclear ('+ex.unclear.join(', ')+') — you can confirm them once your account is set up.</div>';
+  wrap.innerHTML=html;
+  wrap.appendChild(_ctaBlock());
+  return wrap;
+}
+
+async function runSampleSlip(){
+  killMovie();
+  try{
+    const resp=await fetch('sample-slip.png'); if(!resp.ok) throw new Error('load');
+    const blob=await resp.blob();
+    const file=new File([blob],'sample-packing-slip.png',{type:'image/png'});
+    await spExtractFile(file);
+  }catch(e){ showChatArea(); appendBot('Could not load the sample slip just now — try pasting your own document instead.'); }
+}
+
+function _wireArea(ta){
+  if(!ta) return;
+  ta.addEventListener('paste', e=>{
+    const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(let i=0;i<items.length;i++){ const it=items[i]; if(it.type&&it.type.indexOf('image')===0){ const f=it.getAsFile(); if(f){ e.preventDefault(); spExtractFile(f); return; } } }
+  });
+  ['dragover','dragenter'].forEach(ev=>ta.addEventListener(ev, e=>{ e.preventDefault(); }));
+  ta.addEventListener('drop', e=>{ const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f){ e.preventDefault(); spExtractFile(f); } });
+}
+
+// ── Auto-play demo movie — plays in the REAL center chat, one code path ─────
+// Uses the same welcome→chat transition and appendUser/appendBot/showTyping that
+// a real first message uses. Ghost nodes are tagged [data-ghost] so a kill can
+// remove exactly the ghost content and leave real content untouched. The right
+// panel opens ONLY for cards (quote / booking / SmartPaste result).
+const _SLIP_EXTRACT = {shipper:{name:'Lakefront Office Supply Co.',city:'Chicago',state:'IL',zip:'60607'},consignee:{name:'Peachtree Furnishings LLC',city:'Atlanta',state:'GA',zip:'30318'},items:[{pieces:2,weight:1200,length:48,width:40,height:48,packageType:'PLT',freightClass:'92.5',commodity:'Task office chairs'}],pickupDate:'2026-06-11',poNumber:'77413',unclear:[]};
+
+let _movieTimers=[], _movieRunning=false;
+function _movieKilled(){ return sessionStorage.getItem('fl_movie_killed')==='1'; }
+function _mt(fn,delay){ const t=setTimeout(fn,delay); _movieTimers.push(t); return t; }
+
+function _stopGhost(o){
+  o=o||{};
+  const t=document.getElementById('typing-ind'); if(t) t.remove();
+  document.querySelectorAll('#messages [data-ghost]').forEach(n=>n.remove());
+  const wta=document.getElementById('welcome-textarea');
+  if(wta){ if(wta.getAttribute('data-ghost')==='1'){ wta.value=''; wta.style.height='auto'; } wta.removeAttribute('data-ghost'); }
+  const rp=document.getElementById('right-panel');
+  if(rp && rp.getAttribute('data-movie')==='1'){
+    rp.removeAttribute('data-movie'); rp.classList.remove('open'); rp.style.width='';
+    const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
+    const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
+  }
+  if(o.toWelcome){
+    const w=document.getElementById('welcome'); if(w) w.style.display='';
+    const c=document.getElementById('chat-area'); if(c) c.style.display='none';
+  }
+}
+// Permanently stop the ghost for the session. No-op once the movie is not running,
+// so real-use closeRightPanel / input focus never wipe real chat.
+function killMovie(o){
+  if(_movieKilled() && !_movieRunning) return;
+  sessionStorage.setItem('fl_movie_killed','1');
+  _movieTimers.forEach(clearTimeout); _movieTimers=[];
+  _movieRunning=false;
+  _stopGhost(o||{});
+}
+
+// Ghost wrappers around the REAL render fns; tag the produced node so kill can find it.
+function _tag(){ const m=document.getElementById('messages'); if(m&&m.lastChild&&m.lastChild.setAttribute) m.lastChild.setAttribute('data-ghost','1'); }
+function _ghostUser(t){ appendUser(t); _tag(); }
+function _ghostBot(t){ appendBot(t); _tag(); }
+function _ghostTyping(){ showTyping(); const ti=document.getElementById('typing-ind'); if(ti) ti.setAttribute('data-ghost','1'); }
+function _panelMovie(title,node){ openRightPanel(title,node); const rp=document.getElementById('right-panel'); if(rp) rp.setAttribute('data-movie','1'); }
+
+function _movieConfirmCard(){
+  const c=document.createElement('div'); c.style.cssText='padding:16px;';
+  c.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><div style="width:26px;height:26px;border-radius:50%;background:#fdf0fd;border:1px solid #bd27bc;display:flex;align-items:center;justify-content:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div><div style="font-size:14px;font-weight:700;color:#111;">Shipment saved</div></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+    +_kv('BOL#','FL-2024-8842')+_kv('Carrier','TForce Freight')+_kv('Lane','Chicago → Atlanta')+_kv('Total','$534.80')
+    +'</div><div style="margin-top:12px;">'+_sampleBadge()+'</div>';
+  c.appendChild(_ctaBlock());
+  return c;
+}
+
+// Append the "Open a free account" CTA button inside the last (ghost) assistant bubble.
+function _appendMovieCTA(){
+  const m=document.getElementById('messages'); const row=m&&m.lastChild; const bub=row&&row.children[1];
+  if(!bub) return;
+  bub.style.flexDirection='column'; bub.style.alignItems='flex-start';
+  const b=document.createElement('button'); b.textContent='Open a free account →';
+  b.style.cssText='margin-top:8px;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+  b.onclick=startOnboarding; bub.appendChild(b);
+}
+
+// Return the welcome screen to its true initial state (raw — does NOT trigger kill).
+function _movieSoftReset(){
+  const m=document.getElementById('messages'); if(m) m.innerHTML='';
+  const w=document.getElementById('welcome'); if(w) w.style.display='';
+  const c=document.getElementById('chat-area'); if(c) c.style.display='none';
+  const wta=document.getElementById('welcome-textarea'); if(wta){ wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost'); }
+  const rp=document.getElementById('right-panel'); if(rp){ rp.classList.remove('open'); rp.style.width=''; rp.removeAttribute('data-movie'); }
+  const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
+  const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
+}
+
+function runMovie(){
+  if(_movieKilled())return;
+  _movieRunning=true;
+  _movieSoftReset();
+  const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
+  const wta=document.getElementById('welcome-textarea'); if(!wta) return;
+  const line='I need to ship 2 pallets of office chairs from Chicago to Atlanta, about 1,200 lbs';
+  wta.setAttribute('data-ghost','1');
+  let i=0;
+  (function type(){
+    if(_movieKilled())return;
+    wta.value=line.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
+    if(i++<line.length) _mt(type,40); else _mt(send,550);
+  })();
+
+  function send(){
+    if(_movieKilled())return;
+    // exactly the welcomeSend transition: clear textarea, collapse hero → chat thread, user bubble
+    wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost');
+    showChatArea();
+    _ghostUser(line);
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Here are sample rates for that lane. TForce is best at $534.80, three-day transit — these are sample numbers.');
+        _panelMovie('Sample Quote', renderQuoteCard('chi_atl'));
+        _mt(book,1900);
+      },1100);
+    },550);
+  }
+  function book(){
+    if(_movieKilled())return;
+    _ghostUser('Book the TForce option');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Saved. Your BOL is FL-2024-8842 — TForce Freight, ready when you are.');
+        _panelMovie('Shipment saved', _movieConfirmCard());
+        _mt(slip,2000);
+      },1000);
+    },550);
+  }
+  function slip(){
+    if(_movieKilled())return;
+    _ghostUser('[Shared a document: sample-packing-slip.png]');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping();
+        _ghostBot('Read it. Pulled the shipment straight off your packing slip — Chicago to Atlanta, two pallets, 1,200 pounds.');
+        _panelMovie("Here's your shipment", renderExtractedCard(_SLIP_EXTRACT));
+        _mt(qa,2200);
+      },1200);
+    },550);
+  }
+  // Act 4 — "Ask the assistant anything": four scripted freight-knowledge exchanges in the
+  // center chat. Chat-only (no panel card). Q4's answer carries the account CTA and ends the loop.
+  function qa(){
+    if(_movieKilled())return;
+    let j=0;
+    (function step(){
+      if(_movieKilled())return;
+      const item=DEMO_QA[j];
+      const answer=item.a || _abfOcalaAnswer();
+      const isLast=(j===DEMO_QA.length-1);
+      _ghostUser(item.q);
+      _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+        _mt(()=>{ if(_movieKilled())return; removeTyping();
+          _ghostBot(answer);
+          if(isLast){ _appendMovieCTA(); _mt(restart,3400); }
+          else { j++; _mt(step,1500); }
+        },1100);
+      },550);
+    })();
+  }
+}
+
+function startMovie(){ if(!_movieKilled()) runMovie(); }
+
+// ── Init: wire SmartPaste, kill-switches, and schedule the movie ───────────
+document.addEventListener('DOMContentLoaded', function(){
+  _wireArea(document.getElementById('welcome-textarea'));
+  _wireArea(document.getElementById('input-textarea'));
+  const wta=document.getElementById('welcome-textarea');
+  if(wta){ wta.addEventListener('focus',()=>killMovie({toWelcome:true})); wta.addEventListener('keydown',()=>killMovie({toWelcome:true})); }
+  const ita=document.getElementById('input-textarea');
+  if(ita){ ita.addEventListener('focus',()=>killMovie({})); ita.addEventListener('keydown',()=>killMovie({})); }
+  if(!_movieKilled()) _mt(startMovie, 2000);
+});
 </script>
 
 <div style="flex-shrink:0;background:var(--card);border-top:1px solid var(--bdr);padding:10px 20px;font-size:11px;color:var(--fa);text-align:center;">
