@@ -2298,29 +2298,41 @@ function _isCanadianPostal(zip) {
 const zipCache = {};
 async function lookupZip(zip) {
   if (zipCache[zip]) return zipCache[zip];
-  try {
-    let result;
-    if (_isCanadianPostal(zip)) {
-      // Geocodio resolves at FSA (3-char prefix) level — full LDUs often 422
-      const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
+  const ok = (city, state) => { const r = { city: city || '', state: state || '', ok: true, reason: 'ok' }; zipCache[zip] = r; return r; };
+  const nf  = () => ({ city: '', state: '', ok: false, reason: 'notfound' });
+  const out = () => ({ city: '', state: '', ok: false, reason: 'outage' });
+
+  // Geocodio single-query fallback (US or CA). Returns ok | notfound | outage — never throws.
+  async function geo(q, country) {
+    try {
       const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
-        + encodeURIComponent(fsa)
-        + '&country=CA&limit=1');
-      if (!r.ok) return { city: '', state: '' };
+        + encodeURIComponent(q) + '&country=' + country + '&limit=1');
+      if (r.status === 404) return nf();
+      if (!r.ok) return out();
       const d = await r.json();
       const ac = d.results && d.results[0] && d.results[0].address_components;
-      result = { city: ac ? (ac.city || '') : '', state: ac ? (ac.state || '') : '' };
-    } else {
-      const r = await fetch('https://api.zippopotam.us/us/' + zip);
-      if (!r.ok) return { city: '', state: '' };
+      if (ac && ac.city) return ok(ac.city, ac.state);
+      return nf();
+    } catch (e) { return out(); }
+  }
+
+  if (_isCanadianPostal(zip)) {
+    const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
+    return await geo(fsa, 'CA');
+  }
+
+  // US: zippopotam first; ANY miss (non-ok, empty, or throw) falls back to Geocodio,
+  // which decides notfound vs outage. Only a confirmed hit is cached.
+  try {
+    const r = await fetch('https://api.zippopotam.us/us/' + zip);
+    if (r.ok) {
       const d = await r.json();
       const place = d.places && d.places[0];
-      result = { city: place ? place['place name'] : '', state: place ? place['state abbreviation'] : '' };
+      if (place && place['place name']) return ok(place['place name'], place['state abbreviation']);
     }
-    zipCache[zip] = result;
-    return result;
-  } catch(e) {
-    return { city: '', state: '' };
+    return await geo(zip, 'US');
+  } catch (e) {
+    return await geo(zip, 'US');
   }
 }
 
@@ -2545,17 +2557,27 @@ function _insGateBeforeRates(shipment, summary) {
 }
 
 async function fetchRates(shipment) {
-  // Resolve city/state from ZIP if not already provided
-  if (!shipment.originCity || !shipment.originState) {
-    const o = await lookupZip(shipment.originZip);
-    shipment.originCity  = o.city;
-    shipment.originState = o.state;
+  // Resolve both ZIPs to cities, record the resolution, and GATE before any backend call.
+  const _o = await lookupZip(shipment.originZip);
+  const _d = await lookupZip(shipment.destinationZip);
+  window._zipResolution = {
+    originZip: shipment.originZip, originResolved: _o.ok, originReason: _o.reason, originCity: _o.city, originState: _o.state,
+    destZip: shipment.destinationZip, destResolved: _d.ok, destReason: _d.reason, destCity: _d.city, destState: _d.state
+  };
+  const _bad = [];
+  if (_o.reason === 'notfound') _bad.push('origin ZIP ' + shipment.originZip);
+  if (_d.reason === 'notfound') _bad.push('destination ZIP ' + shipment.destinationZip);
+  if (_bad.length) {
+    throw new Error("We couldn't match your " + _bad.join(' or your ') + " to a city, so we can't pull rates. Please double-check " + (_bad.length > 1 ? 'them' : 'it') + " and try again.");
   }
-  if (!shipment.destinationCity || !shipment.destinationState) {
-    const d = await lookupZip(shipment.destinationZip);
-    shipment.destinationCity  = d.city;
-    shipment.destinationState = d.state;
+  if (_o.reason === 'outage' || _d.reason === 'outage') {
+    throw new Error("We couldn't verify one of your ZIP codes right now — please try again in a moment.");
   }
+  // Apply resolved city/state (preserve any already set on the shipment).
+  if (!shipment.originCity)       shipment.originCity  = _o.city;
+  if (!shipment.originState)      shipment.originState = _o.state;
+  if (!shipment.destinationCity)  shipment.destinationCity  = _d.city;
+  if (!shipment.destinationState) shipment.destinationState = _d.state;
 
   const token = await getToken();
 
