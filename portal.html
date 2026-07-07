@@ -2539,7 +2539,7 @@ function _insGateBeforeRates(shipment, summary) {
     });
   }
   window._insPreRate = true;
-  window._insCollecting = 'value';
+  window._insCollecting = 'value'; window._insReaskCount = 0;
   appendMessage('bot', (summary ? summary + ' ' : '') + 'One last thing — would you like to add cargo insurance? If so, what is the total value of the cargo? Or say "no" to skip.');
   return true;
 }
@@ -10297,6 +10297,27 @@ function _summarizeRatesToChat() {
   } catch (e) { console.warn('[FP] rate summary failed', e); }
 }
 
+function _insMsgMovedOn(t) {
+  var s = String(t || '').toLowerCase();
+  return /\b(rate|rates|quote|book|booking|cheapest|carrier|track|tracking|status|where are)\b/.test(s)
+      && !/\b(insurance|insure|coverage|cover|declared value|premium)\b/.test(s);
+}
+function _releaseInsuranceCollection(text) {
+  var wasPreRate = !!window._insPreRate;
+  window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+  window._insReaskCount = 0; window._insPreRate = false; window._insDecided = true;
+  if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
+  if (wasPreRate) {
+    appendMessage('bot', 'No problem — pulling your rates now without insurance.');
+    window._onRatesReady = _summarizeRatesToChat;
+    if (typeof window._doGetRates === 'function' && !window._ratePullInFlight) {
+      try { window._doGetRates(); } catch(e) { console.warn('[FP] release pull failed', e); }
+    }
+    return true;   // handled: rates pulling, do NOT re-dispatch
+  }
+  return false;    // rates already on screen -> caller re-dispatches
+}
+
 // ── Expose residential/liftgate detection result for the AI ────────────────────
 // The quote form's RDI check sets these so the chat can ask "just like the pop-up."
 window._residentialStatus = null; // { residential:bool, liftgateRecommended:bool, weight:n }
@@ -11111,7 +11132,7 @@ async function aiConverse(userText) {
       if (/\[\[INSURANCE\]\]/.test(finalText)) {
         finalText = finalText.replace(/\[\[INSURANCE\]\]/g, '').trim();
         if (!window._insDecided) {
-          window._insCollecting = 'value';
+          window._insCollecting = 'value'; window._insReaskCount = 0;
           window._insPreRate = true;
         }
       }
@@ -12785,7 +12806,7 @@ async function handleInput(text) {
   if (window._insCollecting !== 'value' && window._insCollecting !== 'commodity' &&
       /\b(insurance|insure|cargo insurance|redkik|cover|coverage|insured|protect my)\b/i.test(t) &&
       lastQuotedShipment && !lastQuotedShipment.insuranceEnabled) {
-    window._insCollecting = 'value';
+    window._insCollecting = 'value'; window._insReaskCount = 0;
     appendMessage('bot', 'To add cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
     return;
   }
@@ -12813,6 +12834,9 @@ async function handleInput(text) {
       const _list = REDKIK_COMMODITIES.map((c, i) => (i + 1) + '. ' + c.name).join('\n');
       appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. What type of commodity is it? Reply with a number:\n\n' + _list);
     } else {
+      if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
+      window._insReaskCount = (window._insReaskCount || 0) + 1;
+      if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
       appendMessage('bot', 'I did not catch a dollar amount. What is the total value of the cargo? (Or say "no" to skip insurance.)');
     }
     return;
@@ -12843,7 +12867,10 @@ async function handleInput(text) {
                REDKIK_COMMODITIES.find(c => _lc.split(/\s+/).some(w => w.length >= 3 && c.name.toLowerCase().includes(w)));
     }
     if (!_match) {
-      appendMessage('bot', 'I could not match that. Reply with the number (1–' + REDKIK_COMMODITIES.length + ') or a keyword for the commodity type, or say "cancel" to skip insurance.');
+      if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
+      window._insReaskCount = (window._insReaskCount || 0) + 1;
+      if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
+      appendMessage('bot', 'I could not match that. Reply with the number (1-' + REDKIK_COMMODITIES.length + ') or a keyword for the commodity type, or say "cancel" to skip insurance.');
       return;
     }
     const _val = Number(window._insTempValue) || 0;
