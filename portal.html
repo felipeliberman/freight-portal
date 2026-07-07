@@ -10175,6 +10175,10 @@ function _quoteFormState() {
       items: items,
       accessorials: accs,
       ratesPulled: !!(window._lastRates && window._lastRates.count),
+      // ZIP resolution from the last rate pull (Fix C). Only surfaced when it still matches the
+      // ZIP currently on the form, so a stale resolution never mislabels a freshly-changed ZIP.
+      originCityResolved: (window._zipResolution && String(window._zipResolution.originZip) === g('#qt-origin')) ? !!window._zipResolution.originResolved : undefined,
+      destCityResolved:   (window._zipResolution && String(window._zipResolution.destZip)   === g('#qt-dest'))   ? !!window._zipResolution.destResolved   : undefined,
       shipper:   (window._quotedContacts && window._quotedContacts.shipper   && Object.values(window._quotedContacts.shipper).some(Boolean))   ? window._quotedContacts.shipper   : undefined,
       consignee: (window._quotedContacts && window._quotedContacts.consignee && Object.values(window._quotedContacts.consignee).some(Boolean)) ? window._quotedContacts.consignee : undefined,
     };
@@ -10792,6 +10796,7 @@ HOW TO TALK:
 - Never editorialize about a customer's choice — no "great choice," "excellent," or "perfect." Just act on it.
 - Never editorialize about rates or carriers — no "tough to beat," "hard to beat," "great price," "right fit," "clearly the way to go," "the surcharge didn't apply," or any other value judgment. State the facts (carrier, price, transit days) and let the customer decide. You are not a salesperson.
 - Never fabricate explanations for rate behavior, carrier pricing, coverage, or residential status. If a carrier is not in the results, do not invent a reason why. If a rate did not change, do not invent a reason why. If you don't know, say "I'm not certain."
+- ZIP RESOLUTION — when the LIVE PORTAL STATE shows originCityResolved:false or destCityResolved:false, that ZIP did not resolve to a city and rates cannot be pulled for it. Tell the customer plainly that you could not find a city for that ZIP (name the ZIP) and ask them to double-check it. If a pull already came back empty on an unresolved ZIP, NEVER attribute it to a guessed cause — not "no carriers," not a "local" or "same-metro" lane, not carrier coverage. The unresolved ZIP is the reason: state that and ask for a corrected ZIP.
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then add [[TALK]] on its own line to offer a specialist call. Hazmat is self-serve regardless of hazard class — quote and book it normally, never [[TALK]] for hazmat. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
@@ -11111,7 +11116,24 @@ async function aiConverse(userText) {
             if (toolUse.input && toolUse.input.getRates) {
               await _awaitRatePull();
               if (window._lastRates) { result = Object.assign({}, result, { ratesReady:true, rateCount: window._lastRates.count }); }
-              else { result = Object.assign({}, result, { ratesReady:true, rateCount: 0, note:'Pull complete — no carriers returned for this lane.' }); }
+              else {
+                // No rates. If the last pull was gated by an unresolvable ZIP, tell the agent the REAL
+                // cause so it can't fabricate "no carriers / local lane." Distinguish bad ZIP from outage.
+                const _zr = window._zipResolution;
+                const _nf = _zr ? [
+                  _zr.originReason === 'notfound' ? ('origin ZIP ' + _zr.originZip) : null,
+                  _zr.destReason   === 'notfound' ? ('destination ZIP ' + _zr.destZip) : null
+                ].filter(Boolean) : [];
+                let _note;
+                if (_nf.length) {
+                  _note = 'Rates NOT pulled — could not match ' + _nf.join(' or ') + ' to a city. Tell the customer you could not find a city for that ZIP and ask them to double-check it. Do NOT say carriers were unavailable or blame the lane — the ZIP did not resolve.';
+                } else if (_zr && (_zr.originReason === 'outage' || _zr.destReason === 'outage')) {
+                  _note = 'Rates NOT pulled — the address lookup service was momentarily unavailable. Ask the customer to try again in a moment. Do NOT blame carriers or the lane.';
+                } else {
+                  _note = 'Pull complete — no carriers returned for this lane.';
+                }
+                result = Object.assign({}, result, { ratesReady:true, rateCount: 0, note: _note });
+              }
             }
           } else if (toolUse.name === 'read_rates') {
             // Wait for any in-flight rate pull to finish before reading, so we never
