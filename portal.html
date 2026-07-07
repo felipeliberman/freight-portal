@@ -9876,7 +9876,7 @@ function _execUpdateQuote(input) {
   // GUARD: no origin AND no destination ZIP means this is an education/hypothetical
   // question (e.g. "how many linear feet is 10 pallets at 48x48x80"), not a real
   // quote. Do NOT open the quote form. Return early so aiConverse answers in prose.
-  if (!input.originZip && !input.destZip) {
+  if (!input.originZip && !input.destZip && !window._quoteFormOpen) {
     return { ok: true, noQuote: true, summary: 'No origin or destination ZIP provided — this is a general question, not a live quote. Quote form not opened. Answer the customer directly in prose.' };
   }
 
