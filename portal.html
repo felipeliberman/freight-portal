@@ -2307,8 +2307,8 @@ async function lookupZip(zip) {
     try {
       const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
         + encodeURIComponent(q) + '&country=' + country + '&limit=1');
-      if (r.status === 404) return nf();
-      if (!r.ok) return out();
+      if (r.status >= 500) return out();   // 5xx = provider down -> transient outage, retry
+      if (!r.ok) return nf();              // any other non-2xx (404, 422, 400...) = bad/unmatchable input -> not found
       const d = await r.json();
       const ac = d.results && d.results[0] && d.results[0].address_components;
       if (ac && ac.city) return ok(ac.city, ac.state);
