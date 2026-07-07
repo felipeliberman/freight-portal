@@ -2620,7 +2620,13 @@ async function fetchRates(shipment) {
 
   const r    = await fetch(PRIMUS_BASE + '/applet/v1/rate/multiple?' + params, { headers: { 'Authorization': 'Bearer ' + token } });
   const text = await r.text();
-  if (!r.ok) throw new Error('Rate fetch failed ' + r.status + ': ' + text.slice(0, 200));
+  if (!r.ok) {
+    console.error('Rate fetch failed', r.status, text.slice(0, 300));
+    if (r.status === 400 && /originCity|destinationCity|Missing required parameter/i.test(text)) {
+      throw new Error("We couldn't match one of your ZIP codes to a city, so we can't pull rates. Please double-check the origin and destination ZIP and try again.");
+    }
+    throw new Error("We couldn't retrieve rates just now. Please try again in a moment.");
+  }
 
   const d     = JSON.parse(text);
   let   rates = (d.data && d.data.results && d.data.results.rates) ||
