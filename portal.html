@@ -9917,6 +9917,7 @@ function _execUpdateQuote(input) {
       pf.length = it0.length; pf.width = it0.width; pf.height = it0.height;
     }
     if (input.addAccessorials && input.addAccessorials.length) pf.accessorials = _filterLiftgateCodes(input.addAccessorials.slice());
+    window._suppressQuoteAutoRun = true; // agent path controls rate timing — suppress showQuoteForm's 400ms auto-run so rates don't fire before accessorials/insurance
     showQuoteForm(pf, true);
     changed.push('opened the quote form');
     // GUARD: never pull rates on the same call that OPENS the form. The customer must
