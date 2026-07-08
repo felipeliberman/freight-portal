@@ -1968,7 +1968,7 @@ function runMovie(){
   document.body.classList.add('movie-live');
   var _ita=document.getElementById('input-textarea'); if(_ita) _ita.placeholder='Type to jump in anytime…';
   _movieSoftReset();
-  const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
+  // Loop cap: the movie plays ONE full pass (Acts 1 → 3b) then RESTS on the end-frame — no auto-restart.
   const wta=document.getElementById('welcome-textarea'); if(!wta) return;
 
   // Act 1 — open the Quote Details form, fill it step-by-step to the conversation, then
@@ -2021,8 +2021,12 @@ function runMovie(){
     if(k>=TURNS.length){ _mt(_movieAct2, 1900); return; } // Act 1 done — chain into Act 2
     const t=TURNS[k];
     if(t.u){
-      _ghostUser(t.u);
-      afterLine(t, ()=>playTurns(k+1));
+      // Type each user line into the chat box (like Acts 2/3), then post the bubble.
+      _movieTypeInput(t.u, ()=>{
+        if(_movieKilled())return;
+        _ghostUser(t.u);
+        afterLine(t, ()=>playTurns(k+1));
+      });
     } else {
       _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping();
@@ -2474,7 +2478,53 @@ function _a3Donut(){
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3_DONUT);
         _movieRenderViewChart();
-        _mt(()=>{ if(_movieKilled())return; _panelMovie('Shipments by Month', _movieMonthDonutPanel()); }, 1000); // END of Act 3a — rest
+        _mt(()=>{ if(_movieKilled())return; _panelMovie('Shipments by Month', _movieMonthDonutPanel()); _mt(_movieAct3b, 2400); }, 1000); // Act 3a → Act 3b
+      }, 1500);
+    }, 500);
+  });
+}
+
+// ══ ACT 3b — Keith Q&A + two BOL doc-rows (canned). Terminal act: rests on the end-frame. ══
+const _A3B_KEITH = `Yes, you have two shipments to recipients named Keith. One went to Keith VanOrder in Prosper, TX, shipped on May 7, 2026 via ABF Freight and delivered on May 13, 2026. The other went to Keith Koster in Menlo Park, CA, shipped on February 10, 2026, also via ABF Freight, and delivered on February 20, 2026. Both shipments show a proof of delivery on file. Would you like documents or more details on either one?`;
+const _A3B_BOLS = `The Bills of Lading for both shipments are ready below — you'll see clickable document buttons for Keith VanOrder (BOL 140130969) and Keith Koster (BOL 140126856). Each also has a Shipping Label, Invoice, and Proof of Delivery available if you need those as well!`;
+// Labeled doc-button row (reuses the doc-row look/icons); buttons route to signup. No prices.
+function _movieRenderLabeledDocRow(bolLabel){
+  const msgs=document.getElementById('messages'); if(!msgs) return;
+  const wrap=document.createElement('div');
+  wrap.style.cssText='margin:0 0 16px 38px;max-width:82%;';
+  wrap.setAttribute('data-ghost','1');
+  const DOCS=[{t:'BOL',label:'Bill of Lading'},{t:'LBL',label:'Shipping Label'},{t:'QUO',label:'Quote'},{t:'INV',label:'Invoice'},{t:'POD',label:'Proof of Delivery'}];
+  let html='<div style="font-size:11px;font-weight:600;color:var(--mu);margin-bottom:6px;">'+bolLabel+'</div><div style="display:flex;flex-wrap:wrap;gap:8px;">';
+  DOCS.forEach(d=>{
+    html+='<button class="mv-docbtn" style="display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:var(--tx);cursor:pointer;font-family:inherit;"><span style="color:var(--ac);display:inline-flex;">'+(_MOVIE_DOC_ICONS[d.t]||_MOVIE_DOC_ICONS.DEFAULT)+'</span>'+d.label+'</button>';
+  });
+  html+='</div>';
+  wrap.innerHTML=html;
+  wrap.querySelectorAll('.mv-docbtn').forEach(b=>{ b.onclick=startOnboarding; });
+  msgs.appendChild(wrap); msgs.scrollTop=msgs.scrollHeight;
+}
+// a–b. Type the Keith question → verbatim reply.
+function _movieAct3b(){
+  if(_movieKilled())return;
+  _movieTypeInput('Did I ship anything to someone name Keith?', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Did I ship anything to someone name Keith?');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3B_KEITH); _mt(_a3bBols, 1900); }, 1600);
+    }, 500);
+  });
+}
+// c–d. Type the BOL request → verbatim reply → two labeled doc-rows → REST (end of movie).
+function _a3bBols(){
+  if(_movieKilled())return;
+  _movieTypeInput("Show me the BOL's for both of them", ()=>{
+    if(_movieKilled())return;
+    _ghostUser("Show me the BOL's for both of them");
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3B_BOLS);
+        _movieRenderLabeledDocRow('BOL 140130969');
+        _movieRenderLabeledDocRow('BOL 140126856');
+        // END OF ACT 3b — movie rests on this end-frame; no auto-restart.
       }, 1500);
     }, 500);
   });
