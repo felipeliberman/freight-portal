@@ -2097,18 +2097,6 @@ function _movieNewChatReset(){
   const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
   showChatArea();
 }
-// Inject a ghost "My Shipments" left-nav item (cleared by killMovie via data-movie-el).
-function _movieEnsureShipmentsNav(){
-  let el=document.getElementById('mv-nav-shipments');
-  if(el) return el;
-  const sidebar=document.getElementById('sidebar'); const anchor=document.getElementById('sb-newchat');
-  if(!sidebar||!anchor) return null;
-  el=document.createElement('div');
-  el.id='mv-nav-shipments'; el.className='sb-link'; el.setAttribute('data-movie-el','1');
-  el.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg> My Shipments';
-  anchor.insertAdjacentElement('afterend', el);
-  return el;
-}
 const _MOVIE_DOC_ICONS = {
   'BOL':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
   'LBL':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
@@ -2282,7 +2270,6 @@ const _A2_JORDAN='Yes, the shipment to Jordan Miller in Broomfield, CO was deliv
 const _A2_POD="Your Proof of Delivery for the Jordan Miller shipment is ready — you'll see the clickable document buttons below. The full Bill of Lading and other documents are available there as well if you need them.";
 function _movieAct2(){
   if(_movieKilled())return;
-  _movieEnsureShipmentsNav();
   // a. Cursor → New Chat (shared: lands on button, clicks, parks right) → clean reset
   _movieClickNewChat(()=>{
     if(_movieKilled())return;
@@ -2301,14 +2288,11 @@ function _a2Show(){
     }, 500);
   });
 }
-// d. Cursor → My Shipments → dashboard panel → shipment-detail popup beat
+// d. Dashboard panel opens hands-free → shipment-detail popup beat
 function _a2Dash(){
   if(_movieKilled())return;
-  _movieCursorClickTo(_movieEnsureShipmentsNav(), ()=>{
-    if(_movieKilled())return;
-    _panelMovie('My Shipments (34)', _movieShipmentsPanel());
-    _mt(_a2RowDetail, 1600);
-  });
+  _panelMovie('My Shipments (34)', _movieShipmentsPanel());
+  _mt(_a2RowDetail, 1600);
 }
 // d.2 Cursor → first row (BOL 140133959) → popup opens → pause → cursor → ✕ closes → Jordan
 function _a2RowDetail(){
