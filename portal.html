@@ -1545,14 +1545,6 @@ function parsePackagingType(text) {
   return null;
 }
 
-function promptPackaging() {
-  setTimeout(() => {
-    appendMessage('bot', 'What type of packaging?', {
-      quickReplies: ['Pallet (PLT)', 'Box (BOX)', 'Crate (CRT)', 'Other']
-    });
-  }, 400);
-}
-
 // ── CHAT FILE/IMAGE ATTACHMENT ───────────────────────────────────────────────
 async function handleChatAttachment(input) {
   const file = input.files && input.files[0];
@@ -7689,14 +7681,6 @@ function parsePackagingType(text) {
   if (/\b(other|oth|misc|bag|roll|bundle|tube)\b/i.test(t)) return 'OTH';
   return null;
 }
-function promptPackaging() {
-  setTimeout(() => {
-    appendMessage('bot', 'What type of packaging?', {
-      quickReplies: ['Pallet (PLT)', 'Box (BOX)', 'Crate (CRT)', 'Other']
-    });
-  }, 400);
-}
-
 // ── SETTINGS PANEL ────────────────────────────────────────────────────────────
 function getSettings() {
   try { return JSON.parse(localStorage.getItem('fl_settings_' + (currentCustomer && currentCustomer.code || 'default')) || '{}'); } catch(e) { return {}; }
@@ -13112,8 +13096,6 @@ async function handleInput(text) {
     /^\s*(my shipment was|my freight was|my package was|2 boxes|boxes are missing|item.*missing|missing.*item)/i.test(t.trim())
   );
 
-  // ── Quote form sync — DISABLED, update_quote tool handles form filling now ──
-
   // If booking panel is open and chat has booking-like content, fill the panel
   if (window._bookingPanelContainer) {
     const bd = parseBookingBlock(t, '');
@@ -13125,16 +13107,6 @@ async function handleInput(text) {
       return;
     }
   }
-
-  // If bot just asked for weight, treat next message as weight answer
-  // If bot asked for dims (+weight), parse and fill them
-  // ── Multi-item collection flow ──────────────────────────────────────────────
-  // Triggered when customer says they have pallets with different sizes/weights
-
-
-
-  // Packaging type prompt handler
-
 
   // (Old explicit carrier handler removed — aiConverse handles all carrier questions with web_search)
 
@@ -13148,8 +13120,6 @@ async function handleInput(text) {
 
   if (bookingStep) { await handleBookingInput(t); return; }
   if (wizardStep && wizardStep !== 'fetching' && pendingPicker === null) { handleWizardInput(t); return; }
-
-  // ── Liftgate direction handler ────────────────────────────────────────────────
 
   // ── Accessorial removal from chat ────────────────────────────────────────────
   if (window._quoteFormOpen && /\b(remove|take off|cancel|without|no )\b.{0,25}\b(liftgate|lift gate)\b/i.test(t)) {
@@ -13172,8 +13142,6 @@ async function handleInput(text) {
     appendMessage('bot', 'Residential delivery removed.');
     return;
   }
-
-  // If bot just asked about accessorials, treat next message as the answer
 
   // Continue / widen the previous list
   const moreMatch = lower.match(/^(?:show\s+|give\s+me\s+|see\s+|can\s+i\s+see\s+)?(?:me\s+)?(?:the\s+)?(?:(\d+)\s+)?(more|rest|next|additional)\b/);
