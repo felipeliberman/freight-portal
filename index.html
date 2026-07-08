@@ -25,6 +25,12 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fieldFlash{0%{background:#f3e8ff;border-color:var(--ac);}60%{background:#f3e8ff;border-color:var(--ac);}100%{background:var(--card);border-color:var(--bdr);}}
 .field-flash{animation:fieldFlash 1.2s ease forwards;}
+/* Movie ghost cursor (Act 2) */
+#movie-cursor{position:fixed;left:0;top:0;width:24px;height:24px;z-index:9999;pointer-events:none;opacity:0;transition:left .6s cubic-bezier(.4,0,.2,1),top .6s cubic-bezier(.4,0,.2,1),opacity .25s;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));}
+#movie-cursor.on{opacity:1;}
+#movie-cursor .mc-dot{position:absolute;left:-6px;top:-6px;width:34px;height:34px;border-radius:50%;background:var(--ac);opacity:0;transform:scale(.2);}
+#movie-cursor.click .mc-dot{animation:movieClickRing .45s ease-out;}
+@keyframes movieClickRing{0%{opacity:.35;transform:scale(.2);}100%{opacity:0;transform:scale(1);}}
 
 /* ── TOPBAR ── */
 #topbar{
@@ -1888,8 +1894,12 @@ function _stopGhost(o){
   o=o||{};
   const t=document.getElementById('typing-ind'); if(t) t.remove();
   document.querySelectorAll('#messages [data-ghost]').forEach(n=>n.remove());
+  // Movie chrome outside #messages: ghost cursor + injected nav item.
+  document.querySelectorAll('[data-movie-el]').forEach(n=>n.remove());
   const wta=document.getElementById('welcome-textarea');
   if(wta){ if(wta.getAttribute('data-ghost')==='1'){ wta.value=''; wta.style.height='auto'; } wta.removeAttribute('data-ghost'); }
+  const ita0=document.getElementById('input-textarea');
+  if(ita0){ if(ita0.getAttribute('data-ghost')==='1'){ ita0.value=''; ita0.style.height='auto'; } ita0.removeAttribute('data-ghost'); }
   const rp=document.getElementById('right-panel');
   if(rp && rp.getAttribute('data-movie')==='1'){
     rp.removeAttribute('data-movie'); rp.classList.remove('open'); rp.style.width='';
@@ -2008,7 +2018,7 @@ function runMovie(){
 
   function playTurns(k){
     if(_movieKilled())return;
-    if(k>=TURNS.length){ _mt(restart, 5200); return; } // Act 1 done — rest, then loop
+    if(k>=TURNS.length){ _mt(_movieAct2, 1900); return; } // Act 1 done — chain into Act 2
     const t=TURNS[k];
     if(t.u){
       _ghostUser(t.u);
@@ -2023,6 +2033,183 @@ function runMovie(){
   }
 }
 
+// ══ ACT 2 — cursor-driven shipments → POD walkthrough (canned) ══════════════
+// Ghost cursor: fixed pointer over the app, pointer-events:none, cleared by killMovie.
+function _movieCursor(){
+  let c=document.getElementById('movie-cursor');
+  if(c) return c;
+  c=document.createElement('div');
+  c.id='movie-cursor'; c.setAttribute('data-movie-el','1');
+  c.innerHTML='<span class="mc-dot"></span><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"><path d="M5 3l6 15 2.2-6.2L19.4 9.6 5 3z"/></svg>';
+  c.style.left=Math.round(window.innerWidth*0.5)+'px';
+  c.style.top=Math.round(window.innerHeight*0.55)+'px';
+  document.body.appendChild(c);
+  return c;
+}
+// Glide the cursor to a target's center (~600ms), pulse a click, then fire cb.
+function _movieCursorClickTo(targetEl, cb){
+  if(_movieKilled())return;
+  const c=_movieCursor(); c.classList.add('on');
+  if(!targetEl){ if(cb) _mt(cb,300); return; }
+  _mt(()=>{ if(_movieKilled())return;
+    const r=targetEl.getBoundingClientRect();
+    c.style.left=Math.round(r.left+r.width/2)+'px';
+    c.style.top=Math.round(r.top+r.height/2)+'px';
+    _mt(()=>{ if(_movieKilled())return;
+      c.classList.remove('click'); void c.offsetWidth; c.classList.add('click');
+      _mt(()=>{ if(_movieKilled())return; if(cb) cb(); }, 300);
+    }, 640);
+  }, 40);
+}
+// Type text into the chat input (ghost), then clear and fire cb.
+function _movieTypeInput(text, cb){
+  const ta=document.getElementById('input-textarea');
+  if(!ta){ if(cb) cb(); return; }
+  ta.setAttribute('data-ghost','1');
+  let i=0;
+  (function t(){
+    if(_movieKilled())return;
+    ta.value=text.slice(0,i); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,140)+'px';
+    if(i++<text.length) _mt(t,42);
+    else _mt(()=>{ if(_movieKilled())return; ta.value=''; ta.style.height='auto'; ta.removeAttribute('data-ghost'); if(cb) cb(); }, 380);
+  })();
+}
+// Clean reset (same visual effect as New Chat) WITHOUT killing the movie.
+function _movieNewChatReset(){
+  const m=document.getElementById('messages'); if(m) m.innerHTML='';
+  const rp=document.getElementById('right-panel');
+  if(rp){ rp.classList.remove('open'); rp.style.width=''; rp.removeAttribute('data-movie'); }
+  const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
+  const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
+  showChatArea();
+}
+// Inject a ghost "My Shipments" left-nav item (cleared by killMovie via data-movie-el).
+function _movieEnsureShipmentsNav(){
+  let el=document.getElementById('mv-nav-shipments');
+  if(el) return el;
+  const sidebar=document.getElementById('sidebar'); const anchor=document.getElementById('sb-newchat');
+  if(!sidebar||!anchor) return null;
+  el=document.createElement('div');
+  el.id='mv-nav-shipments'; el.className='sb-link'; el.setAttribute('data-movie-el','1');
+  el.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg> My Shipments';
+  anchor.insertAdjacentElement('afterend', el);
+  return el;
+}
+const _MOVIE_DOC_ICONS = {
+  'BOL':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+  'LBL':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
+  'QUO':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+  'INV':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  'POD':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  'DEFAULT':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
+};
+// Doc-button row (ports openDocsModal's icons/labels). Returns the POD button element.
+function _movieRenderDocRow(){
+  const msgs=document.getElementById('messages'); if(!msgs) return null;
+  const wrap=document.createElement('div');
+  wrap.style.cssText='margin:0 0 20px 38px;display:flex;flex-wrap:wrap;gap:8px;max-width:82%;';
+  wrap.setAttribute('data-ghost','1');
+  const DOCS=[{t:'BOL',label:'Bill of Lading'},{t:'LBL',label:'Shipping Label'},{t:'QUO',label:'Quote'},{t:'INV',label:'Invoice'},{t:'POD',label:'Proof of Delivery'},{t:'DEFAULT',label:'Reweigh'}];
+  let podBtn=null;
+  DOCS.forEach(d=>{
+    const b=document.createElement('button');
+    b.style.cssText='display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:var(--tx);cursor:pointer;font-family:inherit;';
+    b.innerHTML='<span style="color:var(--ac);display:inline-flex;">'+(_MOVIE_DOC_ICONS[d.t]||_MOVIE_DOC_ICONS.DEFAULT)+'</span>'+d.label;
+    if(d.label==='Proof of Delivery'){ podBtn=b; b.onclick=_movieOpenPOD; } else { b.onclick=startOnboarding; }
+    wrap.appendChild(b);
+  });
+  msgs.appendChild(wrap); msgs.scrollTop=msgs.scrollHeight;
+  return podBtn;
+}
+// Single-result shipments table (ports renderShipments' singleResult look), one canned row.
+function _movieShipmentsPanel(){
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  const cols=['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total'];
+  const th=cols.map(c=>'<th style="text-align:left;padding:9px 12px;font-size:10px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--bdr);white-space:nowrap;">'+c+'</th>').join('');
+  const podChip='<span style="display:inline-flex;align-items:center;gap:4px;background:#ede9fe;border:1px solid var(--bdr);border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;color:#6d28d9;white-space:nowrap;">POD</span>';
+  const modeChip='<span style="background:#f0ede6;border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">LTL</span>';
+  const carrierCell='<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;"><img src="logos/abf.png" style="height:16px;max-width:44px;object-fit:contain;" onerror="this.style.display=\'none\'">ABF Freight</span>';
+  const td='padding:9px 12px;white-space:nowrap;font-size:12px;';
+  const tdMu='padding:9px 12px;white-space:nowrap;font-size:11px;color:var(--mu);';
+  const row='<tr style="border-bottom:1px solid var(--bdr);">' +
+    '<td style="'+td+'font-weight:600;color:var(--ac);">FL-2026-4471</td>' +
+    '<td style="padding:9px 12px;">'+podChip+'</td>' +
+    '<td style="padding:9px 12px;">'+modeChip+'</td>' +
+    '<td style="'+tdMu+'">05/27/26</td>' +
+    '<td style="'+tdMu+'">05/28/26</td>' +
+    '<td style="'+tdMu+'">06/03/26</td>' +
+    '<td style="'+td+'">Summit Home Furnishings</td>' +
+    '<td style="'+td+'">Jordan Miller</td>' +
+    '<td style="'+td+'color:var(--mu);">'+carrierCell+'</td>' +
+    '<td style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);white-space:nowrap;">0418-25513</td>' +
+    '<td style="'+td+'font-weight:600;">$629.10</td>' +
+  '</tr>';
+  wrap.innerHTML='<div style="overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:900px;"><thead><tr style="background:#faf9f6;">'+th+'</tr></thead><tbody>'+row+'</tbody></table></div>';
+  return wrap;
+}
+// Open the canned POD image in the right pane (scrollable), titled with the BOL.
+function _movieOpenPOD(){
+  if(_movieKilled())return;
+  const node=document.createElement('div');
+  node.style.cssText='padding:14px;background:#f3f0ff;min-height:100%;';
+  const img=document.createElement('img');
+  img.src='docs/pod-jordan-miller.png';
+  img.style.cssText='display:block;width:100%;height:auto;border:1px solid var(--bdr);border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.12);background:#fff;';
+  node.appendChild(img);
+  _panelMovie('Proof of Delivery · BOL FL-2026-4471', node);
+}
+
+// ── Act 2 sequence (chained after Act 1's closing line) ──
+const _A2_JORDAN='Yes, the shipment to Jordan Miller in Broomfield, CO was delivered! It shows a status of proof of delivery (POD), with a pickup date of May 28, 2026 and a delivery date of June 3, 2026. The shipment was carried by ABF Freight with a cost of $629.10. Would you like me to pull up the proof of delivery document?';
+const _A2_POD="Your Proof of Delivery for the Jordan Miller shipment is ready — you'll see the clickable document buttons below. The full Bill of Lading and other documents are available there as well if you need them.";
+function _movieAct2(){
+  if(_movieKilled())return;
+  _movieEnsureShipmentsNav();
+  // a. Cursor → New Chat → clean reset
+  _movieCursorClickTo(document.getElementById('sb-newchat'), ()=>{
+    if(_movieKilled())return;
+    _movieNewChatReset();
+    _mt(_a2Ask, 800);
+  });
+}
+function _a2Ask(){
+  if(_movieKilled())return;
+  _movieTypeInput('Was the shipment to Jordan delivered?', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Was the shipment to Jordan delivered?');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_JORDAN); _mt(_a2ViewShips, 1800); }, 1500);
+    }, 500);
+  });
+}
+function _a2ViewShips(){
+  if(_movieKilled())return;
+  _movieTypeInput('View shipments', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('View shipments');
+    _mt(()=>{ if(_movieKilled())return;
+      _movieCursorClickTo(_movieEnsureShipmentsNav(), ()=>{
+        if(_movieKilled())return;
+        _panelMovie('My Shipments', _movieShipmentsPanel());
+        _mt(_a2PullPod, 1700);
+      });
+    }, 650);
+  });
+}
+function _a2PullPod(){
+  if(_movieKilled())return;
+  _movieTypeInput('Can you pull the POD?', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Can you pull the POD?');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_POD);
+        const podBtn=_movieRenderDocRow();
+        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(podBtn, _movieOpenPOD); }, 950); // END of Act 2 — rest
+      }, 1500);
+    }, 500);
+  });
+}
+
 function startMovie(){ if(!_movieKilled()) runMovie(); }
 
 // ── Init: wire SmartPaste, kill-switches, and schedule the movie ───────────
@@ -2033,6 +2220,8 @@ document.addEventListener('DOMContentLoaded', function(){
   if(wta){ wta.addEventListener('focus',()=>killMovie({toWelcome:true})); wta.addEventListener('keydown',()=>killMovie({toWelcome:true})); }
   const ita=document.getElementById('input-textarea');
   if(ita){ ita.addEventListener('focus',()=>killMovie({})); ita.addEventListener('keydown',()=>killMovie({})); }
+  // Take-over: any REAL click or keypress anywhere kills the movie mid-cursor.
+  ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) killMovie({}); }, true));
   if(!_movieKilled()) _mt(startMovie, 2000);
 });
 </script>
