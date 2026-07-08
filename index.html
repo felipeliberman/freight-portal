@@ -1317,25 +1317,47 @@ function _abfOcalaAnswer(){
 // ── Act 1 canned rate panel — reproduces the portal rate-comparison LOOK with ──
 // prices masked behind signup. Zero live rating, zero API. Rendered by the movie
 // via _movieRenderRates() and tagged data-movie so killMovie/take-over clears it.
+// Locally hosted logo assets (logos/) — never hotlink a carrier site at runtime.
+// Carriers with no obtainable logo map to '' and fall back to an initials badge.
 const _MOVIE_CARRIER_LOGOS = {
-  // Reused from the portal's official-carrier-URL fallback map (each carrier's own site)
-  'Estes Express': 'https://www.estes-express.com/content/dam/estes/images/logos/estes-express-lines-logo.png',
-  'Estes Express - Volume': 'https://www.estes-express.com/content/dam/estes/images/logos/estes-express-lines-logo.png',
-  'TForce Freight': 'https://www.tforcefreight.com/ltl/apps/img/TForce_Freight_logo.png',
-  'ABF Freight': 'https://arcb.com/content/dam/arcb/images/ABF_Logo.png',
-  'AAA Cooper': 'https://www.aaacooper.com/Assets/images/AAACooper_Logo.png',
-  'Forward Air': 'https://www.forwardair.com/wp-content/uploads/2020/03/ForwardAir_Logo.png',
-  'Saia LTL Freight': 'https://www.saia.com/content/dam/saia/images/saia-logo.svg',
-  'FedEx Freight Priority': 'https://www.fedex.com/content/dam/fedex-com/logos/logo.png',
-  'FedEx Freight Economy': 'https://www.fedex.com/content/dam/fedex-com/logos/logo.png',
-  'Old Dominion Freight Line': 'https://www.odfl.com/content/dam/odfl/images/logos/odfl-logo.svg',
-  // Four carriers not in the portal map — each carrier's OWN official logo URL (verified image)
-  'Roadrunner': 'https://freight.rrts.com/SiteAssets/images/logos/RRFreightLogo.gif',
-  'Roadrunner - Volume': 'https://freight.rrts.com/SiteAssets/images/logos/RRFreightLogo.gif',
-  'WARP': 'https://www.wearewarp.com/warp-logo.svg',
-  'Estes Forwarding Worldwide': 'https://eadn-wc03-9628137.nxedge.io/wp-content/uploads/2018/12/EFW2x.png',
-  'Averitt Express': 'https://www.averitt.com/hs-fs/hubfs/Averitt_logo_250_PNG.png'
+  'Estes Express': 'logos/estes.svg',
+  'Estes Express - Volume': 'logos/estes.svg',
+  'TForce Freight': 'logos/tforce.svg',
+  'ABF Freight': 'logos/abf.svg',
+  'AAA Cooper': 'logos/aaacooper.png',
+  'Forward Air': '',
+  'Saia LTL Freight': 'logos/saia.svg',
+  'FedEx Freight Priority': 'logos/fedex.png',
+  'FedEx Freight Economy': 'logos/fedex.png',
+  'Old Dominion Freight Line': '',
+  'Roadrunner': 'logos/roadrunner.gif',
+  'Roadrunner - Volume': 'logos/roadrunner.gif',
+  'WARP': 'logos/warp.svg',
+  'Estes Forwarding Worldwide': 'logos/efw.png',
+  'Averitt Express': 'logos/averitt.png'
 };
+// Initials-badge fallback — same style as portal MODAL_CARRIER_BADGES (initials + bg).
+const _MOVIE_CARRIER_BADGES = {
+  'Estes Express': {init:'ES', bg:'var(--mu)'},
+  'Estes Express - Volume': {init:'ES', bg:'var(--mu)'},
+  'Roadrunner': {init:'RR', bg:'var(--mu)'},
+  'Roadrunner - Volume': {init:'RR', bg:'var(--mu)'},
+  'AAA Cooper': {init:'AAA', bg:'var(--mu)'},
+  'TForce Freight': {init:'TF', bg:'var(--mu)'},
+  'ABF Freight': {init:'ABF', bg:'#dc2626'},
+  'Forward Air': {init:'FA', bg:'var(--mu)'},
+  'WARP': {init:'WP', bg:'var(--mu)'},
+  'Estes Forwarding Worldwide': {init:'EFW', bg:'var(--mu)'},
+  'FedEx Freight Priority': {init:'FX', bg:'#6d28d9'},
+  'FedEx Freight Economy': {init:'FX', bg:'#6d28d9'},
+  'Saia LTL Freight': {init:'SA', bg:'var(--mu)'},
+  'Averitt Express': {init:'AV', bg:'var(--mu)'},
+  'Old Dominion Freight Line': {init:'OD', bg:'#1d4ed8'}
+};
+function _movieCarrierBadge(carrier){
+  const b = _MOVIE_CARRIER_BADGES[carrier] || {init:(carrier||'??').substring(0,2).toUpperCase(), bg:'var(--mu)'};
+  return '<div style="margin-bottom:3px;"><span style="display:inline-flex;align-items:center;justify-content:center;height:22px;min-width:22px;padding:0 7px;border-radius:5px;background:'+b.bg+';color:#fff;font-size:10px;font-weight:700;letter-spacing:.02em;">'+b.init+'</span></div>';
+}
 const _MOVIE_TERMS_MSG = 'Guaranteed and expedited service levels carry carrier-specific cutoff times, appointment windows, and accessorial terms. Final terms are confirmed when you book.';
 const _MOVIE_RATES = [
   {carrier:'Estes Express',              service:'LTL Economy',                              days:5,    best:true, terms:false},
@@ -1433,7 +1455,7 @@ function _movieRenderRates(rates){
     tr.innerHTML =
       '<td style="padding:7px 10px;font-weight:600;font-size:12px;color:var(--tx);">' +
         (idx===0 ? '<div style="font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px;">↑ Best</div>' : '') +
-        (iconUrl ? '<img src="'+iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;" onerror="this.onerror=null;this.hidden=true">' : '') +
+        (iconUrl ? '<img class="mv-logo" src="'+iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;">' : _movieCarrierBadge(rate.carrier)) +
         rate.carrier + '</td>' +
       '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
@@ -1458,6 +1480,8 @@ function _movieRenderRates(rates){
         '<button class="mv-save-btn" title="Save this rate" style="background:none;border:1px solid var(--bdr);border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:inherit;color:var(--mu);margin-right:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>' +
         '<button class="mv-select-btn" style="background:var(--ac);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Select</button>' +
       '</td>';
+    const logoImg = tr.querySelector('.mv-logo');
+    if (logoImg) logoImg.onerror = function(){ this.onerror = null; this.outerHTML = _movieCarrierBadge(rate.carrier); };
     const termsBtn = tr.querySelector('.mv-terms-toggle');
     if (termsBtn) termsBtn.onclick = function(ev){ ev.stopPropagation(); const d = tr.querySelector('.mv-terms-detail'); if (d) d.style.display = (d.style.display === 'none' ? 'block' : 'none'); };
     const selBtn = tr.querySelector('.mv-select-btn'); if (selBtn) selBtn.onclick = startOnboarding;
