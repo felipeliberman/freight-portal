@@ -1314,6 +1314,163 @@ function _abfOcalaAnswer(){
   return "ABF standard runs about "+o.days+" business days on that lane. I'm seeing about $"+o.price.toFixed(2)+" for a single 800 lb pallet at class 70 — that's a sample rate, live rates come with your account. Want the full carrier comparison?";
 }
 
+// ── Act 1 canned rate panel — reproduces the portal rate-comparison LOOK with ──
+// prices masked behind signup. Zero live rating, zero API. Rendered by the movie
+// via _movieRenderRates() and tagged data-movie so killMovie/take-over clears it.
+const _MOVIE_CARRIER_LOGOS = {
+  // Reused from the portal's official-carrier-URL fallback map (each carrier's own site)
+  'Estes Express': 'https://www.estes-express.com/content/dam/estes/images/logos/estes-express-lines-logo.png',
+  'Estes Express - Volume': 'https://www.estes-express.com/content/dam/estes/images/logos/estes-express-lines-logo.png',
+  'TForce Freight': 'https://www.tforcefreight.com/ltl/apps/img/TForce_Freight_logo.png',
+  'ABF Freight': 'https://arcb.com/content/dam/arcb/images/ABF_Logo.png',
+  'AAA Cooper': 'https://www.aaacooper.com/Assets/images/AAACooper_Logo.png',
+  'Forward Air': 'https://www.forwardair.com/wp-content/uploads/2020/03/ForwardAir_Logo.png',
+  'Saia LTL Freight': 'https://www.saia.com/content/dam/saia/images/saia-logo.svg',
+  'FedEx Freight Priority': 'https://www.fedex.com/content/dam/fedex-com/logos/logo.png',
+  'FedEx Freight Economy': 'https://www.fedex.com/content/dam/fedex-com/logos/logo.png',
+  'Old Dominion Freight Line': 'https://www.odfl.com/content/dam/odfl/images/logos/odfl-logo.svg',
+  // Four carriers not in the portal map — each carrier's OWN official logo URL (verified image)
+  'Roadrunner': 'https://freight.rrts.com/SiteAssets/images/logos/RRFreightLogo.gif',
+  'Roadrunner - Volume': 'https://freight.rrts.com/SiteAssets/images/logos/RRFreightLogo.gif',
+  'WARP': 'https://www.wearewarp.com/warp-logo.svg',
+  'Estes Forwarding Worldwide': 'https://eadn-wc03-9628137.nxedge.io/wp-content/uploads/2018/12/EFW2x.png',
+  'Averitt Express': 'https://www.averitt.com/hs-fs/hubfs/Averitt_logo_250_PNG.png'
+};
+const _MOVIE_TERMS_MSG = 'Guaranteed and expedited service levels carry carrier-specific cutoff times, appointment windows, and accessorial terms. Final terms are confirmed when you book.';
+const _MOVIE_RATES = [
+  {carrier:'Estes Express',              service:'LTL Economy',                              days:5,    best:true, terms:false},
+  {carrier:'Roadrunner',                 service:'Less than Truckload',                      days:3,    terms:false},
+  {carrier:'AAA Cooper',                 service:'Less than Truckload',                      days:3,    terms:false},
+  {carrier:'Roadrunner',                 service:'Guaranteed Charge',                        days:3,    terms:false},
+  {carrier:'TForce Freight',             service:'TForce Freight LTL',                       days:3,    terms:true},
+  {carrier:'Estes Express',              service:'LTL Standard Transit',                     days:3,    terms:false},
+  {carrier:'AAA Cooper',                 service:'Guaranteed',                               days:3,    terms:false},
+  {carrier:'TForce Freight',             service:'TForce Freight LTL - Guaranteed',          days:3,    terms:true},
+  {carrier:'ABF Freight',                service:'Less than Truckload',                      days:3,    terms:true},
+  {carrier:'Forward Air',                service:'Less than Truckload',                      days:2,    terms:false},
+  {carrier:'Estes Express',              service:'Guaranteed LTL Standard Transit: 5PM',     days:3,    terms:false},
+  {carrier:'Forward Air',                service:'Less than Truckload - Guaranteed Service', days:2,    terms:false},
+  {carrier:'ABF Freight',                service:'Guaranteed by 17:00',                      days:4,    terms:true},
+  {carrier:'WARP',                       service:'Less than Truckload',                      days:2,    terms:false},
+  {carrier:'Estes Forwarding Worldwide', service:'Home Now - First',                         days:null, terms:true},
+  {carrier:'FedEx Freight Priority',     service:'Less than Truckload',                      days:2,    terms:false},
+  {carrier:'Saia LTL Freight',           service:'Less than Truckload',                      days:2,    terms:false},
+  {carrier:'Averitt Express',            service:'Standard',                                 days:3,    terms:false},
+  {carrier:'Saia LTL Freight',           service:'Saia Guaranteed - 5',                      days:2,    terms:false},
+  {carrier:'Roadrunner - Volume',        service:'Volume',                                   days:3,    terms:false},
+  {carrier:'FedEx Freight Economy',      service:'Guaranteed Date',                          days:5,    terms:false},
+  {carrier:'Estes Express - Volume',     service:'Volume and Truckload Basic',               days:3,    terms:true},
+  {carrier:'Old Dominion Freight Line',  service:'Less than Load. - Standard LTL',           days:3,    terms:false},
+  {carrier:'Old Dominion Freight Line',  service:'Guaranteed Speed Service. - Standard LTL', days:3,    terms:false}
+];
+
+function _movieRenderRates(rates){
+  rates = rates || _MOVIE_RATES;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;';
+
+  // Hero header — Compare Carrier Rates + route / weight / pickup strip
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
+  hdr.innerHTML =
+    '<div style="flex:1;min-width:110px;border-right:1px solid var(--bdr);padding-right:16px;margin-right:4px;text-align:center;">' +
+      '<div style="font-size:13px;font-weight:600;color:var(--ac);line-height:1.2;">Compare Carrier Rates</div>' +
+      '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Get a Quote</div>' +
+    '</div>' +
+    '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
+      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--ac);">90660 → 75001</div>' +
+        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Route</div>' +
+      '</div>' +
+      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--ac);">260 lbs</div>' +
+        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Weight</div>' +
+      '</div>' +
+      '<div style="text-align:center;padding:0 8px;">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--ac);">Next business day</div>' +
+        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Pickup</div>' +
+      '</div>' +
+    '</div>';
+  wrap.appendChild(hdr);
+
+  // Tab bar — 1. Quote Details | 2. Select Rate (Select Rate active)
+  const tabs = document.createElement('div');
+  tabs.style.cssText = 'display:flex;border-bottom:1px solid var(--bdr);background:var(--card);flex-shrink:0;';
+  tabs.innerHTML =
+    '<div style="flex:1;padding:10px;font-size:13px;font-weight:600;border-bottom:2px solid transparent;color:var(--mu);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> 1. Quote Details</div>' +
+    '<div style="flex:1;padding:10px;font-size:13px;font-weight:600;border-bottom:2px solid var(--ac);color:var(--ac);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> 2. Select Rate</div>';
+  wrap.appendChild(tabs);
+
+  // Rates pane — count + table
+  const pane = document.createElement('div');
+  pane.style.cssText = 'padding:12px;';
+  const count = document.createElement('div');
+  count.style.cssText = 'font-size:12px;font-weight:600;color:var(--mu);margin-bottom:8px;';
+  count.textContent = rates.length + ' rates found';
+  pane.appendChild(count);
+
+  const tblWrap = document.createElement('div');
+  tblWrap.style.cssText = 'overflow-x:auto;';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
+  table.innerHTML =
+    '<thead><tr style="background:#faf9f6;border-bottom:2px solid var(--bdr);">' +
+      '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:var(--mu);white-space:nowrap;">CARRIER</th>' +
+      '<th style="padding:8px 6px;text-align:left;font-size:10px;font-weight:700;color:var(--mu);white-space:nowrap;">SERVICE</th>' +
+      '<th style="padding:8px 6px;text-align:center;font-size:10px;font-weight:700;color:var(--mu);white-space:nowrap;">TRANSIT</th>' +
+      '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;color:var(--ac);white-space:nowrap;width:96px;">PRICE</th>' +
+      '<th style="padding:8px 6px;text-align:center;font-size:10px;font-weight:700;color:var(--mu);width:80px;">ACTIONS</th>' +
+    '</tr></thead>';
+  const tbody = document.createElement('tbody');
+
+  rates.forEach(function(rate, idx){
+    const iconUrl = _MOVIE_CARRIER_LOGOS[rate.carrier] || '';
+    const transit = (rate.days != null) ? (rate.days + ' days') : '—';
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid var(--bdr);transition:background .1s;';
+    tr.onmouseenter = function(){ tr.style.background = '#faf9f6'; };
+    tr.onmouseleave = function(){ tr.style.background = ''; };
+    tr.innerHTML =
+      '<td style="padding:7px 10px;font-weight:600;font-size:12px;color:var(--tx);">' +
+        (idx===0 ? '<div style="font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px;">↑ Best</div>' : '') +
+        (iconUrl ? '<img src="'+iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;" onerror="this.onerror=null;this.hidden=true">' : '') +
+        rate.carrier + '</td>' +
+      '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
+          '<span>' + rate.service + '</span>' +
+          (rate.terms ?
+            '<button class="mv-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;flex-shrink:0;">' +
+              '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+              'Carrier terms' +
+            '</button>' : '') +
+        '</div>' +
+        (rate.terms ?
+          '<div class="mv-terms-detail" style="display:none;margin-top:5px;padding:6px 9px;background:#fdf0fd;border-radius:6px;border-left:2px solid #bd27bc;font-size:10px;color:var(--mu);line-height:1.5;">' + _MOVIE_TERMS_MSG + '</div>' : '') +
+      '</td>' +
+      '<td style="padding:9px 6px;text-align:center;font-size:12px;">' + transit + '</td>' +
+      '<td style="padding:9px 10px;text-align:right;width:96px;">' +
+        '<span style="display:inline-flex;align-items:center;gap:4px;justify-content:flex-end;font-size:11px;font-weight:600;color:var(--fa);white-space:nowrap;">' +
+          '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
+          'Sign up to view' +
+        '</span>' +
+      '</td>' +
+      '<td style="padding:9px 6px;text-align:center;white-space:nowrap;">' +
+        '<button class="mv-save-btn" title="Save this rate" style="background:none;border:1px solid var(--bdr);border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:inherit;color:var(--mu);margin-right:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>' +
+        '<button class="mv-select-btn" style="background:var(--ac);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Select</button>' +
+      '</td>';
+    const termsBtn = tr.querySelector('.mv-terms-toggle');
+    if (termsBtn) termsBtn.onclick = function(ev){ ev.stopPropagation(); const d = tr.querySelector('.mv-terms-detail'); if (d) d.style.display = (d.style.display === 'none' ? 'block' : 'none'); };
+    const selBtn = tr.querySelector('.mv-select-btn'); if (selBtn) selBtn.onclick = startOnboarding;
+    const saveBtn = tr.querySelector('.mv-save-btn'); if (saveBtn) saveBtn.onclick = startOnboarding;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tblWrap.appendChild(table);
+  pane.appendChild(tblWrap);
+  wrap.appendChild(pane);
+  return wrap;
+}
+
 // ── Daily-rolling usage limits (localStorage, resets each calendar day) ─────
 const DEMO_MSG_LIMIT = 15, DEMO_EXTRACT_LIMIT = 2;
 function _todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1647,52 +1804,65 @@ function runMovie(){
   _movieSoftReset();
   const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
   const wta=document.getElementById('welcome-textarea'); if(!wta) return;
-  const line='I need to ship 2 pallets of office chairs from Chicago to Atlanta, about 1,200 lbs';
+
+  // Act 1 — a portal-matching, rate-obscured quote flow. Type the opener, then play
+  // the scripted quote Q&A; the last question pulls up the masked rate panel.
+  const firstLine='I need a quote';
   wta.setAttribute('data-ghost','1');
   let i=0;
   (function type(){
     if(_movieKilled())return;
-    wta.value=line.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
-    if(i++<line.length) _mt(type,40); else _mt(send,550);
+    wta.value=firstLine.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
+    if(i++<firstLine.length) _mt(type,55); else _mt(begin,550);
   })();
 
-  function send(){
+  // Scripted turns after the opener. {u} = user line, {a} = assistant line, panel = open rates.
+  const TURNS=[
+    {a:'Got the form open! Just a few details to get started:\n1. Where is it shipping from (city/state or ZIP)?\n2. Where is it shipping to?\n3. What are you shipping, and what’s the weight and dimensions (L x W x H in inches)?'},
+    {u:'Picking up from 90660 going to 75001. We are shipping a table in two boxes on a pallet weighing 260 lbs. 60 x 48 x 72'},
+    {a:'Looks good — 1 pallet, 260 lbs, 60×48×72 from 90660 to 75001. A couple of quick questions before I pull rates:\n1. Is the delivery going to a residence or a business? And will they need a liftgate at delivery?\n2. Any other special requirements — limited access, inside delivery, appointment needed?'},
+    {u:'This is delivering to a residence and we need a lift gate at delivery'},
+    {a:'Got it. And is the freight hazardous material?'},
+    {u:'No'},
+    {a:'Would you like to add cargo insurance? If so, what is the total value of the cargo?'},
+    {u:'No'},
+    {a:'No problem — pulling your rates now without insurance.', panel:true},
+    {a:'24 carriers came back — Estes is the cheapest at 5 days. Open a free account to see live rates and book any of these.'}
+  ];
+
+  function begin(){
     if(_movieKilled())return;
     // exactly the welcomeSend transition: clear textarea, collapse hero → chat thread, user bubble
     wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost');
     showChatArea();
-    _ghostUser(line);
-    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
-      _mt(()=>{ if(_movieKilled())return; removeTyping();
-        _ghostBot('Here are sample rates for that lane. TForce is best at $534.80, three-day transit — these are sample numbers.');
-        _panelMovie('Sample Quote', renderQuoteCard('chi_atl'));
-        _mt(book,1900);
-      },1100);
-    },550);
+    _ghostUser(firstLine);
+    _mt(()=>playTurns(0),700);
   }
-  function book(){
+
+  function playTurns(k){
     if(_movieKilled())return;
-    _ghostUser('Book the TForce option');
-    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+    if(k>=TURNS.length){ _mt(qa,2600); return; }
+    const t=TURNS[k];
+    if(t.u){
+      _ghostUser(t.u);
+      _mt(()=>playTurns(k+1), 950);
+    } else {
+      _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping();
-        _ghostBot('Saved. Your BOL is FL-2024-8842 — TForce Freight, ready when you are.');
-        _panelMovie('Shipment saved', _movieConfirmCard());
-        _mt(slip,2000);
-      },1000);
-    },550);
+        _ghostBot(t.a);
+        if(t.panel){
+          _mt(()=>{ if(_movieKilled())return;
+            _panelMovie('Compare Carrier Rates', _movieRenderRates(_MOVIE_RATES));
+            _mt(()=>playTurns(k+1), 1700);
+          }, 750);
+        } else {
+          _mt(()=>playTurns(k+1), 1450);
+        }
+      }, 1100);
+    }
   }
-  function slip(){
-    if(_movieKilled())return;
-    _ghostUser('[Shared a document: sample-packing-slip.png]');
-    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
-      _mt(()=>{ if(_movieKilled())return; removeTyping();
-        _ghostBot('Read it. Pulled the shipment straight off your packing slip — Chicago to Atlanta, two pallets, 1,200 pounds.');
-        _panelMovie("Here's your shipment", renderExtractedCard(_SLIP_EXTRACT));
-        _mt(qa,2200);
-      },1200);
-    },550);
-  }
-  // Act 4 — "Ask the assistant anything": four scripted freight-knowledge exchanges in the
+
+  // Closing act — "Ask the assistant anything": four scripted freight-knowledge exchanges in the
   // center chat. Chat-only (no panel card). Q4's answer carries the account CTA and ends the loop.
   function qa(){
     if(_movieKilled())return;
