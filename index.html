@@ -1317,22 +1317,22 @@ function _abfOcalaAnswer(){
 // ── Act 1 canned rate panel — reproduces the portal rate-comparison LOOK with ──
 // prices masked behind signup. Zero live rating, zero API. Rendered by the movie
 // via _movieRenderRates() and tagged data-movie so killMovie/take-over clears it.
-// Locally hosted logo assets (logos/) — never hotlink a carrier site at runtime.
-// Carriers with no obtainable logo map to '' and fall back to an initials badge.
+// Real carrier logos (the rate response's own 128x64 PNGs) hosted locally in logos/.
+// Never hotlink at runtime. _movieCarrierBadge is the onerror fallback if a file is missing.
 const _MOVIE_CARRIER_LOGOS = {
-  'Estes Express': 'logos/estes.svg',
-  'Estes Express - Volume': 'logos/estes.svg',
-  'TForce Freight': 'logos/tforce.svg',
-  'ABF Freight': 'logos/abf.svg',
+  'Estes Express': 'logos/estes.png',
+  'Estes Express - Volume': 'logos/estes.png',
+  'TForce Freight': 'logos/tforce.png',
+  'ABF Freight': 'logos/abf.png',
   'AAA Cooper': 'logos/aaacooper.png',
-  'Forward Air': '',
-  'Saia LTL Freight': 'logos/saia.svg',
+  'Forward Air': 'logos/forwardair.png',
+  'Saia LTL Freight': 'logos/saia.png',
   'FedEx Freight Priority': 'logos/fedex.png',
   'FedEx Freight Economy': 'logos/fedex.png',
-  'Old Dominion Freight Line': '',
-  'Roadrunner': 'logos/roadrunner.gif',
-  'Roadrunner - Volume': 'logos/roadrunner.gif',
-  'WARP': 'logos/warp.svg',
+  'Old Dominion Freight Line': 'logos/odfl.png',
+  'Roadrunner': 'logos/roadrunner.png',
+  'Roadrunner - Volume': 'logos/roadrunner.png',
+  'WARP': 'logos/warp.png',
   'Estes Forwarding Worldwide': 'logos/efw.png',
   'Averitt Express': 'logos/averitt.png'
 };
@@ -1358,32 +1358,31 @@ function _movieCarrierBadge(carrier){
   const b = _MOVIE_CARRIER_BADGES[carrier] || {init:(carrier||'??').substring(0,2).toUpperCase(), bg:'var(--mu)'};
   return '<div style="margin-bottom:3px;"><span style="display:inline-flex;align-items:center;justify-content:center;height:22px;min-width:22px;padding:0 7px;border-radius:5px;background:'+b.bg+';color:#fff;font-size:10px;font-weight:700;letter-spacing:.02em;">'+b.init+'</span></div>';
 }
-const _MOVIE_TERMS_MSG = 'Guaranteed and expedited service levels carry carrier-specific cutoff times, appointment windows, and accessorial terms. Final terms are confirmed when you book.';
 const _MOVIE_RATES = [
-  {carrier:'Estes Express',              service:'LTL Economy',                              days:5,    best:true, terms:false},
-  {carrier:'Roadrunner',                 service:'Less than Truckload',                      days:3,    terms:false},
-  {carrier:'AAA Cooper',                 service:'Less than Truckload',                      days:3,    terms:false},
-  {carrier:'Roadrunner',                 service:'Guaranteed Charge',                        days:3,    terms:false},
-  {carrier:'TForce Freight',             service:'TForce Freight LTL',                       days:3,    terms:true},
-  {carrier:'Estes Express',              service:'LTL Standard Transit',                     days:3,    terms:false},
-  {carrier:'AAA Cooper',                 service:'Guaranteed',                               days:3,    terms:false},
-  {carrier:'TForce Freight',             service:'TForce Freight LTL - Guaranteed',          days:3,    terms:true},
-  {carrier:'ABF Freight',                service:'Less than Truckload',                      days:3,    terms:true},
-  {carrier:'Forward Air',                service:'Less than Truckload',                      days:2,    terms:false},
-  {carrier:'Estes Express',              service:'Guaranteed LTL Standard Transit: 5PM',     days:3,    terms:false},
-  {carrier:'Forward Air',                service:'Less than Truckload - Guaranteed Service', days:2,    terms:false},
-  {carrier:'ABF Freight',                service:'Guaranteed by 17:00',                      days:4,    terms:true},
-  {carrier:'WARP',                       service:'Less than Truckload',                      days:2,    terms:false},
-  {carrier:'Estes Forwarding Worldwide', service:'Home Now - First',                         days:null, terms:true},
-  {carrier:'FedEx Freight Priority',     service:'Less than Truckload',                      days:2,    terms:false},
-  {carrier:'Saia LTL Freight',           service:'Less than Truckload',                      days:2,    terms:false},
-  {carrier:'Averitt Express',            service:'Standard',                                 days:3,    terms:false},
-  {carrier:'Saia LTL Freight',           service:'Saia Guaranteed - 5',                      days:2,    terms:false},
-  {carrier:'Roadrunner - Volume',        service:'Volume',                                   days:3,    terms:false},
-  {carrier:'FedEx Freight Economy',      service:'Guaranteed Date',                          days:5,    terms:false},
-  {carrier:'Estes Express - Volume',     service:'Volume and Truckload Basic',               days:3,    terms:true},
-  {carrier:'Old Dominion Freight Line',  service:'Less than Load. - Standard LTL',           days:3,    terms:false},
-  {carrier:'Old Dominion Freight Line',  service:'Guaranteed Speed Service. - Standard LTL', days:3,    terms:false}
+  {carrier:'Estes Express',              service:'LTL Economy',                              days:5,    best:true},
+  {carrier:'Roadrunner',                 service:'Less than Truckload',                      days:3},
+  {carrier:'AAA Cooper',                 service:'Less than Truckload',                      days:3},
+  {carrier:'Roadrunner',                 service:'Guaranteed Charge',                        days:3},
+  {carrier:'TForce Freight',             service:'TForce Freight LTL',                       days:3},
+  {carrier:'Estes Express',              service:'LTL Standard Transit',                     days:3},
+  {carrier:'AAA Cooper',                 service:'Guaranteed',                               days:3},
+  {carrier:'TForce Freight',             service:'TForce Freight LTL - Guaranteed',          days:3},
+  {carrier:'ABF Freight',                service:'Less than Truckload',                      days:3},
+  {carrier:'Forward Air',                service:'Less than Truckload',                      days:2},
+  {carrier:'Estes Express',              service:'Guaranteed LTL Standard Transit: 5PM',     days:3},
+  {carrier:'Forward Air',                service:'Less than Truckload - Guaranteed Service', days:2},
+  {carrier:'ABF Freight',                service:'Guaranteed by 17:00',                      days:4},
+  {carrier:'WARP',                       service:'Less than Truckload',                      days:2},
+  {carrier:'Estes Forwarding Worldwide', service:'Home Now - First',                         days:null},
+  {carrier:'FedEx Freight Priority',     service:'Less than Truckload',                      days:2},
+  {carrier:'Saia LTL Freight',           service:'Less than Truckload',                      days:2},
+  {carrier:'Averitt Express',            service:'Standard',                                 days:3},
+  {carrier:'Saia LTL Freight',           service:'Saia Guaranteed - 5',                      days:2},
+  {carrier:'Roadrunner - Volume',        service:'Volume',                                   days:3},
+  {carrier:'FedEx Freight Economy',      service:'Guaranteed Date',                          days:5},
+  {carrier:'Estes Express - Volume',     service:'Volume and Truckload Basic',               days:3},
+  {carrier:'Old Dominion Freight Line',  service:'Less than Load. - Standard LTL',           days:3},
+  {carrier:'Old Dominion Freight Line',  service:'Guaranteed Speed Service. - Standard LTL', days:3}
 ];
 
 function _movieRenderRates(rates){
@@ -1457,18 +1456,7 @@ function _movieRenderRates(rates){
         (idx===0 ? '<div style="font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px;">↑ Best</div>' : '') +
         (iconUrl ? '<img class="mv-logo" src="'+iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;">' : _movieCarrierBadge(rate.carrier)) +
         rate.carrier + '</td>' +
-      '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
-        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
-          '<span>' + rate.service + '</span>' +
-          (rate.terms ?
-            '<button class="mv-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;line-height:1.4;flex-shrink:0;">' +
-              '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
-              'Carrier terms' +
-            '</button>' : '') +
-        '</div>' +
-        (rate.terms ?
-          '<div class="mv-terms-detail" style="display:none;margin-top:5px;padding:6px 9px;background:#fdf0fd;border-radius:6px;border-left:2px solid #bd27bc;font-size:10px;color:var(--mu);line-height:1.5;">' + _MOVIE_TERMS_MSG + '</div>' : '') +
-      '</td>' +
+      '<td style="padding:9px 6px;font-size:11px;color:var(--mu);"><span>' + rate.service + '</span></td>' +
       '<td style="padding:9px 6px;text-align:center;font-size:12px;">' + transit + '</td>' +
       '<td style="padding:9px 10px;text-align:right;width:96px;">' +
         '<span style="display:inline-flex;align-items:center;gap:4px;justify-content:flex-end;font-size:11px;font-weight:600;color:var(--fa);white-space:nowrap;">' +
@@ -1482,8 +1470,6 @@ function _movieRenderRates(rates){
       '</td>';
     const logoImg = tr.querySelector('.mv-logo');
     if (logoImg) logoImg.onerror = function(){ this.onerror = null; this.outerHTML = _movieCarrierBadge(rate.carrier); };
-    const termsBtn = tr.querySelector('.mv-terms-toggle');
-    if (termsBtn) termsBtn.onclick = function(ev){ ev.stopPropagation(); const d = tr.querySelector('.mv-terms-detail'); if (d) d.style.display = (d.style.display === 'none' ? 'block' : 'none'); };
     const selBtn = tr.querySelector('.mv-select-btn'); if (selBtn) selBtn.onclick = startOnboarding;
     const saveBtn = tr.querySelector('.mv-save-btn'); if (saveBtn) saveBtn.onclick = startOnboarding;
     tbody.appendChild(tr);
