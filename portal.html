@@ -13226,50 +13226,10 @@ async function handleInput(text) {
   const hasQuoteData = /\d{5}/.test(lower) || /\b\d+\s*(lb|lbs|pound|kg|pallet)/.test(lower) || /\d+x\d+x\d+/.test(lower);
 
   if ((looksLikeQuote && !isKnowledgeQuestion || (looksLikeQuote && hasQuoteData)) && !_isKnowledgeQ) {
-    // Open panel if not already open
-    if (!window._quoteFormOpen) showQuoteForm();
-    const parsed = parseQuoteChat(t);
-    if (Object.keys(parsed).length > 0) {
-      const filled = [];
-      if (parsed.originZip)     filled.push('origin ' + parsed.originZip);
-      if (parsed.destZip)       filled.push('destination ' + parsed.destZip);
-      if (parsed.weight)        filled.push(parsed.weight + ' lbs');
-      if (parsed.pieces)        filled.push(parsed.pieces + ' piece' + (parsed.pieces !== '1' ? 's' : ''));
-      if (parsed.length)        filled.push('dims ' + parsed.length + 'x' + parsed.width + 'x' + parsed.height);
-      if (parsed.accessorials)  filled.push(parsed.accessorials.map(c=>(ACC_LABEL[c]||c)).join(', '));
-      // Delay fill+check to allow quote form DOM to fully render
-      setTimeout(() => {
-        fillQuoteForm(parsed);
-        const _wtEl = document.querySelector('.li-weight');
-        const _lenEl = document.querySelector('.li-len');
-        const _missingDims = (!_lenEl || !_lenEl.value) && !parsed.length;
-        const _missingWeight = (!_wtEl || !_wtEl.value) && !parsed.weight;
-        if (parsed._needsMultiItemFlow) {
-          window._collectingItems = { items: [], total: null };
-          appendMessage('bot', 'Got it — tell me each item one at a time: pieces, weight, and dims. Start with item 1. Say "done" when finished.');
-        } else if (_missingDims && _missingWeight) {
-          window._awaitingDims = true;
-          appendMessage('bot', 'Got it — I\'ve filled in: ' + filled.join(', ') + '. What are the dimensions and weight? (e.g. 48x40x48, 200 lbs)');
-        } else if (_missingDims) {
-          window._awaitingDims = true;
-          appendMessage('bot', 'Got it — I\'ve filled in: ' + filled.join(', ') + '. What are the dimensions? (length x width x height in inches)');
-        } else if (_missingWeight) {
-          window._awaitingWeight = true;
-          appendMessage('bot', 'Got it — I\'ve filled in: ' + filled.join(', ') + '. I still need the weight — how many lbs?');
-        } else {
-          const _confirmMsg2 = filled.length ? 'Got it — I\'ve filled in: ' + filled.join(', ') + '.' : 'Got it.';
-          appendMessage('bot', _confirmMsg2);
-          if (!parsed.accessorials || !parsed.accessorials.length) {
-            window._awaitingPackaging = true; promptPackaging();
-          } else {
-            window._awaitingAccessorial = true;
-            setTimeout(() => { appendMessage('bot', 'Does this shipment need any special services? Going to a home or apartment? No loading dock at the destination? Any limited access location like a school, military base, or storage facility?'); }, 500);
-          }
-        }
-      }, 500);
-      return;
-    }
-    // Has quote signals but parseQuoteChat didn't extract enough — fall through to AI
+    window._inQuoteConvo = true;
+    removeTyping();
+    await aiConverse(t);
+    return;
   }
 
   // ── Quote in progress handled earlier (guard moved up near top of handleInput) ──
