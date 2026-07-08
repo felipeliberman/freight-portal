@@ -1974,13 +1974,22 @@ function runMovie(){
   // Act 1 — open the Quote Details form, fill it step-by-step to the conversation, then
   // switch to Select Rate. Ends on the "24 carriers came back" line (Act 2 comes later).
   const firstLine='I need a quote';
-  wta.setAttribute('data-ghost','1');
-  let i=0;
-  (function type(){
+  // Open like Act 2: cursor → New Chat → clean blank welcome → brief pause → begin typing.
+  _movieCursorClickTo(document.getElementById('sb-newchat'), ()=>{
     if(_movieKilled())return;
-    wta.value=firstLine.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
-    if(i++<firstLine.length) _mt(type,55); else _mt(begin,550);
-  })();
+    _movieSoftReset();               // clean blank welcome state (clears chat + right pane)
+    _mt(_a1TypeOpener, 1000);        // brief pause — a blank screen shouldn't linger
+  });
+  function _a1TypeOpener(){
+    if(_movieKilled())return;
+    wta.setAttribute('data-ghost','1');
+    let i=0;
+    (function type(){
+      if(_movieKilled())return;
+      wta.value=firstLine.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
+      if(i++<firstLine.length) _mt(type,55); else _mt(begin,550);
+    })();
+  }
 
   // Scripted turns. {u}=user line, {a}=assistant line. open=build+show the form;
   // fill='shipment'|'acc' choreographs the form fill; rates=switch to the rate panel.
@@ -2321,12 +2330,12 @@ function _a2Jordan(){
     }, 500);
   });
 }
-// g–i. Type "Pull the POD?" → reply + doc-button row → cursor clicks POD → open it (END).
+// g–i. Type the POD-pull line → reply + doc-button row → cursor clicks POD → open it (END).
 function _a2PullPod(){
   if(_movieKilled())return;
-  _movieTypeInput('Pull the POD?', ()=>{
+  _movieTypeInput('Pull the POD', ()=>{
     if(_movieKilled())return;
-    _ghostUser('Pull the POD?');
+    _ghostUser('Pull the POD');
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_POD);
         const podBtn=_movieRenderDocRow();
