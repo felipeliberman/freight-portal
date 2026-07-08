@@ -2121,30 +2121,89 @@ function _movieRenderDocRow(){
   msgs.appendChild(wrap); msgs.scrollTop=msgs.scrollHeight;
   return podBtn;
 }
-// Single-result shipments table (ports renderShipments' singleResult look), one canned row.
+// Canned shipments dashboard — ports renderShipments' header/stat strip + row look.
+// 34 total (4 In Transit · 29 POD · 1 Scheduled); table shows the first 20 rows. NO price column.
+const _MOVIE_SHIP_LOGOS = {
+  'ABF Freight':'logos/abf.png','Estes Express':'logos/estes.png','TForce Freight':'logos/tforce.png',
+  'Saia LTL Freight':'logos/saia.png','Old Dominion':'logos/odfl.png','Forward Air':'logos/forwardair.png'
+};
+const _MOVIE_SHIP_ROWS = [
+  {bol:'140133959', status:'SHIPMENT IS IN TRANSIT', created:'06/29/26', pu:'06/29/26', del:'07/03/26', shipper:'Ridgeline Furniture Co.', consignee:'Bayside Home Goods', carrier:'Estes Express', pro:'412-889301'},
+  {bol:'140133946', status:'PICKED UP FROM SHIPPER', created:'06/29/26', pu:'07/06/26', del:'07/08/26', shipper:'Ridgeline Furniture Co.', consignee:'Alpine Décor Group', carrier:'TForce Freight', pro:'773-114520'},
+  {bol:'140133944', status:'PICKED UP FROM SHIPPER', created:'06/29/26', pu:'07/06/26', del:'07/08/26', shipper:'Summit Home Furnishings', consignee:'Harbor Home Depot', carrier:'Saia LTL Freight', pro:'201-556012'},
+  {bol:'140133942', status:'PICKED UP FROM SHIPPER', created:'06/29/26', pu:'07/06/26', del:'07/09/26', shipper:'Summit Home Furnishings', consignee:'Meadowbrook Living', carrier:'Forward Air', pro:'640-207788'},
+  {bol:'140133710', status:'POD', created:'06/24/26', pu:'06/25/26', del:'06/25/26', shipper:'Summit Home Furnishings', consignee:'Jordan Miller', carrier:'ABF Freight', pro:'0418-25513'},
+  {bol:'140132852', status:'SCHEDULED FOR DELIVERY', created:'06/10/26', pu:'06/17/26', del:'06/18/26', shipper:'Cedar & Oak Interiors', consignee:'Northgate Retail', carrier:'Estes Express', pro:'412-901145'},
+  {bol:'140132678', status:'POD', created:'06/08/26', pu:'06/12/26', del:'06/12/26', shipper:'Cedar & Oak Interiors', consignee:'Lakeview Outfitters', carrier:'Old Dominion', pro:'889-334100'},
+  {bol:'140132677', status:'POD', created:'06/08/26', pu:'06/12/26', del:'06/12/26', shipper:'Cedar & Oak Interiors', consignee:'Lakeview Outfitters', carrier:'Old Dominion', pro:'889-334101'},
+  {bol:'140132492', status:'POD', created:'06/04/26', pu:'06/04/26', del:'06/04/26', shipper:'Ironwood Supply Co.', consignee:'Sunset Home Store', carrier:'TForce Freight', pro:'773-118840'},
+  {bol:'140132361', status:'POD', created:'06/02/26', pu:'06/05/26', del:'06/05/26', shipper:'Ironwood Supply Co.', consignee:'Prairie Home Co.', carrier:'Saia LTL Freight', pro:'201-560034'},
+  {bol:'140131930', status:'POD', created:'05/27/26', pu:'05/27/26', del:'05/28/26', shipper:'Summit Home Furnishings', consignee:'Willow Creek Design', carrier:'ABF Freight', pro:'0418-24990'},
+  {bol:'140131546', status:'POD', created:'05/19/26', pu:'05/20/26', del:'05/21/26', shipper:'Ridgeline Furniture Co.', consignee:'Copperfield Living', carrier:'Estes Express', pro:'412-887720'},
+  {bol:'140131545', status:'POD', created:'05/19/26', pu:'05/22/26', del:'05/23/26', shipper:'Ridgeline Furniture Co.', consignee:'Copperfield Living', carrier:'Estes Express', pro:'412-887721'},
+  {bol:'140131544', status:'POD', created:'05/19/26', pu:'05/22/26', del:'05/23/26', shipper:'Ridgeline Furniture Co.', consignee:'Copperfield Living', carrier:'Estes Express', pro:'412-887722'},
+  {bol:'140131419', status:'POD', created:'05/18/26', pu:'05/20/26', del:'05/21/26', shipper:'Ironwood Supply Co.', consignee:'Harbor Home Outfitters', carrier:'Forward Air', pro:'640-201455'},
+  {bol:'140131202', status:'POD', created:'05/13/26', pu:'05/18/26', del:'05/19/26', shipper:'Cedar & Oak Interiors', consignee:'Riverside Furnishings', carrier:'Old Dominion', pro:'889-330012'},
+  {bol:'140131201', status:'POD', created:'05/13/26', pu:'05/18/26', del:'05/19/26', shipper:'Cedar & Oak Interiors', consignee:'Riverside Furnishings', carrier:'Old Dominion', pro:'889-330013'},
+  {bol:'140131041', status:'POD', created:'05/08/26', pu:'05/15/26', del:'05/16/26', shipper:'Summit Home Furnishings', consignee:'Grandview Interiors', carrier:'Saia LTL Freight', pro:'201-551190'},
+  {bol:'140130977', status:'POD', created:'05/07/26', pu:'05/08/26', del:'05/08/26', shipper:'Ironwood Supply Co.', consignee:'Maple Street Home', carrier:'TForce Freight', pro:'773-110233'},
+  {bol:'140130969', status:'POD', created:'05/07/26', pu:'05/08/26', del:'05/08/26', shipper:'Ironwood Supply Co.', consignee:'Maple Street Home', carrier:'ABF Freight', pro:'0418-24710'}
+];
+function _movieShipStatusChip(status){
+  const isPod = status === 'POD';
+  const bg = isPod ? '#ede9fe' : '#f3f4f6';
+  const fg = isPod ? '#6d28d9' : 'var(--mu)';
+  return '<span style="display:inline-flex;align-items:center;gap:4px;background:'+bg+';border:1px solid var(--bdr);border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;color:'+fg+';white-space:nowrap;">'+status+'</span>';
+}
 function _movieShipmentsPanel(){
   const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
-  const cols=['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total'];
+  // Status summary strip (full 34)
+  const stat=(n,l,last)=>'<div style="text-align:center;padding:0 8px;flex:1;min-width:0;'+(last?'':'border-right:1px solid var(--bdr);')+'"><div style="font-size:18px;font-weight:500;color:var(--tx);">'+n+'</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">'+l+'</div></div>';
+  const dl='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  const excelBtn='<button class="mv-ship-excel" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:8px 12px;color:var(--tx);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;">'+dl+'Excel</button>';
+  const strip='<div style="border:1px solid var(--bdr);border-radius:12px;background:var(--card);padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:0;flex-wrap:wrap;">' +
+    '<div style="flex:1;min-width:80px;border-right:1px solid var(--bdr);padding-right:14px;margin-right:14px;">' +
+      '<div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:3px;">Last 90 Days</div>' +
+      '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:28px;font-weight:500;color:var(--tx);line-height:1;">34</span><span style="font-size:11px;color:var(--fa);">total</span></div>' +
+    '</div>' +
+    '<div style="display:flex;flex:2;justify-content:space-around;gap:4px;min-width:0;margin-right:12px;">' + stat(4,'In Transit') + stat(29,'POD') + stat(1,'Scheduled',true) + '</div>' +
+    excelBtn +
+  '</div>';
+  // Table (checkbox col + 10 cols, NO Total)
+  const cols=['','BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#'];
   const th=cols.map(c=>'<th style="text-align:left;padding:9px 12px;font-size:10px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--bdr);white-space:nowrap;">'+c+'</th>').join('');
-  const podChip='<span style="display:inline-flex;align-items:center;gap:4px;background:#ede9fe;border:1px solid var(--bdr);border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;color:#6d28d9;white-space:nowrap;">POD</span>';
-  const modeChip='<span style="background:#f0ede6;border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">LTL</span>';
-  const carrierCell='<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;"><img src="logos/abf.png" style="height:16px;max-width:44px;object-fit:contain;" onerror="this.style.display=\'none\'">ABF Freight</span>';
   const td='padding:9px 12px;white-space:nowrap;font-size:12px;';
   const tdMu='padding:9px 12px;white-space:nowrap;font-size:11px;color:var(--mu);';
-  const row='<tr style="border-bottom:1px solid var(--bdr);">' +
-    '<td style="'+td+'font-weight:600;color:var(--ac);">FL-2026-4471</td>' +
-    '<td style="padding:9px 12px;">'+podChip+'</td>' +
-    '<td style="padding:9px 12px;">'+modeChip+'</td>' +
-    '<td style="'+tdMu+'">05/27/26</td>' +
-    '<td style="'+tdMu+'">05/28/26</td>' +
-    '<td style="'+tdMu+'">06/03/26</td>' +
-    '<td style="'+td+'">Summit Home Furnishings</td>' +
-    '<td style="'+td+'">Jordan Miller</td>' +
-    '<td style="'+td+'color:var(--mu);">'+carrierCell+'</td>' +
-    '<td style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);white-space:nowrap;">0418-25513</td>' +
-    '<td style="'+td+'font-weight:600;">$629.10</td>' +
-  '</tr>';
-  wrap.innerHTML='<div style="overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:900px;"><thead><tr style="background:#faf9f6;">'+th+'</tr></thead><tbody>'+row+'</tbody></table></div>';
+  const rows=_MOVIE_SHIP_ROWS.map((s,i)=>{
+    const logo=_MOVIE_SHIP_LOGOS[s.carrier]||'';
+    const carrierCell='<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">'+(logo?'<img src="'+logo+'" style="height:16px;max-width:44px;object-fit:contain;" onerror="this.style.display=\'none\'">':'')+s.carrier+'</span>';
+    return '<tr style="border-bottom:1px solid var(--bdr);'+(i%2===1?'background:#faf9f6;':'')+'">' +
+      '<td style="padding:9px 10px 9px 14px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ac);cursor:pointer;"></td>' +
+      '<td style="'+td+'font-weight:600;color:var(--ac);">'+s.bol+'</td>' +
+      '<td style="padding:9px 12px;">'+_movieShipStatusChip(s.status)+'</td>' +
+      '<td style="padding:9px 12px;"><span style="background:#f0ede6;border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">LTL</span></td>' +
+      '<td style="'+tdMu+'">'+s.created+'</td>' +
+      '<td style="'+tdMu+'">'+s.pu+'</td>' +
+      '<td style="'+tdMu+'">'+s.del+'</td>' +
+      '<td style="'+td+'max-width:130px;overflow:hidden;text-overflow:ellipsis;">'+s.shipper+'</td>' +
+      '<td style="'+td+'max-width:130px;overflow:hidden;text-overflow:ellipsis;">'+s.consignee+'</td>' +
+      '<td style="'+td+'color:var(--mu);">'+carrierCell+'</td>' +
+      '<td style="padding:9px 12px;font-family:monospace;font-size:11px;color:var(--mu);white-space:nowrap;">'+s.pro+'</td>' +
+    '</tr>';
+  }).join('');
+  const table='<div style="overflow-x:auto;border-radius:10px;border:1px solid var(--bdr);background:var(--card);"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:960px;"><thead><tr style="background:#faf9f6;">'+th+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  // Footer (static)
+  const fbtn='background:none;border:1px solid var(--bdr);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--mu);';
+  const footer='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;font-size:11px;color:var(--mu);flex-wrap:wrap;">' +
+    '<span>Displaying <strong style="color:var(--tx);">1–20</strong> of <strong style="color:var(--tx);">34</strong> shipments</span>' +
+    '<div style="display:flex;gap:6px;">' +
+      '<button class="mv-ship-next" style="'+fbtn+'">Next</button>' +
+      '<button class="mv-ship-excel2" style="'+fbtn+'">Excel</button>' +
+      '<button class="mv-ship-refresh" style="'+fbtn+'">↻ Refresh</button>' +
+    '</div></div>';
+  wrap.innerHTML=strip+table+footer;
+  // Static controls → signup CTA (a real click also kills the movie via the global take-over guard)
+  wrap.querySelectorAll('.mv-ship-excel,.mv-ship-excel2,.mv-ship-next,.mv-ship-refresh').forEach(b=>{ b.onclick=startOnboarding; });
   return wrap;
 }
 // Open the canned POD image in the right pane (scrollable), titled with the BOL.
@@ -2156,11 +2215,11 @@ function _movieOpenPOD(){
   img.src='docs/pod-jordan-miller.png';
   img.style.cssText='display:block;width:100%;height:auto;border:1px solid var(--bdr);border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.12);background:#fff;';
   node.appendChild(img);
-  _panelMovie('Proof of Delivery · BOL FL-2026-4471', node);
+  _panelMovie('Proof of Delivery · BOL 140133710', node);
 }
 
 // ── Act 2 sequence (chained after Act 1's closing line) ──
-const _A2_JORDAN='Yes, the shipment to Jordan Miller in Broomfield, CO was delivered! It shows a status of proof of delivery (POD), with a pickup date of May 28, 2026 and a delivery date of June 3, 2026. The shipment was carried by ABF Freight with a cost of $629.10. Would you like me to pull up the proof of delivery document?';
+const _A2_JORDAN='Yes, the shipment to Jordan Miller in Broomfield, CO was delivered! It shows a status of proof of delivery (POD), with a pickup date of May 28, 2026 and a delivery date of June 3, 2026. The shipment was carried by ABF Freight. Would you like me to pull up the proof of delivery document?';
 const _A2_POD="Your Proof of Delivery for the Jordan Miller shipment is ready — you'll see the clickable document buttons below. The full Bill of Lading and other documents are available there as well if you need them.";
 function _movieAct2(){
   if(_movieKilled())return;
@@ -2169,38 +2228,46 @@ function _movieAct2(){
   _movieCursorClickTo(document.getElementById('sb-newchat'), ()=>{
     if(_movieKilled())return;
     _movieNewChatReset();
-    _mt(_a2Ask, 800);
+    _mt(_a2Show, 800);
   });
 }
-function _a2Ask(){
+// b–c. Type "Show me my shipments" → assistant "Found 34 shipments:"
+function _a2Show(){
+  if(_movieKilled())return;
+  _movieTypeInput('Show me my shipments', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Show me my shipments');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot('Found 34 shipments:'); _mt(_a2Dash, 1400); }, 1300);
+    }, 500);
+  });
+}
+// d. Cursor → My Shipments → dashboard panel
+function _a2Dash(){
+  if(_movieKilled())return;
+  _movieCursorClickTo(_movieEnsureShipmentsNav(), ()=>{
+    if(_movieKilled())return;
+    _panelMovie('My Shipments (34)', _movieShipmentsPanel());
+    _mt(_a2Jordan, 1800);
+  });
+}
+// e–f. Type the Jordan question → verbatim reply
+function _a2Jordan(){
   if(_movieKilled())return;
   _movieTypeInput('Was the shipment to Jordan delivered?', ()=>{
     if(_movieKilled())return;
     _ghostUser('Was the shipment to Jordan delivered?');
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
-      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_JORDAN); _mt(_a2ViewShips, 1800); }, 1500);
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_JORDAN); _mt(_a2PullPod, 1800); }, 1500);
     }, 500);
   });
 }
-function _a2ViewShips(){
-  if(_movieKilled())return;
-  _movieTypeInput('View shipments', ()=>{
-    if(_movieKilled())return;
-    _ghostUser('View shipments');
-    _mt(()=>{ if(_movieKilled())return;
-      _movieCursorClickTo(_movieEnsureShipmentsNav(), ()=>{
-        if(_movieKilled())return;
-        _panelMovie('My Shipments', _movieShipmentsPanel());
-        _mt(_a2PullPod, 1700);
-      });
-    }, 650);
-  });
-}
+// g–i. Type "Pull the POD?" → reply + doc-button row → cursor clicks POD → open it (END).
 function _a2PullPod(){
   if(_movieKilled())return;
-  _movieTypeInput('Can you pull the POD?', ()=>{
+  _movieTypeInput('Pull the POD?', ()=>{
     if(_movieKilled())return;
-    _ghostUser('Can you pull the POD?');
+    _ghostUser('Pull the POD?');
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_POD);
         const podBtn=_movieRenderDocRow();
