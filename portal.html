@@ -10146,7 +10146,7 @@ function _quoteSignature() {
 // and never re-asks for or re-narrates fields that are already there.
 function _quoteFormState() {
   try {
-    const panel = document.getElementById('right-panel');
+    const panel = (window._quoteContainer && document.body.contains(window._quoteContainer)) ? window._quoteContainer : document.getElementById('right-panel');
     if (!panel || !panel.querySelector('#qt-origin')) return { quoteFormOpen: false };
     const g = sel => { const el = panel.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
     const rgv = (row, sel) => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
