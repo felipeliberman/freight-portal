@@ -11123,6 +11123,30 @@ async function aiConverse(userText) {
         try {
           if (toolUse.name === 'update_quote') {
             result = _execUpdateQuote(toolUse.input);
+            // Write-time ZIP resolve: if the agent set a ZIP, resolve it NOW so it learns 'notfound'
+            // this turn (up front), not only after a failed pull. Reuses window._zipResolution +
+            // the existing ZIP-RESOLUTION prompt rule; fetchRates simply refreshes it at pull time.
+            if (toolUse.input && (toolUse.input.originZip || toolUse.input.destZip)) {
+              const _zr = window._zipResolution || {};
+              if (toolUse.input.originZip) {
+                const _o = await lookupZip(String(toolUse.input.originZip));
+                _zr.originZip = String(toolUse.input.originZip);
+                _zr.originResolved = _o.ok; _zr.originReason = _o.reason; _zr.originCity = _o.city; _zr.originState = _o.state;
+              }
+              if (toolUse.input.destZip) {
+                const _d = await lookupZip(String(toolUse.input.destZip));
+                _zr.destZip = String(toolUse.input.destZip);
+                _zr.destResolved = _d.ok; _zr.destReason = _d.reason; _zr.destCity = _d.city; _zr.destState = _d.state;
+              }
+              window._zipResolution = _zr;
+              const _bad = [];
+              if (toolUse.input.originZip && _zr.originReason === 'notfound') _bad.push('origin ZIP ' + _zr.originZip);
+              if (toolUse.input.destZip   && _zr.destReason   === 'notfound') _bad.push('destination ZIP ' + _zr.destZip);
+              result = Object.assign({}, result, { formState: _quoteFormState() });
+              if (_bad.length) result = Object.assign({}, result, {
+                note: 'Could not find a city for ' + _bad.join(' or ') + '. Stop and ask the customer to double-check that ZIP now, before asking anything else — do not continue to what they are shipping.'
+              });
+            }
             // If this call pulled rates, WAIT for the pull to finish before returning the
             // result, so the AI doesn't narrate "no rates" while Primus is still responding.
             if (toolUse.input && toolUse.input.getRates) {
