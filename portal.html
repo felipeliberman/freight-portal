@@ -1195,6 +1195,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;
 .form-label{font-size:11px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;}
 .form-input{background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--tx);font-family:var(--sans);transition:border-color .15s;outline:none;}
 .form-input:focus{border-color:var(--ac);}
+.qt-invalid{border-color:#dc2626 !important;}
 .form-select{background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--tx);font-family:var(--sans);outline:none;cursor:pointer;appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23a8a29a' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;transition:border-color .15s;}
 .form-select:focus{border-color:var(--ac);}
 .modal-foot{padding:16px 24px 20px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px;}
@@ -15406,6 +15407,17 @@ function showAddressBook() {
 
 function startQuote() { showQuoteForm(); }
 
+// Entry-time ZIP gate (FORM UX only): grey out Get Rates while either ZIP is notfound.
+// The agent pull path is blocked separately by the fetchRates gate — not here.
+function refreshGetRatesEnabled() {
+  const btn = document.getElementById('qt-get-rates');
+  if (!btn) return;
+  const bad = !!(window._originBad || window._destBad);
+  btn.disabled = bad;
+  btn.style.opacity = bad ? '0.5' : '1';
+  btn.style.cursor = bad ? 'not-allowed' : 'pointer';
+}
+
 function showQuoteForm(prefill, silent) {
   const _pf = prefill || {};
   console.log('[FP] showQuoteForm — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| weight:', _pf.weight, '| lineItems:', !!(_pf.lineItems&&_pf.lineItems.length), '| silent:', !!silent);
@@ -15649,23 +15661,36 @@ function showQuoteForm(prefill, silent) {
   // ── ZIP lookup ───────────────────────────────────────────────────────────
   async function zipLookup(zip, elId) {
     const el = container.querySelector('#' + elId);
-    if (!zip || (!_isCanadianPostal(zip) && zip.length !== 5)) { if (el) el.textContent = ''; return; }
-    try {
-      if (_isCanadianPostal(zip)) {
-        const fsa = zip.replace(/\s/g, '').slice(0, 3).toUpperCase();
-        const r = await fetch('https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q='
-          + encodeURIComponent(fsa)
-          + '&country=CA&limit=1');
-        if (r.ok) {
-          const d = await r.json();
-          const ac = d.results && d.results[0] && d.results[0].address_components;
-          if (ac && ac.city && el) el.textContent = '📍 ' + ac.city + ', ' + (ac.state || '');
-        }
-      } else {
-        const r = await fetch('https://api.zippopotam.us/us/' + zip);
-        if (r.ok) { const d = await r.json(); const p = d.places && d.places[0]; if (p && el) el.textContent = '📍 ' + p['place name'] + ', ' + p['state abbreviation']; }
-      }
-    } catch(e) {}
+    const isOrigin = elId === 'qt-origin-city';
+    const inputEl = container.querySelector(isOrigin ? '#qt-origin' : '#qt-dest');
+    const setBad = (bad) => { if (isOrigin) window._originBad = bad; else window._destBad = bad; };
+    // Empty or not a complete ZIP/postal — clear label + border, mark incomplete (not bad).
+    if (!zip || (!_isCanadianPostal(zip) && zip.length !== 5)) {
+      if (el) { el.textContent = ''; el.style.color = '#bd27bc'; }
+      if (inputEl) inputEl.classList.remove('qt-invalid');
+      setBad(false); refreshGetRatesEnabled();
+      return;
+    }
+    const q = zip;
+    let r;
+    try { r = await lookupZip(q); } catch(e) { r = { ok:false, reason:'outage' }; }
+    // STALE GUARD: input changed while awaiting — abandon, do not paint.
+    if (inputEl && inputEl.value.trim() !== q) return;
+    if (r.reason === 'ok') {
+      if (el) { el.textContent = '📍 ' + r.city + ', ' + (r.state || ''); el.style.color = '#bd27bc'; }
+      if (inputEl) inputEl.classList.remove('qt-invalid');
+      setBad(false);
+    } else if (r.reason === 'notfound') {
+      if (el) { el.textContent = 'Enter a valid ZIP code'; el.style.color = '#dc2626'; }
+      if (inputEl) inputEl.classList.add('qt-invalid');
+      setBad(true);
+    } else {
+      // outage — transient; do NOT hard-block (Get Rates still blocks an incomplete quote).
+      if (el) { el.textContent = 'Couldn\'t verify this ZIP right now — try again'; el.style.color = '#8a857c'; }
+      if (inputEl) inputEl.classList.remove('qt-invalid');
+      setBad(false);
+    }
+    refreshGetRatesEnabled();
   }
 
   // ── Geocodio RDI residential check ──────────────────────────────────────────
@@ -15813,6 +15838,8 @@ function showQuoteForm(prefill, silent) {
     if (_rdiTimer) clearTimeout(_rdiTimer); _rdiTimer = setTimeout(() => checkResidential(v), 800);
   };
   container.querySelector('#qt-date').oninput = () => updateProgress();
+  // Reset the entry-gate bad-flags for this fresh form, then sync the button state on load.
+  window._originBad = false; window._destBad = false; refreshGetRatesEnabled();
   if (pf.originZip) { zipLookup(pf.originZip, 'qt-origin-city'); setTimeout(() => checkResidentialPickup(pf.originZip), 1000); }
   if (pf.destZip)   { zipLookup(pf.destZip, 'qt-dest-city'); setTimeout(() => checkResidential(pf.destZip), 1000); }
   // Initialize maxlength from prefill — catches agent update_quote before _applyQuoteFields fires.
