@@ -1974,22 +1974,14 @@ function runMovie(){
   // Act 1 — open the Quote Details form, fill it step-by-step to the conversation, then
   // switch to Select Rate. Ends on the "24 carriers came back" line (Act 2 comes later).
   const firstLine='I need a quote';
-  // Open like Act 2: cursor → New Chat → clean blank welcome → brief pause → begin typing.
-  _movieCursorClickTo(document.getElementById('sb-newchat'), ()=>{
+  // Open like Act 2: cursor → New Chat → blank new-chat state → brief pause → THEN type.
+  // Nothing types until the click+reset complete, and the opener types into the fresh
+  // new-chat input (bottom chat box) — never the home/welcome hero.
+  _movieClickNewChat(()=>{
     if(_movieKilled())return;
-    _movieSoftReset();               // clean blank welcome state (clears chat + right pane)
-    _mt(_a1TypeOpener, 1000);        // brief pause — a blank screen shouldn't linger
+    _movieNewChatReset();            // blank new-chat state (clears chat + right pane, shows chat area)
+    _mt(begin, 1000);                // brief pause — a blank screen shouldn't linger
   });
-  function _a1TypeOpener(){
-    if(_movieKilled())return;
-    wta.setAttribute('data-ghost','1');
-    let i=0;
-    (function type(){
-      if(_movieKilled())return;
-      wta.value=firstLine.slice(0,i); wta.style.height='auto'; wta.style.height=Math.min(wta.scrollHeight,140)+'px';
-      if(i++<firstLine.length) _mt(type,55); else _mt(begin,550);
-    })();
-  }
 
   // Scripted turns. {u}=user line, {a}=assistant line. open=build+show the form;
   // fill='shipment'|'acc' choreographs the form fill; rates=switch to the rate panel.
@@ -2007,11 +1999,12 @@ function runMovie(){
 
   function begin(){
     if(_movieKilled())return;
-    // exactly the welcomeSend transition: clear textarea, collapse hero → chat thread, user bubble
-    wta.value=''; wta.style.height='auto'; wta.removeAttribute('data-ghost');
-    showChatArea();
-    _ghostUser(firstLine);
-    _mt(()=>playTurns(0),700);
+    // Type the opener into the fresh new-chat input (bottom chat box), then post the user bubble.
+    _movieTypeInput(firstLine, ()=>{
+      if(_movieKilled())return;
+      _ghostUser(firstLine);
+      _mt(()=>playTurns(0),700);
+    });
   }
 
   // Run the form action tied to a turn, then advance after enough time for it to play out.
@@ -2048,9 +2041,12 @@ function _movieCursor(){
   c=document.createElement('div');
   c.id='movie-cursor'; c.setAttribute('data-movie-el','1');
   c.innerHTML='<span class="mc-dot"></span><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"><path d="M5 3l6 15 2.2-6.2L19.4 9.6 5 3z"/></svg>';
-  c.style.left=Math.round(window.innerWidth*0.5)+'px';
-  c.style.top=Math.round(window.innerHeight*0.55)+'px';
+  // Rest position: just to the RIGHT of New Chat, so the first click shows a visible glide onto it.
+  const nc=document.getElementById('sb-newchat');
+  if(nc){ const r=nc.getBoundingClientRect(); c.style.left=Math.round(r.right+40)+'px'; c.style.top=Math.round(r.top+r.height/2)+'px'; }
+  else { c.style.left=Math.round(window.innerWidth*0.5)+'px'; c.style.top=Math.round(window.innerHeight*0.55)+'px'; }
   document.body.appendChild(c);
+  void c.offsetWidth; // commit initial position so the first move animates (no instant jump)
   return c;
 }
 // Glide the cursor to a target's center (~600ms), pulse a click, then fire cb.
@@ -2067,6 +2063,17 @@ function _movieCursorClickTo(targetEl, cb){
       _mt(()=>{ if(_movieKilled())return; if(cb) cb(); }, 300);
     }, 640);
   }, 40);
+}
+// Shared New-Chat click (every act opener). Land the cursor on #sb-newchat center, click, then
+// park it ~40px to the RIGHT — so the next act's click shows the cursor travel back onto it.
+function _movieClickNewChat(cb){
+  const nc=document.getElementById('sb-newchat');
+  _movieCursorClickTo(nc, ()=>{
+    if(_movieKilled())return;
+    const c=document.getElementById('movie-cursor');
+    if(c && nc){ const r=nc.getBoundingClientRect(); c.style.left=Math.round(r.right+40)+'px'; c.style.top=Math.round(r.top+r.height/2)+'px'; }
+    if(cb) cb();
+  });
 }
 // Type text into the chat input (ghost), then clear and fire cb.
 function _movieTypeInput(text, cb){
@@ -2276,8 +2283,8 @@ const _A2_POD="Your Proof of Delivery for the Jordan Miller shipment is ready �
 function _movieAct2(){
   if(_movieKilled())return;
   _movieEnsureShipmentsNav();
-  // a. Cursor → New Chat → clean reset
-  _movieCursorClickTo(document.getElementById('sb-newchat'), ()=>{
+  // a. Cursor → New Chat (shared: lands on button, clicks, parks right) → clean reset
+  _movieClickNewChat(()=>{
     if(_movieKilled())return;
     _movieNewChatReset();
     _mt(_a2Show, 800);
