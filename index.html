@@ -100,7 +100,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   line-height:1.15;letter-spacing:-.01em;
   position:relative;overflow:hidden;
 }
-#welcome-heading::after{
+#welcome-heading.sheen::after{
   content:'';
   position:absolute;
   top:-20%;left:-150%;
@@ -490,7 +490,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
   <!-- MAIN -->
   <div id="main">
     <div id="welcome">
-      <div id="welcome-heading">Start shipping with<br>Freight and Logistics, Inc.</div>
+      <div id="welcome-heading" class="sheen">Start shipping with<br>Freight and Logistics, Inc.</div>
       <div id="welcome-subline">Quote, track, and manage freight — with AI.</div>
       <div id="welcome-trust">Instant quotes from 50+ carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
       <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 5 minutes</div>
@@ -1992,7 +1992,7 @@ function runMovie(){
     {a:'Looks good — 1 pallet, 260 lbs, 60×48×72 from 90660 to 75001. A couple of quick questions before I pull rates:\n1. Is the delivery going to a residence or a business? And will they need a liftgate at delivery?\n2. Any other special requirements — limited access, inside delivery, appointment needed?'},
     {u:'This is delivering to a residence and we need a lift gate at delivery', fill:'acc'},
     {a:'Would you like to add cargo insurance? If so, what is the total value of the cargo?'},
-    {u:'No'},
+    {u:'No thanks.'},
     {a:'No problem — pulling your rates now without insurance.', rates:true},
     {a:'24 carriers came back — Estes is the cheapest at 5 days. Open a free account to see live rates and book any of these.'}
   ];
@@ -2515,6 +2515,15 @@ function _movieOpenBOL(){
   node.appendChild(img);
   _panelMovie('Bill of Lading · BOL 140130969', node);
 }
+// End of movie: return to the HOME welcome screen, replay the heading glimmer once, then rest.
+function _movieEndHome(){
+  if(_movieKilled())return;
+  const cur=document.getElementById('movie-cursor'); if(cur) cur.remove();
+  _movieSoftReset();
+  const h=document.getElementById('welcome-heading');
+  if(h){ h.classList.remove('sheen'); void h.offsetWidth; h.classList.add('sheen'); } // re-trigger logoSheen
+  // Movie done — rests on home. movie-live cue stays; take-over still works.
+}
 // a–b. Type the Mary question → verbatim reply.
 function _movieAct3b(){
   if(_movieKilled())return;
@@ -2538,7 +2547,7 @@ function _a3bBols(){
         const bolBtn=_movieRenderLabeledDocRow('BOL 140130969'); // Mary Whitfield row → its Bill of Lading button
         _movieRenderLabeledDocRow('BOL 140126856');
         if(bolBtn) bolBtn.onclick=_movieOpenBOL;
-        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(bolBtn, _movieOpenBOL); }, 1100); // END of Act 3b — rests after the BOL opens
+        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(bolBtn, ()=>{ _movieOpenBOL(); _mt(_movieEndHome, 2000); }); }, 1100); // BOL opens → hold → return home (end)
       }, 1500);
     }, 500);
   });
