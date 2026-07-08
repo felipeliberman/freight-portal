@@ -2484,9 +2484,9 @@ function _a3Donut(){
   });
 }
 
-// ══ ACT 3b — Keith Q&A + two BOL doc-rows (canned). Terminal act: rests on the end-frame. ══
-const _A3B_KEITH = `Yes, you have two shipments to recipients named Keith. One went to Keith VanOrder in Prosper, TX, shipped on May 7, 2026 via ABF Freight and delivered on May 13, 2026. The other went to Keith Koster in Menlo Park, CA, shipped on February 10, 2026, also via ABF Freight, and delivered on February 20, 2026. Both shipments show a proof of delivery on file. Would you like documents or more details on either one?`;
-const _A3B_BOLS = `The Bills of Lading for both shipments are ready below — you'll see clickable document buttons for Keith VanOrder (BOL 140130969) and Keith Koster (BOL 140126856). Each also has a Shipping Label, Invoice, and Proof of Delivery available if you need those as well!`;
+// ══ ACT 3b — Mary Q&A + two BOL doc-rows (canned). Terminal act: cursor opens a BOL, then rests. ══
+const _A3B_MARY = `Yes, you have two shipments to recipients named Mary. One went to Mary Whitfield in Prosper, TX, shipped on May 7, 2026 via ABF Freight and delivered on May 13, 2026. The other went to Mary Sorensen in Menlo Park, CA, shipped on February 10, 2026, also via ABF Freight, and delivered on February 20, 2026. Both shipments show a proof of delivery on file. Would you like documents or more details on either one?`;
+const _A3B_BOLS = `The Bills of Lading for both shipments are ready below — you'll see clickable document buttons for Mary Whitfield (BOL 140130969) and Mary Sorensen (BOL 140126856). Each also has a Shipping Label, Invoice, and Proof of Delivery available if you need those as well!`;
 // Labeled doc-button row (reuses the doc-row look/icons); buttons route to signup. No prices.
 function _movieRenderLabeledDocRow(bolLabel){
   const msgs=document.getElementById('messages'); if(!msgs) return;
@@ -2502,19 +2502,32 @@ function _movieRenderLabeledDocRow(bolLabel){
   wrap.innerHTML=html;
   wrap.querySelectorAll('.mv-docbtn').forEach(b=>{ b.onclick=startOnboarding; });
   msgs.appendChild(wrap); msgs.scrollTop=msgs.scrollHeight;
+  return wrap.querySelector('.mv-docbtn'); // first button = Bill of Lading
 }
-// a–b. Type the Keith question → verbatim reply.
+// Open the canned Mary Whitfield BOL image in the right pane (same approach as the Act 2 POD).
+function _movieOpenBOL(){
+  if(_movieKilled())return;
+  const node=document.createElement('div');
+  node.style.cssText='padding:14px;background:#f3f0ff;min-height:100%;';
+  const img=document.createElement('img');
+  img.src='docs/bol-mary-whitfield.png';
+  img.style.cssText='display:block;width:100%;height:auto;border:1px solid var(--bdr);border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.12);background:#fff;';
+  node.appendChild(img);
+  _panelMovie('Bill of Lading · BOL 140130969', node);
+}
+// a–b. Type the Mary question → verbatim reply.
 function _movieAct3b(){
   if(_movieKilled())return;
-  _movieTypeInput('Did I ship anything to someone name Keith?', ()=>{
+  _movieTypeInput('Did I ship anything to someone named Mary?', ()=>{
     if(_movieKilled())return;
-    _ghostUser('Did I ship anything to someone name Keith?');
+    _ghostUser('Did I ship anything to someone named Mary?');
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
-      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3B_KEITH); _mt(_a3bBols, 1900); }, 1600);
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3B_MARY); _mt(_a3bBols, 1900); }, 1600);
     }, 500);
   });
 }
-// c–d. Type the BOL request → verbatim reply → two labeled doc-rows → REST (end of movie).
+// c–e. Type the BOL request → verbatim reply → two labeled doc-rows → cursor clicks the
+// Mary Whitfield Bill of Lading → opens the BOL image in the pane → REST (end of movie).
 function _a3bBols(){
   if(_movieKilled())return;
   _movieTypeInput("Show me the BOL's for both of them", ()=>{
@@ -2522,9 +2535,10 @@ function _a3bBols(){
     _ghostUser("Show me the BOL's for both of them");
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3B_BOLS);
-        _movieRenderLabeledDocRow('BOL 140130969');
+        const bolBtn=_movieRenderLabeledDocRow('BOL 140130969'); // Mary Whitfield row → its Bill of Lading button
         _movieRenderLabeledDocRow('BOL 140126856');
-        // END OF ACT 3b — movie rests on this end-frame; no auto-restart.
+        if(bolBtn) bolBtn.onclick=_movieOpenBOL;
+        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(bolBtn, _movieOpenBOL); }, 1100); // END of Act 3b — rests after the BOL opens
       }, 1500);
     }, 500);
   });
