@@ -2330,7 +2330,151 @@ function _a2PullPod(){
     _mt(()=>{ if(_movieKilled())return; _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A2_POD);
         const podBtn=_movieRenderDocRow();
-        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(podBtn, _movieOpenPOD); }, 950); // END of Act 2 — rest
+        _mt(()=>{ if(_movieKilled())return; _movieCursorClickTo(podBtn, ()=>{ _movieOpenPOD(); _mt(_movieAct3, 2600); }); }, 950); // Act 2 → Act 3a
+      }, 1500);
+    }, 500);
+  });
+}
+
+// ══ ACT 3a — reports dashboard + freight-lanes map + shipments-by-month donut (canned) ══
+// All fake data. Panels open hands-free via _panelMovie — no sidebar nav injected/clicked.
+const _A3_REPORTS = `Here are your shipping reports for the last 30 days. You can also ask me things like "show me spend by carrier as a chart", "shipments by month", "my top consignees", or "spend last 3 months" — I'll pull it up as a chart right in the panel.`;
+const _A3_DONUT = `Your donut chart is ready in the side panel, showing your shipment volume across all months on file. Activity has been growing noticeably over time, with October 2025 and January 2026 being among your busiest months at 20 and 18 shipments respectively, and June 2026 is your most recent month with 10 shipments so far. That's a total of 182 shipments across your full history.`;
+
+// ── Report card builders (port renderReports' bar/donut/stat look) ──
+function _mvStatTiles(defs){
+  const cells=defs.map((d,i)=>'<div style="padding:14px 12px;text-align:center;'+(i<defs.length-1?'border-right:1px solid var(--bdr);':'')+'"><div style="font-size:22px;font-weight:500;color:'+d[2]+';line-height:1.1;">'+d[1]+'</div><div style="font-size:10px;color:var(--fa);margin-top:3px;">'+d[0]+'</div></div>').join('');
+  return '<div style="border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;">'+cells+'</div>';
+}
+function _mvBarCard(title, entries, fmt){
+  const max=Math.max.apply(null, entries.map(e=>e[1]).concat([1]));
+  const rows=entries.map(([label,val])=>{
+    const pct=Math.round(val/max*100);
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">'+
+      '<div style="font-size:11px;color:var(--mu);width:88px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+label+'">'+label+'</div>'+
+      '<div style="flex:1;background:#f3f0ff;border-radius:4px;height:16px;overflow:hidden;"><div style="width:'+pct+'%;background:var(--ac);height:100%;border-radius:4px;"></div></div>'+
+      '<div style="font-size:11px;font-weight:600;color:var(--tx);width:60px;text-align:right;">'+(fmt?fmt(val):val)+'</div>'+
+    '</div>';
+  }).join('');
+  return '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:16px;"><div style="font-size:11px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">'+title+'</div>'+rows+'</div>';
+}
+function _mvDonutCard(title, entries, colors){
+  const total=entries.reduce((s,e)=>s+e[1],0)||1;
+  const cx=60,cy=60,r=50; let paths='',start=-Math.PI/2;
+  entries.forEach((e,i)=>{
+    const ang=e[1]/total*Math.PI*2;
+    const x1=cx+r*Math.cos(start),y1=cy+r*Math.sin(start);
+    const x2=cx+r*Math.cos(start+ang),y2=cy+r*Math.sin(start+ang);
+    const large=ang>Math.PI?1:0;
+    paths+='<path d="M'+cx+','+cy+' L'+x1.toFixed(1)+','+y1.toFixed(1)+' A'+r+','+r+' 0 '+large+',1 '+x2.toFixed(1)+','+y2.toFixed(1)+' Z" fill="'+colors[i%colors.length]+'" opacity="0.9"/>';
+    start+=ang;
+  });
+  const legend=entries.map((e,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;"><div style="width:10px;height:10px;border-radius:2px;background:'+colors[i%colors.length]+';flex-shrink:0;"></div><div style="font-size:11px;color:var(--mu);flex:1;">'+e[0]+'</div><div style="font-size:11px;font-weight:600;color:var(--tx);">'+e[1]+' <span style="color:var(--fa);font-weight:400;">('+Math.round(e[1]/total*100)+'%)</span></div></div>').join('');
+  return '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:16px;">'+(title?'<div style="font-size:11px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">'+title+'</div>':'')+
+    '<div style="display:flex;align-items:center;gap:16px;"><svg width="120" height="120" viewBox="0 0 120 120" style="flex-shrink:0;">'+paths+'<circle cx="60" cy="60" r="28" fill="#fff"/><text x="60" y="64" text-anchor="middle" font-size="13" font-weight="600" fill="var(--tx)">'+total+'</text></svg><div style="flex:1;">'+legend+'</div></div></div>';
+}
+// Freight-lanes map — ports buildLaneMap's LOOK (purple map, glowing curves to a Florida hub).
+// Fixed screen-coord lanes; no geocoding.
+function _mvLaneMapHTML(){
+  const hub=[700,380];
+  const origins=[[70,150],[70,255],[300,205],[400,320],[520,165],[560,145],[720,150],[615,290]];
+  const cols=['#bd27bc','#a020a0'];
+  let arcs='',dots='';
+  origins.forEach((o,i)=>{
+    const col=cols[i%2], ox=o[0],oy=o[1],dx=hub[0],dy=hub[1];
+    const mx=(ox+dx)/2, ddx=dx-ox, ddy=dy-oy, len=Math.sqrt(ddx*ddx+ddy*ddy)||1;
+    const bow=Math.max(30,len*0.25), my=(oy+dy)/2 - bow;
+    arcs+='<path d="M'+ox+','+oy+' Q'+mx+','+my.toFixed(1)+' '+dx+','+dy+'" fill="none" stroke="'+col+'cc" stroke-width="1.8" stroke-linecap="round" filter="url(#mvGlow)"/>';
+    dots+='<circle cx="'+ox+'" cy="'+oy+'" r="4.5" fill="'+col+'" stroke="#fff" stroke-width="1" filter="url(#mvGlow)"/>';
+  });
+  dots+='<circle cx="'+hub[0]+'" cy="'+hub[1]+'" r="6.5" fill="#bd27bc" stroke="#fff" stroke-width="1.5" filter="url(#mvGlow)"/>';
+  const us='40,120 120,105 260,95 400,88 520,82 560,76 590,92 650,100 705,120 725,150 712,182 690,222 700,266 705,300 700,332 712,360 720,402 705,416 690,388 672,360 620,368 545,378 470,392 435,362 415,406 388,406 372,362 340,352 322,300 300,292 210,285 120,268 78,250 55,205 60,160 40,120';
+  return '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;">'+
+    '<div style="font-size:11px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;padding:12px 16px 4px;display:flex;justify-content:space-between;align-items:center;"><span>Freight Lanes — Last 30 Days</span><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px;color:var(--fa);">8 lanes mapped</span></div>'+
+    '<svg viewBox="0 0 800 460" width="100%" style="display:block;"><defs><filter id="mvGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.2" result="cb"/><feMerge><feMergeNode in="cb"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>'+
+    '<rect width="800" height="460" fill="#f8f5ff"/>'+
+    '<polygon points="'+us+'" fill="#ede8ff" stroke="#c4b5fd" stroke-width="1" stroke-linejoin="round"/>'+
+    arcs+dots+'</svg>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px 12px;border-top:1px solid var(--bdr);">'+
+      '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--mu);"><span style="width:18px;height:2px;background:#bd27bc;border-radius:2px;display:inline-block;"></span>ABF Freight</span>'+
+      '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--mu);"><span style="width:18px;height:2px;background:#a020a0;border-radius:2px;display:inline-block;"></span>Metro W&amp;D</span>'+
+    '</div></div>';
+}
+function _movieReportsPanel(){
+  const wrap=document.createElement('div');
+  wrap.style.cssText='display:flex;flex-direction:column;gap:14px;padding:16px;background:#fff;';
+  const money=v=>'$'+Number(v).toLocaleString('en-US',{maximumFractionDigits:0});
+  wrap.innerHTML =
+    _mvStatTiles([['Spend','$3,878','var(--ac)'],['Shipments','8','var(--tx)'],['Delivered','4','var(--tx)'],['In Transit','4','var(--tx)']]) +
+    _mvLaneMapHTML() +
+    _mvBarCard('Shipments by Carrier', [['Metro W&D',6],['ABF Freight - B',1],['ABF Freight',1]]) +
+    _mvDonutCard('Shipments by Status', [['In Transit',4],['Delivered',4]], ['#bd27bc','#706c63']) +
+    _mvBarCard('Monthly Shipment Volume', [['Jun 26',8]]) +
+    _mvBarCard('Top Destination States', [['MI',2],['SC',1],['IL',1],['TX',1],['IN',1],['MS',1],['NY',1]]) +
+    _mvBarCard('Monthly Spend ($)', [['Jun 26',3878]], money);
+  return wrap;
+}
+function _movieMonthDonutPanel(){
+  const wrap=document.createElement('div');
+  wrap.style.cssText='padding:16px;background:#fff;min-height:100%;';
+  const chip=t=>'<span style="display:inline-flex;align-items:center;background:#ede9fe;border:1px solid var(--bdr);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;color:#6d28d9;">'+t+'</span>';
+  const entries=[['Sep 2024',2],['Nov 2024',6],['Dec 2024',6],['Jan 2025',6],['Feb 2025',8],['Other',154]];
+  const colors=['#bd27bc','#a020a0','#706c63','#b0ac9f','#8a8480','#c0bbb5'];
+  wrap.innerHTML =
+    '<div style="font-size:15px;font-weight:600;color:var(--tx);">Shipments by Month</div>'+
+    '<div style="font-size:11px;color:var(--fa);margin-bottom:10px;">all history</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">'+chip('Total: 182 shipments')+chip('Dominant: Oct 2025')+chip('All history')+'</div>'+
+    _mvDonutCard('', entries, colors);
+  return wrap;
+}
+// "View chart" ghost button (visual affordance; the donut opens hands-free after).
+function _movieRenderViewChart(){
+  const msgs=document.getElementById('messages'); if(!msgs) return null;
+  const wrap=document.createElement('div'); wrap.style.cssText='margin:0 0 20px 38px;'; wrap.setAttribute('data-ghost','1');
+  const b=document.createElement('button');
+  b.style.cssText='display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--ac);cursor:pointer;font-family:inherit;';
+  b.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 21H3V3"/><path d="M7 14l4-4 3 3 5-6"/></svg> View chart';
+  b.onclick=startOnboarding;
+  wrap.appendChild(b); msgs.appendChild(wrap); msgs.scrollTop=msgs.scrollHeight;
+  return b;
+}
+// ── Act 3a sequence ──
+function _movieAct3(){
+  if(_movieKilled())return;
+  _movieClickNewChat(()=>{
+    if(_movieKilled())return;
+    _movieNewChatReset();
+    _mt(_a3Show, 1000);
+  });
+}
+// b–d. Type "Show me my reports" → loading line → reports blurb → open dashboard hands-free.
+function _a3Show(){
+  if(_movieKilled())return;
+  _movieTypeInput('Show me my reports', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Show me my reports');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot('Loading your reports — fetching the last 30 days of shipment data...');
+        _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+          _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3_REPORTS);
+            _panelMovie('Reports', _movieReportsPanel());
+            _mt(_a3Donut, 2400);
+          }, 1500);
+        }, 1200);
+      }, 1300);
+    }, 500);
+  });
+}
+// e–f. Type the donut request → blurb → "View chart" button → open month donut hands-free (END).
+function _a3Donut(){
+  if(_movieKilled())return;
+  _movieTypeInput('Show me my shipments per month in a donut', ()=>{
+    if(_movieKilled())return;
+    _ghostUser('Show me my shipments per month in a donut');
+    _mt(()=>{ if(_movieKilled())return; _ghostTyping();
+      _mt(()=>{ if(_movieKilled())return; removeTyping(); _ghostBot(_A3_DONUT);
+        _movieRenderViewChart();
+        _mt(()=>{ if(_movieKilled())return; _panelMovie('Shipments by Month', _movieMonthDonutPanel()); }, 1000); // END of Act 3a — rest
       }, 1500);
     }, 500);
   });
