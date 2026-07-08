@@ -23,6 +23,8 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-4px)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fieldFlash{0%{background:#f3e8ff;border-color:var(--ac);}60%{background:#f3e8ff;border-color:var(--ac);}100%{background:var(--card);border-color:var(--bdr);}}
+.field-flash{animation:fieldFlash 1.2s ease forwards;}
 
 /* ── TOPBAR ── */
 #topbar{
@@ -1387,44 +1389,10 @@ const _MOVIE_RATES = [
 
 function _movieRenderRates(rates){
   rates = rates || _MOVIE_RATES;
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;';
-
-  // Hero header — Compare Carrier Rates + route / weight / pickup strip
-  const hdr = document.createElement('div');
-  hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
-  hdr.innerHTML =
-    '<div style="flex:1;min-width:110px;border-right:1px solid var(--bdr);padding-right:16px;margin-right:4px;text-align:center;">' +
-      '<div style="font-size:13px;font-weight:600;color:var(--ac);line-height:1.2;">Compare Carrier Rates</div>' +
-      '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Get a Quote</div>' +
-    '</div>' +
-    '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
-      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--ac);">90660 → 75001</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Route</div>' +
-      '</div>' +
-      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--ac);">260 lbs</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Weight</div>' +
-      '</div>' +
-      '<div style="text-align:center;padding:0 8px;">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--ac);">Next business day</div>' +
-        '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Pickup</div>' +
-      '</div>' +
-    '</div>';
-  wrap.appendChild(hdr);
-
-  // Tab bar — 1. Quote Details | 2. Select Rate (Select Rate active)
-  const tabs = document.createElement('div');
-  tabs.style.cssText = 'display:flex;border-bottom:1px solid var(--bdr);background:var(--card);flex-shrink:0;';
-  tabs.innerHTML =
-    '<div style="flex:1;padding:10px;font-size:13px;font-weight:600;border-bottom:2px solid transparent;color:var(--mu);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> 1. Quote Details</div>' +
-    '<div style="flex:1;padding:10px;font-size:13px;font-weight:600;border-bottom:2px solid var(--ac);color:var(--ac);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> 2. Select Rate</div>';
-  wrap.appendChild(tabs);
-
-  // Rates pane — count + table
+  // Rates-pane inner content (count + 24-carrier table). The shared hero/tabs now
+  // live in _movieQuotePanel; this fills the "2. Select Rate" pane.
   const pane = document.createElement('div');
-  pane.style.cssText = 'padding:12px;';
+  pane.style.cssText = 'display:flex;flex-direction:column;';
   const count = document.createElement('div');
   count.style.cssText = 'font-size:12px;font-weight:600;color:var(--mu);margin-bottom:8px;';
   count.textContent = rates.length + ' rates found';
@@ -1477,8 +1445,186 @@ function _movieRenderRates(rates){
   table.appendChild(tbody);
   tblWrap.appendChild(table);
   pane.appendChild(tblWrap);
-  wrap.appendChild(pane);
-  return wrap;
+  return pane;
+}
+
+// Portal-style field highlight (matches portal.html flashField / .field-flash).
+function flashField(el){ if(!el) return; el.classList.remove('field-flash'); void el.offsetWidth; el.classList.add('field-flash'); }
+
+// Next business day (Mon–Fri) for the movie's canned pickup date.
+function _movieNextBizDay(){ const d=new Date(); d.setDate(d.getDate()+1); const wd=d.getDay(); if(wd===6) d.setDate(d.getDate()+2); else if(wd===0) d.setDate(d.getDate()+1); return d; }
+
+// Full Act 1 quote panel: hero + tabs + progress + "1. Quote Details" form + "2. Select Rate".
+// Ports the LOOK/IDs from portal.html showQuoteForm. Returns { node, ...api } the movie drives.
+// Everything canned — no ZIP lookup, no rating, no API.
+function _movieQuotePanel(){
+  const TYPES   = ['PLT','BOX','CRT','SKD','BAG','BND','RLL','TBE','OTH'];
+  const CLASSES = [50,55,60,65,70,77.5,85,92.5,100,110,125,150,175,200,250,300,400,500];
+  const ACC_SVGS = {
+    'LFD':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="15" y1="17" x2="3" y2="17"/></svg>',
+    'LFO':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="15" y1="17" x2="3" y2="17"/></svg>',
+    'RSD':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+    'RSO':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+    'IND':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>',
+    'LAD':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    'APT':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    'NAO':'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+  };
+  const ACCESSORIAL_LIST = [
+    {code:'RSO',label:'Residential',group:'pu'}, {code:'LFO',label:'Liftgate',group:'pu'}, {code:'NAO',label:'Limited Access',group:'pu'},
+    {code:'RSD',label:'Residential',group:'del'}, {code:'LFD',label:'Liftgate',group:'del'}, {code:'IND',label:'Inside',group:'del'}, {code:'LAD',label:'Limited Access',group:'del'}, {code:'APT',label:'Appointment',group:'del'}
+  ];
+  const iS  = 'border:1px solid var(--bdr);border-radius:6px;padding:7px 10px;font-size:13px;font-family:inherit;background:var(--card);color:var(--tx);width:100%;box-sizing:border-box;';
+  const lS  = 'font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px;';
+  const inS = 'border:1px solid var(--bdr);border-radius:4px;padding:4px 5px;font-size:11px;font-family:inherit;background:var(--card);color:var(--tx);width:100%;box-sizing:border-box;';
+
+  function accGroup(group, label){
+    return '<div style="margin-bottom:6px;"><div style="font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:5px 0;">' + label + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+      ACCESSORIAL_LIST.filter(a=>a.group===group).map(a =>
+        '<button class="qt-acc" data-code="' + a.code + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;border:1px solid var(--bdr);background:var(--card);color:var(--mu);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;">' + (ACC_SVGS[a.code]||'') + ' ' + a.label + '</button>'
+      ).join('') + '</div></div>';
+  }
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;height:100%;';
+  const q = sel => wrap.querySelector(sel);
+
+  // ── Hero header ──
+  const hero = document.createElement('div');
+  hero.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
+  hero.innerHTML =
+    '<div style="flex:1;min-width:110px;border-right:1px solid var(--bdr);padding-right:16px;margin-right:4px;text-align:center;">' +
+      '<div style="font-size:13px;font-weight:600;color:var(--ac);line-height:1.2;">Compare Carrier Rates</div>' +
+      '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Get a Quote</div>' +
+    '</div>' +
+    '<div style="display:flex;flex:2;justify-content:space-around;align-items:center;">' +
+      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);"><div id="qt-hdr-route" style="font-size:13px;font-weight:600;color:var(--ac);">—</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">Route</div></div>' +
+      '<div style="text-align:center;padding:0 8px;border-right:1px solid var(--bdr);"><div id="qt-hdr-weight" style="font-size:13px;font-weight:600;color:var(--ac);">—</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">Weight</div></div>' +
+      '<div style="text-align:center;padding:0 8px;"><div id="qt-hdr-date" style="font-size:13px;font-weight:600;color:var(--ac);">—</div><div style="font-size:10px;color:var(--fa);margin-top:2px;">Pickup</div></div>' +
+    '</div>';
+  wrap.appendChild(hero);
+
+  // ── Tabs ──
+  const tabs = document.createElement('div');
+  tabs.style.cssText = 'display:flex;border-bottom:1px solid var(--bdr);background:var(--card);flex-shrink:0;';
+  tabs.innerHTML =
+    '<button id="qt-tab-quote" style="flex:1;padding:10px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;border-bottom:2px solid var(--ac);color:var(--ac);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> 1. Quote Details</button>' +
+    '<button id="qt-tab-rates" style="flex:1;padding:10px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;color:var(--mu);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> 2. Select Rate</button>';
+  wrap.appendChild(tabs);
+
+  // ── Progress bar ──
+  const prog = document.createElement('div');
+  prog.style.cssText = 'padding:6px 12px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-shrink:0;display:flex;align-items:center;gap:8px;';
+  prog.innerHTML = '<div style="flex:1;background:#e5e2d9;border-radius:4px;height:3px;overflow:hidden;"><div id="qt-prog-bar" style="height:100%;background:var(--ac);border-radius:4px;transition:width .3s;width:0%;"></div></div><div id="qt-prog-txt" style="font-size:10px;color:var(--mu);white-space:nowrap;">0 of 5 fields</div>';
+  wrap.appendChild(prog);
+
+  // ── Quote pane ──
+  const qpane = document.createElement('div');
+  qpane.id = 'qt-pane-quote';
+  qpane.style.cssText = 'flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px;';
+  qpane.innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+      '<div><label style="' + lS + '">Origin ZIP</label><input id="qt-origin" type="text" maxlength="7" placeholder="Origin ZIP" style="' + iS + '"><div id="qt-origin-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+      '<div><label style="' + lS + '">Destination ZIP</label><input id="qt-dest" type="text" maxlength="7" placeholder="Dest ZIP" style="' + iS + '"><div id="qt-dest-city" style="font-size:10px;color:var(--ac);margin-top:3px;min-height:13px;"></div></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+      '<div><label style="' + lS + '">Pickup Date</label><input id="qt-date" type="date" style="' + iS + '"></div>' +
+      '<div><label style="' + lS + '">Quote Name <span style="font-weight:400;text-transform:none;">(optional)</span></label><input id="qt-name" type="text" placeholder="e.g. Dallas run" style="' + iS + '"></div>' +
+    '</div>' +
+    '<div>' +
+      '<label style="' + lS + '">Freight Details</label>' +
+      '<div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:8px;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">' +
+          '<thead><tr style="background:#faf9f6;border-bottom:1px solid var(--bdr);">' +
+            '<th style="padding:6px 4px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:34px;">QTY</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:46px;">TYPE</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:32px;">STC</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:48px;">WT</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:96px;">COMMODITY</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:118px;white-space:nowrap;">L×W×H</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:42px;">STACK</th>' +
+            '<th style="padding:6px 3px;text-align:left;font-size:10px;color:var(--mu);font-weight:700;width:52px;">CLASS</th>' +
+          '</tr></thead><tbody id="qt-tbody"></tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>' +
+    '<div><label style="' + lS + '">Accessorials</label>' + accGroup('pu','Pickup') + accGroup('del','Delivery') + '</div>' +
+    '<button id="qt-get-rates" style="width:100%;background:var(--ac);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0;">Get Rates</button>';
+  wrap.appendChild(qpane);
+
+  // Line-item row (single canned pallet)
+  qpane.querySelector('#qt-tbody').innerHTML =
+    '<tr class="qt-line" style="border-bottom:1px solid var(--bdr);">' +
+      '<td style="padding:3px 2px;"><input class="li-qty" type="text" value="1" style="' + inS + 'width:34px;"></td>' +
+      '<td style="padding:3px 2px;"><select class="li-type" style="' + inS + 'width:46px;">' + TYPES.map(t=>'<option'+(t==='PLT'?' selected':'')+'>'+t+'</option>').join('') + '</select></td>' +
+      '<td style="padding:3px 2px;"><input class="li-stc" type="text" style="' + inS + 'width:32px;"></td>' +
+      '<td style="padding:3px 2px;"><input class="li-weight" type="text" style="' + inS + 'width:48px;" placeholder="lbs"></td>' +
+      '<td style="padding:3px 2px;"><input class="li-commodity" type="text" style="' + inS + 'width:96px;" placeholder="e.g. furniture"></td>' +
+      '<td style="padding:3px 2px;"><div style="display:flex;align-items:center;gap:2px;"><input class="li-len" type="text" style="' + inS + 'width:34px;" placeholder="L"><span style="font-size:10px;color:var(--mu);">×</span><input class="li-wid" type="text" style="' + inS + 'width:34px;" placeholder="W"><span style="font-size:10px;color:var(--mu);">×</span><input class="li-hgt" type="text" style="' + inS + 'width:34px;" placeholder="H"></div></td>' +
+      '<td style="padding:3px 2px;"><select class="li-stack" style="' + inS + 'width:42px;"><option value="Y">Yes</option><option value="N" selected>No</option></select></td>' +
+      '<td style="padding:3px 2px;"><select class="li-class" style="' + inS + 'width:52px;"><option value="">Auto</option>' + CLASSES.map(c=>'<option value="'+c+'">'+c+'</option>').join('') + '</select></td>' +
+    '</tr>';
+
+  // ── Rates pane (hidden until switchTab('rates')) ──
+  const rpane = document.createElement('div');
+  rpane.id = 'qt-pane-rates';
+  rpane.style.cssText = 'flex:1;overflow-y:auto;padding:12px;display:none;flex-direction:column;gap:10px;';
+  rpane.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><button id="qt-back-btn" style="background:none;border:1px solid var(--bdr);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--mu);">← Edit Quote</button><div id="qt-quote-summary" style="font-size:11px;color:var(--mu);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div></div>';
+  rpane.appendChild(_movieRenderRates(_MOVIE_RATES));
+  wrap.appendChild(rpane);
+
+  // ── Behavior ──
+  function switchTab(tab){
+    const isQuote = tab === 'quote';
+    qpane.style.display = isQuote ? 'flex' : 'none';
+    rpane.style.display = isQuote ? 'none' : 'flex';
+    q('#qt-tab-quote').style.borderBottomColor = isQuote ? 'var(--ac)' : 'transparent';
+    q('#qt-tab-quote').style.color = isQuote ? 'var(--ac)' : 'var(--mu)';
+    q('#qt-tab-rates').style.borderBottomColor = isQuote ? 'transparent' : 'var(--ac)';
+    q('#qt-tab-rates').style.color = isQuote ? 'var(--mu)' : 'var(--ac)';
+  }
+  q('#qt-tab-quote').onclick = () => switchTab('quote');
+  q('#qt-tab-rates').onclick = () => switchTab('rates');
+  q('#qt-back-btn').onclick  = () => switchTab('quote');
+  q('#qt-get-rates').onclick = () => switchTab('rates');
+  wrap.querySelectorAll('.qt-acc').forEach(btn => {
+    btn.onclick = () => { const on = btn.classList.toggle('acc-active'); btn.style.borderColor = on?'var(--ac)':'var(--bdr)'; btn.style.background = on?'#f3e8ff':'var(--card)'; btn.style.color = on?'var(--ac)':'var(--mu)'; };
+  });
+
+  function updateProgress(){
+    const vals = [q('#qt-origin').value, q('#qt-dest').value, q('#qt-date').value,
+      (wrap.querySelector('.li-weight')||{}).value, (wrap.querySelector('.li-len')||{}).value];
+    const filled = vals.filter(v => v && (''+v).trim()).length;
+    const bar = q('#qt-prog-bar'), txt = q('#qt-prog-txt');
+    if (bar) bar.style.width = Math.round(filled/5*100) + '%';
+    if (txt) { if (filled >= 5) { txt.textContent = '✓ Ready to get rates'; txt.style.color = 'var(--ac)'; } else { txt.textContent = filled + ' of 5 fields'; txt.style.color = 'var(--mu)'; } }
+  }
+  function setHero(){
+    const o = q('#qt-origin').value, d = q('#qt-dest').value;
+    if (o && d) q('#qt-hdr-route').textContent = o + ' → ' + d;
+    else if (o) q('#qt-hdr-route').textContent = o + ' → …';
+  }
+  function setVal(sel, val){ const el = wrap.querySelector(sel); if (el){ el.value = val; flashField(el); } updateProgress(); }
+  function activateAcc(code){
+    const btn = [...wrap.querySelectorAll('.qt-acc')].find(b => b.dataset.code === code);
+    if (btn && !btn.classList.contains('acc-active')) { btn.classList.add('acc-active'); btn.style.borderColor = 'var(--ac)'; btn.style.background = '#f3e8ff'; btn.style.color = 'var(--ac)'; }
+  }
+
+  // ── Canned, choreographed fill (timers tracked via _mt → cleared by killMovie) ──
+  function fillShipment(){
+    _mt(() => { if(_movieKilled())return; setVal('#qt-origin','90660'); const c=q('#qt-origin-city'); if(c){ c.textContent='📍 Pico Rivera, CA'; c.style.color='#bd27bc'; } setHero(); }, 0);
+    _mt(() => { if(_movieKilled())return; setVal('#qt-dest','75001'); const c=q('#qt-dest-city'); if(c){ c.textContent='📍 Addison, TX'; c.style.color='#bd27bc'; } setHero(); }, 460);
+    _mt(() => { if(_movieKilled())return; setVal('.li-weight','260'); q('#qt-hdr-weight').textContent='260 lbs'; }, 920);
+    _mt(() => { if(_movieKilled())return; setVal('.li-len','60'); }, 1320);
+    _mt(() => { if(_movieKilled())return; setVal('.li-wid','48'); }, 1620);
+    _mt(() => { if(_movieKilled())return; setVal('.li-hgt','72'); }, 1920);
+    _mt(() => { if(_movieKilled())return; const cl=wrap.querySelector('.li-class'); if(cl){ cl.value='250'; flashField(cl); } }, 2280);
+    _mt(() => { if(_movieKilled())return; const d=_movieNextBizDay(); const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); setVal('#qt-date',iso); q('#qt-hdr-date').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}); }, 2700);
+  }
+  function fillAccessorials(){ _mt(()=>{ if(_movieKilled())return; activateAcc('RSD'); }, 0); _mt(()=>{ if(_movieKilled())return; activateAcc('LFD'); }, 440); }
+  function showRates(){ const s=q('#qt-quote-summary'); if(s) s.textContent='90660 → 75001  ·  1 pcs  ·  260 lbs · Residential Delivery, Liftgate Delivery'; switchTab('rates'); }
+
+  return { node: wrap, fillShipment, fillAccessorials, showRates, switchTab };
 }
 
 // ── Daily-rolling usage limits (localStorage, resets each calendar day) ─────
@@ -1815,8 +1961,8 @@ function runMovie(){
   const restart=()=>{ if(_movieKilled())return; _mt(runMovie, 3400); };
   const wta=document.getElementById('welcome-textarea'); if(!wta) return;
 
-  // Act 1 — a portal-matching, rate-obscured quote flow. Type the opener, then play
-  // the scripted quote Q&A; the last question pulls up the masked rate panel.
+  // Act 1 — open the Quote Details form, fill it step-by-step to the conversation, then
+  // switch to Select Rate. Ends on the "24 carriers came back" line (Act 2 comes later).
   const firstLine='I need a quote';
   wta.setAttribute('data-ghost','1');
   let i=0;
@@ -1826,17 +1972,19 @@ function runMovie(){
     if(i++<firstLine.length) _mt(type,55); else _mt(begin,550);
   })();
 
-  // Scripted turns after the opener. {u} = user line, {a} = assistant line, panel = open rates.
+  // Scripted turns. {u}=user line, {a}=assistant line. open=build+show the form;
+  // fill='shipment'|'acc' choreographs the form fill; rates=switch to the rate panel.
+  let mvq=null;
   const TURNS=[
-    {a:'Got the form open! Just a few details to get started:\n1. Where is it shipping from (city/state or ZIP)?\n2. Where is it shipping to?\n3. What are you shipping, and what’s the weight and dimensions (L x W x H in inches)?'},
-    {u:'Picking up from 90660 going to 75001. We are shipping a table in two boxes on a pallet weighing 260 lbs. 60 x 48 x 72'},
+    {a:'Got the form open! Just a few details to get started:\n1. Where is it shipping from (city/state or ZIP)?\n2. Where is it shipping to?\n3. What are you shipping, and what’s the weight and dimensions (L x W x H in inches)?', open:true},
+    {u:'Picking up from 90660 going to 75001. We are shipping a table in two boxes on a pallet weighing 260 lbs. 60 x 48 x 72', fill:'shipment'},
     {a:'Looks good — 1 pallet, 260 lbs, 60×48×72 from 90660 to 75001. A couple of quick questions before I pull rates:\n1. Is the delivery going to a residence or a business? And will they need a liftgate at delivery?\n2. Any other special requirements — limited access, inside delivery, appointment needed?'},
-    {u:'This is delivering to a residence and we need a lift gate at delivery'},
+    {u:'This is delivering to a residence and we need a lift gate at delivery', fill:'acc'},
     {a:'Got it. And is the freight hazardous material?'},
     {u:'No'},
     {a:'Would you like to add cargo insurance? If so, what is the total value of the cargo?'},
     {u:'No'},
-    {a:'No problem — pulling your rates now without insurance.', panel:true},
+    {a:'No problem — pulling your rates now without insurance.', rates:true},
     {a:'24 carriers came back — Estes is the cheapest at 5 days. Open a free account to see live rates and book any of these.'}
   ];
 
@@ -1849,48 +1997,29 @@ function runMovie(){
     _mt(()=>playTurns(0),700);
   }
 
+  // Run the form action tied to a turn, then advance after enough time for it to play out.
+  function afterLine(t, done){
+    if(t.open){ mvq=_movieQuotePanel(); _panelMovie('Compare Carrier Rates', mvq.node); _mt(done, 1000); return; }
+    if(t.fill==='shipment'){ if(mvq) mvq.fillShipment(); _mt(done, 3600); return; }
+    if(t.fill==='acc'){ if(mvq) mvq.fillAccessorials(); _mt(done, 1300); return; }
+    if(t.rates){ _mt(()=>{ if(_movieKilled())return; if(mvq) mvq.showRates(); }, 750); _mt(done, 1800); return; }
+    _mt(done, t.u ? 950 : 1450);
+  }
+
   function playTurns(k){
     if(_movieKilled())return;
-    if(k>=TURNS.length){ _mt(qa,2600); return; }
+    if(k>=TURNS.length){ _mt(restart, 5200); return; } // Act 1 done — rest, then loop
     const t=TURNS[k];
     if(t.u){
       _ghostUser(t.u);
-      _mt(()=>playTurns(k+1), 950);
+      afterLine(t, ()=>playTurns(k+1));
     } else {
       _ghostTyping();
       _mt(()=>{ if(_movieKilled())return; removeTyping();
         _ghostBot(t.a);
-        if(t.panel){
-          _mt(()=>{ if(_movieKilled())return;
-            _panelMovie('Compare Carrier Rates', _movieRenderRates(_MOVIE_RATES));
-            _mt(()=>playTurns(k+1), 1700);
-          }, 750);
-        } else {
-          _mt(()=>playTurns(k+1), 1450);
-        }
+        afterLine(t, ()=>playTurns(k+1));
       }, 1100);
     }
-  }
-
-  // Closing act — "Ask the assistant anything": four scripted freight-knowledge exchanges in the
-  // center chat. Chat-only (no panel card). Q4's answer carries the account CTA and ends the loop.
-  function qa(){
-    if(_movieKilled())return;
-    let j=0;
-    (function step(){
-      if(_movieKilled())return;
-      const item=DEMO_QA[j];
-      const answer=item.a || _abfOcalaAnswer();
-      const isLast=(j===DEMO_QA.length-1);
-      _ghostUser(item.q);
-      _mt(()=>{ if(_movieKilled())return; _ghostTyping();
-        _mt(()=>{ if(_movieKilled())return; removeTyping();
-          _ghostBot(answer);
-          if(isLast){ _appendMovieCTA(); _mt(restart,3400); }
-          else { j++; _mt(step,1500); }
-        },1100);
-      },550);
-    })();
   }
 }
 
