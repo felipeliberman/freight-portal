@@ -9993,7 +9993,7 @@ function _filterLiftgateCodes(codes) {
 }
 
 function _applyQuoteFields(input) {
-  const panel = document.getElementById('right-panel') || document;
+  const panel = _quoteRoot() || document;
 
   // Top-level fields
   if (input.originZip) { const el = panel.querySelector('#qt-origin'); if (el) { el.value = String(input.originZip); el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
@@ -10127,7 +10127,7 @@ async function _awaitRatePull(maxWaitMs) {
 // Build a signature of the current quote form state so we can detect real changes
 function _quoteSignature() {
   try {
-    const panel = document.getElementById('right-panel') || document;
+    const panel = _quoteRoot() || document;
     const o = (panel.querySelector('#qt-origin')||{}).value || '';
     const d = (panel.querySelector('#qt-dest')||{}).value || '';
     const rows = [...panel.querySelectorAll('.qt-line')].map(r => [
@@ -10142,11 +10142,22 @@ function _quoteSignature() {
   } catch(e) { return null; }
 }
 
+function _quoteRoot() {
+  // The live quote container, even on a detached (inactive) tab — a detached container
+  // still holds the last-entered values. Gated on _quoteFormOpen so a post-reset stale
+  // container (not nulled on same-chat resetShipmentState(false)) is never read.
+  if (window._quoteFormOpen && window._quoteContainer && window._quoteContainer.querySelector &&
+      window._quoteContainer.querySelector('#qt-origin')) {
+    return window._quoteContainer;
+  }
+  return document.getElementById('right-panel');
+}
+
 // Snapshot of what's CURRENTLY on the quote form, so the AI knows what's already filled
 // and never re-asks for or re-narrates fields that are already there.
 function _quoteFormState() {
   try {
-    const panel = (window._quoteContainer && document.body.contains(window._quoteContainer)) ? window._quoteContainer : document.getElementById('right-panel');
+    const panel = _quoteRoot();
     if (!panel || !panel.querySelector('#qt-origin')) return { quoteFormOpen: false };
     const g = sel => { const el = panel.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
     const rgv = (row, sel) => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
