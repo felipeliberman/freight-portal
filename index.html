@@ -2522,19 +2522,59 @@ function _a2Dash(){
   _mt(_a2RowDetail, 1600);
 }
 // d.2 Cursor → first row (BOL 140133959) → popup opens → pause → cursor → ✕ closes → Jordan
+// Ghost-drag the right pane to a target width. The cursor grabs the resizer handle, then the cursor
+// and the pane's left edge move together (matched .25s transitions) so it reads as a real drag.
+function _movieDragPane(toWidth, cb){
+  if(_movieKilled())return;
+  const panel=document.getElementById('right-panel');
+  const resizer=document.getElementById('right-resizer');
+  const c=document.getElementById('movie-cursor') || _movieCursor();
+  if(!panel){ if(cb) cb(); return; }
+  const W=Math.min(toWidth, Math.round(window.innerWidth*0.92)); // cap so it never exceeds the viewport
+  // 1) Glide the cursor onto the resizer handle (the pane's current left edge) with the normal easing.
+  let grabLeft, grabTop;
+  if(resizer){ const rr=resizer.getBoundingClientRect(); grabLeft=Math.round(rr.left+rr.width/2); grabTop=Math.round(rr.top+rr.height/2); }
+  else { grabLeft=Math.round(window.innerWidth - panel.offsetWidth); grabTop=Math.round(window.innerHeight*0.5); }
+  c.classList.add('on'); c.style.transition=''; // normal .6s glide for the approach
+  c.style.left=grabLeft+'px'; c.style.top=grabTop+'px';
+  _mt(()=>{ if(_movieKilled())return;
+    // grab pulse — reads as mousedown on the handle
+    c.classList.remove('click'); void c.offsetWidth; c.classList.add('click');
+    _mt(()=>{ if(_movieKilled())return;
+      // 2) DRAG: cursor + pane edge move in lockstep over ~250ms (panel has transition:width .25s ease).
+      c.style.transition='left .25s ease, top .25s ease';
+      panel.style.width=W+'px';
+      if(resizer) resizer.style.right=W+'px';
+      c.style.left=(window.innerWidth - W)+'px';
+      // 3) after the transition, restore the cursor's normal easing and continue.
+      _mt(()=>{ if(_movieKilled())return; c.style.transition=''; if(cb) cb(); }, 340);
+    }, 260);
+  }, 640);
+}
 function _a2RowDetail(){
   if(_movieKilled())return;
-  const bol=document.querySelector('#right-panel .mv-ship-bol0') || document.querySelector('#right-panel .mv-ship-row0');
-  _movieCursorClickTo(bol, ()=>{
+  // 1–2. Drag the pane WIDER to reveal all shipment columns, then hold on the full table.
+  _movieDragPane(1000, ()=>{
     if(_movieKilled())return;
-    const closeBtn=_movieShipDetail();
     _mt(()=>{ if(_movieKilled())return;
-      _movieCursorClickTo(closeBtn, ()=>{
+      // 3. Click the first row's BOL → open the shipment popup.
+      const bol=document.querySelector('#right-panel .mv-ship-bol0') || document.querySelector('#right-panel .mv-ship-row0');
+      _movieCursorClickTo(bol, ()=>{
         if(_movieKilled())return;
-        const ov=document.getElementById('ship-modal-overlay'); if(ov) ov.remove();
-        _mt(_a2Jordan, 1000);
+        const closeBtn=_movieShipDetail();
+        _mt(()=>{ if(_movieKilled())return; // 4. Hold the popup (unchanged).
+          _movieCursorClickTo(closeBtn, ()=>{
+            if(_movieKilled())return;
+            const ov=document.getElementById('ship-modal-overlay'); if(ov) ov.remove(); // 5. Close popup (as today).
+            // 6. Drag the pane back to the original 480px view.
+            _movieDragPane(480, ()=>{
+              if(_movieKilled())return;
+              _mt(_a2Jordan, 800); // 7. Brief beat, then continue exactly as today.
+            });
+          });
+        }, 2800);
       });
-    }, 2800);
+    }, 700); // brief beat with the full table visible
   });
 }
 // e–f. Type the Jordan question → verbatim reply
