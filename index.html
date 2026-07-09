@@ -631,6 +631,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
 <script>
 const CLOUDFLARE_WORKER = 'https://freight-email.freightandlogistics.workers.dev';
+const TRACK_WORKER = 'https://track-proxy.felipe-b80.workers.dev'; // public-safe tracking (PII stripped server-side)
 
 let chatHistory = [];
 let formData = {};
@@ -682,6 +683,8 @@ After collecting all info, tell them to hit Submit on the form and that our onbo
 As you collect answers, emit [[FILL:field_id:value]] tokens at the END of your message. Field IDs: company, contact_name, contact_title, email, phone, city, state, ap_name, ap_email, signature.`;
 
 async function callAI(userMsg) {
+  const _trackNum = _detectTrackingNumber(userMsg);
+  if (_trackNum) { _trackShipment(_trackNum); return; } // live public tracking — handled by the Worker, skip the LLM
   if (isAtMsgLimit()) { showLimitCard(); return; }
   bumpDemoMsg();
   chatHistory.push({role:'user', content:userMsg});
@@ -713,6 +716,105 @@ async function callAI(userMsg) {
     removeTyping();
     appendBot('Having a moment of trouble — please try again or call us at (800) 687-3713 and we will help you right away.');
   }
+}
+
+// ── Live public shipment tracking (via track-proxy Worker; PII stripped server-side) ──
+// Detect a tracking intent and pull the number out. Returns the number string, or null.
+function _detectTrackingNumber(msg){
+  const s=(msg||'').trim(); if(!s) return null;
+  // Bare tracking number: a single token, 6+ chars, letters/digits/dashes, contains a digit.
+  if(!/\s/.test(s) && /^[A-Za-z0-9][A-Za-z0-9-]{5,}$/.test(s) && /[0-9]/.test(s)) return s;
+  // Otherwise require an intent word AND a candidate number token in the message.
+  if(/\b(track|tracking|trace|status|locate|where)\b/i.test(s)){
+    const tokens=s.split(/[^A-Za-z0-9-]+/).filter(Boolean);
+    const cand=tokens.find(t=>t.replace(/-/g,'').length>=6 && /[0-9]/.test(t));
+    if(cand) return cand;
+  }
+  return null;
+}
+
+// One short, factual chat line (no editorializing). appendBot uses textContent, so it's safe.
+function _trackChatLine(d){
+  let line = "Here's the latest on BOL " + (d.bol||'') + " — currently " + (d.currentStatus||'unknown status');
+  if(d.origin && d.destination) line += ", moving from " + d.origin + " to " + d.destination;
+  if(d.carrier) line += " via " + d.carrier;
+  return line + ".";
+}
+
+async function _trackShipment(num){
+  chatHistory.push({role:'user', content:'track ' + num});
+  showTyping();
+  try{
+    const r = await fetch(TRACK_WORKER + '/?q=' + encodeURIComponent(num));
+    const d = await r.json();
+    removeTyping();
+    if(d && d.ok){
+      const line=_trackChatLine(d);
+      appendBot(line);
+      openRightPanel('Tracking ' + (d.bol||num), renderLiveTrackingCard(d));
+      chatHistory.push({role:'assistant', content:line});
+    } else {
+      const line="I couldn't find a shipment for that number. Double-check the BOL, PRO, or reference and try again.";
+      appendBot(line);
+      _appendTrackSignup();
+      chatHistory.push({role:'assistant', content:line});
+    }
+  }catch(e){
+    removeTyping();
+    appendBot('Tracking is having a moment — please try again, or call (800) 687-3713.');
+  }
+}
+
+// Small signup CTA appended in-chat after a not-found lookup.
+function _appendTrackSignup(){
+  const msgs=document.getElementById('messages'); if(!msgs) return;
+  const w=document.createElement('div'); w.style.cssText='margin:0 0 20px 38px;';
+  const b=document.createElement('button'); b.textContent='Open a free account for full history';
+  b.style.cssText='background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+  b.onclick=startOnboarding; w.appendChild(b); msgs.appendChild(w); msgs.scrollTop=msgs.scrollHeight;
+}
+
+// Status card from the Worker's exact fields only (no PII, no invented fields; all escaped).
+function renderLiveTrackingCard(d){
+  const esc = (typeof escHtml==='function') ? escHtml : (x=>String(x==null?'':x));
+  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
+  let html='';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;">' +
+    '<span style="display:inline-flex;align-items:center;gap:5px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;color:#bd27bc;"><span style="width:6px;height:6px;border-radius:50%;background:#bd27bc;display:inline-block;"></span>Live tracking</span>' +
+    (d.currentStatus ? '<span style="font-size:11px;font-weight:600;color:#6d28d9;background:#ede9fe;padding:3px 10px;border-radius:10px;white-space:nowrap;">'+esc(d.currentStatus)+'</span>' : '') +
+    '</div>';
+  if(d.currentStatus) html+='<div style="font-size:18px;font-weight:700;color:#111;line-height:1.2;">'+esc(d.currentStatus)+'</div>';
+  if(d.bol) html+='<div style="font-size:11px;color:#706c63;margin-bottom:14px;">BOL '+esc(d.bol)+'</div>';
+  const kv=[];
+  if(d.carrier) kv.push(_kv('Carrier', esc(d.carrier)));
+  if(d.service) kv.push(_kv('Service', esc(d.service)));
+  if(d.scac)    kv.push(_kv('SCAC', esc(d.scac)));
+  if(d.pieces!=null && d.pieces!=='') kv.push(_kv('Pieces', esc(d.pieces)));
+  if(d.weight!=null && d.weight!=='') kv.push(_kv('Weight', esc(d.weight)+' lbs'));
+  if(kv.length) html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">'+kv.join('')+'</div>';
+  if(d.origin || d.destination) html+='<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;margin-bottom:14px;"><div style="font-size:13px;font-weight:600;color:#111;">'+esc(d.origin||'—')+' → '+esc(d.destination||'—')+'</div></div>';
+  const tl = Array.isArray(d.timeline) ? d.timeline : [];
+  if(tl.length){
+    html+='<div style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Shipment Timeline</div><div style="margin-bottom:8px;">';
+    tl.forEach((ev,idx)=>{
+      const top=idx===0;
+      const when=[esc(ev.date||''), esc(ev.time||'')].filter(Boolean).join(' ');
+      html+='<div style="display:flex;gap:10px;align-items:flex-start;">' +
+        '<div style="display:flex;flex-direction:column;align-items:center;">' +
+          '<div style="width:12px;height:12px;border-radius:50%;flex-shrink:0;margin-top:2px;background:'+(top?'#bd27bc':'#fff')+';border:2px solid '+(top?'#bd27bc':'#e5e2d9')+';"></div>' +
+          (idx<tl.length-1 ? '<div style="width:2px;flex:1;min-height:24px;background:#e5e2d9;"></div>' : '') +
+        '</div>' +
+        '<div style="padding-bottom:'+(idx<tl.length-1?'10px':'0')+';flex:1;">' +
+          (when ? '<div style="font-size:10px;color:#706c63;">'+when+'</div>' : '') +
+          '<div style="font-size:12px;font-weight:600;color:'+(top?'#111':'#444')+';">'+esc(ev.status||'')+'</div>' +
+          (ev.remarks ? '<div style="font-size:11px;color:#706c63;margin-top:1px;">'+esc(ev.remarks)+'</div>' : '') +
+        '</div></div>';
+    });
+    html+='</div>';
+  }
+  wrap.innerHTML=html;
+  wrap.appendChild(_ctaBlock());
+  return wrap;
 }
 
 function fillFormField(key, value) {
