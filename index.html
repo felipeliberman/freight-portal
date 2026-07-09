@@ -1083,6 +1083,11 @@ function openFormPanel() {
   const today=new Date();
   const dateStr=(today.getMonth()+1).toString().padStart(2,'0')+'/'+today.getDate().toString().padStart(2,'0')+'/'+today.getFullYear();
   const html=`
+  <div class="svc-hero">
+    <div class="svc-hero-eyebrow">Open Your Account</div>
+    <div class="svc-hero-title">Free to open — no obligation, no minimums.</div>
+    <div class="svc-hero-sub">Submit your details and our onboarding team will review your application and follow up within one business day.</div>
+  </div>
   <div class="form-progress">
     <div class="progress-label"><span>Account Setup</span><span id="progress-pct">0% complete</span></div>
     <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
@@ -1099,7 +1104,7 @@ function openFormPanel() {
       </div>
       <div class="sf-row">
         <div class="sf-field"><label class="sf-label">Phone</label><input class="sf-input" id="sf-phone" placeholder="(000) 000-0000"></div>
-        <div class="sf-field w2"><label class="sf-label">Taxpayer ID / EIN</label><input class="sf-input" id="sf-ein" placeholder="00-0000000"></div>
+        <div class="sf-field w2"><label class="sf-label">Taxpayer ID / EIN (if applying for credit terms)</label><input class="sf-input" id="sf-ein" placeholder="00-0000000"></div>
       </div>
       <div style="margin-top:4px;"><div class="sf-label" style="margin-bottom:5px;">Entity Type</div>
         <div class="sf-check-group">
@@ -1158,7 +1163,7 @@ function openFormPanel() {
     </div>
     <div class="sf-section">
       <div class="sf-section-label">Terms &amp; Authorization</div>
-      <div class="sf-terms">Customer agrees to all terms at <strong>freightandlogistics.ai</strong>. Amounts due are payable at PO Box 35311, Los Angeles, CA 90035 within Net 15 days. Late payments subject to finance charges up to the maximum allowed by law. Governed by the laws of the State of California.</div>
+      <div class="sf-terms">By submitting this form, Customer agrees to all terms at <strong>freightandlogistics.ai</strong>. Amounts due are payable at PO Box 35311, Los Angeles, CA 90035 within Net 15 days. Late payments subject to finance charges up to the maximum allowed by law. Governed by the laws of the State of California.</div>
       <div class="sf-row">
         <div class="sf-field w2"><label class="sf-label">Authorized Signature (type full name)</label><input class="sf-input" id="sf-signature" placeholder="Type your full name"></div>
         <div class="sf-field"><label class="sf-label">Date</label><input class="sf-input" id="sf-date" value="${dateStr}" readonly style="color:var(--mu);"></div>
@@ -1189,10 +1194,11 @@ function updateProgress() {
 async function submitForm() {
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
   const showErr=m=>{const err=document.getElementById('sf-error');if(err){err.textContent=m;err.style.display='block';}};
-  const required={'sf-company':'Company name','sf-contact-name':'Your name','sf-email':'Email address','sf-phone':'Phone number','sf-signature':'Authorized signature'};
+  const required={'sf-company':'Legal company name','sf-street':'Street address','sf-city':'City','sf-state':'State','sf-zip':'ZIP','sf-phone':'Phone','sf-contact-name':'Primary contact name','sf-contact-title':'Primary contact title','sf-email':'Primary contact email','sf-ship-name':'Shipping contact name','sf-ship-phone':'Shipping contact phone','sf-ship-email':'Shipping contact email','sf-ap-name':'AP contact name','sf-ap-phone':'AP contact phone','sf-ap-email':'AP contact email','sf-services':'Services needed','sf-volume':'Shipments per month','sf-spend':'Monthly spend','sf-lanes':'Primary lanes','sf-commodity':'Commodity','sf-current-carrier':'Current carrier or 3PL','sf-signature':'Authorized signature'};
   for(const [id,label] of Object.entries(required)){
     if(!get(id)){showErr('Please fill in: '+label);document.getElementById(id).focus();return;}
   }
+  if(!document.querySelector('input[name="entity"]:checked')){ showErr('Please select an entity type'); return; }
   const tEl=document.querySelector('.sf-turnstile');
   const hidden=document.querySelector('[name="cf-turnstile-response"]');
   let token=(hidden && hidden.value) || (tEl && tEl.dataset.tsToken) || '';
@@ -1201,7 +1207,7 @@ async function submitForm() {
   const btn=document.getElementById('sf-submit-btn');
   btn.textContent='Submitting…';btn.disabled=true;
   const err0=document.getElementById('sf-error'); if(err0) err0.style.display='none';
-  const body={company:get('sf-company'),contact:get('sf-contact-name')+(get('sf-contact-title')?', '+get('sf-contact-title'):''),email:get('sf-email'),phone:get('sf-phone'),address:[get('sf-street'),get('sf-city'),get('sf-state'),get('sf-zip')].filter(Boolean).join(', '),ein:get('sf-ein'),ap:get('sf-ap-name')+' | '+get('sf-ap-email')+' | '+get('sf-ap-phone'),shipping_contact:get('sf-ship-name')+' | '+get('sf-ship-email'),services:get('sf-services'),volume:get('sf-volume'),spend:get('sf-spend'),lanes:get('sf-lanes'),commodity:get('sf-commodity'),current_carrier:get('sf-current-carrier'),signature:get('sf-signature'),date:get('sf-date'),invoices_uploaded:uploadedInvoices.length+' file(s): '+uploadedInvoices.join(', ')};
+  const body={company:get('sf-company'),contact:get('sf-contact-name')+(get('sf-contact-title')?', '+get('sf-contact-title'):''),email:get('sf-email'),phone:get('sf-phone'),address:[get('sf-street'),get('sf-city'),get('sf-state'),get('sf-zip')].filter(Boolean).join(', '),ein:get('sf-ein'),ap:get('sf-ap-name')+' | '+get('sf-ap-email')+' | '+get('sf-ap-phone'),shipping_contact:get('sf-ship-name')+' | '+get('sf-ship-phone')+' | '+get('sf-ship-email'),services:get('sf-services'),volume:get('sf-volume'),spend:get('sf-spend'),lanes:get('sf-lanes'),commodity:get('sf-commodity'),current_carrier:get('sf-current-carrier'),signature:get('sf-signature'),date:get('sf-date'),invoices_uploaded:uploadedInvoices.length+' file(s): '+uploadedInvoices.join(', ')};
   const emailBody=Object.entries(body).map(([k,v])=>k.replace(/_/g,' ').toUpperCase()+': '+(v||'\u2014')).join('\n');
   const website=(document.querySelector('.sf-website')||{}).value||'';
   try {
