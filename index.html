@@ -709,7 +709,7 @@ async function callAI(userMsg) {
     const demoRe = /\[\[DEMO:([a-z]+):?([^\]]*)\]\]/gi;
     let dm; const demoCalls = [];
     while ((dm=demoRe.exec(text))!==null) demoCalls.push([dm[1].toLowerCase(), dm[2].trim()]);
-    const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').replace(/\[\[OPENFORM\]\]/gi,'').trim();
+    const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').replace(/\[\[OPENFORM\]\]/gi,'').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
     appendBot(clean);
     demoCalls.forEach(c=>handleDemoToken(c[0], c[1]));
     maybeShowRemainingNudge();
