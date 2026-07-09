@@ -499,7 +499,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
   <!-- MAIN -->
   <div id="main">
     <div id="welcome">
-      <div id="welcome-heading" class="sheen">Quote, track, and manage freight — with AI.</div>
+      <div id="welcome-heading" class="sheen">Quote, book, and manage freight — with AI.</div>
       <div id="welcome-subline">Instant quotes from top carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
       <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation</div>
 
@@ -781,7 +781,6 @@ function renderLiveTrackingCard(d){
   let html='';
   html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;">' +
     '<span style="display:inline-flex;align-items:center;gap:5px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;color:#bd27bc;"><span style="width:6px;height:6px;border-radius:50%;background:#bd27bc;display:inline-block;"></span>Live tracking</span>' +
-    (d.currentStatus ? '<span style="font-size:11px;font-weight:600;color:#6d28d9;background:#ede9fe;padding:3px 10px;border-radius:10px;white-space:nowrap;">'+esc(d.currentStatus)+'</span>' : '') +
     '</div>';
   if(d.currentStatus) html+='<div style="font-size:18px;font-weight:700;color:#111;line-height:1.2;">'+esc(d.currentStatus)+'</div>';
   if(d.bol) html+='<div style="font-size:11px;color:#706c63;margin-bottom:14px;">BOL '+esc(d.bol)+'</div>';
@@ -1860,8 +1859,8 @@ function _sampleBadge(){
 function _ctaBlock(){
   const d=document.createElement('div');
   d.style.cssText='margin-top:12px;padding:14px;background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;text-align:center;';
-  d.innerHTML='<div style="font-size:12px;color:#706c63;margin-bottom:8px;line-height:1.5;">Open a free account to pull live rates from 50+ carriers for your own lanes.</div>';
-  const b=document.createElement('button'); b.textContent='Open a free account for live rates';
+  d.innerHTML='<div style="font-size:12px;color:#706c63;margin-bottom:8px;line-height:1.5;">Open a free account to quote, book, and track your own shipments.</div>';
+  const b=document.createElement('button'); b.textContent='Open a free account';
   b.style.cssText='background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
   b.onclick=startOnboarding; d.appendChild(b); return d;
 }
