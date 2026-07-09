@@ -648,7 +648,7 @@ RESPONSE RULES:
 
 SHOWING SAMPLES IN THE SIDE PANEL: You can display real sample cards in the side panel by placing a token at the very END of your message. Emit one when someone asks what a quote, tracking, or the portal looks like, or asks a rate or pricing question. Quote scenarios: [[DEMO:quote:chi_atl]] (Chicago to Atlanta, 2 pallets office chairs, 1,200 lbs), [[DEMO:quote:la_mia]] (Los Angeles to Miami, white glove sofa), [[DEMO:quote:dal_den]] (Dallas to Denver, 3 pallets LTL). Tracking: [[DEMO:track:BOL]] where BOL is one of FL-2024-8840 (in transit), FL-2024-8822 (pending pickup), FL-2024-8834 (claim filed), FL-2024-8839, FL-2024-8841, FL-2024-8838, FL-2024-8837, FL-2024-8836. Full list: [[DEMO:shipments]]. When answering a rate question, STILL give the helpful Option C prose answer AND emit the closest quote token, and note the numbers shown are sample rates — real live rates come once their account is active. Never invent or estimate a specific dollar rate yourself; the sample card holds the only numbers you may show.
 
-YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat.
+YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat. IMPORTANT: the form does NOT open by itself. The first moment the customer agrees to open an account or start onboarding — a yes, "let's do it", "sign me up", or any go-ahead — emit the token [[OPENFORM]] at the very END of that message to open the form in the side panel. Emit it once, on that first commit; never repeat it. Because [[FILL:...]] tokens only land once the form is open, [[OPENFORM]] must come before or in the same message as your first [[FILL]].
 
 WHEN ONBOARDING: Ask in this order:
 1. What type of freight they ship or service they need
@@ -702,13 +702,14 @@ async function callAI(userMsg) {
     if (!text) throw new Error('empty response');
     chatHistory.push({role:'assistant',content:text});
     removeTyping();
+    if (/\[\[OPENFORM\]\]/i.test(text) && !isOnboarding) { isOnboarding = true; openFormPanel(); }
     const fillRe = /\[\[FILL:([^:]+):([^\]]*)\]\]/g;
     let m;
     while ((m=fillRe.exec(text))!==null) fillFormField(m[1],m[2]);
     const demoRe = /\[\[DEMO:([a-z]+):?([^\]]*)\]\]/gi;
     let dm; const demoCalls = [];
     while ((dm=demoRe.exec(text))!==null) demoCalls.push([dm[1].toLowerCase(), dm[2].trim()]);
-    const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').trim();
+    const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').replace(/\[\[OPENFORM\]\]/gi,'').trim();
     appendBot(clean);
     demoCalls.forEach(c=>handleDemoToken(c[0], c[1]));
     maybeShowRemainingNudge();
