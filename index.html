@@ -500,7 +500,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
     <div id="welcome">
       <div id="welcome-heading" class="sheen">Quote, track, and manage freight — with AI.</div>
       <div id="welcome-subline">Instant quotes from top carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
-      <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 5 minutes</div>
+      <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation</div>
 
       <div id="welcome-input-wrap">
         <textarea id="welcome-textarea" placeholder="Ask about rates, white glove delivery, tracking, or opening an account…" rows="1"
@@ -518,23 +518,22 @@ body.movie-live #input-textarea{border-color:var(--ac);}
       </div>
 
       <div class="welcome-pills">
-        <div class="welcome-pill" onclick="pillSampleQuote()">Get a sample quote</div>
         <div class="welcome-pill" onclick="pillSampleTrack()">Track a shipment</div>
-        <div class="welcome-pill" onclick="pillPasteSlip()">Paste a packing slip</div>
-        <div class="welcome-pill" onclick="welcomeSendText('I need a rate — what information do you need from me?')">Get a rate</div>
+        <div class="welcome-pill" onclick="_moviePlayDemo()">Play demo</div>
         <div class="welcome-pill" onclick="startOnboarding()">Open an account</div>
+        <div class="welcome-pill" onclick="welcomeSendText('What services do you offer?')">Learn about our services</div>
       </div>
 
       <div class="svc-tiles">
         <div class="svc-tile" onclick="openSvcPanel('ltl')">
           <div class="svc-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg></div>
           <div class="svc-tile-name">LTL Freight</div>
-          <div class="svc-tile-desc">Compare live contract rates across top national and regional carriers. Optimized for rapid, dock-to-dock commercial quoting.</div>
+          <div class="svc-tile-desc">Compare live contract rates across top national and regional carriers. Optimized for rapid dock-to-dock commercial shipments as well as full-service residential deliveries.</div>
         </div>
         <div class="svc-tile" onclick="openSvcPanel('wg')">
           <div class="svc-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
           <div class="svc-tile-name">White Glove</div>
-          <div class="svc-tile-desc">Guarantee final-mile compliance with automated residential address detection, liftgate verification, and inside-delivery scheduling.</div>
+          <div class="svc-tile-desc">Premium final-mile handling for specialized cargo. Includes automated residential address detection, full room-of-choice inside placement, and professional on-site assembly.</div>
         </div>
         <div class="svc-tile" onclick="openSvcPanel('ground')">
           <div class="svc-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></div>
@@ -549,7 +548,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
         <div class="svc-tile" onclick="openSvcPanel('api')">
           <div class="svc-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
           <div class="svc-tile-name">API Integration</div>
-          <div class="svc-tile-desc">Eliminate manual entry entirely. Connect your ERP, WMS, or e-commerce storefront directly to our backend for silent, high-volume automation.</div>
+          <div class="svc-tile-desc">Eliminate manual entry entirely. Connect your invoicing software, inventory systems, or e-commerce storefront directly to our backend for silent, high-volume automated shipping.</div>
         </div>
         <!-- Mobile-only action tiles -->
         <div class="svc-tile mobile-only-tile" onclick="startOnboarding()">
@@ -822,11 +821,11 @@ function closeRightPanel() {
 
 // Service panels
 const SVC_PANELS = {
-  ltl:{eyebrow:'Less Than Truckload',headline:'Nationwide LTL with 50+ carrier options and instant quotes.',sub:'We rate-shop every major carrier in real time so you always get the best combination of price, transit time, and service.',stats:[['50+','Carriers'],['2-7','Day Transit'],['$0','Hidden Fees']],features:[['Instant live quotes','Rate shop across Estes, ABF, TForce, XPO, Saia, and 45+ more in seconds.'],['BOL generation','We handle all documentation — BOL, labels, and pickup scheduling.'],['Full tracking','Real-time status from pickup to delivery across every carrier.'],['Claims management','We file and negotiate claims on your behalf.'],['Freight class expertise','We calculate NMFC class from your dimensions and weight.']]},
-  wg:{eyebrow:'Our Core Specialty',headline:'Inside delivery, room of choice, assembly, and debris removal.',sub:'White glove residential is what we do best. Metropolitan W&D and Pilot Freight are our top carriers — both specialize in furniture and big-and-bulky delivery.',stats:[['#1','Metro W&D'],['Since','2010'],['Full','Service']],features:[['Room of choice placement','Carriers bring items inside and place them exactly where the customer wants.'],['Unpack and assembly','Full assembly service for furniture, exercise equipment, and more.'],['Debris removal','All packaging removed and taken away.'],['Appointment scheduling','Delivery window scheduled with the end customer directly.'],['Residential liftgate standard','Every white glove delivery includes a liftgate.']]},
+  ltl:{eyebrow:'Less Than Truckload',headline:'Nationwide LTL carrier options and instant quotes.',sub:'We rate-shop every major carrier in real time so you always get the best combination of price, transit time, and service.',stats:[['National','Carriers'],['1 - 7','Day Transit'],['$0','Hidden Fees']],features:[['Instant live quotes','Rate shop across top national and regional carriers in real time.'],['BOL generation','We handle all documentation — BOL, labels, and pickup scheduling.'],['Full tracking','Real-time status from pickup to delivery across every carrier.'],['Claims management','We file and negotiate claims on your behalf.'],['Freight class expertise','We calculate NMFC class from your dimensions and weight.']]},
+  wg:{eyebrow:'Our Core Specialty',headline:'Inside delivery, room of choice, assembly, and debris removal.',sub:'White glove residential is what we do best. Metropolitan W&D and Pilot Freight are our top carriers — both specialize in furniture and big-and-bulky delivery.',stats:[['Full','Room of Choice'],['On-Site','Expert Assembly'],['Zero','Packaging Left Behind']],features:[['Room of choice placement','Carriers bring items inside and place them exactly where the customer wants.'],['Unpack and assembly','Full assembly service for furniture, exercise equipment, and more.'],['Debris removal','All packaging removed and taken away.'],['Appointment scheduling','Delivery window scheduled with the end customer directly.'],['Residential liftgate standard','Every white glove delivery includes a liftgate.']]},
   ground:{eyebrow:'Small Package Shipping',headline:'UPS and FedEx Ground at negotiated rates.',sub:'For packages under 150 lbs, we offer UPS Ground and FedEx Ground through our accounts — available to customers who also ship LTL or white glove with us.',stats:[['1-5','Day Transit'],['<150','Lbs/Piece'],['Real-Time','Tracking']],features:[['Competitive ground rates','Access our negotiated rates without a high-volume commitment.'],['Consolidated billing','Ground and LTL on one invoice.'],['Full tracking integration','All parcels visible alongside your LTL freight.'],['Same account team','One contact for all your freight.']]},
   tms:{eyebrow:'Free Freight Software',headline:'Quote, book, track, and report — all in one portal.',sub:'Our portal is a full TMS at no extra cost. Every customer gets access on day one.',stats:[['Free','Always'],['Real-Time','Rates'],['AI','Powered']],features:[['Live rate shopping','Instant quotes from 50+ carriers with one-click booking.'],['AI freight assistant','Ask questions in plain English.'],['Document center','BOLs, invoices, and PODs all stored and searchable.'],['Spend reporting','See freight spend by carrier, lane, and date range.'],['Team access','Multiple users with role-based permissions.']]},
-  api:{eyebrow:'Developer Access',headline:'Real-time rates and booking directly in your systems.',sub:'Connect your ERP, WMS, or ecommerce platform to our API. Get live freight rates and book shipments without leaving your system.',stats:[['REST','API'],['JSON','Format'],['Dedicated','Support']],features:[['Rate API','Pull live LTL and white glove rates in under 200ms.'],['Booking API','Create BOLs and get carrier confirmations programmatically.'],['Tracking webhooks','Push real-time status updates to your platform.'],['Invoice API','Pull invoice data into your accounting system.'],['Integration support','Our team helps you get connected.']]}
+  api:{eyebrow:'Developer Access',headline:'Real-time rates and booking directly in your systems.',sub:'Connect your invoicing software, inventory systems, or e-commerce storefront directly to our backend for silent, high-volume automated shipping.',stats:[['REST','API'],['JSON','Format'],['Dedicated','Support']],features:[['Rate API','Pull live LTL and white glove rates in under 200ms.'],['Booking API','Create BOLs and get carrier confirmations programmatically.'],['Tracking webhooks','Push real-time status updates to your platform.'],['Invoice API','Pull invoice data into your accounting system.'],['Integration support','Our team helps you get connected.']]}
 };
 
 function openSvcPanel(key) {
