@@ -1162,7 +1162,7 @@ function openFormPanel() {
     </div>
     <div class="sf-section">
       <div class="sf-section-label">Terms &amp; Authorization</div>
-      <div class="sf-terms">Customer agrees to all terms at <strong>freightandlogistics.com/termsandconditions</strong>. Amounts due are payable at PO Box 35311, Los Angeles, CA 90035 within Net 15 days. Late payments subject to finance charges up to the maximum allowed by law. Governed by the laws of the State of California.</div>
+      <div class="sf-terms">Customer agrees to all terms at <strong>freightandlogistics.ai</strong>. Amounts due are payable at PO Box 35311, Los Angeles, CA 90035 within Net 15 days. Late payments subject to finance charges up to the maximum allowed by law. Governed by the laws of the State of California.</div>
       <div class="sf-row">
         <div class="sf-field w2"><label class="sf-label">Authorized Signature (type full name)</label><input class="sf-input" id="sf-signature" placeholder="Type your full name"></div>
         <div class="sf-field"><label class="sf-label">Date</label><input class="sf-input" id="sf-date" value="${dateStr}" readonly style="color:var(--mu);"></div>
@@ -1170,12 +1170,14 @@ function openFormPanel() {
     </div>
     <div id="sf-error" style="display:none;padding:9px 11px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:10px;"></div>
     <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href=\"https://www.freightandlogistics.com/terms-and-conditions\" target=\"_blank\" style=\"color:var(--mu);\">Terms and Conditions</a> and <a href=\"https://www.freightandlogistics.com/privacy-policy\" target=\"_blank\" style=\"color:var(--mu);\">Privacy Policy</a>.</div>
+    <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;"><label>Website<input class="sf-website" type="text" tabindex="-1" autocomplete="off"></label></div>
+    <div class="sf-turnstile" style="margin:2px 0 10px;min-height:65px;"></div>
     <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Submit Account Application</button>
     <div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Our onboarding team will reach out within 1 business day.</div>
   </div>`;
   openRightPanel('Account Setup', html);
   updateProgress();
-  setTimeout(()=>{document.querySelectorAll('.sf-input').forEach(el=>el.addEventListener('input',updateProgress));},100);
+  setTimeout(()=>{document.querySelectorAll('.sf-input').forEach(el=>el.addEventListener('input',updateProgress));_renderTurnstile(document.querySelector('.sf-turnstile'));},100);
 }
 
 function updateProgress() {
@@ -1190,17 +1192,36 @@ function updateProgress() {
 
 async function submitForm() {
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+  const showErr=m=>{const err=document.getElementById('sf-error');if(err){err.textContent=m;err.style.display='block';}};
   const required={'sf-company':'Company name','sf-contact-name':'Your name','sf-email':'Email address','sf-phone':'Phone number','sf-signature':'Authorized signature'};
   for(const [id,label] of Object.entries(required)){
-    if(!get(id)){const err=document.getElementById('sf-error');if(err){err.textContent='Please fill in: '+label;err.style.display='block';}document.getElementById(id).focus();return;}
+    if(!get(id)){showErr('Please fill in: '+label);document.getElementById(id).focus();return;}
   }
+  const tEl=document.querySelector('.sf-turnstile');
+  const hidden=document.querySelector('[name="cf-turnstile-response"]');
+  let token=(hidden && hidden.value) || (tEl && tEl.dataset.tsToken) || '';
+  if(!token){ try{ if(window.turnstile && tEl && tEl.dataset.tsWidgetId!=null) token=window.turnstile.getResponse(tEl.dataset.tsWidgetId); }catch(e){} }
+  if(!token){ showErr('Please complete the verification below and try again.'); return; }
   const btn=document.getElementById('sf-submit-btn');
   btn.textContent='Submitting…';btn.disabled=true;
+  const err0=document.getElementById('sf-error'); if(err0) err0.style.display='none';
   const body={company:get('sf-company'),contact:get('sf-contact-name')+(get('sf-contact-title')?', '+get('sf-contact-title'):''),email:get('sf-email'),phone:get('sf-phone'),address:[get('sf-street'),get('sf-city'),get('sf-state'),get('sf-zip')].filter(Boolean).join(', '),ein:get('sf-ein'),ap:get('sf-ap-name')+' | '+get('sf-ap-email')+' | '+get('sf-ap-phone'),shipping_contact:get('sf-ship-name')+' | '+get('sf-ship-email'),services:get('sf-services'),volume:get('sf-volume'),spend:get('sf-spend'),lanes:get('sf-lanes'),commodity:get('sf-commodity'),current_carrier:get('sf-current-carrier'),signature:get('sf-signature'),date:get('sf-date'),invoices_uploaded:uploadedInvoices.length+' file(s): '+uploadedInvoices.join(', ')};
   const emailBody=Object.entries(body).map(([k,v])=>k.replace(/_/g,' ').toUpperCase()+': '+(v||'\u2014')).join('\n');
+  const website=(document.querySelector('.sf-website')||{}).value||'';
   try {
-    await fetch(CLOUDFLARE_WORKER,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'felipe@freightandlogistics.com',subject:'New Account Application \u2014 '+body.company,text:'New account application via Freight and Logistics Portal.\n\n'+emailBody,from_name:'Freight and Logistics Portal Onboarding',reply_to:body.email})});
-  }catch(e){}
+    const r=await fetch(SUPPORT_WORKER,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:get('sf-contact-name'),email:get('sf-email'),topic:'New Account Application',message:emailBody,website,turnstileToken:token})});
+    let data={}; try{ data=await r.json(); }catch(e){}
+    if(!(r.ok && data.ok)){
+      btn.textContent='Submit Account Application';btn.disabled=false;
+      try{ if(window.turnstile && tEl && tEl.dataset.tsWidgetId!=null){ window.turnstile.reset(tEl.dataset.tsWidgetId); tEl.dataset.tsToken=''; } }catch(e){}
+      showErr((r.status===400||r.status===403)?'Please complete the verification and try again.':'Something went wrong \u2014 please try again or call (800) 687-3713.');
+      return;
+    }
+  }catch(e){
+    btn.textContent='Submit Account Application';btn.disabled=false;
+    showErr('Network error \u2014 please try again or call (800) 687-3713.');
+    return;
+  }
   document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">Your application has been received. Our onboarding team will reach out to ${body.email} within 1 business day to activate your account.<br><br>(800) 687-3713 for anything urgent.</div></div>`;
   appendBot("Your application is in. Our onboarding team will reach out to you within 1 business day to get your account activated.");
 }
