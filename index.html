@@ -485,14 +485,21 @@ body.movie-live #input-textarea{border-color:var(--ac);}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
       Contact Support
     </div>
+    <div class="sb-link" onclick="openLoginModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      AI Portal Login
+    </div>
+    <div class="sb-link" onclick="_moviePlayDemo()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Play Demo
+    </div>
   </div>
 
   <!-- MAIN -->
   <div id="main">
     <div id="welcome">
-      <div id="welcome-heading" class="sheen">Start shipping with<br>Freight and Logistics, Inc.</div>
-      <div id="welcome-subline">Quote, track, and manage freight — with AI.</div>
-      <div id="welcome-trust">Instant quotes from 50+ carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
+      <div id="welcome-heading" class="sheen">Quote, track, and manage freight — with AI.</div>
+      <div id="welcome-subline">Instant quotes from top carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
       <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation · Takes 5 minutes</div>
 
       <div id="welcome-input-wrap">
@@ -1922,7 +1929,32 @@ function killMovie(o){
   _movieRunning=false;
   _stopGhost(o||{});
 }
-function demoTakeOver(){ killMovie({toWelcome:true}); var w=document.getElementById('welcome-textarea'); if(w) w.focus(); }
+// Reset to the HOME welcome screen and replay the #welcome-heading shimmer (unguarded).
+function _movieGoHomeShimmer(){
+  const cur=document.getElementById('movie-cursor'); if(cur) cur.remove();
+  const m=document.getElementById('messages'); if(m) m.innerHTML='';
+  const w=document.getElementById('welcome'); if(w) w.style.display='';
+  const c=document.getElementById('chat-area'); if(c) c.style.display='none';
+  const rp=document.getElementById('right-panel'); if(rp){ rp.classList.remove('open'); rp.style.width=''; rp.removeAttribute('data-movie'); }
+  const rz=document.getElementById('right-resizer'); if(rz) rz.classList.remove('visible');
+  const body=document.getElementById('rp-body'); if(body) body.innerHTML='';
+  const h=document.getElementById('welcome-heading'); if(h){ h.classList.remove('sheen'); void h.offsetWidth; h.classList.add('sheen'); }
+}
+// Take-over: stop the demo AND land the user on the shimmering HOME welcome (not the current scene).
+function _movieTakeOver(){
+  if(_movieKilled() && !_movieRunning) return; // already handed off — let normal UI proceed
+  killMovie({});
+  _movieGoHomeShimmer();
+}
+// Play Demo (left-nav): clear the session kill flag + any rested state, then run from Act 1.
+function _moviePlayDemo(){
+  sessionStorage.removeItem('fl_movie_killed');
+  _movieTimers.forEach(clearTimeout); _movieTimers=[];
+  document.querySelectorAll('[data-movie-el]').forEach(n=>n.remove());
+  _movieRunning=false;
+  runMovie();
+}
+function demoTakeOver(){ _movieTakeOver(); var w=document.getElementById('welcome-textarea'); if(w) w.focus(); }
 
 // Ghost wrappers around the REAL render fns; tag the produced node so kill can find it.
 function _tag(){ const m=document.getElementById('messages'); if(m&&m.lastChild&&m.lastChild.setAttribute) m.lastChild.setAttribute('data-ghost','1'); }
@@ -2646,10 +2678,7 @@ function _movieOpenBOL(){
 // End of movie: return to the HOME welcome screen, replay the heading glimmer once, then rest.
 function _movieEndHome(){
   if(_movieKilled())return;
-  const cur=document.getElementById('movie-cursor'); if(cur) cur.remove();
-  _movieSoftReset();
-  const h=document.getElementById('welcome-heading');
-  if(h){ h.classList.remove('sheen'); void h.offsetWidth; h.classList.add('sheen'); } // re-trigger logoSheen
+  _movieGoHomeShimmer();  // soft reset to home welcome + re-trigger logoSheen
   // Movie done — rests on home. movie-live cue stays; take-over still works.
 }
 // a–b. Type the Mary question → verbatim reply.
@@ -2688,11 +2717,11 @@ document.addEventListener('DOMContentLoaded', function(){
   _wireArea(document.getElementById('welcome-textarea'));
   _wireArea(document.getElementById('input-textarea'));
   const wta=document.getElementById('welcome-textarea');
-  if(wta){ wta.addEventListener('focus',()=>killMovie({toWelcome:true})); wta.addEventListener('keydown',()=>killMovie({toWelcome:true})); }
+  if(wta){ wta.addEventListener('focus',_movieTakeOver); wta.addEventListener('keydown',_movieTakeOver); }
   const ita=document.getElementById('input-textarea');
-  if(ita){ ita.addEventListener('focus',()=>killMovie({})); ita.addEventListener('keydown',()=>killMovie({})); }
-  // Take-over: any REAL click or keypress anywhere kills the movie mid-cursor.
-  ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) killMovie({}); }, true));
+  if(ita){ ita.addEventListener('focus',_movieTakeOver); ita.addEventListener('keydown',_movieTakeOver); }
+  // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
+  ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) _movieTakeOver(); }, true));
   if(!_movieKilled()) _mt(startMovie, 2000);
 });
 </script>
