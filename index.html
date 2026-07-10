@@ -344,28 +344,34 @@ body.movie-live #input-textarea{border-color:var(--ac);}
   #right-panel.open{position:fixed;inset:0;width:100%;z-index:200;}
 
   /* Welcome screen */
-  html,body{overflow-x:hidden;overflow-y:auto;height:auto;max-width:100%;width:100%;}
+  html,body{overflow-x:hidden;overflow-y:auto;height:auto;max-width:100vw;width:100%;}
   #body-wrap{overflow:visible;height:auto;}
   #main{overflow:visible;height:auto;}
   #welcome{padding:16px 16px 40px;justify-content:flex-start;overflow:visible;flex:none;}
+  /* Hard cap ancestors to viewport so no descendant can inflate them past 100vw */
+  #body-wrap,#main,#welcome{max-width:100vw !important;overflow-x:hidden !important;box-sizing:border-box;}
   #welcome > *:not(.welcome-pills-wrap){max-width:100%;box-sizing:border-box;}
   #welcome-heading{font-size:20px;margin-bottom:6px;line-height:1.25;text-wrap:balance;}
   #welcome-subline{font-size:12px;line-height:1.4;padding:0 4px;text-wrap:balance;}
   #welcome-trust{margin-bottom:14px;}
-  #welcome-input-wrap{margin-bottom:8px;width:100%;max-width:100%;box-sizing:border-box;}
+  #welcome-input-wrap{margin-bottom:8px;width:calc(100vw - 32px) !important;max-width:calc(100vw - 32px) !important;box-sizing:border-box;}
 
   /* Pills: full-viewport-width horizontal scroll strip */
-  .welcome-pills-wrap{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .welcome-pills-wrap{width:100vw !important;max-width:100vw !important;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
   .welcome-pills-wrap::-webkit-scrollbar{display:none;}
   .welcome-pills{display:flex;flex-wrap:nowrap;gap:3px;padding:0 16px 4px;justify-content:flex-start;width:max-content;margin:0;}
   .welcome-pill{font-size:11px;padding:5px 9px;flex-shrink:0;}
 
   /* Service tiles: 2-col grid on mobile */
-  .svc-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;max-width:100%;padding:0;margin:0;box-sizing:border-box;}
+  .svc-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:calc(100vw - 32px) !important;max-width:calc(100vw - 32px) !important;padding:0;margin:0;box-sizing:border-box;}
   .svc-tiles::-webkit-scrollbar{display:none;}
   .svc-tile{min-width:unset;flex-shrink:unset;padding:12px 10px;}
   .svc-tile-desc{display:none;}
   .mobile-only-tile{display:flex;}
+
+  /* Demo movie: fully hidden on mobile */
+  .welcome-pill.demo-pill{display:none !important;}
+  .movie-hint{display:none !important;}
 
   /* Chat input: safe area bottom padding */
   #input-bar{padding-bottom:max(14px, env(safe-area-inset-bottom));}
@@ -382,6 +388,16 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
 @media(max-width:480px){
   #welcome-heading{font-size:18px;line-height:1.25;}
+}
+
+/* ── DIAGNOSTIC (toggle with ?diag=1) — REMOVE after confirming the layout fix ── */
+@media(max-width:768px){
+  html[data-diag] #body-wrap{outline:2px solid red !important;}
+  html[data-diag] #main{outline:2px solid orange !important;}
+  html[data-diag] #welcome{outline:2px solid limegreen !important;}
+  html[data-diag] .welcome-pills-wrap{outline:2px solid blue !important;}
+  html[data-diag] #welcome-input-wrap{outline:2px dashed purple !important;}
+  html[data-diag] .svc-tiles{outline:2px dashed teal !important;}
 }
 </style>
 </head>
@@ -524,7 +540,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
       <div class="welcome-pills-wrap">
         <div class="welcome-pills">
           <div class="welcome-pill" onclick="pillSampleTrack()">Track a shipment</div>
-          <div class="welcome-pill" onclick="_moviePlayDemo()">Play demo</div>
+          <div class="welcome-pill demo-pill" onclick="_moviePlayDemo()">Play demo</div>
           <div class="welcome-pill" onclick="startOnboarding()">Open an account</div>
           <div class="welcome-pill" onclick="welcomeSendText('What services do you offer?')">Learn about our services</div>
         </div>
@@ -2088,19 +2104,21 @@ function _movieGoHomeShimmer(){
 }
 // Take-over: stop the demo AND land the user on the shimmering HOME welcome (not the current scene).
 function _movieTakeOver(){
+  if(window.innerWidth<=768) return; // demo disabled on mobile
   if(_movieKilled() && !_movieRunning) return; // already handed off — let normal UI proceed
   killMovie({});
   _movieGoHomeShimmer();
 }
 // Play Demo (left-nav): clear the session kill flag + any rested state, then run from Act 1.
 function _moviePlayDemo(){
+  if(window.innerWidth<=768) return; // demo disabled on mobile
   sessionStorage.removeItem('fl_movie_killed');
   _movieTimers.forEach(clearTimeout); _movieTimers=[];
   document.querySelectorAll('[data-movie-el]').forEach(n=>n.remove());
   _movieRunning=false;
   runMovie();
 }
-function demoTakeOver(){ _movieTakeOver(); var w=document.getElementById('welcome-textarea'); if(w) w.focus(); }
+function demoTakeOver(){ if(window.innerWidth<=768) return; _movieTakeOver(); var w=document.getElementById('welcome-textarea'); if(w) w.focus(); }
 
 // Ghost wrappers around the REAL render fns; tag the produced node so kill can find it.
 function _tag(){ const m=document.getElementById('messages'); if(m&&m.lastChild&&m.lastChild.setAttribute) m.lastChild.setAttribute('data-ghost','1'); }
@@ -2141,6 +2159,7 @@ function _movieSoftReset(){
 }
 
 function runMovie(){
+  if(window.innerWidth<=768) return; // demo never runs on mobile (chokepoint)
   if(_movieKilled())return;
   _movieRunning=true;
   document.body.classList.add('movie-live');
@@ -2900,6 +2919,21 @@ function startMovie(){ if(!_movieKilled()) runMovie(); }
 
 // ── Init: wire SmartPaste, kill-switches, and schedule the movie ───────────
 document.addEventListener('DOMContentLoaded', function(){
+  // ── DIAGNOSTIC (toggle with ?diag=1) — REMOVE after confirming the layout fix ──
+  if(new URLSearchParams(location.search).has('diag')){
+    document.documentElement.setAttribute('data-diag','1');
+    if(window.innerWidth<=768){
+      console.log('DIAG', {
+        viewport: window.innerWidth,
+        bodyWrap: document.getElementById('body-wrap')?.getBoundingClientRect(),
+        main: document.getElementById('main')?.getBoundingClientRect(),
+        welcome: document.getElementById('welcome')?.getBoundingClientRect(),
+        pillsWrap: document.querySelector('.welcome-pills-wrap')?.getBoundingClientRect(),
+        tiles: document.querySelector('.svc-tiles')?.getBoundingClientRect(),
+        inputWrap: document.getElementById('welcome-input-wrap')?.getBoundingClientRect(),
+      });
+    }
+  }
   _wireArea(document.getElementById('welcome-textarea'));
   _wireArea(document.getElementById('input-textarea'));
   const wta=document.getElementById('welcome-textarea');
@@ -2908,7 +2942,7 @@ document.addEventListener('DOMContentLoaded', function(){
   if(ita){ ita.addEventListener('focus',_movieTakeOver); ita.addEventListener('keydown',_movieTakeOver); }
   // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
   ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) _movieTakeOver(); }, true));
-  if(!_movieKilled()) _mt(startMovie, 2000);
+  if(!_movieKilled() && window.innerWidth>768) _mt(startMovie, 2000); // no auto-play timer on mobile
 });
 </script>
 
