@@ -508,10 +508,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();welcomeSend();}"></textarea>
         <div class="welcome-input-footer">
-          <button type="button" onclick="document.getElementById('sp-file-in').click()" title="Attach a packing slip, BOL, or rate sheet" style="background:none;border:none;cursor:pointer;color:#706c63;padding:5px;display:flex;align-items:center;margin-right:auto;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-          </button>
-          <button id="welcome-send" onclick="welcomeSend()">
+          <button id="welcome-send" onclick="welcomeSend()" style="margin-left:auto;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
         </div>
@@ -577,10 +574,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
             oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
           <div class="inp-foot">
-            <button type="button" onclick="document.getElementById('sp-file-in').click()" title="Attach a packing slip, BOL, or rate sheet" style="background:none;border:none;cursor:pointer;color:#706c63;padding:5px;display:flex;align-items:center;margin-right:auto;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-            </button>
-            <button id="btn-send" onclick="sendMsg()">
+            <button id="btn-send" onclick="sendMsg()" style="margin-left:auto;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </button>
           </div>
@@ -2027,12 +2021,7 @@ async function runSampleSlip(){
 
 function _wireArea(ta){
   if(!ta) return;
-  ta.addEventListener('paste', e=>{
-    const items=(e.clipboardData&&e.clipboardData.items)||[];
-    for(let i=0;i<items.length;i++){ const it=items[i]; if(it.type&&it.type.indexOf('image')===0){ const f=it.getAsFile(); if(f){ e.preventDefault(); spExtractFile(f); return; } } }
-  });
-  ['dragover','dragenter'].forEach(ev=>ta.addEventListener(ev, e=>{ e.preventDefault(); }));
-  ta.addEventListener('drop', e=>{ const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f){ e.preventDefault(); spExtractFile(f); } });
+  // Document attach/extract removed from the landing page — users don't attach docs here.
 }
 
 // ── Auto-play demo movie — plays in the REAL center chat, one code path ─────
