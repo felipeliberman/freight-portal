@@ -1018,25 +1018,26 @@ function _renderTurnstile(el){
 function showSupportChat(){
   if(typeof _movieTakeOver==='function') _movieTakeOver(); // stop/hand off the demo first
   showChatArea();
-  appendBot("Hi! I'm here to help connect you with our support team. Tell me what's going on, or start a request below.");
-  const msgs=document.getElementById('messages'); if(!msgs) return;
-  const card=document.createElement('div');
-  card.style.cssText='margin:0 0 20px 38px;max-width:80%;background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:14px;';
+  appendBot("Happy to help — I've opened a contact form on the right. Fill it in and we'll get back to you within one business day.");
   const iS='width:100%;box-sizing:border-box;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:inherit;background:var(--card);color:var(--tx);margin-bottom:8px;';
   const lbl='display:block;font-size:11px;font-weight:600;color:var(--mu);margin-bottom:3px;';
-  card.innerHTML =
+  const html =
+    '<div class="sc-form" style="padding:18px;">' +
     '<label style="'+lbl+'">Your name</label><input class="sc-name" type="text" placeholder="Full name" style="'+iS+'">' +
     '<label style="'+lbl+'">Email</label><input class="sc-email" type="text" placeholder="you@company.com" style="'+iS+'">' +
     '<label style="'+lbl+'">Topic</label><select class="sc-topic" style="'+iS+'cursor:pointer;"><option>Shipment issue or delay</option><option>Invoice or billing</option><option>Damage or loss claim</option><option>Something else</option><option>New account / getting started</option></select>' +
     '<label style="'+lbl+'">Message</label><textarea class="sc-message" rows="4" placeholder="Describe your issue or question…" style="'+iS+'resize:vertical;min-height:70px;"></textarea>' +
     '<div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;"><label>Website<input class="sc-website" type="text" tabindex="-1" autocomplete="off"></label></div>' +
-    '<div class="sc-turnstile" style="margin:2px 0 10px;min-height:65px;"></div>' +
+    '<div style="display:flex;justify-content:center;"><div class="sc-turnstile" style="margin:2px 0 10px;min-height:65px;"></div></div>' +
     '<div class="sc-error" style="display:none;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:8px;"></div>' +
     '<button class="sc-send" style="width:100%;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Send request</button>' +
-    '<div style="text-align:center;margin-top:8px;font-size:11px;color:var(--fa);">We respond within 1 business day · (800) 687-3713 for urgent issues</div>';
-  msgs.appendChild(card); msgs.scrollTop=msgs.scrollHeight;
-  _renderTurnstile(card.querySelector('.sc-turnstile'));
-  card.querySelector('.sc-send').onclick=function(){ _submitSupportChat(card); };
+    '<div style="text-align:center;margin-top:8px;font-size:11px;color:var(--fa);">We respond within 1 business day · (800) 687-3713 for urgent issues</div>' +
+    '</div>';
+  openRightPanel('Contact Support', html);
+  const body=document.getElementById('rp-body');
+  const card=body.querySelector('.sc-form');
+  setTimeout(()=>{ _renderTurnstile(body.querySelector('.sc-turnstile')); },100);
+  body.querySelector('.sc-send').onclick=function(){ _submitSupportChat(card); };
 }
 
 async function _submitSupportChat(card){
@@ -1057,8 +1058,7 @@ async function _submitSupportChat(card){
     const r=await fetch(SUPPORT_WORKER,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,topic,message,website,turnstileToken:token})});
     let data={}; try{ data=await r.json(); }catch(e){}
     if(r.ok && data.ok){
-      card.remove();
-      appendBot("Thanks — your request is on its way to our support team. We'll reply within 1 business day.");
+      document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">Request received.</div><div class="success-sub">We'll follow up at ${email} within one business day. For anything urgent, call (800) 687-3713.</div></div>`;
       return;
     }
     btn.textContent='Send request'; btn.disabled=false;
