@@ -650,21 +650,14 @@ SHOWING SAMPLES IN THE SIDE PANEL: You can display real sample cards in the side
 
 YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat. IMPORTANT: the form does NOT open by itself. The first moment the customer agrees to open an account or start onboarding — a yes, "let's do it", "sign me up", or any go-ahead — emit the token [[OPENFORM]] at the very END of that message to open the form in the side panel. Emit it once, on that first commit; never repeat it. Because [[FILL:...]] tokens only land once the form is open, [[OPENFORM]] must come before or in the same message as your first [[FILL]].
 
-WHEN ONBOARDING: Ask in this order. Ask ONLY these questions — every one maps to a field on the form. Never ask for anything not on this list (no pain-point, timeline, delivery-type, or shipping-frequency questions — the form has nowhere to store those):
-1. What type of freight they ship or service they need
-2. Company name
-3. Their full name
+WHEN ONBOARDING: Ask in this order. Ask ONLY these questions — every one maps to a field on the form. Never ask for anything not on this list:
+1. Company name
+2. Their full name
+3. Their title or role at the company
 4. Business email
 5. Phone number
-6. City and state
-7. Shipments per month
-8. What they ship — commodity
-9. Primary shipping lanes
-10. What carriers or 3PLs they currently use
-11. Monthly freight spend
-12. AP contact name and email
-13. Offer invoice upload for free pricing review — we often beat current rates 15-25%
-14. Full name to authorize the credit application (Net 15, ACH or payment portal)
+6. Company website
+7. About how many shipments they move per month
 
 WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 5 minutes with no obligation, and once they are in we pull live contract rates from 50+ carriers instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
 
@@ -676,7 +669,7 @@ KEY CARRIERS: Metropolitan W&D (white glove #1), Pilot/Maersk (white glove #2), 
 
 After collecting all info, tell them to hit Submit on the form and that our onboarding team will reach out within 1 business day.
 
-As you collect answers, emit [[FILL:field_id:value]] tokens at the END of your message. Field IDs: company, contact_name, contact_title, email, phone, city, state, ap_name, ap_email, signature.`;
+As you collect answers, emit [[FILL:field_id:value]] tokens at the END of your message. Field IDs: company, contact_name, email, phone, website.`;
 
 async function callAI(userMsg) {
   const _trackNum = _detectTrackingNumber(userMsg);
@@ -814,7 +807,7 @@ function renderLiveTrackingCard(d){
 }
 
 function fillFormField(key, value) {
-  const map={company:'sf-company',contact_name:'sf-contact-name',contact_title:'sf-contact-title',email:'sf-email',phone:'sf-phone',city:'sf-city',state:'sf-state',ap_name:'sf-ap-name',ap_email:'sf-ap-email',signature:'sf-signature'};
+  const map={company:'sf-company',contact_name:'sf-contact-name',email:'sf-email',phone:'sf-phone',website:'sf-weburl'};
   const id=map[key]; if(!id) return;
   const el=document.getElementById(id); if(!el) return;
   el.value=value; el.classList.remove('filled'); void el.offsetWidth; el.classList.add('filled');
@@ -1086,96 +1079,50 @@ function openFormPanel() {
   <div class="svc-hero">
     <div class="svc-hero-eyebrow">Open Your Account</div>
     <div class="svc-hero-title">Free to open — no obligation, no minimums.</div>
-    <div class="svc-hero-sub">Submit your details and our onboarding team will review your application and follow up within one business day.</div>
-  </div>
-  <div class="form-progress">
-    <div class="progress-label"><span>Account Setup</span><span id="progress-pct">0% complete</span></div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="svc-hero-sub">Tell us a bit about your business and our team will follow up within one business day.</div>
   </div>
   <div class="setup-form">
     <div class="sf-section">
-      <div class="sf-section-label">Company Information</div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Legal Company Name</label><input class="sf-input" id="sf-company" placeholder="Your company name"></div></div>
-      <div class="sf-row"><div class="sf-field"><label class="sf-label">Street Address</label><input class="sf-input" id="sf-street" placeholder="Street address"></div></div>
-      <div class="sf-row">
-        <div class="sf-field w2"><label class="sf-label">City</label><input class="sf-input" id="sf-city" placeholder="City"></div>
-        <div class="sf-field" style="max-width:60px;"><label class="sf-label">State</label><input class="sf-input" id="sf-state" placeholder="CA"></div>
-        <div class="sf-field" style="max-width:80px;"><label class="sf-label">ZIP</label><input class="sf-input" id="sf-zip" placeholder="00000"></div>
-      </div>
-      <div class="sf-row">
-        <div class="sf-field"><label class="sf-label">Phone</label><input class="sf-input" id="sf-phone" placeholder="(000) 000-0000"></div>
-        <div class="sf-field w2"><label class="sf-label">Taxpayer ID / EIN (if applying for credit terms)</label><input class="sf-input" id="sf-ein" placeholder="00-0000000"></div>
-      </div>
-      <div style="margin-top:4px;"><div class="sf-label" style="margin-bottom:5px;">Entity Type</div>
-        <div class="sf-check-group">
-          <label class="sf-check"><input type="radio" name="entity" value="llc"> LLC</label>
-          <label class="sf-check"><input type="radio" name="entity" value="corporation"> Corporation</label>
-          <label class="sf-check"><input type="radio" name="entity" value="sole"> Sole Proprietor</label>
-          <label class="sf-check"><input type="radio" name="entity" value="partnership"> Partnership</label>
-        </div>
-      </div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Primary Contact</div>
+      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Company Name</label><input class="sf-input" id="sf-company" placeholder="Your company name"></div></div>
       <div class="sf-row">
         <div class="sf-field w2"><label class="sf-label">Full Name</label><input class="sf-input" id="sf-contact-name" placeholder="Full name"></div>
-        <div class="sf-field"><label class="sf-label">Title</label><input class="sf-input" id="sf-contact-title" placeholder="Job title"></div>
-      </div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Email</label><input class="sf-input" id="sf-email" placeholder="you@company.com"></div></div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Shipping Contact</div>
-      <div class="sf-row">
-        <div class="sf-field"><label class="sf-label">Name</label><input class="sf-input" id="sf-ship-name" placeholder="Full name"></div>
-        <div class="sf-field"><label class="sf-label">Phone</label><input class="sf-input" id="sf-ship-phone" placeholder="(000) 000-0000"></div>
-      </div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Email</label><input class="sf-input" id="sf-ship-email" placeholder="shipping@company.com"></div></div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Accounts Payable Contact</div>
-      <div class="sf-row">
-        <div class="sf-field"><label class="sf-label">Name</label><input class="sf-input" id="sf-ap-name" placeholder="Full name"></div>
-        <div class="sf-field"><label class="sf-label">Phone</label><input class="sf-input" id="sf-ap-phone" placeholder="(000) 000-0000"></div>
-      </div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Email</label><input class="sf-input" id="sf-ap-email" placeholder="ap@company.com"></div></div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Freight Profile</div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Services Needed</label><input class="sf-input" id="sf-services" placeholder="LTL, white glove, parcel…"></div></div>
-      <div class="sf-row">
-        <div class="sf-field"><label class="sf-label">Shipments / Month</label><input class="sf-input" id="sf-volume" placeholder="e.g. 20"></div>
-        <div class="sf-field"><label class="sf-label">Monthly Spend</label><input class="sf-input" id="sf-spend" placeholder="e.g. $10,000"></div>
-      </div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Primary Lanes (Origin → Destination)</label><input class="sf-input" id="sf-lanes" placeholder="e.g. CA → FL, TX → NY"></div></div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Commodity / What You Ship</label><input class="sf-input" id="sf-commodity" placeholder="e.g. furniture, electronics…"></div></div>
-      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Current Carrier or 3PL</label><input class="sf-input" id="sf-current-carrier" placeholder="e.g. XPO, Estes, TForce…"></div></div>
-      <div style="margin-top:4px;"><div class="sf-label" style="margin-bottom:5px;">Invoice Upload — Free Pricing Review</div>
-        <div id="upload-zone" class="upload-pill" onclick="document.getElementById('invoice-upload').click()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Upload past invoices (PDF, Excel, image)
+        <div class="sf-field w2"><label class="sf-label">Title</label>
+          <select class="sf-input" id="sf-contact-title">
+            <option value="" disabled selected>Select…</option>
+            <option>CEO / Founder</option>
+            <option>Owner / President</option>
+            <option>Operations Manager</option>
+            <option>Shipping / Logistics Manager</option>
+            <option>Warehouse Manager</option>
+            <option>Purchasing / Procurement</option>
+            <option>Finance / AP</option>
+            <option>Other</option>
+          </select>
         </div>
-        <div id="upload-list" style="margin-top:5px;font-size:11px;color:var(--mu);"></div>
       </div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Payment Terms</div>
-      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:11px 13px;font-size:12px;color:var(--mu);line-height:1.7;">Terms are <strong style="color:var(--tx);">Net 15</strong>. Payment via <strong style="color:var(--tx);">ACH</strong> or our <strong style="color:var(--tx);">online payment portal</strong>.</div>
-    </div>
-    <div class="sf-section">
-      <div class="sf-section-label">Terms &amp; Authorization</div>
-      <div class="sf-terms">By submitting this form, Customer agrees to all terms at <strong>freightandlogistics.ai</strong>. Amounts due are payable at PO Box 35311, Los Angeles, CA 90035 within Net 15 days. Late payments subject to finance charges up to the maximum allowed by law. Governed by the laws of the State of California.</div>
       <div class="sf-row">
-        <div class="sf-field w2"><label class="sf-label">Authorized Signature (type full name)</label><input class="sf-input" id="sf-signature" placeholder="Type your full name"></div>
-        <div class="sf-field"><label class="sf-label">Date</label><input class="sf-input" id="sf-date" value="${dateStr}" readonly style="color:var(--mu);"></div>
+        <div class="sf-field w2"><label class="sf-label">Business Email</label><input class="sf-input" id="sf-email" placeholder="you@company.com"></div>
+        <div class="sf-field"><label class="sf-label">Phone</label><input class="sf-input" id="sf-phone" placeholder="(000) 000-0000"></div>
       </div>
+      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Company Website</label><input class="sf-input" id="sf-weburl" placeholder="yourcompany.com"></div></div>
+      <div class="sf-row"><div class="sf-field w2"><label class="sf-label">Shipments / Month</label>
+        <select class="sf-input" id="sf-volume">
+          <option value="" disabled selected>Select…</option>
+          <option>1–10</option>
+          <option>11–50</option>
+          <option>51–200</option>
+          <option>201–1,000</option>
+          <option>1,000+</option>
+        </select>
+      </div></div>
     </div>
     <div id="sf-error" style="display:none;padding:9px 11px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:10px;"></div>
-    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href=\"https://www.freightandlogistics.com/terms-and-conditions\" target=\"_blank\" style=\"color:var(--mu);\">Terms and Conditions</a> and <a href=\"https://www.freightandlogistics.com/privacy-policy\" target=\"_blank\" style=\"color:var(--mu);\">Privacy Policy</a>.</div>
+    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" style="color:var(--mu);">Terms and Conditions</a> and <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" style="color:var(--mu);">Privacy Policy</a>.</div>
     <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;"><label>Website<input class="sf-website" type="text" tabindex="-1" autocomplete="off"></label></div>
     <div style="display:flex;justify-content:center;margin:8px 0 12px;"><div class="sf-turnstile" style="min-height:65px;"></div></div>
-    <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Submit Account Application</button>
+    <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Open My Account</button>
     <div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Our onboarding team will reach out within 1 business day.</div>
-  </div>`;
+  </div>`
   openRightPanel('Account Setup', html);
   updateProgress();
   setTimeout(()=>{document.querySelectorAll('.sf-input').forEach(el=>el.addEventListener('input',updateProgress));_renderTurnstile(document.querySelector('.sf-turnstile'));},100);
@@ -1194,11 +1141,10 @@ function updateProgress() {
 async function submitForm() {
   const get=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
   const showErr=m=>{const err=document.getElementById('sf-error');if(err){err.textContent=m;err.style.display='block';}};
-  const required={'sf-company':'Legal company name','sf-street':'Street address','sf-city':'City','sf-state':'State','sf-zip':'ZIP','sf-phone':'Phone','sf-contact-name':'Primary contact name','sf-contact-title':'Primary contact title','sf-email':'Primary contact email','sf-ship-name':'Shipping contact name','sf-ship-phone':'Shipping contact phone','sf-ship-email':'Shipping contact email','sf-ap-name':'AP contact name','sf-ap-phone':'AP contact phone','sf-ap-email':'AP contact email','sf-services':'Services needed','sf-volume':'Shipments per month','sf-spend':'Monthly spend','sf-lanes':'Primary lanes','sf-commodity':'Commodity','sf-current-carrier':'Current carrier or 3PL','sf-signature':'Authorized signature'};
+  const required={'sf-company':'Company name','sf-contact-name':'Full name','sf-contact-title':'Title','sf-email':'Business email','sf-phone':'Phone','sf-weburl':'Company website','sf-volume':'Shipments per month'};
   for(const [id,label] of Object.entries(required)){
     if(!get(id)){showErr('Please fill in: '+label);document.getElementById(id).focus();return;}
   }
-  if(!document.querySelector('input[name="entity"]:checked')){ showErr('Please select an entity type'); return; }
   const tEl=document.querySelector('.sf-turnstile');
   const hidden=document.querySelector('[name="cf-turnstile-response"]');
   let token=(hidden && hidden.value) || (tEl && tEl.dataset.tsToken) || '';
@@ -1207,25 +1153,25 @@ async function submitForm() {
   const btn=document.getElementById('sf-submit-btn');
   btn.textContent='Submitting…';btn.disabled=true;
   const err0=document.getElementById('sf-error'); if(err0) err0.style.display='none';
-  const body={company:get('sf-company'),contact:get('sf-contact-name')+(get('sf-contact-title')?', '+get('sf-contact-title'):''),email:get('sf-email'),phone:get('sf-phone'),address:[get('sf-street'),get('sf-city'),get('sf-state'),get('sf-zip')].filter(Boolean).join(', '),ein:get('sf-ein'),ap:get('sf-ap-name')+' | '+get('sf-ap-email')+' | '+get('sf-ap-phone'),shipping_contact:get('sf-ship-name')+' | '+get('sf-ship-phone')+' | '+get('sf-ship-email'),services:get('sf-services'),volume:get('sf-volume'),spend:get('sf-spend'),lanes:get('sf-lanes'),commodity:get('sf-commodity'),current_carrier:get('sf-current-carrier'),signature:get('sf-signature'),date:get('sf-date'),invoices_uploaded:uploadedInvoices.length+' file(s): '+uploadedInvoices.join(', ')};
-  const emailBody=Object.entries(body).map(([k,v])=>k.replace(/_/g,' ').toUpperCase()+': '+(v||'\u2014')).join('\n');
-  const website=(document.querySelector('.sf-website')||{}).value||'';
+  const body={company:get('sf-company'),contact:get('sf-contact-name'),title:get('sf-contact-title'),email:get('sf-email'),phone:get('sf-phone'),website:get('sf-weburl'),shipments_per_month:get('sf-volume')};
+  const emailBody=Object.entries(body).map(([k,v])=>k.replace(/_/g,' ').toUpperCase()+': '+(v||'—')).join('\n');
+  const honeypot=(document.querySelector('.sf-website')||{}).value||'';
   try {
-    const r=await fetch(SUPPORT_WORKER,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:get('sf-contact-name'),email:get('sf-email'),topic:'New Account Application',message:emailBody,website,turnstileToken:token})});
+    const r=await fetch(SUPPORT_WORKER,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:get('sf-contact-name'),email:get('sf-email'),topic:'New Account Signup',message:emailBody,website:honeypot,turnstileToken:token})});
     let data={}; try{ data=await r.json(); }catch(e){}
     if(!(r.ok && data.ok)){
-      btn.textContent='Submit Account Application';btn.disabled=false;
+      btn.textContent='Open My Account';btn.disabled=false;
       try{ if(window.turnstile && tEl && tEl.dataset.tsWidgetId!=null){ window.turnstile.reset(tEl.dataset.tsWidgetId); tEl.dataset.tsToken=''; } }catch(e){}
-      showErr((r.status===400||r.status===403)?'Please complete the verification and try again.':'Something went wrong \u2014 please try again or call (800) 687-3713.');
+      showErr((r.status===400||r.status===403)?'Please complete the verification and try again.':'Something went wrong — please try again or call (800) 687-3713.');
       return;
     }
   }catch(e){
-    btn.textContent='Submit Account Application';btn.disabled=false;
-    showErr('Network error \u2014 please try again or call (800) 687-3713.');
+    btn.textContent='Open My Account';btn.disabled=false;
+    showErr('Network error — please try again or call (800) 687-3713.');
     return;
   }
-  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">Your application has been received. Our onboarding team will reach out to ${body.email} within 1 business day to activate your account.<br><br>(800) 687-3713 for anything urgent.</div></div>`;
-  appendBot("Your application is in. Our onboarding team will reach out to you within 1 business day to get your account activated.");
+  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">Thanks — we've got your details and our team will reach out to ${body.email} within 1 business day.<br><br>(800) 687-3713 for anything urgent.</div></div>`;
+  appendBot("You're all set. Our team will reach out within 1 business day to get you going.");
 }
 
 function handleInvoiceUpload(input) {
