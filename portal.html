@@ -13688,7 +13688,7 @@ function showSavedQuotes() {
           '<div style="font-size:13px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (q.name||carrierName||q.originZip+' → '+q.destZip) + '</div>' +
           '<div style="font-size:11px;color:var(--fa);margin-top:2px;">' + (qNum ? 'Quote #'+qNum+' · ' : '') + 'Saved ' + savedDate + '</div>' +
         '</div>' +
-        (displayPrice ? '<div style="text-align:right;flex-shrink:0;margin-left:12px;"><div style="font-size:20px;font-weight:500;color:'+(isStale?'#d97706':'var(--ac)')+';">$'+Number(displayPrice).toFixed(2)+'</div><div style="font-size:10px;color:var(--fa);">'+(isStale?'may be expired':'saved rate')+'</div></div>' : '') +
+        (displayPrice ? '<div style="text-align:right;flex-shrink:0;margin-left:12px;"><div style="font-size:20px;font-weight:500;color:var(--ac);">$'+Number(displayPrice).toFixed(2)+'</div><div style="font-size:10px;color:var(--fa);">'+(isStale?'may be expired':'saved rate')+'</div></div>' : '') +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;padding:10px;background:var(--card);border-radius:8px;border:1px solid var(--bdr);font-size:11px;">' +
         '<div><div style="color:var(--fa);margin-bottom:2px;">Origin</div><div style="font-weight:600;color:var(--tx);">' + q.originZip + '</div></div>' +
@@ -13699,7 +13699,7 @@ function showSavedQuotes() {
         '<div><div style="color:var(--fa);margin-bottom:2px;">Accessorials</div><div style="font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+acc+'">' + acc + '</div></div>' +
       '</div>' +
       '<div style="display:flex;gap:7px;">' +
-        '<button class="sq-book-btn" data-qid="' + q.id + '" style="flex:1;background:'+(isStale?'#9ca3af':'var(--ac)')+';;color:#fff;border:none;border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">'+(isStale?'Book Anyway':'Book This Rate')+'</button>' +
+        '<button class="sq-book-btn" data-qid="' + q.id + '" style="flex:1;box-sizing:border-box;background:'+(isStale?'#fff':'var(--ac)')+';color:'+(isStale?'var(--ac)':'#fff')+';border:'+(isStale?'1px solid var(--ac)':'none')+';border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">'+(isStale?'Book Anyway':'Book This Rate')+'</button>' +
         '<button class="sq-requote-btn" data-qid="' + q.id + '" style="flex:1;background:'+(isStale?'var(--ac)':'var(--card)')+';;border:'+(isStale?'none':'0.5px solid var(--bdr)')+';;border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:'+(isStale?'#fff':'var(--tx)')+';">Get Fresh Rates</button>' +
         '<button class="sq-del-btn" data-qid="' + q.id + '" data-name="'+(q.name||carrierName||q.originZip+' → '+q.destZip)+'" style="background:none;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:12px;cursor:pointer;color:var(--mu);transition:all .12s;" onmouseover="this.style.borderColor=\'#fecaca\';this.style.color=\'#dc2626\';" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.color=\'var(--mu)\';" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>' +
       '</div>';
@@ -14707,6 +14707,7 @@ function showShippingItems() {
     var c2=document.createElement('div');
     c2.style.cssText='position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid '+(i<a.length-1?'#c8c4bc;':'transparent;');
     if(s.value===null){
+      c2.style.display='flex';c2.style.alignItems='center';c2.style.justifyContent='center';
       var btn=document.createElement('button');
       btn.id='ab-add-btn';
       btn.style.cssText='display:inline-flex;align-items:center;gap:4px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
