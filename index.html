@@ -1123,7 +1123,7 @@ function openFormPanel() {
     <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Open My Account</button>
     <div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Our onboarding team will reach out within 1 business day.</div>
   </div>`
-  openRightPanel('Account Setup', html);
+  openRightPanel('Open an Account', html);
   updateProgress();
   setTimeout(()=>{document.querySelectorAll('.sf-input').forEach(el=>el.addEventListener('input',updateProgress));_renderTurnstile(document.querySelector('.sf-turnstile'));},100);
 }
@@ -1170,8 +1170,8 @@ async function submitForm() {
     showErr('Network error — please try again or call (800) 687-3713.');
     return;
   }
-  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">Thanks — we've got your details and our team will reach out to ${body.email} within 1 business day.<br><br>(800) 687-3713 for anything urgent.</div></div>`;
-  appendBot("You're all set. Our team will reach out within 1 business day to get you going.");
+  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">We've got your details. Someone from our team will reach out to ${body.email} within one business day to get you shipping. Check your inbox for a confirmation in the meantime.<br><br>(800) 687-3713 for anything urgent.</div></div>`;
+  appendBot("You're all set — we've got your details. Someone from our team will reach out within one business day to get you shipping, and you'll get a confirmation email shortly.");
 }
 
 function handleInvoiceUpload(input) {
