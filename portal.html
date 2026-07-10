@@ -5528,6 +5528,26 @@ function showBookingConfirmedModal(bc) {
 
 
 
+// ── SHARED DISPATCH-FAILURE FORMATTER ──────────────────────────────────────────
+// Single chokepoint for every dispatch-fail surface. Turns a raw Primus error
+// into customer-facing, actionable text: name what's missing + how to fix it.
+// Saving an incomplete BOL as a draft is fine — this only speaks to dispatch.
+function formatDispatchError(raw) {
+  const e = (raw || '').toString();
+  const low = e.toLowerCase();
+  // Map known Primus validation failures to a clear fix.
+  if (/consignee.*contact|delivery.*contact/.test(low))
+    return "This shipment is saved but can't dispatch yet — it's missing a delivery contact name. Open it in My Shipments, add a Contact Name under Delivery, then dispatch again.";
+  if (/shipper.*contact|pickup.*contact/.test(low))
+    return "This shipment is saved but can't dispatch yet — it's missing a pickup contact name. Open it in My Shipments, add a Contact Name under Pickup, then dispatch again.";
+  if (/phone/.test(low))
+    return "This shipment is saved but can't dispatch yet — a phone number is missing or invalid. Open it in My Shipments, add a valid pickup/delivery phone, then dispatch again.";
+  if (/address|zip/.test(low))
+    return "This shipment is saved but can't dispatch yet — the pickup or delivery address is incomplete. Open it in My Shipments, complete the address, then dispatch again.";
+  // Fallback: still name the raw reason (it's usually specific) and give the fix path.
+  return "This shipment is saved but couldn't dispatch — " + e + ". Open it in My Shipments to complete the missing info and dispatch again, or call (800) 687-3713 if you're stuck.";
+}
+
 // ── CANONICAL DISPATCH ENGINE ──────────────────────────────────────────────────
 // Single source of truth for all dispatch calls. Every UI/agent path calls this.
 // Returns { ok, status, dispResult, confirmation, PRO, docs, hasClbl, dispatchOk, error }
@@ -5704,7 +5724,7 @@ function showShipmentSavedModal(bc) {
     if (!dr.ok) {
       overlay.remove();
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-      appendMessage('bot', 'Dispatch could not be completed — ' + (dr.error || 'unknown error') + '. Please try from My Shipments or call (800) 687-3713.');
+      appendMessage('bot', formatDispatchError(dr.error));
       return;
     }
     overlay.remove();
@@ -6052,7 +6072,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     if (dr.inFlight || dr.alreadyDispatched) { if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; } return; }
     if (!dr.ok) {
       if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
-      appendMessage('bot', 'Dispatch error: ' + (dr.error || 'unknown') + '. Please call (800) 687-3713.');
+      appendMessage('bot', formatDispatchError(dr.error));
       return;
     }
     const validDocs = (dr.docs || []).filter(d => d && d.url);
@@ -10688,7 +10708,7 @@ async function _execDispatchShipment(input) {
     if (dr.inFlight) return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
     if (!dr.ok) {
       console.error('dispatch_shipment error:', dr.error);
-      return { ok: false, error: 'Dispatch error: ' + (dr.error || 'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
+      return { ok: false, error: formatDispatchError(dr.error) };
     }
 
     const validDocs = (dr.docs || []).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
