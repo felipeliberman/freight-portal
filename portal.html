@@ -2685,7 +2685,13 @@ async function fetchRates(shipment) {
     const isVolume = VOLUME_KEYWORDS.test(svc) || VOLUME_KEYWORDS.test(r.name || '');
     const isGuaranteed = /guarantee|guaranteed|gtd/i.test(svc) || /guarantee|guaranteed|gtd/i.test(r.name||'');
     const cat = isVolume ? 'vol' : isGuaranteed ? 'gtd' : 'ltl';
-    const dedupKey = carrierKey + '|' + cat;
+    // Distinct service levels (Door Step / Threshold / White Glove / Guaranteed etc.)
+    // are distinct offerings — include serviceLevelCode so they all survive. Same
+    // carrier + same service level from multiple accounts still collapses to cheapest.
+    const lvl = ((r.serviceLevelCode || '') + '').trim().toLowerCase()
+             || svc.replace(/[^a-z0-9]/g, '').slice(0, 24)
+             || cat;
+    const dedupKey = carrierKey + '|' + cat + '|' + lvl;
     if (seen[dedupKey]) return false;
     seen[dedupKey] = true;
     return true;
