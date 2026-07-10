@@ -99,9 +99,10 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   font-weight:400;color:var(--tx);
   margin-bottom:4px;text-align:center;
   line-height:1.15;letter-spacing:-.01em;
-  position:relative;overflow:hidden;
+  position:relative;
 }
-#welcome-heading.sheen::after{
+#welcome-heading .wh-inner{position:relative;display:inline-block;overflow:hidden;}
+#welcome-heading.sheen .wh-inner::after{
   content:'';
   position:absolute;
   top:-20%;left:-150%;
@@ -343,10 +344,12 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
   /* Welcome screen */
   html,body{overflow:auto;height:auto;}
+  body{overflow-x:hidden;}
   #body-wrap{overflow:visible;height:auto;}
   #main{overflow:visible;height:auto;}
   #welcome{padding:16px 16px 40px;justify-content:flex-start;overflow:visible;flex:none;}
-  #welcome-heading{font-size:clamp(22px,6vw,30px);margin-bottom:3px;}
+  #welcome-heading{font-size:20px;margin-bottom:6px;line-height:1.25;text-wrap:balance;}
+  #welcome-subline{font-size:12px;line-height:1.4;padding:0 4px;text-wrap:balance;}
   #welcome-trust{margin-bottom:14px;}
   #welcome-input-wrap{margin-bottom:8px;}
 
@@ -370,12 +373,13 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
   /* Topbar tighter on mobile */
   #topbar{padding:0 12px;}
+  .nav-logo{height:36px;}
   .nav-phone span{display:none;}
   .nav-phone{padding:6px 10px;}
 }
 
 @media(max-width:480px){
-  #welcome-heading{font-size:20px;}
+  #welcome-heading{font-size:18px;line-height:1.25;}
 }
 </style>
 </head>
@@ -499,7 +503,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
   <!-- MAIN -->
   <div id="main">
     <div id="welcome">
-      <div id="welcome-heading" class="sheen">Quote, book, and manage freight — with AI.</div>
+      <div id="welcome-heading" class="sheen"><span class="wh-inner">Quote, book, and manage freight — with AI.</span></div>
       <div id="welcome-subline">Instant quotes from top carriers &nbsp;·&nbsp; One account for all your shipping &nbsp;·&nbsp; Dedicated support team</div>
       <div style="display:inline-flex;align-items:center;gap:6px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--ac);font-weight:600;margin-bottom:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Free to open · No obligation</div>
 
