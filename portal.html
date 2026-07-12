@@ -14748,6 +14748,7 @@ function showShippingItems() {
 
   // ── Hero header ──────────────────────────────────────────────────────────────
   const hdr = document.createElement('div');
+  hdr.className = 'panel-summary-card';
   hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);';
   var abStrip = document.createElement('div');
   abStrip.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
@@ -15051,6 +15052,7 @@ function showAddressBook() {
 
   // ── Header ──────────────────────────────────────────────────────────────────
   const hdr = document.createElement('div');
+  hdr.className = 'panel-summary-card';
   hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);';
   hdr.innerHTML =
     // Hero card — compact strip
