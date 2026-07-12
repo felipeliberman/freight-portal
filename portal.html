@@ -9275,6 +9275,8 @@ function shipFields(s){
     destState:String(s.destinationState||con.state||'').toLowerCase(),
     originCity:String(s.originCity||shp.city||'').toLowerCase(),
     originState:String(s.originState||shp.state||'').toLowerCase(),
+    originZip:String(s.originZipcode||''),
+    destZip:String(s.destinationZipcode||''),
     status:String(s.lastStatus||ti.lastStatusExternal||ti.lastStatusInternal||ti.statusName||s.status||'').toLowerCase(),
     mode:String(s.shipmentMode||'LTL').toLowerCase(),
     cost:cost,
@@ -18201,6 +18203,8 @@ CRITICAL: Never mention Primus, ShipPrimus, or any backend system name to the cu
 
 You have tools to look up this customer's real shipment data: search_shipments (find and filter their shipments), run_analytics (aggregate their history — counts, total and average spend, carrier and destination breakdowns, monthly volume, top consignees), get_documents (fetch a shipment's documents like the BOL PDF or proof of delivery by BOL number), render_chart (draw a chart of their analytics in the side panel), get_invoices (invoices and payment status — paid, unpaid and overdue counts, total outstanding balance, invoice aging, and each invoice's number, BOL, PAID or UNPAID status, amount, date and due date; pass a bol to check one shipment), get_claims (the customer's OPEN freight claims — open count, total claimed, and each claim's BOL, type, status, amount, carrier and file date; pass a bol to check one shipment), and list_saved_quotes (the customer's SAVED quotes — count and each quote's origin, destination, weight, carrier, price and saved date; opens the real Saved Quotes panel). Use them whenever the customer asks anything about their own shipments, carriers, spend, counts, lanes, destinations, history, paperwork, invoices, whether something is paid, claims, or their saved/past quotes. Report payment status, claim status, and amounts ONLY from what get_invoices/get_claims return; if they report nothing, say you could not find it rather than guessing. get_claims is for READING existing claims — to FILE a new damage/loss claim, that is the separate support draft flow, not this tool. When the customer wants a filtered slice of invoices (unpaid, paid, overdue, or a subset just discussed), re-scope by calling get_invoices with that status BEFORE exporting — never export the full set for a subset request, and never tell the customer to filter the downloaded spreadsheet themselves; if the subset is unclear, ask which one.
 
+STREET ADDRESSES: The shipment list and search results carry only city, state and ZIP — never a street address. When the customer asks where a specific shipment picked up or delivered, or for a shipper/consignee street address, contact name or contact phone, call get_shipment_address with that shipment's BOL rather than saying you don't have the address — but only once search_shipments or the conversation has already identified WHICH BOL is in question; if the BOL isn't known yet, find it first.
+
 When the customer asks to SEE, chart, graph, plot, visualize, or "show me a breakdown of" their data, call render_chart. You choose only the chart shape and which aggregate to run — the tool computes every number itself over their full history, so you never supply figures. Use a bar chart to compare categories (carriers, states, cities), a line chart for a trend over months, a pie or donut for share-of-total across a few categories, a stat for a single headline number, and a table when they want the exact rows. Always pair the chart with a one or two sentence spoken summary of the key numbers it returns. If render_chart reports it rendered nothing because there's no data for that period, say so plainly and never invent figures.
 
 When a question is scoped to a time period (this year, last month, since June, the last 90 days), ALWAYS pass the matching dateFrom/dateTo on run_analytics and search_shipments, and carry that same window through follow-up questions about the same period. If you omit the dates, analytics covers their entire history on file. Each analytics result reports the exact window it used (no dates means all-time) — state that period accurately in your answer.
@@ -18262,6 +18266,17 @@ const _waybTools = [
       required: ['bol'],
       properties: {
         bol: { type: 'string', description: "The shipment's BOL number." }
+      }
+    }
+  },
+  {
+    name: 'get_shipment_address',
+    description: "Look up the full pickup (shipper) and delivery (consignee) STREET ADDRESS for ONE specific shipment by its BOL number — street address line, city, state, ZIP, plus the on-site contact name and phone. The shipment list/search results do NOT carry street addresses, so call this whenever the customer asks where a shipment picked up or delivered, or for a shipper/consignee street address or contact. It fetches that one shipment's detail on demand, so call it ONLY after search_shipments or the conversation has already identified WHICH BOL is in question. Returns only the fields actually on file; anything missing comes back null — never invent an address.",
+    input_schema: {
+      type: 'object',
+      required: ['bol'],
+      properties: {
+        bol: { type: 'string', description: "The shipment's BOL number, already identified from search_shipments or the conversation context." }
       }
     }
   },
@@ -18365,12 +18380,23 @@ async function _waybSearch(input) {
     const _eta = _del ? null : _iso(s.estimatedDeliveryDate || ti.deliveryDateEstimated || ti.estimatedDeliveryDate);
     return {
       bol: f.bol || null,
+      pro: f.pro || null,
       carrier: cleanCar(f.carrier) || null,
+      shipper: f.shipper || null,
       consignee: f.consignee || null,
+      originCity: f.shipperCity || null,
+      originState: f.shipperState ? f.shipperState.toUpperCase() : null,
       destCity: f.consigneeCity || null,
       destState: f.consigneeState ? f.consigneeState.toUpperCase() : null,
+      originZip: f.originZip || null,
+      destZip: f.destZip || null,
       date: f.date ? f.date.toISOString().split('T')[0] : null,
       cost: f.cost > 0 ? f.cost : null,
+      mode: f.mode || null,
+      weight: f.weight > 0 ? f.weight : null,
+      pieces: f.pieces > 0 ? f.pieces : null,
+      freightClass: f.freightClass || null,
+      accessorials: (f.accessorials && f.accessorials.length) ? f.accessorials : null,
       status: f.status || null,
       pickupDate: _pu,
       deliveryDate: _del,
@@ -18543,6 +18569,54 @@ async function _waybDocuments(input) {
     documents: list.map(function (d) { return { type: d.type, label: d.label }; }),
     note: 'The document links are shown to the customer as clickable buttons automatically. Do NOT write out or repeat any link or URL — just tell them the documents are ready.'
   };
+}
+
+// get_shipment_address — on-demand per-BOL detail fetch for the ONE thing the /book list endpoint
+// lacks: the shipper/consignee STREET address. Reuse an already-loaded raw object (shipCtx.loaded or
+// the last search result) for its BOLId when we have it; else fetchBookingByBOL. Then pull the nested
+// shipper/consignee off the /book/{BOLId} detail (same endpoint as showShipmentDetail). Returns only
+// the fields actually present — null for anything missing — and never fabricates an address.
+async function _waybShipmentAddress(input) {
+  input = input || {};
+  const bol = String(input.bol || '').trim();
+  if (!bol) return { found: false, message: 'No BOL number was provided.' };
+  const _byBol = function (s) { return String((s && (s.BOLNumber || s.bolNumber)) || '').trim() === bol; };
+  let ship = ((shipCtx && shipCtx.loaded) || []).find(_byBol)
+          || ((typeof lastWaybResultShipments !== 'undefined' && lastWaybResultShipments) || []).find(_byBol)
+          || null;
+  if (!ship) { try { ship = await fetchBookingByBOL(bol); } catch (e) { ship = null; } }
+  const bolId = ship && (ship.BOLId || ship.bolId || ship.id);
+  if (!bolId) return { found: false, message: 'I could not find shipment ' + bol + '.' };
+  let det;
+  try {
+    const token = await getToken();
+    const r = await fetch(PRIMUS_BASE + '/applet/v1/book/' + bolId, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) throw new Error('detail ' + r.status);
+    const d = await r.json();
+    det = (d && d.data && d.data.results) ? d.data.results : ((d && d.data) || {});
+  } catch (e) {
+    console.error('waybAgent get_shipment_address error:', e);
+    return { found: false, message: 'I could not pull up the address for shipment ' + bol + '.' };
+  }
+  // Extract only the fields on file — null for anything blank/missing, never invented.
+  const _pick = function (o) {
+    o = o || {};
+    const _s = function (v) { const t = (v == null ? '' : String(v)).trim(); return t || null; };
+    return {
+      address1:     _s(o.address1),
+      address2:     _s(o.address2),
+      city:         _s(o.city),
+      state:        _s(o.state),
+      zipCode:      _s(o.zipCode || o.zipcode),
+      contact:      _s(o.contact),
+      contactPhone: _s(o.contactPhone)
+    };
+  };
+  const shipper = _pick(det.shipper);
+  const consignee = _pick(det.consignee);
+  const _empty = function (o) { return Object.keys(o).every(function (k) { return o[k] == null; }); };
+  if (_empty(shipper) && _empty(consignee)) return { found: false, message: 'I could not find an address on file for shipment ' + bol + '.' };
+  return { found: true, bol: bol, shipper: shipper, consignee: consignee };
 }
 
 // Shared read-tool scaffold: fetch a feed the UI already uses, run each row through the SAME
@@ -19199,6 +19273,7 @@ async function _waybExecTool(tu) {
     if (tu.name === 'search_shipments') result = await _waybSearch(tu.input);
     else if (tu.name === 'run_analytics') result = await _waybAnalytics(tu.input);
     else if (tu.name === 'get_documents') result = await _waybDocuments(tu.input);
+    else if (tu.name === 'get_shipment_address') result = await _waybShipmentAddress(tu.input);
     else if (tu.name === 'get_invoices') result = await _waybInvoices(tu.input);
     else if (tu.name === 'get_claims') result = await _waybClaims(tu.input);
     else if (tu.name === 'list_saved_quotes') result = await _waybSavedQuotes(tu.input);
