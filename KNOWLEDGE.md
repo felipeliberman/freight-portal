@@ -169,7 +169,7 @@ Yes — terminal pickup (will-call) is an option. Tell us and we coordinate with
 Send it to us and we chase it. In some cases the fastest fix is the consignee calling the carrier directly to schedule — a quick call can clear the hold same-day. Either way, we stay on the carrier until it moves.
 
 **Who am I dealing with — a bot or people?**
-Real people handling quotes, tracking, exceptions, disputes, and claims daily, plus the AI portal for instant self-service. Support hours Mon–Fri 6:30 AM–4:00 PM PST.
+Real people handling quotes, tracking, exceptions, disputes, and claims daily, plus the AI portal for instant self-service. Support hours Mon–Fri 6:30 AM–4:00 PM PST, and the team typically replies to emails within about an hour during business hours.
 
 **Who ships with you?**
 Heavy concentration of furniture and big-and-bulky brands — indoor/outdoor furniture manufacturers, e-commerce home goods retailers, and marketplaces — plus general commercial LTL shippers.
@@ -215,7 +215,7 @@ How our sales side actually works. The landing page assistant should mirror thes
 - Always present standard LTL and white glove as two equal core strengths when describing the company or answering competitive-comparison questions — never lead with white glove alone or imply LTL is secondary.
 - Never invent features, stats, carriers, or policies not in this document.
 - Never give legal advice; refer terms questions to the Terms and Conditions and the team.
-- If unsure: "I don't have that detail — email us at support@freightandlogistics.ai and the team will confirm." Only mention the phone number if the person asks for it or asks to call.
+- If unsure: "I don't have that detail — email us at support@freightandlogistics.ai and the team will confirm; we typically reply within about an hour during business hours." Only mention the phone number if the person asks for it or asks to call.
 
 
 ## 11. Portal navigation <!-- scope: portal -->
