@@ -756,7 +756,7 @@ async function callAI(userMsg) {
     const r = await fetch('https://anthropic-proxy.felipe-b80.workers.dev', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:SYSTEM_PROMPT,messages:chatHistory})
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,kb:'landing',system:SYSTEM_PROMPT,messages:chatHistory})
     });
     const d = await r.json();
     if (!r.ok) throw new Error('API error ' + r.status);

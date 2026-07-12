@@ -10994,6 +10994,7 @@ async function aiConverse(userText) {
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 1024,
+          kb: 'portal',
           system: [
             { type: 'text', text: _convoSysPrompt, cache_control: { type: 'ephemeral' } },
             { type: 'text', text: _liveStateBlock() + (isMobile() ? '\n\nThe customer is on a mobile device. Do NOT quote or book conversationally — for any quote or booking request, tell them in one sentence to tap the Quote tab at the bottom. If you extracted shipment details from a message (like a pasted BOL), they have been saved and will appear when they tap Quote.' : '') }
