@@ -1,0 +1,116 @@
+{
+  "description": "Seed questions for the landing-page AI eval harness. Derived from real inquiries in the support mailbox, paraphrased and stripped of PII. Each category should be expanded to 50-100 variants by the generator.",
+  "categories": {
+    "quoting": [
+      "Can you quote a shipment with a lot of items \u2014 would this be FTL or LTL?",
+      "I need a quote for white glove delivery of outdoor furniture from a manufacturer to a residence",
+      "Can you quote threshold delivery for a furniture order?",
+      "The pickup location requires a call 15 minutes before pickup \u2014 can you handle special instructions?",
+      "Can this shipment be palletized, and does that change the price?",
+      "How fast can you turn around a quote?",
+      "Do you quote shipments originating in Canada?"
+    ],
+    "white_glove": [
+      "The item is flat-pack and needs assembly \u2014 can you still do white glove?",
+      "What exactly is included in white glove delivery?",
+      "What's the difference between curbside, threshold, and white glove?",
+      "Do you deliver to room of choice and remove the packaging?"
+    ],
+    "equipment_limits": [
+      "My item weighs over 2000 lbs \u2014 can it still go on a liftgate?",
+      "The pallet is 10 feet long \u2014 will it fit on a liftgate?",
+      "The receiver doesn't have a dock or forklift \u2014 what are my options?"
+    ],
+    "booking_process": [
+      "I approved the quote \u2014 what happens next?",
+      "How do I get the BOL and shipping labels?",
+      "Can you schedule the pickup for tomorrow?",
+      "Can I book everything myself online or do I have to email you?"
+    ],
+    "tracking_exceptions": [
+      "The carrier attempted delivery but couldn't complete it \u2014 what now?",
+      "The consignee's phone number doesn't work and the carrier can't schedule the appointment \u2014 can you help?",
+      "My pickup was missed \u2014 what do you do about it?",
+      "Can you tell me the exact timestamp of the attempted pickup?",
+      "The shipment shifted in transit and went back to the dock \u2014 when will it deliver?"
+    ],
+    "billing_disputes": [
+      "I got hit with a reweigh fee but my item weighs less than they billed \u2014 can you fix it?",
+      "The invoice is higher than the quote \u2014 why, and what can I do?",
+      "Does an attempted pickup cost me anything?",
+      "How do I avoid reclass and reweigh charges?"
+    ],
+    "claims_insurance": [
+      "My freight arrived damaged \u2014 what do I do?",
+      "How long do I have to file a damage claim?",
+      "Can I add cargo insurance to my shipment?",
+      "Who pays when the carrier damages my freight \u2014 you or the carrier?"
+    ],
+    "payments_invoicing": [
+      "What are your payment terms?",
+      "Can I pay by ACH or card?",
+      "I got a payment reminder but I already paid \u2014 who do I contact?"
+    ],
+    "trust_competitive": [
+      "Are you a carrier or a broker?",
+      "Why should I use you instead of going direct to the carrier?",
+      "How are you different from other freight brokers or load boards?",
+      "Who are your typical customers?",
+      "Am I talking to a bot or real people?"
+    ],
+    "sales_conversion": [
+      "I have a shipment from Richardson TX going residential, 40x49x86 at 220 lbs \u2014 can you price it?",
+      "We already have a broker we're happy with \u2014 why would we switch?",
+      "Can I just test you with one or two lanes before committing?",
+      "How fast can you turn a quote around if I send dims right now?",
+      "We don't ship much LTL yet \u2014 is it worth setting up an account?",
+      "Who else do you ship for in outdoor furniture?",
+      "Can I book a call with a real person instead of chatting?",
+      "Stop emailing me / take me off your list",
+      "I sent you dims an hour ago, where's my quote?"
+    ],
+    "existing_customer_flow": [
+      "New shipment, dock pickup in City of Industry to a residence, add $1728 insurance \u2014 please quote",
+      "Quote approved, schedule pickup for tomorrow and send the BOL",
+      "The pickup location closes at 2:30pm \u2014 can you note the hours on the BOL?"
+    ],
+    "price_negotiation": [
+      "Was there anything cheaper with TForce?",
+      "Your quote is higher than last time \u2014 have a better rate next time",
+      "Would it be cheaper to package it all on one pallet?",
+      "Can you give me two options \u2014 cheapest and fastest?",
+      "Why is the residential delivery so much more than dock-to-dock?"
+    ],
+    "special_capabilities": [
+      "Can Estes deliver to an Amazon fulfillment center?",
+      "I need 8 pallets on a 26' box truck with liftgate \u2014 do you do FTL?",
+      "The pallet can't have anything stacked on top \u2014 can you guarantee that?",
+      "The portal isn't showing Metro for my delivery zip \u2014 did you stop using them?",
+      "This is an exchange \u2014 deliver the new table and take the old one back"
+    ],
+    "fba_tradeshow": [
+      "I have an FBA shipment ID FBA19XXXXXXX, 1 pallet 48x40x20 at 203 lbs \u2014 can you quote LTL to the Amazon FC?",
+      "Which carriers can actually deliver to an Amazon fulfillment center?",
+      "Can you pick up from my 3PL warehouse and deliver to Amazon same week?",
+      "Do you ship FBA inbound to Amazon Canada fulfillment centers?",
+      "Amazon rejected the delivery appointment \u2014 what happens now?",
+      "I need a booth shipped to a convention center with an advance warehouse deadline \u2014 can you handle trade show freight?"
+    ],
+    "byo_carrier": [
+      "We already have a direct contract with Estes \u2014 why would we book through you?",
+      "Can I connect my own carrier account to your system?",
+      "If I book on my own carrier account through your platform, what do you charge?",
+      "Who invoices me when I use my own carrier rates \u2014 you or the carrier?",
+      "Will your system show me my direct rates and your rates side by side?"
+    ],
+    "delivery_exceptions": [
+      "The sofa didn't fit through my customer's front door and the driver took it away \u2014 what happens now?",
+      "My customer refused the shipment because it arrived damaged \u2014 what's the process?",
+      "XPO added a $209 storage fee to my invoice and I was never told about any delivery problem",
+      "My shipment hasn't moved in a week and I think it's lost",
+      "If a lost shipment is found, does it come back to me or go to my customer?",
+      "Can the consignee just pick up the freight at the carrier terminal?",
+      "The carrier put my delivery on hold \u2014 how do I get it released?"
+    ]
+  }
+}
