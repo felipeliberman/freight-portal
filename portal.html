@@ -429,6 +429,20 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 .talk-alt-btn:hover{background:#a020a0;}
 @media(max-width:820px){.talk-grid{grid-template-columns:1fr;}.talk-right{position:static;}}
 
+/* Desktop right-panel top-summary cards — unify every panel's top block into
+   the same rounded card as My Shipments. Scoped to #rp-body so the mobile
+   content view (#mob-content-body) keeps its own separately-tuned treatment.
+   !important overrides the inline border-bottom (which mobile still relies on). */
+#rp-body .panel-summary-card{
+  border:1px solid var(--bdr) !important;
+  border-radius:14px !important;
+  margin-bottom:16px !important;
+  overflow:hidden;
+}
+/* qt-hero is a status header for the form directly below it (tab bar, progress,
+   fields), not a card above a distinct data table — keep it flush, no gap. */
+#rp-body #qt-hero.panel-summary-card{margin-bottom:0 !important;}
+
 /* ══════════════════════════════════════════════════
    MOBILE — full responsive overhaul ≤768px
    ══════════════════════════════════════════════════ */
@@ -2937,6 +2951,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
 
   // Date range picker
   const dateBar = document.createElement('div');
+  dateBar.className = 'panel-summary-card';
   dateBar.style.cssText = 'padding:10px 18px;border-bottom:1px solid var(--bdr);background:var(--card);display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;';
   const _iNow = new Date();
   const _i12Mo = new Date(_iNow); _i12Mo.setFullYear(_i12Mo.getFullYear() - 1);
@@ -13620,6 +13635,7 @@ function showSavedQuotes() {
   const carriers = new Set(quotes.map(q => q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
 
   const hdr = document.createElement('div');
+  hdr.className = 'panel-summary-card';
   hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
   // Build hdr columns via DOM to ensure white-space:nowrap
   [
@@ -15513,6 +15529,7 @@ function showQuoteForm(prefill, silent) {
   // ── Hero header ──────────────────────────────────────────────────────────
   const quoteHdr = document.createElement('div');
   quoteHdr.id = 'qt-hero';
+  quoteHdr.className = 'panel-summary-card';
   quoteHdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
   quoteHdr.innerHTML =
     '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:18px;margin-right:4px;text-align:center;">' +
