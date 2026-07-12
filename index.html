@@ -34,7 +34,7 @@
   "description": "Nationwide AI-powered LTL and white-glove freight brokerage",
   "foundingDate": "2010",
   "telephone": "+1-800-687-3713",
-  "email": "support@freightandlogistics.com",
+  "email": "support@freightandlogistics.ai",
   "address": {
     "@type": "PostalAddress",
     "postOfficeBoxNumber": "35311",
@@ -732,13 +732,13 @@ WHEN ONBOARDING: Ask in this order. Ask ONLY these questions — every one maps 
 6. Company website
 7. About how many shipments they move per month
 
-WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 5 minutes with no obligation, and once they are in we pull live contract rates from 50+ carriers instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
+WHEN NOT ONBOARDING: Answer freight questions directly and helpfully. RATE QUESTIONS — OPTION C: When anyone asks about rates or pricing, give a genuinely helpful answer first (LTL rates depend on origin/dest, weight, freight class, and accessorials; white glove residential runs higher due to final-mile complexity; typical LTL shipments range widely based on distance and weight). Then always pivot: opening a free account takes 5 minutes with no obligation, and once they are in we pull live contract rates from 20+ contracted carriers with 50+ rate options per quote (standard, guaranteed, volume) instantly — we typically beat current rates by 15 to 25 percent. Always mention it is free with no obligation.
 
 NEVER INVENT OPERATIONAL DETAILS: You do not have access to live data. You must NEVER state a specific terminal address, terminal location, carrier phone number, transit time, delivery ETA, tracking status, shipment status, or a specific dollar rate for a specific lane — you cannot look these up and any specific you give would be a guess. If asked any of these (for example "is there an ABF terminal in Ocala" or "how long to ship to Dallas" or "what's the rate from X to Y" or "where is my shipment"), do NOT guess or state specifics. Instead, say honestly that live terminal, transit, tracking, and exact-rate details come from the portal once their account is active, where the system pulls real data from the carriers directly — then pivot to opening a free account. Example: "Live terminal locations and transit times come straight from the carriers once you're in the portal — it takes 5 minutes to set up, free with no obligation, and then you'd see exact answers for your lanes. Want me to get you started?" It is always better to defer honestly than to state a specific you cannot verify. This rule overrides any urge to be helpful with a specific answer.
 
-COMPANY: Freight and Logistics, Inc. Phone: (800) 687-3713. Email: support@freightandlogistics.com. Hours: Mon-Fri 6:30 AM - 4:00 PM PST. PO Box 35311, Los Angeles, CA 90035. Terms: Net 15. Payment: ACH or payment portal.
+COMPANY: Freight and Logistics, Inc. Phone: (800) 687-3713. Email: support@freightandlogistics.ai. Hours: Mon-Fri 6:30 AM - 4:00 PM PST. PO Box 35311, Los Angeles, CA 90035. Terms: Net 15. Payment: ACH or payment portal.
 
-KEY CARRIERS: Metropolitan W&D (white glove #1), Pilot/Maersk (white glove #2), Estes, ABF, TForce, XPO, Saia, AAA Cooper, R&L Carriers, Roadrunner, Forward Air.
+KEY CARRIERS: White glove — Metropolitan W&D, Pilot/Maersk, Werner Final Mile, and Dickerson, plus a robust network of nationwide white glove partners. LTL — Estes, ABF, TForce, XPO, Saia, AAA Cooper, R&L Carriers, Roadrunner, Forward Air. Never rank white glove carriers or say which is number one.
 
 After collecting all info, tell them to hit Submit on the form and that our onboarding team will reach out within 1 business day.
 
@@ -987,9 +987,9 @@ function closeRightPanel() {
 // Service panels
 const SVC_PANELS = {
   ltl:{eyebrow:'Less Than Truckload',headline:'Nationwide LTL carrier options and instant quotes.',sub:'We rate-shop every major carrier in real time so you always get the best combination of price, transit time, and service.',stats:[['National','Carriers'],['1 - 7','Day Transit'],['$0','Hidden Fees']],features:[['Instant live quotes','Rate shop across top national and regional carriers in real time.'],['BOL generation','We handle all documentation — BOL, labels, and pickup scheduling.'],['Full tracking','Real-time status from pickup to delivery across every carrier.'],['Claims management','We file and negotiate claims on your behalf.'],['Freight class expertise','We calculate NMFC class from your dimensions and weight.']]},
-  wg:{eyebrow:'Our Core Specialty',headline:'Inside delivery, room of choice, assembly, and debris removal.',sub:'White glove residential is what we do best. Metropolitan W&D and Pilot Freight are our top carriers — both specialize in furniture and big-and-bulky delivery.',stats:[['Full','Room of Choice'],['On-Site','Expert Assembly'],['Zero','Packaging Left Behind']],features:[['Room of choice placement','Carriers bring items inside and place them exactly where the customer wants.'],['Unpack and assembly','Full assembly service for furniture, exercise equipment, and more.'],['Debris removal','All packaging removed and taken away.'],['Appointment scheduling','Delivery window scheduled with the end customer directly.'],['Residential liftgate standard','Every white glove delivery includes a liftgate.']]},
+  wg:{eyebrow:'Our Core Specialty',headline:'Inside delivery, room of choice, assembly, and debris removal.',sub:'White glove residential is what we do best. Our white glove carriers include Metropolitan Warehouse & Delivery, Pilot/Maersk, Werner Final Mile, and Dickerson, plus a robust network of nationwide white glove partners — all specializing in furniture and big-and-bulky residential delivery.',stats:[['Full','Room of Choice'],['On-Site','Expert Assembly'],['Zero','Packaging Left Behind']],features:[['Room of choice placement','Carriers bring items inside and place them exactly where the customer wants.'],['Unpack and assembly','Full assembly service for furniture, exercise equipment, and more.'],['Debris removal','All packaging removed and taken away.'],['Appointment scheduling','Delivery window scheduled with the end customer directly.'],['Residential liftgate standard','Every white glove delivery includes a liftgate.']]},
   ground:{eyebrow:'Small Package Shipping',headline:'UPS and FedEx Ground at negotiated rates.',sub:'For packages under 150 lbs, we offer UPS Ground and FedEx Ground through our accounts — available to customers who also ship LTL or white glove with us.',stats:[['1-5','Day Transit'],['<150','Lbs/Piece'],['Real-Time','Tracking']],features:[['Competitive ground rates','Access our negotiated rates without a high-volume commitment.'],['Consolidated billing','Ground and LTL on one invoice.'],['Full tracking integration','All parcels visible alongside your LTL freight.'],['Same account team','One contact for all your freight.']]},
-  tms:{eyebrow:'Free Freight Software',headline:'Quote, book, track, and report — all in one portal.',sub:'Our portal is a full TMS at no extra cost. Every customer gets access on day one.',stats:[['Free','Always'],['Real-Time','Rates'],['AI','Powered']],features:[['Live rate shopping','Instant quotes from 50+ carriers with one-click booking.'],['AI freight assistant','Ask questions in plain English.'],['Document center','BOLs, invoices, and PODs all stored and searchable.'],['Spend reporting','See freight spend by carrier, lane, and date range.'],['Team access','Multiple users with role-based permissions.']]},
+  tms:{eyebrow:'Free Freight Software',headline:'Quote, book, track, and report — all in one portal.',sub:'Our portal is a full TMS at no extra cost. Every customer gets access on day one.',stats:[['Free','Always'],['Real-Time','Rates'],['AI','Powered']],features:[['Live rate shopping','Instant quotes from 20+ carriers with 50+ rate options and one-click booking.'],['AI freight assistant','Ask questions in plain English.'],['Document center','BOLs, invoices, and PODs all stored and searchable.'],['Spend reporting','See freight spend by carrier, lane, and date range.'],['Team access','Multiple users with role-based permissions.']]},
   api:{eyebrow:'Developer Access',headline:'Real-time rates and booking directly in your systems.',sub:'Connect your invoicing software, inventory systems, or e-commerce storefront directly to our backend for silent, high-volume automated shipping.',stats:[['REST','API'],['JSON','Format'],['Dedicated','Support']],features:[['Rate API','Pull live LTL and white glove rates in under 200ms.'],['Booking API','Create BOLs and get carrier confirmations programmatically.'],['Tracking webhooks','Push real-time status updates to your platform.'],['Invoice API','Pull invoice data into your accounting system.'],['Integration support','Our team helps you get connected.']]}
 };
 
@@ -1322,7 +1322,7 @@ function openMeetingPanel() {
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
       '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">LTL Freight</div>' +
-        '<div style="font-size:11px;color:var(--tx);">Live rates from 50+ carriers. Book in 60 seconds.</div>' +
+        '<div style="font-size:11px;color:var(--tx);">Live rates from 20+ carriers with 50+ rate options. Book in 60 seconds.</div>' +
       '</div>' +
       '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">White Glove</div>' +
@@ -1428,7 +1428,7 @@ function openTermsPanel() {
       </div>`).join('')}
     <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">
       Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>
-      (800) 687-3713 · support@freightandlogistics.com
+      (800) 687-3713 · support@freightandlogistics.ai
     </div>
   </div>`;
   openRightPanel('Terms and Conditions', html);
@@ -1452,7 +1452,7 @@ function openPrivacyPanel() {
       ['Marketing', 'We do not sell or rent your personal information to third parties for their marketing purposes without your explicit consent. If you do not wish to receive marketing communications, you can indicate your preference in My Account or within any direct communication from us.'],
       ['Disclosure of Your Information', 'We may disclose personal information to respond to legal requirements, enforce our policies, or protect anyone\'s rights or safety. We may also share information with service providers who support our business operations (such as fraud investigations and billing), and with other parties as authorized by you.'],
       ['Data Security', 'We use industry-standard measures to protect your personal information from unauthorized access, alteration, or disclosure. However, no method of transmission over the internet is 100% secure.'],
-      ['Your Rights', 'You may request access, correction, or deletion of your personal information by contacting us at support@freightandlogistics.com.'],
+      ['Your Rights', 'You may request access, correction, or deletion of your personal information by contacting us at support@freightandlogistics.ai.'],
       ['Changes to This Policy', 'We may update this Privacy Policy from time to time. All amended terms automatically take effect immediately upon posting to this site.'],
     ].map(([title, text]) => `
       <div style="margin-bottom:16px;">
@@ -1461,7 +1461,7 @@ function openPrivacyPanel() {
       </div>`).join('')}
     <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">
       Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>
-      (800) 687-3713 · support@freightandlogistics.com
+      (800) 687-3713 · support@freightandlogistics.ai
     </div>
   </div>`;
   openRightPanel('Privacy Policy', html);
@@ -1549,7 +1549,7 @@ const DEMO_QA = [
   { q:"Is there a residential fee if it delivers to a home?",
     a:"Yes — residential delivery adds an accessorial, plus a liftgate if there's no dock. I flag both automatically when I detect a residential ZIP, so the quote's accurate up front — no surprise reweighs or rebills." },
   { q:"Nice. How do I get set up?",
-    a:"Takes about two minutes — open a free account and you'll get live rates from 50+ carriers, plus booking, tracking, and reports all from this chat." }
+    a:"Takes about two minutes — open a free account and you'll get live rates from 20+ carriers with 50+ rate options, plus booking, tracking, and reports all from this chat." }
 ];
 function _abfOcalaAnswer(){
   const q=DEMO_QUOTES.ocala_clt; const o=q.options.find(x=>x.carrier==='ABF Freight')||q.options[0];
@@ -2018,7 +2018,7 @@ function handleDemoToken(kind, arg){
 function pillSampleQuote(){
   killMovie(); showChatArea();
   appendUser('Can I see a sample quote?');
-  appendBot('Here is a sample rate comparison for a Chicago to Atlanta LTL shipment — two pallets of office chairs, about 1,200 pounds. These are sample numbers; open a free account and we pull live rates from 50+ carriers for your own lanes.');
+  appendBot('Here is a sample rate comparison for a Chicago to Atlanta LTL shipment — two pallets of office chairs, about 1,200 pounds. These are sample numbers; open a free account and we pull live rates from 20+ carriers with 50+ rate options for your own lanes.');
   openRightPanel('Sample Quote', renderQuoteCard('chi_atl'));
 }
 function pillSampleTrack(){
@@ -2067,7 +2067,7 @@ async function spExtractFile(file){
     if(!r.ok) throw new Error('extract failed');
     const raw=(d.content&&d.content[0]&&d.content[0].text)||'';
     let ex; try{ ex=JSON.parse(raw.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim()); }catch(e){ throw new Error('parse'); }
-    appendBot('Read it. Here is the shipment I pulled from that document — review it in the panel. Open a free account and I will rate it live across 50+ carriers.');
+    appendBot('Read it. Here is the shipment I pulled from that document — review it in the panel. Open a free account and I will rate it live across 20+ carriers with 50+ rate options.');
     openRightPanel("Here's your shipment", renderExtractedCard(ex));
   }catch(e){
     removeTyping();

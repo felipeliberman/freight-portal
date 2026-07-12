@@ -736,9 +736,9 @@ YOU HANDLE TWO THINGS equally well:
 
 2. SALES & ONBOARDING — When someone wants a quote or wants to open an account, qualify them conversationally. Ask one question at a time. Gather: freight type, company name, contact name, email, phone, city/state, shipping frequency, monthly volume, commodity, lanes, delivery type, current carriers, pain points, monthly spend, timeline. Then invite them to open an account.
 
-COMPANY INFO: Phone (800) 687-3713. Email support@freightandlogistics.com. Hours Mon-Fri 6:30 AM - 4:00 PM PST. Terms: Net 15. Payment: ACH or payment portal.
+COMPANY INFO: Phone (800) 687-3713. Email support@freightandlogistics.ai. Hours Mon-Fri 6:30 AM - 4:00 PM PST. Terms: Net 15. Payment: ACH or payment portal.
 
-KEY CARRIERS: Metropolitan W&D (white glove #1), Pilot/Maersk (white glove #2), Estes, ABF, TForce, XPO, Saia, AAA Cooper, R&L Carriers, Roadrunner, Forward Air.
+KEY CARRIERS: White glove — Metropolitan W&D, Pilot/Maersk, Werner Final Mile, and Dickerson, plus a robust network of nationwide white glove partners. LTL — Estes, ABF, TForce, XPO, Saia, AAA Cooper, R&L Carriers, Roadrunner, Forward Air. Never rank white glove carriers or say which is number one.
 
 TERMINAL QUESTIONS: When asked about nearest terminals, give the carrier's general service center info for that region with a confident answer. ABF, Estes, XPO, Saia, TForce, R&L all have terminals in major metro areas.
 
@@ -1355,9 +1355,9 @@ const SVC_PANELS = {
   ltl: {
     title: 'LTL Freight',
     eyebrow: 'Less Than Truckload',
-    headline: 'Nationwide LTL with 50+ carrier options and instant quotes.',
+    headline: 'Nationwide LTL with 20+ carriers, 50+ rate options, and instant quotes.',
     sub: 'We rate-shop every major carrier in real time so you always get the best combination of price, transit time, and service level.',
-    stats: [['50+','Carriers'],['2-7','Day Transit'],['$0','Hidden Fees']],
+    stats: [['50+','Rate Options'],['2-7','Day Transit'],['$0','Hidden Fees']],
     features: [
       ['Instant live quotes','Rate shop across Estes, ABF, TForce, XPO, Saia, and 45+ more in seconds.'],
       ['BOL generation','We handle all documentation — BOL, labels, and pickup scheduling.'],
@@ -1370,8 +1370,8 @@ const SVC_PANELS = {
     title: 'White Glove Residential',
     eyebrow: 'Our Core Specialty',
     headline: 'Inside delivery, room of choice, assembly, and debris removal.',
-    sub: 'White glove residential is what we do best. Metropolitan W&D and Pilot Freight are our top carriers — both specialize in furniture and big-and-bulky delivery done right.',
-    stats: [['#1','Metro W&D'],['Since','2010'],['5-Star','Delivery']],
+    sub: 'White glove residential is what we do best. Our white glove carriers include Metropolitan Warehouse & Delivery, Pilot/Maersk, Werner Final Mile, and Dickerson, plus a robust network of nationwide white glove partners — all specializing in furniture and big-and-bulky residential delivery.',
+    stats: [['Nationwide','WG Network'],['Since','2010'],['5-Star','Delivery']],
     features: [
       ['Room of choice placement','Carriers bring items inside and place them exactly where the customer wants — not just at the door.'],
       ['Unpack and assembly','Full assembly service available for furniture, exercise equipment, and more.'],
@@ -1400,7 +1400,7 @@ const SVC_PANELS = {
     sub: 'Our portal is a full TMS at no extra cost. Every customer gets access on day one.',
     stats: [['Free','Always'],['Real-Time','Rates'],['AI','Powered']],
     features: [
-      ['Live rate shopping','Instant quotes from 50+ carriers with one-click booking.'],
+      ['Live rate shopping','Instant quotes from 20+ carriers with 50+ rate options and one-click booking.'],
       ['AI freight assistant','Ask questions in plain English — get rates, track shipments, pull invoices.'],
       ['Document center','BOLs, invoices, and PODs all stored and searchable.'],
       ['Spend reporting','See your freight spend by carrier, lane, date range, and service type.'],
@@ -2949,7 +2949,7 @@ async function quickAction(action) {
       }
     } catch(e) {
       removeTyping();
-      appendMessage('bot', 'I wasn\'t able to load your invoices right now. Please try again or contact support@freightandlogistics.com');
+      appendMessage('bot', 'I wasn\'t able to load your invoices right now. Please try again or contact support@freightandlogistics.ai');
       console.error('Invoice fetch error:', e);
     }
     return;
@@ -3768,7 +3768,7 @@ function openTermsPanel() {
       ['30. Indemnification', 'Customer agrees to indemnify Freight and Logistics, Inc. against any claims, losses, fines, or penalties arising out of Customer\'s act, omission, or negligence.'],
       ['31. Binding Effect', 'This Agreement is binding upon the Parties and their respective heirs, successors, and assigns.'],
     ].map(([t, tx]) => `<div style="margin-bottom:16px;"><div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">${t}</div><div style="font-size:13px;color:var(--mu);line-height:1.7;">${tx}</div></div>`).join('')}
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.com</div>
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.ai</div>
   </div>`;
   openRightPanel('Terms and Conditions', html);
 }
@@ -3791,10 +3791,10 @@ function openPrivacyPanel() {
       ['Marketing', 'We do not sell or rent your personal information to third parties for marketing purposes without your explicit consent. You may opt out of marketing communications at any time through My Account or via any direct communication from us.'],
       ['Disclosure of Your Information', 'We may disclose personal information to respond to legal requirements, enforce our policies, or protect anyone\'s rights or safety. We may share information with service providers who support our business operations and with other parties as authorized by you.'],
       ['Data Security', 'We use industry-standard measures to protect your personal information from unauthorized access, alteration, or disclosure.'],
-      ['Your Rights', 'You may request access, correction, or deletion of your personal information by contacting us at support@freightandlogistics.com.'],
+      ['Your Rights', 'You may request access, correction, or deletion of your personal information by contacting us at support@freightandlogistics.ai.'],
       ['Changes to This Policy', 'We may update this Privacy Policy from time to time. All amended terms take effect immediately upon posting to this site.'],
     ].map(([t, tx]) => `<div style="margin-bottom:16px;"><div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:4px;">${t}</div><div style="font-size:13px;color:var(--mu);line-height:1.7;">${tx}</div></div>`).join('')}
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.com</div>
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. · PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 · support@freightandlogistics.ai</div>
   </div>`;
   openRightPanel('Privacy Policy', html);
 }
@@ -3814,7 +3814,7 @@ function openMeetingPanel() {
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
       '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">LTL Freight</div>' +
-        '<div style="font-size:11px;color:var(--tx);">Live rates from 50+ carriers. Book in 60 seconds.</div>' +
+        '<div style="font-size:11px;color:var(--tx);">Live rates from 20+ carriers with 50+ rate options. Book in 60 seconds.</div>' +
       '</div>' +
       '<div style="background:#f8f5ff;border:1px solid var(--bdr);border-radius:8px;padding:8px 10px;">' +
         '<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">White Glove</div>' +
@@ -3857,7 +3857,7 @@ function openMeetingPanel() {
   <span>·</span>
   <a href="#" onclick="event.preventDefault();openPrivacyPanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
   <span>·</span>
-  <a href="mailto:support@freightandlogistics.com" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">support@freightandlogistics.com</a>
+  <a href="mailto:support@freightandlogistics.ai" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">support@freightandlogistics.ai</a>
 </div>
 </body>
 </html>
