@@ -1,0 +1,17 @@
+# GitHub Pages (Jekyll) build config.
+# Publish ONLY the customer-facing site. Everything below is source, tooling, or
+# internal knowledge and must NEVER be served at freightandlogistics.ai.
+# → When you add a new non-site file/dir at the repo root, add it here too.
+exclude:
+  - KNOWLEDGE.md
+  - CLAUDE.md
+  - README.md
+  - real-questions-seed.json
+  - "*.js"            # root Node scripts + test-*.js (all site JS is inline in the HTML)
+  - evals
+  - anthropic-proxy
+  - qbo-api
+  - node_modules
+  - package.json
+  - package-lock.json
+  - .gitignore
