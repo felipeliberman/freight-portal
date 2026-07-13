@@ -310,6 +310,8 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 #btn-send:hover{background:#a020a0;transform:translateY(-1px);}
 #btn-send svg{width:15px;height:15px;stroke-width:2;}
 .inp-label{text-align:center;font-size:10px;color:var(--fa);margin-top:7px;}
+.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:6px;}
+.ai-disclaimer a{color:var(--mu);text-decoration:underline;}
 
 /* Messages */
 .msg-row{display:flex;margin-bottom:24px;animation:fadeUp .2s ease;align-items:flex-start;}
@@ -886,6 +888,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
       <div style="height:1px;background:var(--bdr);margin:6px 0;"></div>
       <button onclick="closeMobMore();openTermsPanel()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--mu);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Terms &amp; Conditions</button>
       <button onclick="closeMobMore();openPrivacyPanel()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--mu);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Privacy Policy</button>
+      <button onclick="closeMobMore();openAIDisclosurePanel()" style="display:flex;align-items:center;gap:14px;padding:13px 8px;background:none;border:none;border-radius:10px;font-family:var(--font);font-size:14px;color:var(--mu);cursor:pointer;text-align:left;width:100%;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.75"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>AI Disclosure</button>
     </div>
   </div>
 </div>
@@ -1337,6 +1340,8 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;
   <a href=&quot;#&quot; onclick=&quot;event.preventDefault();openTermsPanel()&quot;>Terms and Conditions</a>
   <span class=&quot;sep&quot;>·</span>
   <a href=&quot;#&quot; onclick=&quot;event.preventDefault();openPrivacyPanel()&quot;>Privacy Policy</a>
+  <span class=&quot;sep&quot;>·</span>
+  <a href=&quot;#&quot; onclick=&quot;event.preventDefault();openAIDisclosurePanel()&quot;>AI Disclosure</a>
 </footer>
 
 <!-- SIGNUP MODAL -->
@@ -1906,6 +1911,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
     </div>
+    <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
     <div class="welcome-pills">
       <div class="welcome-pill" onclick="welcomeAction('My Shipments')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>
@@ -1989,6 +1995,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         </button>
       </div>
       <div class="inp-label">Freight &amp; Logistics, Inc. &nbsp;-&nbsp; AI Assistant</div>
+      <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
     </div>
   </div>
 
@@ -7300,6 +7307,21 @@ function openPrivacyPanel() {
   html += '<div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr);font-size:11px;color:var(--fa);text-align:center;">Freight and Logistics, Inc. &middot; PO Box 35311, Los Angeles, CA 90035<br>(800) 687-3713 &middot; support@freightandlogistics.ai</div>';
   el.innerHTML = html;
   openRightPanel(el, 'Privacy Policy');
+}
+
+function openAIDisclosurePanel() {
+  var el = document.createElement('div');
+  el.style.cssText = 'padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);';
+  el.innerHTML = `<div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:14px;">About our AI assistant</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">The chat assistant on this site is AI. It's fast and it's useful, but like every AI system, it can be wrong — and it can be wrong in a way that sounds completely confident. Please don't treat it as the last word on anything that matters.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Here's where the information actually comes from, so you know what to trust and what to check.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Your rates, shipments, invoices, and tracking come straight out of our live systems and the carriers' own data. The assistant doesn't make those up — if it doesn't have a number, it will tell you so rather than invent one.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Other things it looks up on the web, like a carrier's terminal address, phone number, or hours. Those results can be out of date or wrong, and the assistant is only as good as what it finds. If you're routing a truck somewhere based on an address it gave you, confirm it first.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">General freight guidance — freight class, accessorials, packaging, what a lane usually looks like — is information, not a guarantee. The final class and the final charges are determined by the carrier when they inspect the freight.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">So: before you book, verify the rate, the addresses, the dates, and the delivery details. A wrong address or a missed window costs you more than money, and it's a two-minute check.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, call us at (800) 687-3713 or email support@freightandlogistics.ai. We've been moving freight since 2010 and there is always a human here who can check it for you.</div>
+    <div style="font-size:12px;color:var(--fa);line-height:1.6;margin-top:16px;">The AI is here to make this faster. It isn't here to replace the people who make sure your freight actually shows up.</div>`;
+  openRightPanel(el, 'AI Disclosure');
 }
 
 

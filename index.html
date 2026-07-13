@@ -246,6 +246,8 @@ body.movie-live .movie-hint{display:flex;}
 .movie-hint .dot{width:6px;height:6px;border-radius:50%;background:var(--ac);}
 .movie-hint .takeover{background:none;border:none;color:var(--ac);font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;padding:0;}
 .movie-hint .takeover:hover{text-decoration:underline;}
+.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:6px;}
+.ai-disclaimer a{color:var(--mu);text-decoration:underline;}
 body.movie-live #input-textarea{border-color:var(--ac);}
 .inp-foot{display:flex;align-items:center;padding:5px 10px;}
 #btn-send{
@@ -611,6 +613,8 @@ body.movie-live #input-textarea{border-color:var(--ac);}
         <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
       </div>
 
+      <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
+
       <div class="welcome-pills-wrap">
         <div class="welcome-pills">
           <div class="welcome-pill demo-pill" onclick="_moviePlayDemo()">Play demo</div>
@@ -682,6 +686,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
           </div>
         </div>
         <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
+        <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
       </div>
     </div>
   </div>
@@ -1475,6 +1480,21 @@ function openPrivacyPanel() {
     </div>
   </div>`;
   openRightPanel('Privacy Policy', html);
+}
+
+function openAIDisclosurePanel() {
+  const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:14px;">About our AI assistant</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">The chat assistant on this site is AI. It's fast and it's useful, but like every AI system, it can be wrong — and it can be wrong in a way that sounds completely confident. Please don't treat it as the last word on anything that matters.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Here's where the information actually comes from, so you know what to trust and what to check.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Your rates, shipments, invoices, and tracking come straight out of our live systems and the carriers' own data. The assistant doesn't make those up — if it doesn't have a number, it will tell you so rather than invent one.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Other things it looks up on the web, like a carrier's terminal address, phone number, or hours. Those results can be out of date or wrong, and the assistant is only as good as what it finds. If you're routing a truck somewhere based on an address it gave you, confirm it first.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">General freight guidance — freight class, accessorials, packaging, what a lane usually looks like — is information, not a guarantee. The final class and the final charges are determined by the carrier when they inspect the freight.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">So: before you book, verify the rate, the addresses, the dates, and the delivery details. A wrong address or a missed window costs you more than money, and it's a two-minute check.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, call us at (800) 687-3713 or email support@freightandlogistics.ai. We've been moving freight since 2010 and there is always a human here who can check it for you.</div>
+    <div style="font-size:12px;color:var(--fa);line-height:1.6;margin-top:16px;">The AI is here to make this faster. It isn't here to replace the people who make sure your freight actually shows up.</div>
+  </div>`;
+  openRightPanel('AI Disclosure', html);
 }
 
 async function doIndexLogin() {
@@ -3342,6 +3362,8 @@ document.addEventListener('DOMContentLoaded', function(){
     <a href="#" onclick="event.preventDefault();openTermsPanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Terms and Conditions</a>
     <span>·</span>
     <a href="#" onclick="event.preventDefault();openPrivacyPanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">Privacy Policy</a>
+    <span>·</span>
+    <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()" style="color:var(--mu);text-decoration:none;" onmouseover="this.style.color='var(--ac)'" onmouseout="this.style.color='var(--mu)'">AI Disclosure</a>
   </div>
 </div>
 </body>
