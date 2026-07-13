@@ -18379,6 +18379,8 @@ NEVER write out a document link, URL, or web address of any kind. When you fetch
 
 General freight education (what LTL means, how freight class works, what a liftgate is) you may answer from your own expertise. Anything specific to THIS customer's account comes only from tools.
 
+WEB SEARCH — GENERAL RULE: You have a web_search tool. Use it any time the customer asks something you don't already know for certain and it is NOT about their own account (their own shipments, invoices, claims, quotes always come from the tools above, never from search). This covers carrier terminal locations, nearest terminal to a city or ZIP, carrier phone numbers, hours, service areas, and any other real-world or current fact — not just terminals. If you're not confident of an answer from your own knowledge and it's the kind of thing you could look up, search rather than guess, hedge, or say you don't have access. Never punt straight to email support when a search could answer it — search first, and give the real answer (address, phone number, name, whatever applies) from the results. For a natural follow-up ("is there a phone number for it," "what about XPO nearby"), use the most recent subject discussed and search again rather than asking the customer to repeat themselves. Only fall back to suggesting they call us or check a carrier's own site if the search genuinely turns up nothing usable.
+
 Plain conversational prose only. No bullets, no numbered lists, no markdown, no headers. Prefer 2 to 4 sentences. Do not mention any internal or backend system by name — you speak as the company.
 
 CONTEXT: Always use the most recent topic in the conversation as the referent for ambiguous follow-up questions. If the customer uses pronouns like 'they', 'them', 'their', 'it' without specifying who, infer from the last subject discussed. Example: if you just mentioned an ABF terminal address and the customer asks 'are they open tomorrow?', answer about ABF terminal hours — do not ask who 'they' refers to. If you cannot find the hours, say so and offer the phone number you already gave. Never ask for clarification when the context is obvious from the prior turn.
@@ -18482,7 +18484,8 @@ const _waybTools = [
         }
       }
     }
-  }
+  },
+  { type: 'web_search_20250305', name: 'web_search' }
 ];
 
 // search_shipments — interprets the query with parseShipQuery, ensures the customer's history is
