@@ -8,7 +8,7 @@
  *
  * Scope model (from KNOWLEDGE.md header):
  *   - Landing page agent  → ALL sections.
- *   - Portal agent        → `scope: both` sections + section 11 (`scope: portal`).
+ *   - Portal agent        → `scope: both` sections + section 12 (`scope: portal`).
  *                           Excludes `scope: landing` (sales playbook, onboarding, etc.).
  *
  * A section header looks like:  `## 8. FAQ ... <!-- scope: both -->`

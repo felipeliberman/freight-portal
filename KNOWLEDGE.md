@@ -4,8 +4,8 @@ All facts confirmed by Felipe as of July 2026.
 
 **Scope tags.** Each section is tagged `<!-- scope: both -->` or `<!-- scope: landing -->`.
 - Landing page agent receives ALL sections.
-- Portal agent receives ONLY `scope: both` sections plus section 11 (Portal navigation). Sales playbook and onboarding are excluded — portal users are already customers.
-- Section 11 is generated from the live portal.html and must be regenerated whenever portal navigation or button labels change.
+- Portal agent receives ONLY `scope: both` sections plus section 12 (Portal navigation). Sales playbook and onboarding are excluded — portal users are already customers.
+- Section 12 is generated from the live portal.html and must be regenerated whenever portal navigation or button labels change.
 
 
 ---
@@ -218,7 +218,36 @@ How our sales side actually works. The landing page assistant should mirror thes
 - If unsure: "I don't have that detail — email us at support@freightandlogistics.ai and the team will confirm; we typically reply within about an hour during business hours." Only mention the phone number if the person asks for it or asks to call.
 
 
-## 11. Portal navigation <!-- scope: portal -->
+## 11. Carrier cargo liability (rules tariffs) <!-- scope: both -->
+
+Verified as of July 13, 2026. Carrier liability figures change without notice — carriers revise their rules tariffs on their own schedule. Never state any figure below as settled or guaranteed; always tell the person to confirm the current limit with us before relying on it.
+
+**Liability is a cap, not insurance.** When freight is lost or damaged, the carrier's legal cargo liability is a maximum, not a promised payout. Under a carrier's rules tariff, the carrier pays the LESSER of the liability cap, the invoice cost, or the actual repair/replacement cost — so the recovery is often well below the cap. Always say "up to" or "a maximum of," never "you'll get" or "you'll be reimbursed." Always attribute the limit to the carrier — "Under [Carrier]'s rules tariff, the maximum is…" — never to us. We are the broker; the carrier's tariff sets the number.
+
+**Full Value Coverage and the gap.** Carrier liability frequently falls far short of what freight is actually worth. Third-party cargo insurance (Full Value Coverage) can be added at booking or after (see the cargo-insurance answer in section 8) and covers declared value rather than a per-pound cap. State the carrier's cap, show the gap between that cap and the shipment's value, and hand the decision to the customer. NEVER recommend whether or not to buy coverage — lay out the numbers and connect the person with the team to decide.
+
+**Commodity carve-outs override the freight class — the lowest applicable limit wins.** A shipment's freight class does not by itself set liability. Rules tariffs carve out specific commodities and conditions that drop the limit far below the class-based figure, and when more than one applies the LOWEST limit governs:
+
+- **Used, refurbished, or reconditioned goods** collapse to roughly $0.10–$0.50 per pound at nearly every carrier, and some carriers pay $0.00 on used goods. "Used" is defined broadly — several carriers treat anything opened or out of its original manufacturer packaging as used. Failing to declare goods as used does not preserve a higher rate; the carrier decides how the freight is classified at claim time.
+- **Furniture** is specifically targeted: multiple carriers cap furniture at about $1.00 per pound regardless of freight class. On a 200 lb shipment that is a $200 maximum.
+- **Uncrated goods** often drop to about $0.10 per pound. Some carriers exclude uncrated glass, marble, granite, stone, and mirrors from coverage entirely.
+- **Spot quotes, pallet rates, and flat rates** generally drop liability to roughly $1.00 per pound.
+- **The commodity description on the BOL matters at claim time.** A BOL marked "FAK" or carrying a vague or poor commodity description drops liability to the lowest-valued item in the shipment. A clear, accurate description is worth real money when a claim is filed.
+
+Do not recite per-carrier class tables or per-pound rate tables, and do not name which carriers have the worst coverage — those are internal. State the general limit and tell the person to confirm the specific number for their commodity and carrier with us.
+
+**The customer's deadline is ours, not the carrier's — notify us within 48 hours (see section 5).** In every answer about damage or a claim, the operative deadline is the one in section 5: the customer must file a written claim with us within 48 hours of delivery. That is our binding requirement and it is tighter than any carrier window, so it is always the deadline the customer is working to. Every damage answer should land on the same two actions: note the damage on the delivery receipt at the time of delivery, then tell us within 48 hours.
+
+**Carrier windows are context for why speed matters — never the customer's deadline.** The carrier's own timelines run separately and are only background for why prompt reporting protects the claim. Never present them as the timeline the customer is working to; the section 5 48-hour requirement always governs.
+
+- **A clean delivery receipt kills a concealed-damage claim.** Noting damage on the delivery receipt at the time of delivery, before the driver leaves, is the single highest-leverage thing a consignee can do — signing a clear receipt undercuts a later damage claim.
+- **Carrier concealed-damage windows are short** — as little as 72 hours with some carriers. That is the carrier's window, not the customer's, and it is one more reason to report to us immediately, well inside our 48 hours.
+- **The carrier's general filing deadline is around 9 months from delivery.** This is the carrier's outer limit, not a license to wait — the customer's 48-hour obligation to us always comes first.
+- **The carrier must be given the chance to inspect.** Retain the damaged goods and the original packaging until the claim is resolved; discarding them can void the claim.
+
+**An actual claim is always a human handoff.** If someone has a real claim — a shipment that arrived damaged, short, or lost — connect them with the team immediately. Do not adjudicate the claim, estimate a payout, or tell them what they will recover. We file and manage the claim with the carrier as the customer's agent, on the section 5 timeline: note the damage on the delivery receipt and get a written claim to us within 48 hours of delivery.
+
+## 12. Portal navigation <!-- scope: portal -->
 
 <!-- GENERATED FROM portal.html — DO NOT HAND-EDIT. Regenerate whenever portal nav or button labels change. -->
 

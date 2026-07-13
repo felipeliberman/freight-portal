@@ -12,8 +12,8 @@ meaningful if the model under test sees what the customer's agent sees.
 
 | Audience | Sections received |
 |----------|-------------------|
-| `landing` (index.html sales/onboarding agent) | ALL (§1–11) |
-| `portal` (portal.html logged-in agent) | `scope: both` + §11 only — excludes the `landing`-tagged §3, 6, 7, 9 |
+| `landing` (index.html sales/onboarding agent) | ALL (§1–12) |
+| `portal` (portal.html logged-in agent) | `scope: both` + §12 only — excludes the `landing`-tagged §3, 6, 7, 9 |
 
 `knowledge.js` parses the `<!-- scope: … -->` tags and is the same logic the Worker must
 use. Change the split in one place and mirror it in the other.
