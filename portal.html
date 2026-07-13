@@ -248,7 +248,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
   background:var(--card);border:1.5px solid var(--bdr);
   border-radius:14px;overflow:hidden;
   box-shadow:0 2px 8px rgba(0,0,0,.06);
-  transition:border-color .15s;margin-bottom:16px;
+  transition:border-color .15s;margin-bottom:0;
 }
 #welcome-input-wrap:focus-within{border-color:var(--ac);}
 #welcome-textarea{
@@ -310,8 +310,8 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 #btn-send:hover{background:#a020a0;transform:translateY(-1px);}
 #btn-send svg{width:15px;height:15px;stroke-width:2;}
 .inp-label{text-align:center;font-size:10px;color:var(--fa);margin-top:7px;}
-.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:6px;}
-.ai-disclaimer a{color:var(--mu);text-decoration:underline;}
+.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:3px;}
+#welcome-input-wrap + .ai-disclaimer{margin-bottom:14px;}
 
 /* Messages */
 .msg-row{display:flex;margin-bottom:24px;animation:fadeUp .2s ease;align-items:flex-start;}
@@ -507,7 +507,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
   #welcome-name{display:block;font-size:22px;}
   #welcome-heading img.logo-img{height:30px;}
   #welcome-heading img.truck-img{height:22px;}
-  #welcome-input-wrap{border-radius:12px;margin-bottom:10px;}
+  #welcome-input-wrap{border-radius:12px;margin-bottom:0;}
   #welcome-textarea{font-size:15px;padding:12px 80px 8px 14px;min-height:56px;}
   #welcome-send{width:34px;height:34px;bottom:8px;right:8px;}
   .welcome-pills{gap:6px;justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
@@ -1911,7 +1911,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
     </div>
-    <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
+    <div class="ai-disclaimer">This AI assistant can make mistakes. Please double-check responses.</div>
     <div class="welcome-pills">
       <div class="welcome-pill" onclick="welcomeAction('My Shipments')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>
@@ -1995,7 +1995,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         </button>
       </div>
       <div class="inp-label">Freight &amp; Logistics, Inc. &nbsp;-&nbsp; AI Assistant</div>
-      <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
+      <div class="ai-disclaimer">This AI assistant can make mistakes. Please double-check responses.</div>
     </div>
   </div>
 
@@ -7312,7 +7312,8 @@ function openPrivacyPanel() {
 function openAIDisclosurePanel() {
   var el = document.createElement('div');
   el.style.cssText = 'padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);';
-  el.innerHTML = `<div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:14px;">About our AI assistant</div>
+  el.innerHTML = `<div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;"><div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">AI Transparency</div><div style="font-size:12px;color:var(--mu);line-height:1.6;">How our AI assistant works, where its information comes from, and what to double-check before you book.</div></div>
+    <div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:14px;">About our AI assistant</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">The chat assistant on this site is AI. It's fast and it's useful, but like every AI system, it can be wrong — and it can be wrong in a way that sounds completely confident. Please don't treat it as the last word on anything that matters.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Here's where the information actually comes from, so you know what to trust and what to check.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Your rates, shipments, invoices, and tracking come straight out of our live systems and the carriers' own data. The assistant doesn't make those up — if it doesn't have a number, it will tell you so rather than invent one.</div>

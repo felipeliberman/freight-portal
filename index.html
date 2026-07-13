@@ -186,7 +186,7 @@ input::placeholder,textarea::placeholder{color:var(--fa);}
   background:var(--card);border:1.5px solid var(--bdr);
   border-radius:14px;overflow:hidden;
   box-shadow:0 2px 12px rgba(0,0,0,.06);
-  transition:border-color .15s;margin-bottom:14px;
+  transition:border-color .15s;margin-bottom:0;
 }
 #welcome-input-wrap:focus-within{border-color:var(--ac);}
 #welcome-textarea{
@@ -246,8 +246,8 @@ body.movie-live .movie-hint{display:flex;}
 .movie-hint .dot{width:6px;height:6px;border-radius:50%;background:var(--ac);}
 .movie-hint .takeover{background:none;border:none;color:var(--ac);font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;padding:0;}
 .movie-hint .takeover:hover{text-decoration:underline;}
-.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:6px;}
-.ai-disclaimer a{color:var(--mu);text-decoration:underline;}
+.ai-disclaimer{text-align:center;font-size:11px;color:var(--mu);margin-top:3px;}
+#welcome-input-wrap + .ai-disclaimer{margin-bottom:14px;}
 body.movie-live #input-textarea{border-color:var(--ac);}
 .inp-foot{display:flex;align-items:center;padding:5px 10px;}
 #btn-send{
@@ -427,7 +427,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
   #welcome-heading{font-size:20px;margin-bottom:6px;line-height:1.25;text-wrap:balance;}
   #welcome-subline{font-size:12px;line-height:1.4;padding:0 4px;text-wrap:balance;}
   #welcome-trust{margin-bottom:14px;}
-  #welcome-input-wrap{margin-bottom:8px;width:calc(100vw - 32px) !important;max-width:calc(100vw - 32px) !important;box-sizing:border-box;}
+  #welcome-input-wrap{margin-bottom:0;width:calc(100vw - 32px) !important;max-width:calc(100vw - 32px) !important;box-sizing:border-box;}
 
   /* Pills: full-viewport-width horizontal scroll strip */
   .welcome-pills-wrap{width:100vw !important;max-width:100vw !important;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
@@ -613,7 +613,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
         <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
       </div>
 
-      <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
+      <div class="ai-disclaimer">This AI assistant can make mistakes. Please double-check responses.</div>
 
       <div class="welcome-pills-wrap">
         <div class="welcome-pills">
@@ -686,7 +686,7 @@ body.movie-live #input-textarea{border-color:var(--ac);}
           </div>
         </div>
         <div class="movie-hint"><span class="dot"></span><span>Live demo — start typing to take over</span><button type="button" class="takeover" onclick="demoTakeOver()">Try it yourself →</button></div>
-        <div class="ai-disclaimer">This AI assistant can make mistakes. Please <a href="#" onclick="event.preventDefault();openAIDisclosurePanel()">double-check responses</a>.</div>
+        <div class="ai-disclaimer">This AI assistant can make mistakes. Please double-check responses.</div>
       </div>
     </div>
   </div>
@@ -1484,6 +1484,10 @@ function openPrivacyPanel() {
 
 function openAIDisclosurePanel() {
   const html = `<div style="padding:24px 20px;font-size:13px;line-height:1.75;color:var(--tx);">
+    <div style="background:#fdf0fd;border:1px solid rgba(189,39,188,.15);border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:4px;">AI Transparency</div>
+      <div style="font-size:12px;color:var(--mu);line-height:1.6;">How our AI assistant works, where its information comes from, and what to double-check before you book.</div>
+    </div>
     <div style="font-size:15px;font-weight:600;color:var(--tx);margin-bottom:14px;">About our AI assistant</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">The chat assistant on this site is AI. It's fast and it's useful, but like every AI system, it can be wrong — and it can be wrong in a way that sounds completely confident. Please don't treat it as the last word on anything that matters.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Here's where the information actually comes from, so you know what to trust and what to check.</div>
