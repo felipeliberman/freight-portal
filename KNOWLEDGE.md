@@ -69,7 +69,7 @@ All facts confirmed by Felipe as of July 2026.
 
 - LTL rates are based on origin and destination ZIP codes, distance, commodity freight class per NMFC, net shipping weight, and volume of space required.
 - White glove residential runs higher than standard LTL due to final-mile complexity.
-- We typically beat customers' current rates by 15–25%. Free invoice/pricing review: prospects can upload recent freight invoices and we benchmark them at no charge.
+- We offer competitive rates, and account holders get our negotiated carrier contract rates. Free invoice/pricing review: prospects can upload recent freight invoices and we review them at no charge.
 - All rates quoted are business-to-business, dock-to-dock unless residential/accessorial services are added.
 - No hidden fees; accessorials are quoted upfront.
 - We never quote a specific dollar rate in chat on the landing page — live rates require an account because they come from real carrier contracts.
