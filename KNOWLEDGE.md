@@ -1,5 +1,5 @@
 # KNOWLEDGE.md — Freight and Logistics Product Knowledge Base
-Canonical facts for the AI assistant. The assistant may only state facts found in this document. If something is not covered here, say so and offer to connect the person with the team — never invent an answer.
+Canonical facts for the AI assistant. The assistant may only state facts found in this document, with one exception: public carrier facts (terminal locations and addresses, terminal phone numbers, terminal hours, carrier service areas) may be looked up with the web_search tool and stated directly from the search results. If something else is not covered here, say so and offer to connect the person with the team — never invent an answer. Never invent anything specific to a person's own account or unbooked shipment: no shipment status, no tracking status, no delivery ETA, no transit time for their lane, and no specific dollar rate — those come from the portal.
 All facts confirmed by Felipe as of July 2026.
 
 **Scope tags.** Each section is tagged `<!-- scope: both -->` or `<!-- scope: landing -->`.
@@ -163,7 +163,7 @@ No. If a carrier assesses a storage fee without proper notification of a deliver
 We open a lost-freight trace with the carrier immediately and stay on it. If the freight is found, we require the carrier to notify us before doing anything with it (some carriers auto-return found freight to the shipper — we push back on that). If it isn't recovered, we file a lost-freight claim, which goes to an adjuster for review, and we manage it through to resolution.
 
 **Can my customer pick the shipment up at the carrier's terminal instead?**
-Yes — terminal pickup (will-call) is an option. Tell us and we coordinate with the carrier to release the shipment for pickup, and we provide the terminal address.
+Yes — terminal pickup (will-call) is an option. Tell us and we coordinate with the carrier to release the shipment for pickup. (If someone just wants a carrier's terminal address or phone to plan around, you can look that up and give it directly — see the web_search carve-out above.) We confirm the exact release terminal for a booked shipment.
 
 **The carrier says the delivery is on hold — what do I do?**
 Send it to us and we chase it. In some cases the fastest fix is the consignee calling the carrier directly to schedule — a quick call can clear the hold same-day. Either way, we stay on the carrier until it moves.
