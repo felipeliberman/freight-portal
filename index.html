@@ -3010,6 +3010,16 @@ function startMovie(){ if(!_movieKilled()) runMovie(); }
 // ============================================================================
 function _srSupported()  { return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
 
+// ?diag=1 → verbose voice-mode tracing so this class of silent failure (mic live, zero results,
+// clean console) is never invisible again. Honors the existing html[data-diag] convention AND
+// ?diag= directly (portal.html has no data-diag setup). Completely silent for normal visitors.
+function _vmDiag() {
+  var on = false;
+  try { on = document.documentElement.getAttribute('data-diag') === '1' || /[?&]diag=1\b/.test(location.search); } catch(e) {}
+  if (!on) return;
+  try { console.log.apply(console, ['[VM]'].concat([].slice.call(arguments))); } catch(e) {}
+}
+
 // Strip markdown so symbols are not read aloud, and collapse links to their label.
 function _cleanForSpeech(t) {
   return String(t || '')
@@ -3084,6 +3094,7 @@ function toggleVoiceMode() {
 
 function _vmEnter() {
   if (!_srSupported()) return;
+  _vmDiag('_vmEnter called');
   // Stop the landing-page autoplay demo before voice takes the chat, so the movie's scripted
   // appendBot timers can't fire into the same chat as the live agent (no-op where killMovie
   // doesn't exist — the demo is landing-page-specific). Mirrors welcomeSend/welcomeSendText.
@@ -3105,6 +3116,7 @@ function _vmEnter() {
 // This only runs on exit — it does NOT touch the in-session warm recognizer that intentionally
 // stays live across turns (that warmth is the Part 0.5 cold-start fix, not a leak).
 function _vmTeardown() {
+  _vmDiag('TEARDOWN; active(before)=', _vm.active, 'rec=', !!_vm.rec, 'bargeRec=', !!_vm.bargeRec);
   _vm.active = false;
   _vm.speakToken++;                 // invalidate any in-flight speak/resume/relisten callbacks
   _vm.listening = false;
@@ -3137,12 +3149,14 @@ function _vmStopListen() {
 }
 
 function _vmStartListen() {
+  _vmDiag('_vmStartListen: active=', _vm.active);
   if (!_vm.active) return;
   _vmStopListen();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec;
   try { rec = new SR(); } catch(e) { return; }
   rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  _vmDiag('recognizer constructed');
   _vmAttachListenHandlers(rec, false);
 }
 
@@ -3153,6 +3167,7 @@ function _vmStartListen() {
 // which is what removes the turn-2+ cold-start gap that clipped the first word or two.
 function _vmAttachListenHandlers(rec, alreadyStarted) {
   _vm.rec = rec; _vm.listening = true;
+  _vmDiag('attach handlers; alreadyStarted=', alreadyStarted);
   _vmSetState('listen');
   const { ta } = _vmEls();
   if (ta) { ta.value = ''; ta.style.height = 'auto'; }
@@ -3182,8 +3197,10 @@ function _vmAttachListenHandlers(rec, alreadyStarted) {
     if (t2) { t2.value = (finalText + interim).trim(); t2.style.height = 'auto'; t2.style.height = Math.min(t2.scrollHeight, 140) + 'px'; }
     // Reset the silence countdown whenever we hear anything.
     if ((finalText + interim).trim()) armSilence();
+    _vmDiag('onresult resultIndex=', event.resultIndex, 'text=', (finalText + interim).trim());
   };
   rec.onerror = (e) => {
+    _vmDiag('listen onerror', e && e.error);
     if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); return; }
     // transient ('no-speech' / 'aborted' / 'network') → restart shortly if still listening with no result
     if (_vm.active && _vm.state === 'listen' && !finalText.trim()) {
@@ -3193,12 +3210,14 @@ function _vmAttachListenHandlers(rec, alreadyStarted) {
   rec.onend = () => {
     _vm.listening = false;
     if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
+    _vmDiag('listen onend; active=', _vm.active, 'said=', finalText.trim());
     if (!_vm.active) return;
     const said = finalText.trim();
     if (said) _vmHandleFinal(said);
     else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
   };
   if (!alreadyStarted) {
+    _vmDiag('rec.start()');
     try { rec.start(); }
     catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
   }
@@ -3209,6 +3228,7 @@ function _vmAttachListenHandlers(rec, alreadyStarted) {
 // detector is warm (caller then falls back to _vmStartListen). This is the fix for turn-2+
 // first-word clipping (Part 0.5) and is also how a barge-in keeps capturing mid-sentence.
 function _vmPromoteBargeToListen() {
+  _vmDiag('promote; bargeRec=', !!_vm.bargeRec);
   const rec = _vm.bargeRec;
   if (!rec) return false;
   _vm.bargeRec = null;                 // consume it — _vmStopBargeDetector becomes a no-op
@@ -3224,6 +3244,7 @@ function _vmPromoteBargeToListen() {
 // NOTE: without headphones there is no hard guarantee against speaker bleed; the debounce plus
 // manual tap-to-interrupt (toggleVoiceMode) are the v1 mitigations — intentionally not more.
 function _vmStartBargeDetector() {
+  _vmDiag('_vmStartBargeDetector: active=', _vm.active);
   if (!_vm.active) return;
   _vmStopBargeDetector();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -3409,10 +3430,22 @@ function initVoiceMode() {
     return;
   }
   // Release the mic if the page is hidden or navigated away while voice mode is live. pagehide
-  // (NOT beforeunload — Safari/iOS ignore beforeunload) fires on tab close, navigation, and
-  // bfcache entry, so the self-restarting recognizer can't keep the OS mic indicator lit after
-  // the user leaves without tapping the mic off.
-  window.addEventListener('pagehide', function() { if (_vm.active) _vmTeardown(); });
+  // (NOT beforeunload — Safari/iOS ignore beforeunload) fires on tab close, navigation, AND
+  // bfcache entry. Use _vmExit (not raw _vmTeardown) so we ALSO reset the UI — this can never
+  // leave a torn-down-but-"listening" zombie (mic released but the wave still animating and the
+  // recognizer's handlers nulled). If the page was only cached and is later restored
+  // (pageshow.persisted), re-enter so a transient hide doesn't silently kill a live session —
+  // that transient-hide teardown is what regressed voice transcription in the mic-leak commit.
+  window.addEventListener('pagehide', function() {
+    _vmDiag('pagehide; active=', _vm.active);
+    if (!_vm.active) return;
+    _vm.__resumeOnShow = true;
+    _vmExit();
+  });
+  window.addEventListener('pageshow', function(e) {
+    _vmDiag('pageshow; persisted=', e && e.persisted, 'resumeFlag=', _vm.__resumeOnShow);
+    if (_vm.__resumeOnShow) { _vm.__resumeOnShow = false; if (e && e.persisted) _vmEnter(); }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', function(){
