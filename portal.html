@@ -5240,6 +5240,192 @@ function appendMessage(role, text, extras) {
   return row;
 }
 
+// ── CARRIER MAXIMUM LIABILITY ───────────────────────────────────────────────
+// Canonical, single-source liability calc + display. Used by BOTH the form path
+// (renderRates) and the chat-agent path (renderQuotes). Never implement twice —
+// this split is the recurring root cause of bug recurrence in this repo.
+//
+// INTERNAL — LIABILITY_TABLE must NEVER be exposed to the chat agent (not in
+// _lastRates / read_rates) or recited to the customer, per KNOWLEDGE.md §11.
+// Only the two computed dollar figures (New / Used) surface, in the tooltip.
+//
+// VARIANT = FIRST-CLASS KEY. The lookup key is the EXACT, whitespace-normalized
+// rate.name. A variant like "Estes Express - Volume" is its OWN entry and must
+// NEVER inherit from a parent carrier ("Estes Express"). No prefix matching, no
+// fallback to the parent. Any name not present as an explicit key →
+// "Contact us to confirm". Never inherit, never guess. (If Estes volume drops to
+// $1/lb and we showed a base $5/lb, that's 5x overstated on the priciest row.)
+//
+// THREE PROFILE TYPES:
+//   { type:'class',       cap, usedPerLb, byClass(cls)->$/lb }  new = byClass(cls) * actualWt
+//   { type:'perLb',       cap, usedPerLb, newPerLb }            new = $/lb * actualWt
+//   { type:'perShipment', newAmount, usedAmount }              weight-independent constants
+// Weight basis is ACTUAL shipment weight (qty × per-piece weight) — there is no
+// billable-weight field on the rate object. Per-shipment cap is applied but NEVER shown.
+//
+// ⚠️ PROVISIONAL — NOT FINAL. Exact rate.name strings are UNVERIFIED pending the
+// live name dump. Numbers are per Felipe; keys are best-known. If a live name does
+// not match a key exactly, the row safely shows "Contact us to confirm". Drop-variants
+// (volume/spot/pallet) are intentionally NOT enabled below — see the pending block.
+const LIABILITY_TABLE = {
+  // ── ABF — the ONE carrier whose variants diverge; the two names are DISTINCT. ──
+  'abf freight':     { type:'perLb', newPerLb:1.25, usedPerLb:0.00, cap:100000 },
+  'abf freight - b': { type:'class', usedPerLb:5.00, cap:100000, byClass: cls =>
+                         cls <= 55    ? 2.00  : cls === 60 ? 3.00  : cls === 65 ? 5.00  : cls === 70 ? 7.00 :
+                         cls === 77.5 ? 10.00 : cls === 85 ? 15.00 : cls <= 100 ? 20.00 : 25.00 },
+
+  // ── ODFL — flat $/lb, same at every class; volume == class (no collapse risk). ─
+  'odfl':                      { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
+  'old dominion':              { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
+  'old dominion freight line': { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
+
+  // ── Flat per shipment — weight-independent. Both pay $0.00 on USED goods:
+  //    Metro's contract excludes used/antique/heirloom furniture (Carmack waived);
+  //    WARP carries no used coverage. Display "$0.00" plainly — never soften/hide.
+  'metropolitan warehouse & delivery corp': { type:'perShipment', newAmount:500, usedAmount:0.00 },
+  'metro w&d':                               { type:'perShipment', newAmount:500, usedAmount:0.00 },
+  'warp':                                    { type:'perShipment', newAmount:250, usedAmount:0.00 },
+};
+
+// ── PENDING THE NAME DUMP — DO NOT ENABLE until the exact rate.name is confirmed. ──
+// These variants DROP liability far below their parent, so a guessed key risks a base
+// rate catching a spot/volume shipment (the Estes-volume trap). Left commented so any
+// unverified variant falls through to "Contact us to confirm" (safe). `?` = unknown, needs dump.
+//   'xpo' / 'xpo logistics':   { type:'class', usedPerLb:0.10, cap:100000, byClass: cls => cls===50?3.00:cls===55?3.50:cls===60?4.00:5.00 },  // base class table — but XPO SPOT drops to $1/lb, so name must be confirmed distinct
+//   'xpo …spot/pallet/pup/tl': { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:'?' },
+//   'stg …volume/spot':        { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:10000 },
+//   'r+l …spot/pallet':        { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:'?' },
+//   'sefl …spot':              { type:'perLb', newPerLb:2.00, usedPerLb:'?', cap:10000 },
+//   'aaa cooper …pallet/spot/flat': { type:'perLb', newPerLb:2.00, usedPerLb:'?', cap:20000 },
+//   'estes express - volume':  UNVERIFIED (4 rows, one at $9,416) — must NOT inherit base Estes.
+//   'roadrunner - volume':     UNVERIFIED.
+
+// EXACT variant-name lookup. No prefix match, no inheritance. Missing → null.
+function _liabilityProfile(rate) {
+  const key = String((rate && (rate.name || rate.carrier)) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!key) return null;
+  return LIABILITY_TABLE[key] || null;
+}
+
+// THE shared chokepoint. Returns { known:true, newPayout, usedPayout } or { known:false }.
+function carrierMaxLiability(rate) {
+  try {
+    const prof = _liabilityProfile(rate);
+    if (!prof) return { known: false };
+
+    // Type 3 — flat per shipment: weight-independent constant, same New/Used.
+    if (prof.type === 'perShipment') {
+      return { known: true, newPayout: prof.newAmount, usedPayout: prof.usedAmount };
+    }
+
+    // Types 1 & 2 — weight-based (ACTUAL shipment weight; no billable-weight field exists).
+    const items = (rate && rate.freightInfo) ||
+                  (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.items) || [];
+    if (!Array.isArray(items) || !items.length) return { known: false };
+    let newPayout = 0, usedPayout = 0, totalWt = 0;
+    items.forEach(it => {
+      const qty = Number(it.qty || it.pieces || 1) || 1;
+      const wt  = Number(it.weight || 0) || 0;
+      const lbs = qty * wt;
+      if (lbs <= 0) return;
+      totalWt += lbs;
+      const cls = parseFloat(it.class || it.freightClass || 0) || 0;
+      const newPerLb = prof.type === 'class' ? prof.byClass(cls) : prof.newPerLb;
+      newPayout  += newPerLb * lbs;
+      usedPayout += prof.usedPerLb * lbs;
+    });
+    if (totalWt <= 0) return { known: false };
+    const cap = prof.cap || Infinity;
+    return {
+      known: true,
+      newPayout:  Math.min(newPayout,  cap),
+      usedPayout: Math.min(usedPayout, cap)
+    };
+  } catch (e) { return { known: false }; }
+}
+
+function _fmtLiab(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Builds the "Carrier Maximum Liability ⓘ" line as a DOM element — second line under
+// the carrier name. Label + ⓘ only; no figures until hover/tap. FLOATING tooltip
+// (appended to <body>, position:fixed) so the row height never changes. Shared by both renderers.
+function renderLiabilityLine(rate) {
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--mu);font-weight:400;';
+  wrap.appendChild(document.createTextNode('Carrier Maximum Liability'));
+
+  const info = document.createElement('span');
+  info.textContent = 'ⓘ';
+  info.setAttribute('role', 'button');
+  info.setAttribute('tabindex', '0');
+  info.setAttribute('aria-label', 'Carrier maximum liability details');
+  info.style.cssText = 'cursor:pointer;color:#bd27bc;font-size:12px;line-height:1;user-select:none;';
+  wrap.appendChild(info);
+
+  let tip = null, pinned = false;
+
+  function build() {
+    const L = carrierMaxLiability(rate);
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;z-index:10000;width:240px;background:#fff;border:1px solid #c8c4bc;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden;font-family:var(--font);';
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'background:#2a2a2a;color:#fff;font-size:11px;font-weight:700;padding:7px 12px;letter-spacing:.02em;';
+    hdr.textContent = 'Carrier Maximum Liability';
+    t.appendChild(hdr);
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:10px 12px;';
+    if (L.known) {
+      body.innerHTML =
+        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#333;margin-bottom:3px;"><span>New:</span><span style="font-weight:700;font-variant-numeric:tabular-nums;">' + _fmtLiab(L.newPayout) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#333;margin-bottom:9px;"><span>Used:</span><span style="font-weight:700;font-variant-numeric:tabular-nums;">' + _fmtLiab(L.usedPayout) + '</span></div>';
+    } else {
+      body.innerHTML = '<div style="font-size:12px;color:#333;font-weight:600;margin-bottom:9px;">Contact us to confirm</div>';
+    }
+    const disc = document.createElement('div');
+    disc.style.cssText = 'font-size:10px;color:#6b7280;line-height:1.45;border-top:1px solid #e5e2d9;padding-top:7px;';
+    disc.textContent = 'Carrier liability varies by commodity and packaging. Used, refurbished, and certain goods (furniture, art, household items) are covered for substantially less. Contact us to confirm coverage or add Full Value protection.';
+    body.appendChild(disc);
+    t.appendChild(body);
+    return t;
+  }
+  function position() {
+    if (!tip) return;
+    const r = info.getBoundingClientRect();
+    const tw = 240, th = tip.offsetHeight || 150;
+    let left = r.left, top = r.bottom + 6;
+    if (left + tw > window.innerWidth - 8) left = window.innerWidth - tw - 8;
+    if (left < 8) left = 8;
+    if (top + th > window.innerHeight - 8) top = r.top - th - 6;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top  = top + 'px';
+  }
+  function onDocClick(e) { if (e.target !== info) { pinned = false; hide(); } }
+  function onScroll() { pinned = false; hide(); }
+  function show() {
+    if (tip) return;
+    tip = build();
+    document.body.appendChild(tip);
+    position();
+    document.addEventListener('click', onDocClick, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+  }
+  function hide() {
+    if (tip) { tip.remove(); tip = null; }
+    document.removeEventListener('click', onDocClick, true);
+    window.removeEventListener('scroll', onScroll, true);
+    window.removeEventListener('resize', onScroll);
+  }
+  info.addEventListener('mouseenter', () => { if (!tip) show(); });
+  info.addEventListener('mouseleave', () => { if (!pinned) hide(); });
+  info.addEventListener('click', e => { e.stopPropagation(); pinned = !pinned; if (pinned) { if (!tip) show(); } else hide(); });
+  info.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pinned = !pinned; if (pinned) { if (!tip) show(); } else hide(); } });
+  return wrap;
+}
+
 function renderQuotes(rates, isBox) {
   const top  = rates.slice(0, 5);
   const wrap = document.createElement('div');
@@ -5286,6 +5472,11 @@ function renderQuotes(rates, isBox) {
     nameRow.style.cssText = 'font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;';
     nameRow.textContent = carrier;
     left.appendChild(nameRow);
+
+    const liabRow = document.createElement('div');
+    liabRow.style.marginBottom = '3px';
+    liabRow.appendChild(renderLiabilityLine(q));
+    left.appendChild(liabRow);
 
     const meta1 = document.createElement('div');
     meta1.style.cssText = 'font-size:11px;color:var(--mu);margin-bottom:1px;';
@@ -16133,7 +16324,8 @@ function showQuoteForm(prefill, silent) {
         '<td style="padding:7px 10px;font-weight:600;font-size:12px;color:var(--tx);">' +
           (idx===0?'<div style="font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px;">↑ Best</div>':'') +
           (rate.iconUrl ? '<img src="'+rate.iconUrl+'" style="height:22px;max-width:80px;object-fit:contain;display:block;margin-bottom:3px;" onerror="this.onerror=null;this.hidden=true">' : '') +
-          name + '</td>' +
+          name +
+          '<div class="qt-liab-slot" style="margin-top:3px;font-weight:400;"></div></td>' +
         '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
             '<span>' + svc + '</span>' +
@@ -16145,7 +16337,7 @@ function showQuoteForm(prefill, silent) {
             : '') +
           '</div>' +
           (svcMsg ?
-            '<div class="qt-terms-detail" style="display:none;margin-top:5px;padding:6px 9px;background:#fdf0fd;border-radius:6px;border-left:2px solid #bd27bc;font-size:10px;color:var(--mu);line-height:1.5;">' + svcMsg + '</div>'
+            '<div class="qt-terms-detail" style="display:none;margin-top:5px;padding:6px 9px 6px 11px;background:#fdf0fd;border-radius:6px;font-size:10px;color:var(--mu);line-height:1.5;">' + svcMsg + '</div>'
           : '') +
         '</td>' +
         '<td style="padding:9px 6px;text-align:center;font-size:12px;">' + (transit!=='—'?transit+' days':transit) + '</td>' +
@@ -16159,6 +16351,8 @@ function showQuoteForm(prefill, silent) {
           '<button class="qt-save-rate-btn" title="Save this rate" style="background:none;border:1px solid var(--bdr);border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:var(--font);color:var(--mu);margin-right:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>' +
           '<button class="qt-book-btn" style="background:var(--ac);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font);">Select</button>' +
         '</td>';
+      const _liabSlot = tr.querySelector('.qt-liab-slot');
+      if (_liabSlot) _liabSlot.appendChild(renderLiabilityLine(rate));
       tr.querySelector('.qt-book-btn').onclick = () => {
         const _its = getItems();
         const shipData = {
