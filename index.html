@@ -613,7 +613,6 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
       <div class="welcome-pills-wrap">
         <div class="welcome-pills">
-          <div class="welcome-pill" onclick="pillSampleTrack()">Track a shipment</div>
           <div class="welcome-pill demo-pill" onclick="_moviePlayDemo()">Play demo</div>
           <div class="welcome-pill" onclick="startOnboarding()">Open an account</div>
           <div class="welcome-pill" onclick="welcomeSendText('What services do you offer?')">Learn about our services</div>
@@ -743,8 +742,6 @@ RESPONSE RULES:
 - Never start with "I". Never say "certainly", "great question", "of course", "absolutely".
 - Be a confident, knowledgeable freight broker.
 
-SHOWING SAMPLES IN THE SIDE PANEL: You can display real sample cards in the side panel by placing a token at the very END of your message. Emit one when someone asks what a quote, tracking, or the portal looks like, or asks a rate or pricing question. Quote scenarios: [[DEMO:quote:chi_atl]] (Chicago to Atlanta, 2 pallets office chairs, 1,200 lbs), [[DEMO:quote:la_mia]] (Los Angeles to Miami, white glove sofa), [[DEMO:quote:dal_den]] (Dallas to Denver, 3 pallets LTL). Tracking: [[DEMO:track:BOL]] where BOL is one of FL-2024-8840 (in transit), FL-2024-8822 (pending pickup), FL-2024-8834 (claim filed), FL-2024-8839, FL-2024-8841, FL-2024-8838, FL-2024-8837, FL-2024-8836. Full list: [[DEMO:shipments]]. When answering a rate question, STILL give the helpful Option C prose answer AND emit the closest quote token, and note the numbers shown are sample rates — real live rates come once their account is active. Never invent or estimate a specific dollar rate yourself; the sample card holds the only numbers you may show.
-
 YOUR ROLE: You are qualifying and onboarding new customers. Ask one question at a time. After each answer, acknowledge briefly and ask the next. The form in the right panel fills in automatically as you chat. IMPORTANT: the form does NOT open by itself. The first moment the customer agrees to open an account or start onboarding — a yes, "let's do it", "sign me up", or any go-ahead — emit the token [[OPENFORM]] at the very END of that message to open the form in the side panel. Emit it once, on that first commit; never repeat it. Because [[FILL:...]] tokens only land once the form is open, [[OPENFORM]] must come before or in the same message as your first [[FILL]].
 
 WHEN ONBOARDING: Ask in this order. Ask ONLY these questions — every one maps to a field on the form. Never ask for anything not on this list:
@@ -792,12 +789,8 @@ async function callAI(userMsg) {
     const fillRe = /\[\[FILL:([^:]+):([^\]]*)\]\]/g;
     let m;
     while ((m=fillRe.exec(text))!==null) fillFormField(m[1],m[2]);
-    const demoRe = /\[\[DEMO:([a-z]+):?([^\]]*)\]\]/gi;
-    let dm; const demoCalls = [];
-    while ((dm=demoRe.exec(text))!==null) demoCalls.push([dm[1].toLowerCase(), dm[2].trim()]);
     const clean = text.replace(/\[\[FILL:[^\]]*\]\]/g,'').replace(/\[\[DEMO:[^\]]*\]\]/g,'').replace(/\[\[OPENFORM\]\]/gi,'').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
     appendBot(clean);
-    demoCalls.forEach(c=>handleDemoToken(c[0], c[1]));
     maybeShowRemainingNudge();
   } catch(e) {
     removeTyping();
@@ -1524,24 +1517,12 @@ async function doIndexLogin() {
 }
 
 /* ============================================================================
-   DEMO LAYER — sample data, shared render functions, chat DEMO tokens,
-   daily-rolling limits, live SmartPaste, and the auto-play demo movie.
-   Every rate/BOL/date on screen comes from DEMO_DATA / DEMO_QUOTES below.
+   DEMO LAYER — sample data, daily-rolling limits, live SmartPaste, and
+   the auto-play demo movie.
+   Every rate/BOL/date on screen comes from DEMO_QUOTES below.
    The AI never invents numbers. Hardcoded hex only (CSS vars don't resolve
    in JS-set inline styles in this codebase).
    ============================================================================ */
-
-// ── Sample data (curated subset of the portal's shipments) ─────────────────
-const DEMO_DATA = [
-  {"bol":"FL-2024-8840","pro":"892-441-7733","carrier":"Pilot Freight","status":"In Transit","statusColor":"#dbeafe","statusTx":"#1e40af","origin":"Dallas, TX","dest":"New York, NY","consignee":"Metro Home Goods","shipper":"Southern Dist. Center","date":"Jun 12, 2026","eta":"Jun 17, 2026","service":"White Glove","pieces":2,"weight":480,"dims":"84×42×38 / 60×36×30","commodity":"King Bed Frame + Nightstands","cost":687.0,"ref":"PO-44820","notes":"Appointment required"},
-  {"bol":"FL-2024-8839","pro":"TF-992-3341","carrier":"TForce Freight","status":"In Transit","statusColor":"#dbeafe","statusTx":"#1e40af","origin":"Chicago, IL","dest":"Atlanta, GA","consignee":"Prestige Office Supply","shipper":"Midwest Fulfillment LLC","date":"Jun 11, 2026","eta":"Jun 15, 2026","service":"LTL","pieces":4,"weight":1240,"dims":"4 pallets","commodity":"Office Chairs — Mixed","cost":534.8,"ref":"ORD-7741","notes":"Dock delivery"},
-  {"bol":"FL-2024-8822","pro":"MET-008-3312","carrier":"Metropolitan W&D","status":"Pending Pickup","statusColor":"#fef9c3","statusTx":"#854d0e","origin":"Los Angeles, CA","dest":"San Francisco, CA","consignee":"Bay Area Home Design","shipper":"Pacific Warehouse Co.","date":"Jun 14, 2026","eta":"Jun 17, 2026","service":"White Glove","pieces":2,"weight":310,"dims":"2 pallets","commodity":"Sofa + Coffee Table","cost":412.0,"ref":"BAHD-1101","notes":"Scheduled pickup today"},
-  {"bol":"FL-2024-8834","pro":"PIL-119-4453","carrier":"Pilot Freight","status":"Claim Filed","statusColor":"#fee2e2","statusTx":"#991b1b","origin":"Miami, FL","dest":"Tampa, FL","consignee":"Sunshine Interiors","shipper":"Florida Dist. Co.","date":"May 31, 2026","eta":"May 31, 2026","service":"White Glove","pieces":1,"weight":95,"dims":"42×24×60","commodity":"Floor Mirror — Oversized","cost":312.0,"ref":"SI-8871","notes":"Damage on delivery receipt — claim in progress"},
-  {"bol":"FL-2024-8841","pro":"517-883-4421","carrier":"Metropolitan W&D","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Los Angeles, CA","dest":"Miami, FL","consignee":"Suncoast Furniture Gallery","shipper":"Pacific Warehouse Co.","date":"Jun 06, 2026","eta":"Jun 06, 2026","service":"White Glove","pieces":1,"weight":220,"dims":"72×38×42","commodity":"Sofa — 3 Seat","cost":412.5,"ref":"PO-44821","notes":"Room of choice, debris removal"},
-  {"bol":"FL-2024-8838","pro":"ABF-554-8821","carrier":"ABF Freight","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Phoenix, AZ","dest":"Seattle, WA","consignee":"Northwest Retail Inc.","shipper":"Desert Logistics Hub","date":"Jun 08, 2026","eta":"Jun 08, 2026","service":"LTL","pieces":2,"weight":860,"dims":"2 pallets","commodity":"Display Shelving Units","cost":398.2,"ref":"NW-2241","notes":""},
-  {"bol":"FL-2024-8837","pro":"XPO-771-2209","carrier":"XPO Logistics","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Houston, TX","dest":"Denver, CO","consignee":"Rocky Mtn. Furnishings","shipper":"Gulf Coast Warehouse","date":"Jun 06, 2026","eta":"Jun 06, 2026","service":"LTL","pieces":1,"weight":320,"dims":"60×30×36","commodity":"Dining Table — Glass Top","cost":287.5,"ref":"RMF-0091","notes":"Liftgate delivery"},
-  {"bol":"FL-2024-8836","pro":"EST-334-9981","carrier":"Estes Express","status":"Delivered","statusColor":"#dcfce7","statusTx":"#166534","origin":"Los Angeles, CA","dest":"Chicago, IL","consignee":"Lakeview Home Center","shipper":"Pacific Warehouse Co.","date":"Jun 04, 2026","eta":"Jun 04, 2026","service":"LTL","pieces":6,"weight":1880,"dims":"Boxes — various","commodity":"Bedroom Set — Queen","cost":621.4,"ref":"LHC-5531","notes":""}
-];
 
 // ── Canned quote scenarios (all rates hardcoded; never AI-generated) ───────
 const DEMO_QUOTES = {
@@ -1924,7 +1905,7 @@ function maybeShowRemainingNudge(){
     msgs.appendChild(n); msgs.scrollTop=msgs.scrollHeight; }
 }
 
-// ── Shared render helpers (used by BOTH chat tokens AND the movie) ──────────
+// ── Shared render helpers (used by the movie confirm card + SmartPaste) ───────
 function _sampleBadge(){
   return '<div style="display:inline-flex;align-items:center;gap:5px;background:#fdf0fd;border:1px solid rgba(189,39,188,.2);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:600;color:#bd27bc;letter-spacing:.02em;">'
     +'<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
@@ -1940,120 +1921,7 @@ function _ctaBlock(){
 }
 function _kv(k,v){ return '<div style="background:#fff;border:1px solid #e5e2d9;border-radius:8px;padding:8px 10px;"><div style="font-size:9px;color:#b0ac9f;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">'+k+'</div><div style="font-size:12px;font-weight:600;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+v+'</div></div>'; }
 
-function renderQuoteCard(id, opts){
-  opts=opts||{};
-  const q=DEMO_QUOTES[id]||DEMO_QUOTES.chi_atl;
-  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
-  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()+'<span style="font-size:10px;color:#b0ac9f;">Sample rates</span></div>';
-  html+='<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:10px 14px;margin-bottom:12px;">'
-    +'<div style="font-size:10px;font-weight:600;color:#706c63;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Your Shipment</div>'
-    +'<div style="font-size:13px;color:#111;font-weight:500;">'+q.lane+'</div>'
-    +'<div style="font-size:11px;color:#706c63;margin-top:1px;">'+q.summary+'</div></div>';
-  html+='<div style="font-size:10px;font-weight:600;color:#706c63;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">'+q.options.length+' carriers available</div>';
-  wrap.innerHTML=html;
-  q.options.forEach((o,idx)=>{
-    const best=!!o.best;
-    const card=document.createElement('div');
-    card.style.cssText='border:1px solid '+(best?'#bd27bc':'#e5e2d9')+';border-radius:10px;overflow:hidden;margin-bottom:8px;background:#fff;';
-    card.innerHTML='<div style="padding:6px 14px;background:'+(best?'rgba(189,39,188,.06)':'#faf9f6')+';border-bottom:1px solid #e5e2d9;display:flex;justify-content:space-between;align-items:center;">'
-      +'<span style="font-size:10px;font-weight:700;color:'+(best?'#bd27bc':'#706c63')+';text-transform:uppercase;letter-spacing:.04em;">'+(best?'Best Rate':'Option '+(idx+1))+'</span>'
-      +'<span style="font-size:10px;color:#b0ac9f;">Sample rate</span></div>'
-      +'<div style="padding:12px 14px;display:flex;align-items:center;gap:12px;">'
-        +'<div style="flex:1;"><div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px;">'+o.carrier+'</div>'
-        +'<div style="font-size:11px;color:#706c63;">'+o.service+'</div>'
-        +'<div style="font-size:11px;color:#706c63;">'+o.days+(o.days===1?' day':' days')+' transit</div></div>'
-        +'<div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:#111;">$'+o.price.toFixed(2)+'</div></div>'
-      +'</div>';
-    wrap.appendChild(card);
-  });
-  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
-  return wrap;
-}
-
-function renderTrackingCard(s, opts){
-  opts=opts||{};
-  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
-  const isDone=s.status==='Delivered', isTransit=s.status==='In Transit', isClaim=s.status==='Claim Filed';
-  const steps=[
-    {label:'Booked', date:s.date, done:true},
-    {label:'Dispatched', date:s.date, done:true},
-    {label:'Picked Up', date:'', done:isTransit||isDone||isClaim},
-    {label:'In Transit', date:'', done:isTransit||isDone||isClaim},
-    {label:'Delivered', date:(isDone||isClaim)?s.eta:'', done:isDone||isClaim}
-  ];
-  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()
-    +'<span style="font-size:11px;font-weight:600;color:'+s.statusTx+';background:'+s.statusColor+';padding:2px 9px;border-radius:10px;">'+s.status+'</span></div>';
-  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">'
-    +_kv('BOL#',s.bol)+_kv('PRO#',s.pro)+_kv('Total','$'+s.cost.toFixed(2))+_kv('Carrier',s.carrier)+'</div>';
-  html+='<div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;margin-bottom:14px;">'
-    +'<div style="font-size:13px;font-weight:600;color:#111;">'+s.origin+' → '+s.dest+'</div>'
-    +'<div style="font-size:11px;color:#706c63;margin-top:2px;">'+s.service+' · '+s.commodity+' · '+s.pieces+' pc · '+s.weight+' lbs</div></div>';
-  html+='<div style="font-size:10px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Shipment Timeline</div><div style="margin-bottom:14px;">';
-  steps.forEach((st,idx)=>{
-    const done=st.done;
-    html+='<div style="display:flex;gap:10px;align-items:flex-start;">'
-      +'<div style="display:flex;flex-direction:column;align-items:center;">'
-        +'<div style="width:18px;height:18px;border-radius:50%;background:'+(done?'#bd27bc':'#fff')+';border:2px solid '+(done?'#bd27bc':'#e5e2d9')+';display:flex;align-items:center;justify-content:center;">'
-          +(done?'<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':'')+'</div>'
-        +(idx<steps.length-1?'<div style="width:2px;height:22px;background:'+(done?'#bd27bc':'#e5e2d9')+';"></div>':'')
-      +'</div>'
-      +'<div style="padding-bottom:'+(idx<steps.length-1?'6px':'0')+';"><div style="font-size:12px;font-weight:600;color:'+(done?'#111':'#b0ac9f')+';">'+st.label+'</div>'
-        +(st.date?'<div style="font-size:10px;color:#706c63;">'+st.date+'</div>':'')+'</div></div>';
-  });
-  html+='</div>';
-  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px;">'
-    +'<div style="background:#fff;border:1px solid #e5e2d9;border-radius:10px;padding:12px;"><div style="font-size:9px;font-weight:700;color:#bd27bc;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Shipper</div><div style="font-size:12px;font-weight:600;color:#111;">'+s.shipper+'</div><div style="font-size:11px;color:#706c63;margin-top:3px;">'+s.origin+'</div></div>'
-    +'<div style="background:#fff;border:1px solid #e5e2d9;border-radius:10px;padding:12px;"><div style="font-size:9px;font-weight:700;color:#bd27bc;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Consignee</div><div style="font-size:12px;font-weight:600;color:#111;">'+s.consignee+'</div><div style="font-size:11px;color:#706c63;margin-top:3px;">'+s.dest+'</div></div></div>';
-  if(s.notes) html+='<div style="font-size:11px;color:#706c63;margin-bottom:4px;">Notes: '+s.notes+'</div>';
-  wrap.innerHTML=html;
-  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
-  return wrap;
-}
-
-function renderShipmentList(ships, opts){
-  opts=opts||{};
-  const wrap=document.createElement('div'); wrap.style.cssText='padding:16px;';
-  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+_sampleBadge()+'<span style="font-size:11px;color:#706c63;">'+ships.length+' shipments</span></div>';
-  html+='<div style="overflow-x:auto;border:1px solid #e5e2d9;border-radius:10px;"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:540px;">';
-  html+='<thead><tr style="background:#faf9f6;">'+['BOL#','Status','Mode','Lane','Carrier','Total'].map(h=>'<th style="text-align:left;padding:8px 10px;font-size:9px;font-weight:700;color:#706c63;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid #e5e2d9;white-space:nowrap;">'+h+'</th>').join('')+'</tr></thead><tbody>';
-  ships.forEach((s,i)=>{
-    html+='<tr data-demoidx="'+i+'" style="cursor:pointer;border-bottom:1px solid #e5e2d9;'+(i%2?'background:#faf9f6;':'')+'">'
-      +'<td style="padding:8px 10px;font-weight:600;color:#bd27bc;white-space:nowrap;">'+s.bol+'</td>'
-      +'<td style="padding:8px 10px;"><span style="font-size:10px;font-weight:600;color:'+s.statusTx+';background:'+s.statusColor+';padding:1px 7px;border-radius:9px;white-space:nowrap;">'+s.status+'</span></td>'
-      +'<td style="padding:8px 10px;"><span style="background:#f0ede6;border:1px solid #e5e2d9;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;">'+(s.service==='White Glove'?'WG':'LTL')+'</span></td>'
-      +'<td style="padding:8px 10px;color:#706c63;white-space:nowrap;">'+s.origin+' → '+s.dest+'</td>'
-      +'<td style="padding:8px 10px;color:#706c63;white-space:nowrap;">'+s.carrier+'</td>'
-      +'<td style="padding:8px 10px;font-weight:600;white-space:nowrap;">$'+s.cost.toFixed(2)+'</td></tr>';
-  });
-  html+='</tbody></table></div>';
-  wrap.innerHTML=html;
-  wrap.querySelectorAll('tr[data-demoidx]').forEach(tr=>{
-    tr.onclick=()=>{ const idx=+tr.getAttribute('data-demoidx'); openRightPanel('Shipment '+ships[idx].bol, renderTrackingCard(ships[idx])); };
-  });
-  if(opts.cta!==false) wrap.appendChild(_ctaBlock());
-  return wrap;
-}
-
-function handleDemoToken(kind, arg){
-  if(kind==='quote'){ const id=(arg in DEMO_QUOTES)?arg:'chi_atl'; openRightPanel('Sample Quote', renderQuoteCard(id)); }
-  else if(kind==='track'){ const s=DEMO_DATA.find(x=>x.bol===arg)||DEMO_DATA[0]; openRightPanel('Tracking '+s.bol, renderTrackingCard(s)); }
-  else if(kind==='shipments'){ openRightPanel('Sample Shipments', renderShipmentList(DEMO_DATA)); }
-}
-
 // ── Welcome-pill handlers (deterministic, no API cost) ─────────────────────
-function pillSampleQuote(){
-  killMovie(); showChatArea();
-  appendUser('Can I see a sample quote?');
-  appendBot('Here is a sample rate comparison for a Chicago to Atlanta LTL shipment — two pallets of office chairs, about 1,200 pounds. These are sample numbers; open a free account and we pull live rates from 20+ carriers with 50+ rate options for your own lanes.');
-  openRightPanel('Sample Quote', renderQuoteCard('chi_atl'));
-}
-function pillSampleTrack(){
-  killMovie(); showChatArea();
-  const s=DEMO_DATA.find(x=>x.bol==='FL-2024-8840');
-  appendUser('Track a shipment');
-  appendBot('Here is a sample shipment in transit from Dallas to New York. This is sample tracking data — once your account is active you would see your own shipments here live.');
-  openRightPanel('Tracking '+s.bol, renderTrackingCard(s));
-}
 function pillPasteSlip(){
   killMovie(); showChatArea();
   appendBot('Paste or drop a packing slip, bill of lading, or rate sheet right into the chat and I will read the shipment details off it. Want to see how it works? Try a sample packing slip below.');
