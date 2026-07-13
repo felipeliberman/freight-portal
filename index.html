@@ -3097,13 +3097,29 @@ function _vmEnter() {
   _vmStartListen();
 }
 
-function _vmExit() {
+// Full, idempotent mic-release teardown. _vm.active=false is set FIRST so any onend/onerror
+// that fires mid-teardown sees the session as gone and can't hit an auto-restart path; then
+// EVERY recognizer handle is hard-stopped (handlers nulled BEFORE abort, so a queued onend
+// can't resurrect it), timers cleared, and audio released. Shared by _vmExit (user toggles
+// off) and the pagehide handler (navigating away) so both guarantee the OS mic goes out.
+// This only runs on exit — it does NOT touch the in-session warm recognizer that intentionally
+// stays live across turns (that warmth is the Part 0.5 cold-start fix, not a leak).
+function _vmTeardown() {
   _vm.active = false;
-  _vm.speakToken++; // cancel any pending relisten tied to in-flight speech
-  _vmStopBargeDetector();
-  _vmStopListen();
+  _vm.speakToken++;                 // invalidate any in-flight speak/resume/relisten callbacks
+  _vm.listening = false;
+  if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
+  if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
+  [_vm.rec, _vm.bargeRec].forEach(function(rec) {
+    if (!rec) return;
+    try { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); } catch(e) {}
+  });
+  _vm.rec = null; _vm.bargeRec = null;
   try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
-  if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
+}
+
+function _vmExit() {
+  _vmTeardown();
   const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.remove('show');
   _vmSetState('idle');
   _vmUpdateButtons();
@@ -3390,7 +3406,13 @@ function initVoiceMode() {
   // is handled by ElevenLabs, so it doesn't depend on the browser's speechSynthesis.
   if (!_srSupported()) {
     document.querySelectorAll('.btn-voice-mic').forEach(b => { b.style.display = 'none'; });
+    return;
   }
+  // Release the mic if the page is hidden or navigated away while voice mode is live. pagehide
+  // (NOT beforeunload — Safari/iOS ignore beforeunload) fires on tab close, navigation, and
+  // bfcache entry, so the self-restarting recognizer can't keep the OS mic indicator lit after
+  // the user leaves without tapping the mic off.
+  window.addEventListener('pagehide', function() { if (_vm.active) _vmTeardown(); });
 }
 
 document.addEventListener('DOMContentLoaded', function(){
