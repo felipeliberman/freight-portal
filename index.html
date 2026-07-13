@@ -256,6 +256,22 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 }
 #btn-send:hover{background:#a020a0;transform:translateY(-1px);}
 #btn-send svg{width:15px;height:15px;}
+/* ── Voice mode — in-place in the chat input bars (no overlay) ───────────── */
+.btn-voice-mic{color:#9ca3af;}
+.btn-voice-mic:hover{background:rgba(0,0,0,.05);}
+.btn-voice-mic.vm-active{color:#bd27bc;}
+.btn-voice-mic.vm-listening{color:#bd27bc;animation:vmMicPulse 1.1s ease-in-out infinite;}
+.btn-voice-mic.vm-speaking{color:#bd27bc;animation:vmMicSpeak .9s ease-in-out infinite;}
+@keyframes vmMicPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:.65}}
+@keyframes vmMicSpeak{0%,100%{opacity:.55}50%{opacity:1}}
+#vm-status-bar{display:none;align-items:center;gap:6px;color:#bd27bc;font-size:11px;font-weight:600;padding:4px 2px 2px;}
+#vm-status-bar.show{display:flex;}
+#voice-wave{position:absolute;left:46px;bottom:16px;display:none;align-items:flex-end;gap:3px;height:16px;pointer-events:none;}
+#voice-wave.show{display:flex;}
+#voice-wave i{display:block;width:3px;height:5px;background:#bd27bc;border-radius:2px;animation:vmBar .8s ease-in-out infinite;}
+#voice-wave i:nth-child(2){animation-delay:.2s;}
+#voice-wave i:nth-child(3){animation-delay:.4s;}
+@keyframes vmBar{0%,100%{height:5px}50%{height:16px}}
 .msg-row{display:flex;margin-bottom:20px;animation:fadeUp .2s ease;align-items:flex-start;}
 .msg-row.user{justify-content:flex-end;}
 .msg-txt{font-size:14px;line-height:1.65;white-space:pre-wrap;word-wrap:break-word;}
@@ -585,7 +601,10 @@ body.movie-live #input-textarea{border-color:var(--ac);}
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();welcomeSend();}"></textarea>
         <div class="welcome-input-footer">
-          <button id="welcome-send" onclick="welcomeSend()" style="margin-left:auto;">
+          <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="margin-left:auto;width:34px;height:34px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .12s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+          </button>
+          <button id="welcome-send" onclick="welcomeSend()" style="margin-left:6px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
         </div>
@@ -648,12 +667,17 @@ body.movie-live #input-textarea{border-color:var(--ac);}
     <div id="chat-area">
       <div id="messages"></div>
       <div id="input-bar">
-        <div class="inp-wrap">
+        <div id="vm-status-bar">🎙 Voice mode on — I'm listening</div>
+        <div class="inp-wrap" style="position:relative;">
           <textarea id="input-textarea" placeholder="Type your message…" rows="1"
             oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+          <div id="voice-wave" aria-hidden="true"><i></i><i></i><i></i></div>
           <div class="inp-foot">
-            <button id="btn-send" onclick="sendMsg()" style="margin-left:auto;">
+            <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="margin-left:auto;width:34px;height:34px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .12s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+          </button>
+            <button id="btn-send" onclick="sendMsg()" style="margin-left:6px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </button>
           </div>
@@ -1284,6 +1308,8 @@ function appendBot(text) {
   row.appendChild(avDiv);
   row.appendChild(bubble);
   msgs.appendChild(row);msgs.scrollTop=msgs.scrollHeight;
+  // Voice mode: speak the reply aloud (ElevenLabs) once it has rendered in the chat.
+  if (window._vm && window._vm.active && text && text.trim()) { try { window._vm.speakReply(text); } catch(e) {} }
 }
 function appendUser(text) {
   const msgs=document.getElementById('messages');
@@ -2978,6 +3004,395 @@ function _a3bBols(){
 function startMovie(){ if(!_movieKilled()) runMovie(); }
 
 // ── Init: wire SmartPaste, kill-switches, and schedule the movie ───────────
+// ============================================================================
+// VOICE CONVERSATION MODE — ported from portal.html (barge-in, warm-handoff, TTS fixes)
+// Input via Web Speech SpeechRecognition; output via ElevenLabs TTS REST API.
+// ============================================================================
+function _srSupported()  { return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
+
+// Strip markdown so symbols are not read aloud, and collapse links to their label.
+function _cleanForSpeech(t) {
+  return String(t || '')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')  // [label](url) → label
+    .replace(/[`*#_>~]/g, '')                                  // md tokens
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+// Build the spoken string: long numbered lists (e.g. the insurance commodity list)
+// are not read in full — speak the first sentence then point to the chat.
+function _speechTextFor(t) {
+  const raw = String(t || '');
+  const numbered = (raw.match(/^\s*\d+[\.\)]\s+/gm) || []).length;
+  if (numbered > 8) {
+    const m = raw.match(/^[\s\S]*?[.!?](\s|$)/);
+    const first = (m ? m[0] : (raw.split('\n')[0] || raw)).trim();
+    return _cleanForSpeech(first) + ' — please check the chat for the full list.';
+  }
+  return _cleanForSpeech(raw);
+}
+
+// ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'' };
+window._vm = _vm;
+_vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
+_vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
+
+// Public alias used by the speak-back hook (strips markdown before speaking).
+function cleanForSpeech(t) { return _cleanForSpeech(t); }
+
+function _vmEls() {
+  // Landing page has two textareas (welcome + chat); use whichever is visible — same
+  // dual-textarea pattern welcomeSend/sendMsg rely on. Voice activates the chat area, so
+  // input-textarea is normally the live one; welcome-textarea is the fallback.
+  const wta = document.getElementById('welcome-textarea');
+  const ita = document.getElementById('input-textarea');
+  const ta = (ita && ita.offsetParent !== null) ? ita : ((wta && wta.offsetParent !== null) ? wta : (ita || wta));
+  return { wave: document.getElementById('voice-wave'), ta: ta };
+}
+
+// Update every mic button (.btn-voice-mic, across all input bars) to reflect voice state.
+function _vmUpdateButtons() {
+  document.querySelectorAll('.btn-voice-mic').forEach(btn => {
+    btn.classList.remove('vm-active', 'vm-listening', 'vm-speaking');
+    if (_vm.active) {
+      btn.classList.add('vm-active');
+      btn.classList.add(_vm.state === 'speak' ? 'vm-speaking' : 'vm-listening');
+      btn.title = 'Stop voice conversation';
+    } else {
+      btn.title = 'Start voice conversation';
+    }
+  });
+}
+
+function _vmSetState(state) {
+  _vm.state = state;
+  _vmUpdateButtons();
+  const { wave, ta } = _vmEls();
+  if (wave) wave.classList.toggle('show', _vm.active && state === 'listen');
+  if (ta) ta.placeholder = (_vm.active && state === 'listen') ? 'Listening…' : _vm.origPlaceholder;
+}
+
+// The mic button is a clear two-state toggle: ON ↔ OFF. While the agent is speaking it acts as
+// a manual interrupt (barge-in) instead of exiting — the fallback for noisy rooms / no headphones.
+function toggleVoiceMode() {
+  if (!_srSupported()) return; // needs mic input; buttons hidden anyway when unsupported
+  if (_vm.active && _vm.state === 'speak') { _vmBargeIn(); return; }
+  if (_vm.active) _vmExit(); else _vmEnter();
+}
+
+function _vmEnter() {
+  if (!_srSupported()) return;
+  // Stop the landing-page autoplay demo before voice takes the chat, so the movie's scripted
+  // appendBot timers can't fire into the same chat as the live agent (no-op where killMovie
+  // doesn't exist — the demo is landing-page-specific). Mirrors welcomeSend/welcomeSendText.
+  if (typeof killMovie === 'function') killMovie({});
+  if (typeof showChatArea === 'function') showChatArea();
+  const { ta } = _vmEls();
+  if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
+  _vm.active = true;
+  const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.add('show');
+  _vmUpdateButtons();
+  _vmStartListen();
+}
+
+function _vmExit() {
+  _vm.active = false;
+  _vm.speakToken++; // cancel any pending relisten tied to in-flight speech
+  _vmStopBargeDetector();
+  _vmStopListen();
+  try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
+  if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
+  const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.remove('show');
+  _vmSetState('idle');
+  _vmUpdateButtons();
+  const { ta } = _vmEls();
+  if (ta) { ta.style.paddingLeft = _vm.origPadLeft; if (ta.placeholder === 'Listening…') ta.placeholder = _vm.origPlaceholder; }
+}
+
+function _vmStopListen() {
+  _vm.listening = false;
+  if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
+  if (_vm.rec) {
+    try { _vm.rec.onend = null; _vm.rec.onresult = null; _vm.rec.onerror = null; _vm.rec.abort(); } catch(e) {}
+    _vm.rec = null;
+  }
+}
+
+function _vmStartListen() {
+  if (!_vm.active) return;
+  _vmStopListen();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec;
+  try { rec = new SR(); } catch(e) { return; }
+  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  _vmAttachListenHandlers(rec, false);
+}
+
+// Wire the full listening behavior (silence timer, finalText accumulation, dispatch to
+// _vmHandleFinal) onto a recognizer. Used for a freshly-created recognizer (_vmStartListen)
+// AND to repurpose the already-warm barge detector on a turn handoff (Part 0.5) — pass
+// alreadyStarted=true to skip rec.start() because that instance is already capturing audio,
+// which is what removes the turn-2+ cold-start gap that clipped the first word or two.
+function _vmAttachListenHandlers(rec, alreadyStarted) {
+  _vm.rec = rec; _vm.listening = true;
+  _vmSetState('listen');
+  const { ta } = _vmEls();
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+  let finalText = '';
+  // Silence detection: in continuous mode the recognizer never ends on its own, so after
+  // the user pauses (no new speech for SILENCE_MS) we stop() it — which fires onend and
+  // sends the accumulated transcript. Re-armed on every result while speech is heard.
+  const SILENCE_MS = 1500;
+  const armSilence = () => {
+    if (_vm.silenceTimer) clearTimeout(_vm.silenceTimer);
+    _vm.silenceTimer = setTimeout(() => {
+      _vm.silenceTimer = null;
+      if (_vm.active && _vm.rec === rec) { try { rec.stop(); } catch(e) {} }
+    }, SILENCE_MS);
+  };
+  rec.onresult = (event) => {
+    let interim = '';
+    // Start at event.resultIndex, NOT 0: in continuous mode onresult re-delivers the full
+    // results array on every firing, so looping from 0 re-appends already-finalized segments
+    // and duplicates early words ("are those are those…"). resultIndex is the first changed one.
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const r = event.results[i];
+      if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+    }
+    // Interim transcript appears in the input field in real time.
+    const t2 = _vmEls().ta;
+    if (t2) { t2.value = (finalText + interim).trim(); t2.style.height = 'auto'; t2.style.height = Math.min(t2.scrollHeight, 140) + 'px'; }
+    // Reset the silence countdown whenever we hear anything.
+    if ((finalText + interim).trim()) armSilence();
+  };
+  rec.onerror = (e) => {
+    if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); return; }
+    // transient ('no-speech' / 'aborted' / 'network') → restart shortly if still listening with no result
+    if (_vm.active && _vm.state === 'listen' && !finalText.trim()) {
+      setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
+    }
+  };
+  rec.onend = () => {
+    _vm.listening = false;
+    if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
+    if (!_vm.active) return;
+    const said = finalText.trim();
+    if (said) _vmHandleFinal(said);
+    else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
+  };
+  if (!alreadyStarted) {
+    try { rec.start(); }
+    catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
+  }
+}
+
+// Repurpose the warm barge detector (kept live during 'speak') as the main listening
+// recognizer instead of tearing it down and cold-starting a fresh one. Returns false if no
+// detector is warm (caller then falls back to _vmStartListen). This is the fix for turn-2+
+// first-word clipping (Part 0.5) and is also how a barge-in keeps capturing mid-sentence.
+function _vmPromoteBargeToListen() {
+  const rec = _vm.bargeRec;
+  if (!rec) return false;
+  _vm.bargeRec = null;                 // consume it — _vmStopBargeDetector becomes a no-op
+  _vmAttachListenHandlers(rec, true);  // already capturing audio → no rec.start(), no gap
+  return true;
+}
+
+// ── Barge-in (interrupt) ──────────────────────────────────────────────────────
+// A lightweight recognizer kept live WHILE the agent speaks so the user can cut in
+// (Claude.ai-style). Requires >=3 heard chars on TWO consecutive onresult callbacks before
+// firing _vmBargeIn — a debounce so TTS bleeding into the mic (no headphones) doesn't falsely
+// trip it. It also stays warm so a normal turn can hand it straight to listening (Part 0.5).
+// NOTE: without headphones there is no hard guarantee against speaker bleed; the debounce plus
+// manual tap-to-interrupt (toggleVoiceMode) are the v1 mitigations — intentionally not more.
+function _vmStartBargeDetector() {
+  if (!_vm.active) return;
+  _vmStopBargeDetector();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec;
+  try { rec = new SR(); } catch(e) { return; }
+  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  _vm.bargeRec = rec;
+  let hits = 0;
+  rec.onresult = (event) => {
+    let heard = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) heard += event.results[i][0].transcript;
+    if (heard.trim().length >= 3) { hits++; if (hits >= 2) _vmBargeIn(); }
+    else hits = 0;
+  };
+  rec.onerror = () => {};   // ignore transient errors while speaking
+  rec.onend = () => {
+    // The browser auto-stops continuous recognizers periodically; keep it alive while we speak.
+    if (_vm.active && _vm.state === 'speak' && _vm.bargeRec === rec) { try { rec.start(); } catch(e) {} }
+  };
+  try { rec.start(); } catch(e) {}
+}
+
+function _vmStopBargeDetector() {
+  if (_vm.bargeRec) {
+    const rec = _vm.bargeRec; _vm.bargeRec = null;
+    try { rec.onresult = null; rec.onerror = null; rec.onend = null; rec.abort(); } catch(e) {}
+  }
+}
+
+// User cut in while the agent was talking. Kill the in-flight speech and switch to listening,
+// reusing the now-warm detector so the rest of their sentence is captured with no cold start.
+function _vmBargeIn() {
+  if (_vm.state !== 'speak') return;
+  _vm.speakToken++;                                   // invalidate in-flight speak/resume callbacks
+  try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+  _vmSetState('listen');
+  if (!_vmPromoteBargeToListen()) { _vmStopBargeDetector(); _vmStartListen(); }
+}
+
+function _vmHandleFinal(text) {
+  _vmStopListen();
+  _vmSetState('think');
+  const { ta } = _vmEls();
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+  // Auto-send exactly like a typed message so every agent capability runs (rates, booking, insurance…).
+  try { if (typeof showChatArea === 'function') showChatArea(); appendUser(text); callAI(text); } catch(e) { console.warn('[VM] send failed', e); }
+  // Watchdog: if no spoken reply arrives (e.g. a panel-only turn), relisten so we never stall.
+  if (_vm.watchdog) clearTimeout(_vm.watchdog);
+  _vm.watchdog = setTimeout(() => { if (_vm.active && _vm.state === 'think') _vmStartListen(); }, 25000);
+}
+
+// Speak an agent reply aloud via ElevenLabs TTS, then resume listening.
+// (Invoked from the appendMessage bot-render hook.) A speakToken guards against
+// multi-message turns / barge / exit: only the latest reply's completion resumes.
+// Normalize text for TTS so ElevenLabs reads money, decimals, percents, and long BOL numbers
+// naturally instead of stumbling ("$1,234.56" → "1,234 dollars and 56 cents", a 9+ digit BOL as
+// separate digits, etc.). Applied immediately before the text is sent to the voice proxy.
+function _ttsClean(text) {
+  // Expand street direction abbreviations
+  text = text.replace(/\bNW\b/g, 'Northwest');
+  text = text.replace(/\bNE\b/g, 'Northeast');
+  text = text.replace(/\bSW\b/g, 'Southwest');
+  text = text.replace(/\bSE\b/g, 'Southeast');
+  // Expand US state abbreviations so Rachel says "Texas" not "TX"
+  const _states = {
+    'AL':'Alabama','AK':'Alaska','AZ':'Arizona','AR':'Arkansas','CA':'California',
+    'CO':'Colorado','CT':'Connecticut','DE':'Delaware','FL':'Florida','GA':'Georgia',
+    'HI':'Hawaii','ID':'Idaho','IL':'Illinois','IN':'Indiana','IA':'Iowa',
+    'KS':'Kansas','KY':'Kentucky','LA':'Louisiana','ME':'Maine','MD':'Maryland',
+    'MA':'Massachusetts','MI':'Michigan','MN':'Minnesota','MS':'Mississippi','MO':'Missouri',
+    'MT':'Montana','NE':'Nebraska','NV':'Nevada','NH':'New Hampshire','NJ':'New Jersey',
+    'NM':'New Mexico','NY':'New York','NC':'North Carolina','ND':'North Dakota','OH':'Ohio',
+    'OK':'Oklahoma','OR':'Oregon','PA':'Pennsylvania','RI':'Rhode Island','SC':'South Carolina',
+    'SD':'South Dakota','TN':'Tennessee','TX':'Texas','UT':'Utah','VT':'Vermont',
+    'VA':'Virginia','WA':'Washington','WV':'West Virginia','WI':'Wisconsin','WY':'Wyoming',
+    'DC':'Washington D.C.'
+  };
+  text = text.replace(/\b([A-Z]{2})\b(?=[\s,\.\)"]|$)/g, function(match, code) {
+    return _states[code] || match;
+  });
+  // $1,234.56 → "1,234 dollars and 56 cents"
+  text = text.replace(/\$(\d[\d,]*)\.(\d{2})\b/g, (_, dollars, cents) =>
+    dollars + ' dollars and ' + (cents === '00' ? 'zero' : parseInt(cents, 10)) + ' cents');
+  // $1,234 (no cents) → "1,234 dollars"
+  text = text.replace(/\$(\d[\d,]*)\b/g, (_, n) => n + ' dollars');
+  // Units → spoken words. These run BEFORE the decimal→"point" step so the unit regexes see the
+  // raw number ("3.5 lbs"), and AFTER the dollar step so money isn't touched. Number-aware
+  // (singular "1 pound" vs plural "1,200 pounds") and only fire when a digit precedes the unit,
+  // so unrelated words are never affected. Fixes ElevenLabs sounding out "lbs" as "lumbs".
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*lbs?\.?\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'pound' : 'pounds'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:ft\.?|')\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'foot' : 'feet'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:in\.?|")\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'inch' : 'inches'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*oz\.?\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'ounce' : 'ounces'));
+  // Bare-word fallback for "lbs"/"lb" with no leading number ("shown in lbs"); MUST run after the
+  // numeric-aware version above so numbered instances still get correct singular/plural first.
+  text = text.replace(/\blbs?\.?\b/gi, 'pounds');
+  // 3.5 → "3 point 5" (avoid decimal stumble on non-money numbers)
+  text = text.replace(/\b(\d+)\.(\d+)\b/g, '$1 point $2');
+  // % → " percent"
+  text = text.replace(/%/g, ' percent');
+  // # → "number"
+  text = text.replace(/#(\d)/g, 'number $1');
+  // BOL numbers — read as individual digits to avoid "one hundred sixty million..."
+  text = text.replace(/\bBOL\s+(\d{9,})/gi, (_, n) => 'BOL ' + n.split('').join(' '));
+  // …and read the acronym itself as letters ("B O L") instead of a guessed pronunciation.
+  // Runs after the digit-spelling step so "BOL 123456789" gets both parts spoken as letters/digits.
+  text = text.replace(/\bBOL\b/g, 'B O L');
+  return text;
+}
+
+async function _vmSpeakReply(text) {
+  if (!_vm.active) return;
+  if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
+  const raw = typeof text === 'string' ? text : (text && text.text ? text.text : '');
+  const tok = ++_vm.speakToken;
+
+  // Resume listening after speaking — runs exactly once (success, error, or no-audio),
+  // so voice mode never stalls.
+  let done = false;
+  const resume = () => {
+    if (done) return; done = true;
+    _vmStopBargeDetector();   // early bailout (no audio) — tear down the detector we may have started
+    if (window._vm && window._vm.active && _vm.speakToken === tok) {
+      setTimeout(() => { if (window._vm && window._vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
+    }
+  };
+
+  // Strip markdown + apply the long-list guard (>8 numbered items → first sentence + pointer)
+  // so we never read the full insurance commodity list aloud.
+  const clean = _speechTextFor(raw);
+  if (!clean) { resume(); return; }
+
+  _vmSetState('speak'); // mic shows the speaker animation while talking
+  _vmStartBargeDetector(); // keep the mic live so the user can interrupt (and stay warm for handoff)
+  try {
+    const resp = await fetch('https://elevenlabs-proxy.felipe-b80.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: _ttsClean(clean),
+        voice_id: '21m00Tcm4TlvDq8ikWAM',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          speed: 1.05
+        }
+      })
+    });
+    if (!resp.ok || !_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    const blob = await resp.blob();
+    if (!_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    const url = URL.createObjectURL(blob);
+    try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+    _vmStopListen();                 // mic OFF while the agent speaks (no self-hearing)
+    _vm.state = 'speak';
+    _vmUpdateButtons();
+    const audio = new Audio(url);
+    _vm.audio = audio;
+    audio.onended = () => {
+      try { URL.revokeObjectURL(url); } catch(e) {}
+      if (!_vm.active || _vm.speakToken !== tok) return;
+      // Normal turn end: hand the warm barge recognizer straight to listening (Part 0.5) — no
+      // cold rec.start(), so turn-2+ first words aren't clipped. Fall back to a fresh listen.
+      if (_vmPromoteBargeToListen()) return;
+      _vmStopBargeDetector();
+      // 800ms lets the speaker sound fully clear before the mic reopens.
+      setTimeout(() => { if (_vm.active && _vm.speakToken === tok) { _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen(); } }, 800);
+    };
+    audio.onerror = () => {
+      if (!_vm.active || _vm.speakToken !== tok) return;
+      _vmStopBargeDetector();
+      setTimeout(() => { if (_vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
+    };
+    audio.play().catch(() => { if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
+  } catch(e) { resume(); }
+}
+
+function initVoiceMode() {
+  // Hide the mic buttons if the browser lacks speech recognition (mic input). TTS output
+  // is handled by ElevenLabs, so it doesn't depend on the browser's speechSynthesis.
+  if (!_srSupported()) {
+    document.querySelectorAll('.btn-voice-mic').forEach(b => { b.style.display = 'none'; });
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function(){
   // ── DIAGNOSTIC (toggle with ?diag=1) — REMOVE after confirming the layout fix ──
   if(new URLSearchParams(location.search).has('diag')){
@@ -3003,6 +3418,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
   ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) _movieTakeOver(); }, true));
   if(!_movieKilled() && window.innerWidth>768) _mt(startMovie, 2000); // no auto-play timer on mobile
+  initVoiceMode();
 });
 </script>
 

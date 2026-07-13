@@ -17566,14 +17566,20 @@ function _vmSetState(state) {
   if (ta) ta.placeholder = (_vm.active && state === 'listen') ? 'Listening…' : _vm.origPlaceholder;
 }
 
-// The mic button is a clear two-state toggle: ON ↔ OFF.
+// The mic button is a clear two-state toggle: ON ↔ OFF. While the agent is speaking it acts as
+// a manual interrupt (barge-in) instead of exiting — the fallback for noisy rooms / no headphones.
 function toggleVoiceMode() {
   if (!_srSupported()) return; // needs mic input; buttons hidden anyway when unsupported
+  if (_vm.active && _vm.state === 'speak') { _vmBargeIn(); return; }
   if (_vm.active) _vmExit(); else _vmEnter();
 }
 
 function _vmEnter() {
   if (!_srSupported()) return;
+  // Stop the landing-page autoplay demo before voice takes the chat, so the movie's scripted
+  // appendBot timers can't fire into the same chat as the live agent (no-op where killMovie
+  // doesn't exist — the demo is landing-page-specific). Mirrors welcomeSend/welcomeSendText.
+  if (typeof killMovie === 'function') killMovie({});
   if (typeof showChatArea === 'function') showChatArea();
   const { ta } = _vmEls();
   if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
@@ -17586,6 +17592,7 @@ function _vmEnter() {
 function _vmExit() {
   _vm.active = false;
   _vm.speakToken++; // cancel any pending relisten tied to in-flight speech
+  _vmStopBargeDetector();
   _vmStopListen();
   try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
@@ -17612,6 +17619,15 @@ function _vmStartListen() {
   let rec;
   try { rec = new SR(); } catch(e) { return; }
   rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  _vmAttachListenHandlers(rec, false);
+}
+
+// Wire the full listening behavior (silence timer, finalText accumulation, dispatch to
+// _vmHandleFinal) onto a recognizer. Used for a freshly-created recognizer (_vmStartListen)
+// AND to repurpose the already-warm barge detector on a turn handoff (Part 0.5) — pass
+// alreadyStarted=true to skip rec.start() because that instance is already capturing audio,
+// which is what removes the turn-2+ cold-start gap that clipped the first word or two.
+function _vmAttachListenHandlers(rec, alreadyStarted) {
   _vm.rec = rec; _vm.listening = true;
   _vmSetState('listen');
   const { ta } = _vmEls();
@@ -17630,7 +17646,10 @@ function _vmStartListen() {
   };
   rec.onresult = (event) => {
     let interim = '';
-    for (let i = 0; i < event.results.length; i++) {
+    // Start at event.resultIndex, NOT 0: in continuous mode onresult re-delivers the full
+    // results array on every firing, so looping from 0 re-appends already-finalized segments
+    // and duplicates early words ("are those are those…"). resultIndex is the first changed one.
+    for (let i = event.resultIndex; i < event.results.length; i++) {
       const r = event.results[i];
       if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
     }
@@ -17655,8 +17674,69 @@ function _vmStartListen() {
     if (said) _vmHandleFinal(said);
     else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
   };
-  try { rec.start(); }
-  catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
+  if (!alreadyStarted) {
+    try { rec.start(); }
+    catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
+  }
+}
+
+// Repurpose the warm barge detector (kept live during 'speak') as the main listening
+// recognizer instead of tearing it down and cold-starting a fresh one. Returns false if no
+// detector is warm (caller then falls back to _vmStartListen). This is the fix for turn-2+
+// first-word clipping (Part 0.5) and is also how a barge-in keeps capturing mid-sentence.
+function _vmPromoteBargeToListen() {
+  const rec = _vm.bargeRec;
+  if (!rec) return false;
+  _vm.bargeRec = null;                 // consume it — _vmStopBargeDetector becomes a no-op
+  _vmAttachListenHandlers(rec, true);  // already capturing audio → no rec.start(), no gap
+  return true;
+}
+
+// ── Barge-in (interrupt) ──────────────────────────────────────────────────────
+// A lightweight recognizer kept live WHILE the agent speaks so the user can cut in
+// (Claude.ai-style). Requires >=3 heard chars on TWO consecutive onresult callbacks before
+// firing _vmBargeIn — a debounce so TTS bleeding into the mic (no headphones) doesn't falsely
+// trip it. It also stays warm so a normal turn can hand it straight to listening (Part 0.5).
+// NOTE: without headphones there is no hard guarantee against speaker bleed; the debounce plus
+// manual tap-to-interrupt (toggleVoiceMode) are the v1 mitigations — intentionally not more.
+function _vmStartBargeDetector() {
+  if (!_vm.active) return;
+  _vmStopBargeDetector();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec;
+  try { rec = new SR(); } catch(e) { return; }
+  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  _vm.bargeRec = rec;
+  let hits = 0;
+  rec.onresult = (event) => {
+    let heard = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) heard += event.results[i][0].transcript;
+    if (heard.trim().length >= 3) { hits++; if (hits >= 2) _vmBargeIn(); }
+    else hits = 0;
+  };
+  rec.onerror = () => {};   // ignore transient errors while speaking
+  rec.onend = () => {
+    // The browser auto-stops continuous recognizers periodically; keep it alive while we speak.
+    if (_vm.active && _vm.state === 'speak' && _vm.bargeRec === rec) { try { rec.start(); } catch(e) {} }
+  };
+  try { rec.start(); } catch(e) {}
+}
+
+function _vmStopBargeDetector() {
+  if (_vm.bargeRec) {
+    const rec = _vm.bargeRec; _vm.bargeRec = null;
+    try { rec.onresult = null; rec.onerror = null; rec.onend = null; rec.abort(); } catch(e) {}
+  }
+}
+
+// User cut in while the agent was talking. Kill the in-flight speech and switch to listening,
+// reusing the now-warm detector so the rest of their sentence is captured with no cold start.
+function _vmBargeIn() {
+  if (_vm.state !== 'speak') return;
+  _vm.speakToken++;                                   // invalidate in-flight speak/resume callbacks
+  try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+  _vmSetState('listen');
+  if (!_vmPromoteBargeToListen()) { _vmStopBargeDetector(); _vmStartListen(); }
 }
 
 function _vmHandleFinal(text) {
@@ -17700,20 +17780,34 @@ function _ttsClean(text) {
   text = text.replace(/\b([A-Z]{2})\b(?=[\s,\.\)"]|$)/g, function(match, code) {
     return _states[code] || match;
   });
-  return text
-    // $1,234.56 → "1,234 dollars and 56 cents"
-    .replace(/\$(\d[\d,]*)\.(\d{2})\b/g, (_, dollars, cents) =>
-      dollars + ' dollars and ' + (cents === '00' ? 'zero' : parseInt(cents, 10)) + ' cents')
-    // $1,234 (no cents) → "1,234 dollars"
-    .replace(/\$(\d[\d,]*)\b/g, (_, n) => n + ' dollars')
-    // 3.5 → "3 point 5" (avoid decimal stumble on non-money numbers)
-    .replace(/\b(\d+)\.(\d+)\b/g, '$1 point $2')
-    // % → " percent"
-    .replace(/%/g, ' percent')
-    // # → "number"
-    .replace(/#(\d)/g, 'number $1')
-    // BOL numbers — read as individual digits to avoid "one hundred sixty million..."
-    .replace(/\bBOL\s+(\d{9,})/gi, (_, n) => 'BOL ' + n.split('').join(' '));
+  // $1,234.56 → "1,234 dollars and 56 cents"
+  text = text.replace(/\$(\d[\d,]*)\.(\d{2})\b/g, (_, dollars, cents) =>
+    dollars + ' dollars and ' + (cents === '00' ? 'zero' : parseInt(cents, 10)) + ' cents');
+  // $1,234 (no cents) → "1,234 dollars"
+  text = text.replace(/\$(\d[\d,]*)\b/g, (_, n) => n + ' dollars');
+  // Units → spoken words. These run BEFORE the decimal→"point" step so the unit regexes see the
+  // raw number ("3.5 lbs"), and AFTER the dollar step so money isn't touched. Number-aware
+  // (singular "1 pound" vs plural "1,200 pounds") and only fire when a digit precedes the unit,
+  // so unrelated words are never affected. Fixes ElevenLabs sounding out "lbs" as "lumbs".
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*lbs?\.?\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'pound' : 'pounds'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:ft\.?|')\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'foot' : 'feet'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:in\.?|")\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'inch' : 'inches'));
+  text = text.replace(/\b(\d[\d,]*(?:\.\d+)?)\s*oz\.?\b/gi, (m, num) => num + ' ' + (parseFloat(num.replace(/,/g,'')) === 1 ? 'ounce' : 'ounces'));
+  // Bare-word fallback for "lbs"/"lb" with no leading number ("shown in lbs"); MUST run after the
+  // numeric-aware version above so numbered instances still get correct singular/plural first.
+  text = text.replace(/\blbs?\.?\b/gi, 'pounds');
+  // 3.5 → "3 point 5" (avoid decimal stumble on non-money numbers)
+  text = text.replace(/\b(\d+)\.(\d+)\b/g, '$1 point $2');
+  // % → " percent"
+  text = text.replace(/%/g, ' percent');
+  // # → "number"
+  text = text.replace(/#(\d)/g, 'number $1');
+  // BOL numbers — read as individual digits to avoid "one hundred sixty million..."
+  text = text.replace(/\bBOL\s+(\d{9,})/gi, (_, n) => 'BOL ' + n.split('').join(' '));
+  // …and read the acronym itself as letters ("B O L") instead of a guessed pronunciation.
+  // Runs after the digit-spelling step so "BOL 123456789" gets both parts spoken as letters/digits.
+  text = text.replace(/\bBOL\b/g, 'B O L');
+  return text;
 }
 
 async function _vmSpeakReply(text) {
@@ -17727,6 +17821,7 @@ async function _vmSpeakReply(text) {
   let done = false;
   const resume = () => {
     if (done) return; done = true;
+    _vmStopBargeDetector();   // early bailout (no audio) — tear down the detector we may have started
     if (window._vm && window._vm.active && _vm.speakToken === tok) {
       setTimeout(() => { if (window._vm && window._vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     }
@@ -17738,6 +17833,7 @@ async function _vmSpeakReply(text) {
   if (!clean) { resume(); return; }
 
   _vmSetState('speak'); // mic shows the speaker animation while talking
+  _vmStartBargeDetector(); // keep the mic live so the user can interrupt (and stay warm for handoff)
   try {
     const resp = await fetch('https://elevenlabs-proxy.felipe-b80.workers.dev', {
       method: 'POST',
@@ -17764,11 +17860,20 @@ async function _vmSpeakReply(text) {
     _vm.audio = audio;
     audio.onended = () => {
       try { URL.revokeObjectURL(url); } catch(e) {}
+      if (!_vm.active || _vm.speakToken !== tok) return;
+      // Normal turn end: hand the warm barge recognizer straight to listening (Part 0.5) — no
+      // cold rec.start(), so turn-2+ first words aren't clipped. Fall back to a fresh listen.
+      if (_vmPromoteBargeToListen()) return;
+      _vmStopBargeDetector();
       // 800ms lets the speaker sound fully clear before the mic reopens.
-      if (_vm.active) setTimeout(() => { _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen(); }, 800);
+      setTimeout(() => { if (_vm.active && _vm.speakToken === tok) { _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen(); } }, 800);
     };
-    audio.onerror = () => { if (_vm.active) setTimeout(() => _vmStartListen(), 800); };
-    audio.play().catch(() => { if (_vm.active) _vmStartListen(); });
+    audio.onerror = () => {
+      if (!_vm.active || _vm.speakToken !== tok) return;
+      _vmStopBargeDetector();
+      setTimeout(() => { if (_vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
+    };
+    audio.play().catch(() => { if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
   } catch(e) { resume(); }
 }
 
