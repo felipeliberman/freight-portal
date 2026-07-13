@@ -5348,13 +5348,14 @@ function _fmtLiab(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Builds the "Carrier Maximum Liability ⓘ" line as a DOM element — second line under
-// the carrier name. Label + ⓘ only; no figures until hover/tap. FLOATING tooltip
+// Builds the "Max liability ⓘ" line as a DOM element — second line under the carrier
+// name (short label to fit one line; the full "Carrier Maximum Liability" lives in the
+// tooltip header). Label + ⓘ only; no figures until hover/tap. FLOATING tooltip
 // (appended to <body>, position:fixed) so the row height never changes. Shared by both renderers.
 function renderLiabilityLine(rate) {
   const wrap = document.createElement('span');
-  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--mu);font-weight:400;';
-  wrap.appendChild(document.createTextNode('Carrier Maximum Liability'));
+  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--mu);font-weight:400;white-space:nowrap;';
+  wrap.appendChild(document.createTextNode('Max liability'));
 
   const info = document.createElement('span');
   info.textContent = 'ⓘ';
@@ -5371,7 +5372,7 @@ function renderLiabilityLine(rate) {
     const t = document.createElement('div');
     t.style.cssText = 'position:fixed;z-index:10000;width:240px;background:#fff;border:1px solid #c8c4bc;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);overflow:hidden;font-family:var(--font);';
     const hdr = document.createElement('div');
-    hdr.style.cssText = 'background:#2a2a2a;color:#fff;font-size:11px;font-weight:700;padding:7px 12px;letter-spacing:.02em;';
+    hdr.style.cssText = 'background:#bd27bc;color:#fff;font-size:11px;font-weight:700;padding:7px 12px;letter-spacing:.02em;';
     hdr.textContent = 'Carrier Maximum Liability';
     t.appendChild(hdr);
     const body = document.createElement('div');
@@ -5381,10 +5382,10 @@ function renderLiabilityLine(rate) {
         '<div style="display:flex;justify-content:space-between;font-size:12px;color:#333;margin-bottom:3px;"><span>New:</span><span style="font-weight:700;font-variant-numeric:tabular-nums;">' + _fmtLiab(L.newPayout) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;font-size:12px;color:#333;margin-bottom:9px;"><span>Used:</span><span style="font-weight:700;font-variant-numeric:tabular-nums;">' + _fmtLiab(L.usedPayout) + '</span></div>';
     } else {
-      body.innerHTML = '<div style="font-size:12px;color:#333;font-weight:600;margin-bottom:9px;">Contact us to confirm</div>';
+      body.innerHTML = '<div style="font-size:12px;color:#333;margin-bottom:9px;">Contact us to confirm</div>';
     }
     const disc = document.createElement('div');
-    disc.style.cssText = 'font-size:10px;color:#6b7280;line-height:1.45;border-top:1px solid #e5e2d9;padding-top:7px;';
+    disc.style.cssText = 'font-size:9px;color:#9ca3af;line-height:1.4;border-top:1px solid #e5e2d9;padding-top:7px;';
     disc.textContent = 'Carrier liability varies by commodity and packaging. Used, refurbished, and certain goods (furniture, art, household items) are covered for substantially less. Contact us to confirm coverage or add Full Value protection.';
     body.appendChild(disc);
     t.appendChild(body);
@@ -16327,15 +16328,13 @@ function showQuoteForm(prefill, silent) {
           name +
           '<div class="qt-liab-slot" style="margin-top:3px;font-weight:400;"></div></td>' +
         '<td style="padding:9px 6px;font-size:11px;color:var(--mu);">' +
-          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;">' +
-            '<span>' + svc + '</span>' +
-            (svcMsg ?
-              '<button class="qt-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:var(--font);line-height:1.4;flex-shrink:0;">' +
-                '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
-                'Carrier terms' +
-              '</button>'
-            : '') +
-          '</div>' +
+          '<div>' + svc + '</div>' +
+          (svcMsg ?
+            '<button class="qt-terms-toggle" type="button" style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;background:#fdf0fd;border:1px solid #bd27bc;color:#bd27bc;border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;cursor:pointer;font-family:var(--font);line-height:1.4;">' +
+              '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+              'Carrier terms' +
+            '</button>'
+          : '') +
           (svcMsg ?
             '<div class="qt-terms-detail" style="display:none;margin-top:5px;padding:6px 9px 6px 11px;background:#fdf0fd;border-radius:6px;font-size:10px;color:var(--mu);line-height:1.5;">' + svcMsg + '</div>'
           : '') +
