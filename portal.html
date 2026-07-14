@@ -3003,8 +3003,26 @@ function scrollBottom() {
 
 
 function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
-  const allInvoices = fullInvoicesList || invoices;
-  window._currentInvoiceList = allInvoices; // used by Pay button
+  const _allFetched = fullInvoicesList || invoices;
+  // /applet/v1/invoice can't filter by date (verified), so filter client-side here on the
+  // INVOICE date (getInvoiceFields().date = issueDate/invoiceDate, NOT the due date). That
+  // field is a 'YYYY-MM-DD HH:MM:SS' datetime, so compare on the YYYY-MM-DD prefix as a
+  // string: TZ-free and cross-browser-safe (Safari rejects space-separated new Date()), and
+  // inclusive on both ends. Bind the filtered rows to allInvoices so EVERY derived value
+  // below (tiles, aging, table, Excel, Pay list, count) reflects the visible window — a
+  // filtered table under unfiltered totals would silently lie.
+  let allInvoices = _allFetched;
+  if (_invDateFrom || _invDateTo) {
+    allInvoices = _allFetched.filter(inv => {
+      const ds = String(getInvoiceFields(inv).date || '').slice(0, 10);   // YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return false;
+      if (_invDateFrom && ds < _invDateFrom) return false;
+      if (_invDateTo   && ds > _invDateTo)   return false;
+      return true;
+    });
+  }
+  window._currentInvoiceList = allInvoices;          // Pay button — reflects the visible window
+  window._invLastRenderedCount = allInvoices.length; // tab-count source for date-filtered opens
   const container = document.createElement('div');
 
   // ── Dashboard header ──────────────────────────────────────────────────────
@@ -3528,7 +3546,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       const _from = fromEl.value, _to = toEl.value;
       const newInvs = await fetchInvoices(_from, _to);
       const newEl = renderInvoices(newInvs, newInvs, _from, _to);
-      openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
+      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
     } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
   };
   if (allBtn) allBtn.onclick = async () => {
@@ -3539,7 +3557,7 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     try {
       const newInvs = await fetchInvoices(_af, _at);
       const newEl = renderInvoices(newInvs, newInvs, _af, _at);
-      openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
+      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
     } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
   };
 
@@ -16764,10 +16782,10 @@ function showQuoteForm(prefill, silent) {
 
 async function fetchInvoices(dateFrom, dateTo) {
   const token = await getToken();
-  const now = new Date();
-  // Default: last 12 months
-  if (!dateFrom) { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); dateFrom = d.toISOString().split('T')[0]; }
-  if (!dateTo)   { dateTo = now.toISOString().split('T')[0]; }
+  // /applet/v1/invoice ignores dateFrom/dateTo (verified: an absurd range still returns the
+  // full set), so we fetch ALL invoices and filter client-side on the invoice date in
+  // renderInvoices(). dateFrom/dateTo stay in the signature for caller compatibility but are
+  // intentionally NOT sent — sending them would imply a server filter that does not exist.
 
   // Step 1: Fetch invoice list directly — one paginated call, no per-invoice fetches
   const invoiceList = [];
@@ -16777,7 +16795,7 @@ async function fetchInvoices(dateFrom, dateTo) {
     for (let p = page; p < page + 6 && p <= totalPages; p++) batches.push(p);
     if (!batches.length) break;
     const results = await Promise.all(batches.map(p =>
-      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=10&page=' + p + '&sort=invoiceNumber&sortDir=desc&dateFrom=' + dateFrom + '&dateTo=' + dateTo, { headers: { 'Authorization': 'Bearer ' + token } })
+      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=10&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
         .then(r => r.ok ? r.json() : null).catch(() => null)
     ));
     results.forEach(d => {
@@ -16789,7 +16807,7 @@ async function fetchInvoices(dateFrom, dateTo) {
     });
     page += batches.length;
   }
-  console.log('[Invoices] total found:', invoiceList.length);
+  console.log('[Invoices] total fetched (all, unfiltered):', invoiceList.length);
 
   // Step 2: Build invoice objects from invoice list — no extra API calls
   // Also load shipments in parallel to get consignee/carrier info
