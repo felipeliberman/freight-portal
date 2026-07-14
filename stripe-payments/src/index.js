@@ -9,6 +9,9 @@ export default {
     const STRIPE_SK        = env.STRIPE_SK;
     const SENDGRID_KEY     = env.SENDGRID_KEY;
     const RECAPTCHA_SECRET = env.RECAPTCHA_SECRET;
+    // Pinned Stripe API version for the Phase 2 SetupIntent/card endpoints only.
+    // Existing invoice endpoints keep using the account default version, unchanged.
+    const STRIPE_VERSION = '2024-06-20';
 
     const cors = {
       'Access-Control-Allow-Origin': '*',
@@ -54,6 +57,43 @@ export default {
         const c = await createRes.json();
         return c.id || null;
       } catch(e) { return null; }
+    }
+
+    // ── Phase 2 helpers: mode-aware key + Primus-id-keyed customer ─────────
+    // Select the Stripe secret for the requested mode. 'live' -> existing
+    // STRIPE_SK (untouched); anything else -> STRIPE_SK_TEST. Additive only.
+    function skFor(mode) { return mode === 'live' ? STRIPE_SK : env.STRIPE_SK_TEST; }
+
+    // Find-or-create a Stripe Customer keyed by metadata.primusCustomerId
+    // (stable, unlike email). Uses customers/search — NOT the legacy first-100
+    // email scan. Mode is implicit in `sk` (test/live are separate accounts).
+    async function getCustomerByPrimus(sk, primusCustomerId, email) {
+      if (!primusCustomerId) return null;
+      const auth = { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION };
+      const q = encodeURIComponent(`metadata['primusCustomerId']:'${primusCustomerId}'`);
+      const sr = await fetch(`https://api.stripe.com/v1/customers/search?query=${q}&limit=1`, { headers: auth });
+      const sd = await sr.json();
+      if (sd.data && sd.data[0]) return sd.data[0].id;
+      const cr = await fetch('https://api.stripe.com/v1/customers', {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ email: email || '', 'metadata[primusCustomerId]': String(primusCustomerId) }).toString()
+      });
+      const c = await cr.json();
+      if (c.error) throw new Error(c.error.message);
+      return c.id || null;
+    }
+
+    // Read-only customer lookup by Primus id (does NOT create). Used by
+    // /get-saved-cards so listing cards never mints an empty customer.
+    async function findCustomerByPrimus(sk, primusCustomerId) {
+      if (!primusCustomerId) return null;
+      const q = encodeURIComponent(`metadata['primusCustomerId']:'${primusCustomerId}'`);
+      const sr = await fetch(`https://api.stripe.com/v1/customers/search?query=${q}&limit=1`, {
+        headers: { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION }
+      });
+      const sd = await sr.json();
+      return (sd.data && sd.data[0] && sd.data[0].id) || null;
     }
 
     // ── GET PAYMENT METHODS ────────────────────────────────────────────────
@@ -171,6 +211,51 @@ export default {
         if (sendRes.status !== 202) return json({ error: 'Failed to send email' }, 500);
         return json({ success: true });
       } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CREATE SETUP INTENT (Phase 2: save a card on file) ─────────────────
+    if (pathname === '/create-setup-intent' && request.method === 'POST') {
+      try {
+        const { mode, primusCustomerId, email } = await request.json();
+        const sk = skFor(mode);
+        if (!sk) return json({ error: 'Stripe key not configured for mode: ' + mode }, 500);
+        if (!primusCustomerId) return json({ error: 'Missing primusCustomerId' }, 400);
+        const customerId = await getCustomerByPrimus(sk, primusCustomerId, email);
+        if (!customerId) return json({ error: 'Could not resolve customer' }, 500);
+        const siParams = new URLSearchParams({ customer: customerId, usage: 'off_session' });
+        siParams.append('payment_method_types[]', 'card');
+        const siRes = await fetch('https://api.stripe.com/v1/setup_intents', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: siParams.toString()
+        });
+        const siData = await siRes.json();
+        if (siData.error) return json({ error: siData.error.message }, 400);
+        return json({ clientSecret: siData.client_secret, customerId });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── GET SAVED CARDS (Phase 2) ──────────────────────────────────────────
+    if (pathname === '/get-saved-cards' && request.method === 'POST') {
+      try {
+        const { mode, primusCustomerId } = await request.json();
+        const sk = skFor(mode);
+        if (!sk) return json({ error: 'Stripe key not configured for mode: ' + mode }, 500);
+        const customerId = await findCustomerByPrimus(sk, primusCustomerId);
+        if (!customerId) return json({ cards: [] });
+        const pmRes = await fetch(`https://api.stripe.com/v1/payment_methods?customer=${customerId}&type=card`, {
+          headers: { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION }
+        });
+        const pmData = await pmRes.json();
+        const cards = (pmData.data || []).map(pm => ({
+          id: pm.id,
+          brand: pm.card && pm.card.brand,
+          last4: pm.card && pm.card.last4,
+          exp_month: pm.card && pm.card.exp_month,
+          exp_year: pm.card && pm.card.exp_year
+        }));
+        return json({ cards, customerId });
+      } catch(e) { return json({ error: e.message, cards: [] }, 500); }
     }
 
     // ── 404 ───────────────────────────────────────────────────────────────
