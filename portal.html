@@ -1698,26 +1698,6 @@ async function handleChatAttachment(input) {
   reader.readAsDataURL(file);
 }
 
-// Handle paste of images into the chat textarea
-document.addEventListener('paste', function(e) {
-  if (!document.getElementById('input-textarea')) return;
-  const items = e.clipboardData && e.clipboardData.items;
-  if (!items) return;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type.startsWith('image/')) {
-      const file = items[i].getAsFile();
-      if (file) {
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        const fakeInput = { files: dt.files, value: '' };
-        handleChatAttachment(fakeInput);
-        e.preventDefault();
-        break;
-      }
-    }
-  }
-});
-
 async function sendMsg(text){
   if(!text||!text.trim()) return;
   text=text.trim();
@@ -2030,23 +2010,13 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div id="input-bar">
       <div id="vm-status-bar">🎙 Voice mode on — I'm listening</div>
       <div class="inp-wrap" style="position:relative;">
-        <textarea id="input-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:90px;padding-left:44px;min-height:72px;"></textarea>
-        <input type="file" id="chat-file-input" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
-        <button onclick="document.getElementById('chat-file-input').click()" title="Attach a document or screenshot" style="position:absolute;bottom:10px;left:10px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        </button>
+        <textarea id="input-textarea" rows="3" placeholder="Ask about shipments, get a freight quote, track a BOL..." style="padding-right:90px;padding-left:14px;min-height:72px;"></textarea>
         <div id="voice-wave" aria-hidden="true"><i></i><i></i><i></i></div>
         <button id="btn-voice" class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="position:absolute;bottom:10px;right:48px;width:32px;height:32px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
         </button>
         <button id="btn-send" style="position:absolute;bottom:8px;right:8px;width:36px;height:36px;background:#bd27bc;border:none;border-radius:10px;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-        </button>
-      </div>
-      <div style="padding:3px 0 1px;display:flex;gap:6px;">
-        <button onclick="showSmartPastePanel()" title="Paste or upload a packing slip, email, or BOL — we'll extract everything" style="display:flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--bdr);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:600;color:var(--mu);cursor:pointer;font-family:var(--font);white-space:nowrap;transition:border-color .15s,color .15s;" onmouseover="this.style.borderColor='#bd27bc';this.style.color='#bd27bc';" onmouseout="this.style.borderColor='';this.style.color='';">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-          Paste Shipment Info
         </button>
       </div>
       <div class="inp-label">Freight &amp; Logistics, Inc. &nbsp;-&nbsp; AI Assistant</div>
@@ -2073,10 +2043,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div id="mob-content-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#fff;"></div>
   <div id="mob-content-footer" style="flex-shrink:0;border-top:1px solid var(--bdr);background:var(--card);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;height:0;overflow:hidden;border-top:none;">
     <div style="display:flex;align-items:center;gap:8px;">
-      <input type="file" id="mob-content-file" accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="handleChatAttachment(this)">
-      <button onclick="document.getElementById('mob-content-file').click()" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-      </button>
       <input id="mob-content-input" type="text" placeholder="Ask a question..." style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:10px 14px;font-size:14px;font-family:var(--font);color:var(--tx);outline:none;" onkeydown="if(event.key==='Enter')mobContentAsk()">
       <button class="btn-voice-mic" onclick="toggleVoiceMode()" title="Start voice conversation" style="width:34px;height:34px;background:transparent;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
