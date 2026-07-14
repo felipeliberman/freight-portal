@@ -2123,7 +2123,7 @@ const TERMS_WORKER = 'https://customer-terms.felipe-b80.workers.dev';
 // reviewed change once the save->charge loop is proven on test. The invoice modal keeps
 // its own live key untouched; only the save-card flow uses _saveCardPK().
 const STRIPE_WORKER  = 'https://stripe-payments.felipe-b80.workers.dev';
-const STRIPE_MODE    = 'test';
+const STRIPE_MODE    = 'live';
 const STRIPE_PK_TEST = 'pk_test_51TjE6BAJRfa3jdmDg33gkHTWxsfL9Z2UkMUvB3JPDJOYDagfYtTqfr4BojpOMYpRFZx89LYzztcuU3yaflh1YaOE00oVpQkxul';
 const STRIPE_PK_LIVE = 'pk_live_51TjE6BAJRfa3jdmDq3AA0UTJF4OlLv6jOsvkxxiN4FfkXs2t3FbiWUzWolXgzzbOWyxYP6Nat05ywLCwaKvZGnTg00Wzj0pbwI';
 function _saveCardPK() { return STRIPE_MODE === 'live' ? STRIPE_PK_LIVE : STRIPE_PK_TEST; }
