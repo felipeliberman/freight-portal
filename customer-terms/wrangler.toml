@@ -1,0 +1,10 @@
+# Deploy:  cd customer-terms && wrangler deploy
+# KV:      wrangler kv namespace create TERMS_KV   (paste the returned id below)
+# Secret:  wrangler secret put ADMIN_SECRET        (set once; not stored in this repo)
+name = "customer-terms"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "TERMS_KV"
+id = "c5771c49afc449c98f6df39013c47267"

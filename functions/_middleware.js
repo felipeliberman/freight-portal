@@ -16,6 +16,7 @@
 const ALLOWED_EXACT = new Set([
   '/', '/index', '/index.html',
   '/portal', '/portal.html',
+  '/admin', '/admin.html',
   '/logo.png', '/logo-white.png', '/sample-slip.png',
 ]);
 const ALLOWED_PREFIXES = ['/logos/', '/docs/'];

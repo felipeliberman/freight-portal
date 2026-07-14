@@ -2114,6 +2114,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const PRIMUS_BASE = 'https://freightandlogistics-api.shipprimus.com';
+// Self-sourced billing-terms store (Phase 1). Primus does not expose a customer's
+// terms code, so the portal reads it from the customer-terms Worker at login.
+const TERMS_WORKER = 'https://customer-terms.felipe-b80.workers.dev';
 
 // ── Redkik cargo insurance commodity catalog ──────────────────────────────────
 // Selected at quote time; the chosen commodity id + cargo value are passed to the
@@ -7864,6 +7867,34 @@ async function doLogin() {
       }
     } catch(e) {}
 
+    // Resolve the real Primus customer ID. Primus doesn't return it at login;
+    // /applet/v1/profile is self-scoped to the logged-in account and exposes it
+    // as billToInformation.id. We need it to key the terms lookup below.
+    let primusCustomerId = null;
+    try {
+      const pr = await fetch(PRIMUS_BASE + '/applet/v1/profile', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (pr.ok) {
+        const pd = await pr.json();
+        const bt = pd.data && pd.data.results && pd.data.results.billToInformation;
+        if (bt && bt.id != null) primusCustomerId = String(bt.id);
+      }
+    } catch(e) {}
+
+    // Look up self-sourced billing terms (PRE / NET15 / …). Absence of an entry
+    // — or ANY failure here — means normal/non-PRE terms and must never block login.
+    let termsCode = null;
+    if (primusCustomerId) {
+      try {
+        const tr = await fetch(TERMS_WORKER + '/terms?customerId=' + encodeURIComponent(primusCustomerId));
+        if (tr.ok) {
+          const td = await tr.json();
+          termsCode = (td && td.termsCode) || null;
+        }
+      } catch(e) {}
+    }
+
     // Build customer object dynamically
     const dynCustomer = {
       email,
@@ -7871,11 +7902,12 @@ async function doLogin() {
       firstName: firstName || companyName.split(' ')[0],
       code: email.replace(/[^a-z0-9]/gi,'').slice(0,8).toUpperCase(),
       avatar: avatarText,
-      primusCustomerId: null,
+      primusCustomerId,
       primusUser: email,
       primusPass: pw,
       billingType: 'thirdParty',
       arCode: null,
+      termsCode,
       _dynamic: true,
     };
 
