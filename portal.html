@@ -3514,33 +3514,34 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
 
   renderInvoiceRows(allInvoices, tbody, PAGE_SIZE, 0);
 
-  // Wire date picker buttons
-  setTimeout(() => {
-    const applyBtn = document.getElementById('inv-date-apply');
-    const allBtn   = document.getElementById('inv-date-all');
-    const fromEl   = document.getElementById('inv-date-from');
-    const toEl     = document.getElementById('inv-date-to');
-    if (applyBtn) applyBtn.onclick = async () => {
-      applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
-      try {
-        const _from = fromEl.value, _to = toEl.value;
-        const newInvs = await fetchInvoices(_from, _to);
-        const newEl = renderInvoices(newInvs, newInvs, _from, _to);
-        openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
-      } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
-    };
-    if (allBtn) allBtn.onclick = async () => {
-      allBtn.textContent = 'Loading...'; allBtn.disabled = true;
-      const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
-      if (fromEl) fromEl.value = _af;
-      if (toEl)   toEl.value   = _at;
-      try {
-        const newInvs = await fetchInvoices(_af, _at);
-        const newEl = renderInvoices(newInvs, newInvs, _af, _at);
-        openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
-      } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
-    };
-  }, 150);
+  // Wire date picker buttons — query the detached dateBar directly (no timer,
+  // no getElementById). The container isn't in the document yet, and Apply
+  // builds a fresh container reusing these IDs while the old one is still
+  // mounted, so a document lookup would race or match the stale duplicate.
+  const applyBtn = dateBar.querySelector('#inv-date-apply');
+  const allBtn   = dateBar.querySelector('#inv-date-all');
+  const fromEl   = dateBar.querySelector('#inv-date-from');
+  const toEl     = dateBar.querySelector('#inv-date-to');
+  if (applyBtn) applyBtn.onclick = async () => {
+    applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
+    try {
+      const _from = fromEl.value, _to = toEl.value;
+      const newInvs = await fetchInvoices(_from, _to);
+      const newEl = renderInvoices(newInvs, newInvs, _from, _to);
+      openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
+    } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
+  };
+  if (allBtn) allBtn.onclick = async () => {
+    allBtn.textContent = 'Loading...'; allBtn.disabled = true;
+    const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
+    if (fromEl) fromEl.value = _af;
+    if (toEl)   toEl.value   = _at;
+    try {
+      const newInvs = await fetchInvoices(_af, _at);
+      const newEl = renderInvoices(newInvs, newInvs, _af, _at);
+      openRightPanel(newEl, 'Invoices (' + newInvs.length + ')');
+    } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
+  };
 
   return container;
 }
@@ -17319,32 +17320,33 @@ function renderReports(shipments, _repDateFrom, _repDateTo) {
     container.appendChild(buildSpendChart('Monthly Spend ($)', spendSorted));
   }
 
-  // Wire date picker buttons — refetch via the shared feed and re-open the panel
-  // (openRightPanel routes to the mobile content view on mobile).
-  setTimeout(() => {
-    const applyBtn = document.getElementById('rep-date-apply');
-    const allBtn   = document.getElementById('rep-date-all');
-    const fromEl   = document.getElementById('rep-date-from');
-    const toEl     = document.getElementById('rep-date-to');
-    if (applyBtn) applyBtn.onclick = async () => {
-      applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
-      try {
-        const _from = fromEl.value, _to = toEl.value;
-        const newShipments = await fetchReportShipments(_from, _to);
-        openRightPanel(renderReports(newShipments, _from, _to), 'Reports');
-      } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
-    };
-    if (allBtn) allBtn.onclick = async () => {
-      allBtn.textContent = 'Loading...'; allBtn.disabled = true;
-      const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
-      if (fromEl) fromEl.value = _af;
-      if (toEl)   toEl.value   = _at;
-      try {
-        const newShipments = await fetchReportShipments(_af, _at);
-        openRightPanel(renderReports(newShipments, _af, _at), 'Reports');
-      } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
-    };
-  }, 100);
+  // Wire date picker buttons — query the detached dateBar directly (no timer,
+  // no getElementById). The container isn't in the document yet, and Apply
+  // builds a fresh container reusing these IDs while the old one is still
+  // mounted, so a document lookup would race or match the stale duplicate.
+  // (openRightPanel routes to the mobile content view on mobile.)
+  const applyBtn = dateBar.querySelector('#rep-date-apply');
+  const allBtn   = dateBar.querySelector('#rep-date-all');
+  const fromEl   = dateBar.querySelector('#rep-date-from');
+  const toEl     = dateBar.querySelector('#rep-date-to');
+  if (applyBtn) applyBtn.onclick = async () => {
+    applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
+    try {
+      const _from = fromEl.value, _to = toEl.value;
+      const newShipments = await fetchReportShipments(_from, _to);
+      openRightPanel(renderReports(newShipments, _from, _to), 'Reports');
+    } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
+  };
+  if (allBtn) allBtn.onclick = async () => {
+    allBtn.textContent = 'Loading...'; allBtn.disabled = true;
+    const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
+    if (fromEl) fromEl.value = _af;
+    if (toEl)   toEl.value   = _at;
+    try {
+      const newShipments = await fetchReportShipments(_af, _at);
+      openRightPanel(renderReports(newShipments, _af, _at), 'Reports');
+    } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
+  };
 
   // Fill remaining space to avoid gray bar
   var spacer = document.createElement('div');
