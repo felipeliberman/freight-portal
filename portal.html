@@ -5256,49 +5256,74 @@ function appendMessage(role, text, extras) {
 // "Contact us to confirm". Never inherit, never guess. (If Estes volume drops to
 // $1/lb and we showed a base $5/lb, that's 5x overstated on the priciest row.)
 //
-// THREE PROFILE TYPES:
-//   { type:'class',       cap, usedPerLb, byClass(cls)->$/lb }  new = byClass(cls) * actualWt
-//   { type:'perLb',       cap, usedPerLb, newPerLb }            new = $/lb * actualWt
-//   { type:'perShipment', newAmount, usedAmount }              weight-independent constants
-// Weight basis is ACTUAL shipment weight (qty × per-piece weight) — there is no
-// billable-weight field on the rate object. Per-shipment cap is applied but NEVER shown.
-//
-// ⚠️ PROVISIONAL — NOT FINAL. Exact rate.name strings are UNVERIFIED pending the
-// live name dump. Numbers are per Felipe; keys are best-known. If a live name does
-// not match a key exactly, the row safely shows "Contact us to confirm". Drop-variants
-// (volume/spot/pallet) are intentionally NOT enabled below — see the pending block.
+// THREE PROFILE TYPES (bracketed fields optional):
+//   { type:'class',       cap, usedPerLb, byClass(cls)->$/lb [, usedCap, min] }  new = byClass(cls) * actualWt
+//   { type:'perLb',       cap, usedPerLb, newPerLb           [, usedCap, min] }  new = $/lb * actualWt
+//   { type:'perShipment', newAmount, usedAmount }                                weight-independent constants
+// ACTUAL shipment weight (qty × per-piece weight); no billable-weight field exists.
+//   cap     = per-shipment ceiling on NEW (also caps USED unless usedCap is set)
+//   usedCap = separate, lower ceiling on USED only
+//   min     = dollar floor on the payout (a "$X min" in the tariff)
+// Caps and mins are applied but NEVER shown. Numbers are each carrier's own rules tariff.
+// Keys are the normalized rate.name (best-known). "Contact us to confirm" now shows ONLY
+// for a name matching nothing here — including any volume/spot variant with no exact key
+// of its own (e.g. "Estes Express - Volume"): exact keys only, never prefix-match, never
+// inherit from the parent.
+
+// Shared class ladders — declared once so carriers on the same ladder can't drift apart.
+const _clsRL   = cls => cls <= 50 ? 2.00 : cls === 55 ? 3.00 : cls === 60 ? 5.00 : cls === 65 ? 10.00 : cls === 70 ? 15.00 : cls === 77.5 ? 20.00 : 25.00;                                          // R+L: 50:2 55:3 60:5 65:10 70:15 77.5:20 85+:25
+const _clsRoad = cls => cls <= 50 ? 1.00 : cls === 55 ? 2.00 : cls === 60 ? 3.00 : cls === 65 ? 5.00 : cls === 70 ? 7.50 : 10.00;                                                                   // STG/Roadrunner: 50:1 55:2 60:3 65:5 70:7.5 77.5:10 85+:10
+const _clsSEFL = cls => cls <= 50 ? 1.00 : cls === 55 ? 2.00 : cls === 60 ? 2.50 : cls === 65 ? 4.00 : cls <= 100 ? 5.00 : cls <= 200 ? 6.00 : 10.00;                                               // SEFL: 50:1 55:2 60:2.5 65:4 70-100:5 110-200:6 250+:10
+const _clsXPO  = cls => cls === 50 ? 3.00 : cls === 55 ? 3.50 : cls === 60 ? 4.00 : 5.00;                                                                                                          // XPO: 50:3 55:3.5 60:4 65-500:5
+const _clsAAA  = cls => cls <= 50 ? 0.99 : cls === 55 ? 2.00 : cls === 60 ? 3.00 : cls === 65 ? 5.00 : cls === 70 ? 7.50 : cls === 77.5 ? 10.00 : cls === 85 ? 15.00 : cls <= 100 ? 17.50 : 20.00;  // AAA Cooper: …85:15 92.5-100:17.5 110+:20
+const _clsABFB = cls => cls <= 55 ? 2.00 : cls === 60 ? 3.00 : cls === 65 ? 5.00 : cls === 70 ? 7.00 : cls === 77.5 ? 10.00 : cls === 85 ? 15.00 : cls <= 100 ? 20.00 : 25.00;                       // ABF-B: 50/55:2 60:3 65:5 70:7 77.5:10 85:15 92.5/100:20 110+:25
+const _clsPen  = cls => cls <= 60 ? 2.50 : 5.00;                                                                                                                                                   // Peninsula: 50-60:2.5 65-500:5
+
 const LIABILITY_TABLE = {
-  // ── ABF — the ONE carrier whose variants diverge; the two names are DISTINCT. ──
-  'abf freight':     { type:'perLb', newPerLb:1.25, usedPerLb:0.00, cap:100000 },
-  'abf freight - b': { type:'class', usedPerLb:5.00, cap:100000, byClass: cls =>
-                         cls <= 55    ? 2.00  : cls === 60 ? 3.00  : cls === 65 ? 5.00  : cls === 70 ? 7.00 :
-                         cls === 77.5 ? 10.00 : cls === 85 ? 15.00 : cls <= 100 ? 20.00 : 25.00 },
+  // ── perLb (rate × actual weight); cap = per-shipment ceiling ─────────────────
+  'saia':                      { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:50000  },
+  'estes express':             { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:50000  },
+  'old dominion':              { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:50000  },
+  'odfl':                      { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:50000  },
+  'old dominion freight line': { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:50000  },
+  'averitt':                   { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:100000 },
+  'averitt express':           { type:'perLb', newPerLb:5.00,  usedPerLb:0.10, cap:100000 },
+  'fedex freight':             { type:'perLb', newPerLb:25.00, usedPerLb:0.50, cap:100000 },  // Economy/Priority share this — exact keys, no prefix
+  'fedex freight economy':     { type:'perLb', newPerLb:25.00, usedPerLb:0.50, cap:100000 },
+  'fedex freight priority':    { type:'perLb', newPerLb:25.00, usedPerLb:0.50, cap:100000 },
+  'abf freight':               { type:'perLb', newPerLb:1.25,  usedPerLb:1.25 },              // no cap stated → no ceiling
+  'jts express':               { type:'perLb', newPerLb:1.00,  usedPerLb:0.50, cap:5000   },
+  'forward air':               { type:'perLb', newPerLb:0.50,  usedPerLb:0.50, cap:100000, min:50 },
+  'efw':                       { type:'perLb', newPerLb:0.50,  usedPerLb:0.10, cap:25000, usedCap:1000, min:50 },
+  'pilot':                     { type:'perLb', newPerLb:0.50,  usedPerLb:0.50, min:50 },      // cap = actual value → no numeric ceiling
+  'pilot freight':             { type:'perLb', newPerLb:0.50,  usedPerLb:0.50, min:50 },
+  'maersk':                    { type:'perLb', newPerLb:0.50,  usedPerLb:0.50, min:50 },
+  'pilot / maersk':            { type:'perLb', newPerLb:0.50,  usedPerLb:0.50, min:50 },
+  'tforce':                    { type:'perLb', newPerLb:25.00, usedPerLb:1.00, cap:100000 },  // flat $25/lb ceiling (spec lists under class; no class breaks)
+  'tforce freight':            { type:'perLb', newPerLb:25.00, usedPerLb:1.00, cap:100000 },
 
-  // ── ODFL — flat $/lb, same at every class; volume == class (no collapse risk). ─
-  'odfl':                      { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
-  'old dominion':              { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
-  'old dominion freight line': { type:'perLb', newPerLb:5.00, usedPerLb:0.10, cap:50000 },
-
-  // ── Flat per shipment — weight-independent. Both pay $0.00 on USED goods:
-  //    Metro's contract excludes used/antique/heirloom furniture (Carmack waived);
-  //    WARP carries no used coverage. Display "$0.00" plainly — never soften/hide.
+  // ── perShipment (flat, weight ignored). Used pays $0.00 — show "$0.00" plainly.
   'metropolitan warehouse & delivery corp': { type:'perShipment', newAmount:500, usedAmount:0.00 },
   'metro w&d':                               { type:'perShipment', newAmount:500, usedAmount:0.00 },
   'warp':                                    { type:'perShipment', newAmount:250, usedAmount:0.00 },
-};
 
-// ── PENDING THE NAME DUMP — DO NOT ENABLE until the exact rate.name is confirmed. ──
-// These variants DROP liability far below their parent, so a guessed key risks a base
-// rate catching a spot/volume shipment (the Estes-volume trap). Left commented so any
-// unverified variant falls through to "Contact us to confirm" (safe). `?` = unknown, needs dump.
-//   'xpo' / 'xpo logistics':   { type:'class', usedPerLb:0.10, cap:100000, byClass: cls => cls===50?3.00:cls===55?3.50:cls===60?4.00:5.00 },  // base class table — but XPO SPOT drops to $1/lb, so name must be confirmed distinct
-//   'xpo …spot/pallet/pup/tl': { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:'?' },
-//   'stg …volume/spot':        { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:10000 },
-//   'r+l …spot/pallet':        { type:'perLb', newPerLb:1.00, usedPerLb:'?', cap:'?' },
-//   'sefl …spot':              { type:'perLb', newPerLb:2.00, usedPerLb:'?', cap:10000 },
-//   'aaa cooper …pallet/spot/flat': { type:'perLb', newPerLb:2.00, usedPerLb:'?', cap:20000 },
-//   'estes express - volume':  UNVERIFIED (4 rows, one at $9,416) — must NOT inherit base Estes.
-//   'roadrunner - volume':     UNVERIFIED.
+  // ── class (byClass × actual weight); used = $0.10/lb unless noted ────────────
+  'r+l':                        { type:'class', byClass:_clsRL,   usedPerLb:0.10, cap:100000 },
+  'r&l':                        { type:'class', byClass:_clsRL,   usedPerLb:0.10, cap:100000 },
+  'r+l carriers':               { type:'class', byClass:_clsRL,   usedPerLb:0.10, cap:100000 },
+  'r&l carriers':               { type:'class', byClass:_clsRL,   usedPerLb:0.10, cap:100000 },
+  'roadrunner':                 { type:'class', byClass:_clsRoad, usedPerLb:0.10, cap:100000, usedCap:2000  },
+  'stg ltl':                    { type:'class', byClass:_clsRoad, usedPerLb:0.10, cap:100000 },
+  'stg':                        { type:'class', byClass:_clsRoad, usedPerLb:0.10, cap:100000 },
+  'sefl':                       { type:'class', byClass:_clsSEFL, usedPerLb:0.10, cap:100000, usedCap:10000 },
+  'southeastern':               { type:'class', byClass:_clsSEFL, usedPerLb:0.10, cap:100000, usedCap:10000 },
+  'southeastern freight lines': { type:'class', byClass:_clsSEFL, usedPerLb:0.10, cap:100000, usedCap:10000 },
+  'xpo':                        { type:'class', byClass:_clsXPO,  usedPerLb:0.10, cap:100000 },
+  'aaa cooper':                 { type:'class', byClass:_clsAAA,  usedPerLb:0.10, cap:50000,  usedCap:10000 },
+  'abf freight - b':            { type:'class', byClass:_clsABFB, usedPerLb:5.00, cap:100000 },
+  'peninsula':                  { type:'class', byClass:_clsPen,  usedPerLb:0.10 },           // no cap stated
+  'peninsula truck lines':      { type:'class', byClass:_clsPen,  usedPerLb:0.10 },
+};
 
 // EXACT variant-name lookup. No prefix match, no inheritance. Missing → null.
 function _liabilityProfile(rate) {
@@ -5335,11 +5360,13 @@ function carrierMaxLiability(rate) {
       usedPayout += prof.usedPerLb * lbs;
     });
     if (totalWt <= 0) return { known: false };
-    const cap = prof.cap || Infinity;
+    const newCap  = prof.cap != null ? prof.cap : Infinity;
+    const usedCap = prof.usedCap != null ? prof.usedCap : newCap; // separate, lower ceiling on used
+    const floor   = prof.min || 0;                                // "$X min" dollar floor
     return {
       known: true,
-      newPayout:  Math.min(newPayout,  cap),
-      usedPayout: Math.min(usedPayout, cap)
+      newPayout:  Math.min(newCap,  Math.max(floor, newPayout)),
+      usedPayout: Math.min(usedCap, Math.max(floor, usedPayout))
     };
   } catch (e) { return { known: false }; }
 }
@@ -5354,7 +5381,9 @@ function _fmtLiab(n) {
 // (appended to <body>, position:fixed) so the row height never changes. Shared by both renderers.
 function renderLiabilityLine(rate) {
   const wrap = document.createElement('span');
-  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--mu);font-weight:400;white-space:nowrap;';
+  // Grey text (hardcoded — var(--mu) does NOT resolve in JS-set inline styles here),
+  // magenta ⓘ only. Whole-label magenta across ~53 rows would compete with the accent.
+  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#706c63;font-weight:400;white-space:nowrap;';
   wrap.appendChild(document.createTextNode('Max liability'));
 
   const info = document.createElement('span');
