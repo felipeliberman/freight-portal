@@ -5383,7 +5383,7 @@ function renderLiabilityLine(rate) {
   const wrap = document.createElement('span');
   // Grey text (hardcoded — var(--mu) does NOT resolve in JS-set inline styles here),
   // magenta ⓘ only. Whole-label magenta across ~53 rows would compete with the accent.
-  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#706c63;font-weight:400;white-space:nowrap;';
+  wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#4a4741;font-weight:400;white-space:nowrap;';
   wrap.appendChild(document.createTextNode('Max liability'));
 
   const info = document.createElement('span');
