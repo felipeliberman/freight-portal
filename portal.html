@@ -18357,10 +18357,16 @@ function openRightPanel(contentEl, title) {
       return;
     }
   }
-  // Check if tab with same title already exists — replace it
-  const existing = rpState.tabs.find(t => t.title === title);
+  // Match tabs by title, ignoring a trailing " (n)" count so a changed count
+  // (e.g. a re-filtered Invoices/Shipments/Claims list) still replaces the
+  // current tab instead of pushing a hidden duplicate. Strips ONLY a trailing
+  // count — a leading qualifier like 'Unpaid Invoices' stays distinct from
+  // 'Invoices', so the agent's filtered tabs still coexist.
+  const _tabKey = t => String(t || '').replace(/\s*\(\d+\)\s*$/, '');
+  const existing = rpState.tabs.find(t => _tabKey(t.title) === _tabKey(title));
   if (existing) {
     existing.el = contentEl;
+    existing.title = title;        // keep the label current (count updates)
     rpState.activeId = existing.id;
   } else {
     const id = 'tab-' + Date.now();
