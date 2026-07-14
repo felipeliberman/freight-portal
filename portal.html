@@ -441,11 +441,13 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 .talk-alt-btn:hover{background:#a020a0;}
 @media(max-width:820px){.talk-grid{grid-template-columns:1fr;}.talk-right{position:static;}}
 
-/* Desktop right-panel top-summary cards — unify every panel's top block into
-   the same rounded card as My Shipments. Scoped to #rp-body so the mobile
-   content view (#mob-content-body) keeps its own separately-tuned treatment.
-   !important overrides the inline border-bottom (which mobile still relies on). */
-#rp-body .panel-summary-card{
+/* Panel top-summary cards — unify every panel's top block into the same
+   rounded card as My Shipments, shared across desktop (#rp-body) and the
+   mobile content view (#mob-content-body). The old flat border-bottom strip
+   on mobile was intentionally retired: it read as a stray rule under the
+   chrome header. !important overrides each card's inline border-bottom. */
+#rp-body .panel-summary-card,
+#mob-content-body .panel-summary-card{
   border:1px solid var(--bdr) !important;
   border-radius:14px !important;
   margin-bottom:16px !important;
@@ -453,7 +455,8 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 }
 /* qt-hero is a status header for the form directly below it (tab bar, progress,
    fields), not a card above a distinct data table — keep it flush, no gap. */
-#rp-body #qt-hero.panel-summary-card{margin-bottom:0 !important;}
+#rp-body #qt-hero.panel-summary-card,
+#mob-content-body #qt-hero.panel-summary-card{margin-bottom:0 !important;}
 
 /* ══════════════════════════════════════════════════
    MOBILE — full responsive overhaul ≤768px
@@ -809,6 +812,16 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
   #mob-content-body [style*="padding:18px 22px"]{
     padding:14px 16px !important;
   }
+
+  /* The chrome bar (#mob-content-header) is the ONLY panel title on mobile.
+     Panels that inject their own internal title text (Claims, Quote hero)
+     tag it .mob-hide-title so it is suppressed here — matching Reports,
+     which injects no internal header at all. */
+  #mob-content-body .mob-hide-title{ display:none !important; }
+
+  /* Quote: drop the tab-bar's own border-bottom so it doesn't stack a second
+     rule under the (now rounded-card) hero above it. */
+  #mob-content-body .qt-tabbar{ border-bottom:none !important; }
 }
 
 /* iOS safe area padding for input bar */
@@ -2002,7 +2015,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 <div id="mob-ships-view" style="display:none;position:fixed;top:50px;left:0;right:0;bottom:60px;z-index:120;background:var(--bg);flex-direction:column;overflow:hidden;">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);">
     <div style="font-size:16px;font-weight:600;color:var(--tx);">My Shipments</div>
-    <div id="mob-ships-count" style="font-size:12px;color:var(--mu);"></div>
+    <button onclick="var v=document.getElementById('mob-ships-view');if(v)v.style.display='none';if(typeof mobSetActive==='function')mobSetActive('chat');" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:22px;line-height:1;padding:2px 6px;">×</button>
   </div>
   <div id="mob-ships-stats" style="display:none;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--bdr);overflow:hidden;height:56px;"></div>
   <div id="mob-ships-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 12px;">
@@ -15793,7 +15806,7 @@ function showQuoteForm(prefill, silent) {
   quoteHdr.className = 'panel-summary-card';
   quoteHdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);padding:16px 18px;display:flex;align-items:center;gap:0;flex-shrink:0;flex-wrap:wrap;';
   quoteHdr.innerHTML =
-    '<div style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:18px;margin-right:4px;text-align:center;">' +
+    '<div class="mob-hide-title" style="flex:1;min-width:120px;border-right:1px solid var(--bdr);padding-right:18px;margin-right:4px;text-align:center;">' +
       '<div style="font-size:13px;font-weight:600;color:var(--ac);line-height:1.2;">Compare Carrier Rates</div>' +
       '<div style="font-size:10px;color:var(--fa);margin-top:2px;">Get a Quote</div>' +
     '</div>' +
@@ -15815,6 +15828,7 @@ function showQuoteForm(prefill, silent) {
 
   // ── Tab bar ──────────────────────────────────────────────────────────────
   const tabBar = document.createElement('div');
+  tabBar.className = 'qt-tabbar';
   tabBar.style.cssText = 'display:flex;border-bottom:1px solid var(--bdr);background:var(--card);flex-shrink:0;';
   tabBar.innerHTML =
     '<button id="qt-tab-quote" style="flex:1;padding:10px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;font-family:var(--font);border-bottom:2px solid var(--ac);color:var(--ac);display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> 1. Quote Details</button>' +
@@ -16899,7 +16913,7 @@ function renderClaims(claims) {
   const headerLeft = document.createElement('div');
   headerLeft.style.cssText = 'flex:1;min-width:140px;border-right:1px solid var(--bdr);padding-right:24px;margin-right:24px;';
   headerLeft.innerHTML = `
-    <div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Open Claims</div>
+    <div class="mob-hide-title" style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">Open Claims</div>
     <div style="display:flex;align-items:baseline;gap:6px;">
       <span style="font-size:36px;font-weight:500;color:var(--tx);line-height:1.1;">${claims.length}</span>
       <span style="font-size:12px;color:var(--fa);">total</span>
