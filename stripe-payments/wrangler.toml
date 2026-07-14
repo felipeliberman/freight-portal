@@ -1,0 +1,14 @@
+# stripe-payments — Stripe payments + SendGrid confirmation emails + reCAPTCHA verify.
+# Handles LIVE invoice payments. Do NOT edit + deploy blind — verify against the
+# deployed source first (this file was reconstructed from the deployed worker on
+# 2026-07-14 and certified byte-identical).
+#
+# Deploy:  cd stripe-payments && wrangler deploy
+# Secrets (set via `wrangler secret put`, NOT stored here):
+#   STRIPE_SK        — Stripe secret key (currently a single key; live)
+#   SENDGRID_KEY     — SendGrid API key
+#   RECAPTCHA_SECRET — reCAPTCHA v3 secret
+# Last deployed via the Cloudflare dashboard "quick_editor" before this import.
+name = "stripe-payments"
+main = "src/index.js"
+compatibility_date = "2026-06-17"
