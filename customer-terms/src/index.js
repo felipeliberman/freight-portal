@@ -21,9 +21,20 @@ const ALLOWED_ORIGINS = [
   'https://www.freightandlogistics.ai'
 ];
 
+// Production origins plus this project's Cloudflare Pages preview deployments
+// (*.freight-portal.pages.dev), so branch previews can exercise the terms flow.
+// Additive only; the PUT stays protected by the admin secret regardless of origin.
+function isAllowedOrigin(origin) {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  try {
+    const h = new URL(origin).hostname;
+    return h === 'freight-portal.pages.dev' || h.endsWith('.freight-portal.pages.dev');
+  } catch (e) { return false; }
+}
+
 function corsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allow = isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin': allow,
     'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
