@@ -822,6 +822,40 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
   /* Quote: drop the tab-bar's own border-bottom so it doesn't stack a second
      rule under the (now rounded-card) hero above it. */
   #mob-content-body .qt-tabbar{ border-bottom:none !important; }
+
+  /* ── Shared stat strip ──────────────────────────────────────────────────
+     Every panel's summary row renders like Reports: one row of equal tiles,
+     a #c8c4bc vertical hairline between them (never trailing), a centered
+     number-over-label, immune to the flat-reflow block above. Panels opt in
+     with class="fp-statrow" on the wrapper, "fp-stat" on each tile, and
+     "fp-stat-num"/"fp-stat-lbl" on the value/label.
+     The doubled .fp-statrow.fp-statrow raises specificity to (1,2,0) so it
+     beats rule 789's two-attribute [style*=display:grid][style*=grid-...]
+     selector. Divider is #c8c4bc (NOT var(--bdr) #e5e2d9) to match Reports —
+     the approved reference — which reads too faint at --bdr. Covers both
+     panel roots: #mob-content-body and My Shipments' #mob-ships-view. */
+  #mob-content-body .fp-statrow.fp-statrow,
+  #mob-ships-view  .fp-statrow.fp-statrow{
+    display:grid !important;
+    grid-template-columns:none !important;
+    grid-auto-flow:column !important;
+    grid-auto-columns:1fr !important;
+    align-items:stretch !important;
+  }
+  #mob-content-body .fp-statrow > .fp-stat,
+  #mob-ships-view  .fp-statrow > .fp-stat{
+    position:relative !important; height:56px !important; box-sizing:border-box !important;
+    display:flex !important; flex-direction:column !important;
+    align-items:center !important; justify-content:center !important; gap:3px !important;
+    border-right:1px solid #c8c4bc !important; border-bottom:none !important;
+    padding:0 !important; margin:0 !important; text-align:center !important;
+  }
+  #mob-content-body .fp-statrow > .fp-stat:last-child,
+  #mob-ships-view  .fp-statrow > .fp-stat:last-child{ border-right:none !important; }
+  #mob-content-body .fp-statrow .fp-stat-num,
+  #mob-ships-view  .fp-statrow .fp-stat-num{ font-size:16px !important; font-weight:600 !important; line-height:1 !important; }
+  #mob-content-body .fp-statrow .fp-stat-lbl,
+  #mob-ships-view  .fp-statrow .fp-stat-lbl{ font-size:9px !important; color:var(--fa) !important; text-transform:uppercase !important; letter-spacing:.03em !important; margin:0 !important; }
 }
 
 /* iOS safe area padding for input bar */
@@ -15024,6 +15058,7 @@ function showShippingItems() {
   hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--card);';
   var abStrip = document.createElement('div');
   abStrip.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
+  abStrip.className = 'fp-statrow';
   [
     {label:'Saved', value:'—', color:'var(--ac)', id:'ab-hdr-count'},
     {label:'Ship From', value:'—', color:'var(--tx)', id:'ab-hdr-from'},
@@ -15032,6 +15067,7 @@ function showShippingItems() {
   ].forEach(function(s,i,a){
     var c2=document.createElement('div');
     c2.style.cssText='position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid '+(i<a.length-1?'#c8c4bc;':'transparent;');
+    c2.className='fp-stat';
     if(s.value===null){
       c2.style.display='flex';c2.style.alignItems='center';c2.style.justifyContent='center';
       var btn=document.createElement('button');
@@ -15040,8 +15076,8 @@ function showShippingItems() {
       btn.innerHTML='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add';
       c2.appendChild(btn);
     } else {
-      var n=document.createElement('div');n.id=s.id;n.style.cssText='position:absolute;top:12px;left:0;right:0;text-align:center;font-size:20px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
-      var l=document.createElement('div');l.style.cssText='position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
+      var n=document.createElement('div');n.className='fp-stat-num';n.id=s.id;n.style.cssText='position:absolute;top:12px;left:0;right:0;text-align:center;font-size:20px;font-weight:600;color:'+s.color+';line-height:1;';n.textContent=s.value;
+      var l=document.createElement('div');l.className='fp-stat-lbl';l.style.cssText='position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';l.textContent=s.label;
       c2.appendChild(n);c2.appendChild(l);
     }
     abStrip.appendChild(c2);
@@ -15328,20 +15364,20 @@ function showAddressBook() {
   hdr.style.cssText = 'flex-shrink:0;border-bottom:1px solid var(--bdr);';
   hdr.innerHTML =
     // Hero card — compact strip
-    '<div style="background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;">' +
-      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
-        '<div id="ab-hdr-count" style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
+    '<div class="fp-statrow" style="background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;">' +
+      '<div class="fp-stat" style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
+        '<div id="ab-hdr-count" class="fp-stat-num" style="font-size:22px;font-weight:600;color:var(--ac);line-height:1;">—</div>' +
+        '<div class="fp-stat-lbl" style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Saved</div>' +
       '</div>' +
-      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
-        '<div id="ab-hdr-from" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship From</div>' +
+      '<div class="fp-stat" style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
+        '<div id="ab-hdr-from" class="fp-stat-num" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
+        '<div class="fp-stat-lbl" style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship From</div>' +
       '</div>' +
-      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
-        '<div id="ab-hdr-to" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
-        '<div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship To</div>' +
+      '<div class="fp-stat" style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;border-right:1px solid var(--bdr);">' +
+        '<div id="ab-hdr-to" class="fp-stat-num" style="font-size:22px;font-weight:600;color:var(--tx);line-height:1;">—</div>' +
+        '<div class="fp-stat-lbl" style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">Ship To</div>' +
       '</div>' +
-      '<div style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
+      '<div class="fp-stat" style="text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;">' +
         '<button id="ab-add-btn" style="display:inline-flex;align-items:center;gap:5px;background:var(--ac);color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">' +
           '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add' +
         '</button>' +
@@ -17114,6 +17150,7 @@ function renderReports(shipments) {
 
   const statsRow = document.createElement('div');
   statsRow.style.cssText = 'border-radius:14px;background:var(--card);border:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden;';
+  statsRow.className = 'fp-statrow';
 
   const statDefs = [
     { label: 'Spend', value: '$' + totalSpend.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color: 'var(--ac)' },
@@ -17123,12 +17160,15 @@ function renderReports(shipments) {
   ];
   statDefs.forEach(({ label, value, color }, idx, arr) => {
     const col = document.createElement('div');
+    col.className = 'fp-stat';
     const isLast = idx === arr.length - 1;
     col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (!isLast ? '#c8c4bc;' : 'transparent;');
     const numEl = document.createElement('div');
+    numEl.className = 'fp-stat-num';
     numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:' + color + ';line-height:1;';
     numEl.textContent = value;
     const lblEl = document.createElement('div');
+    lblEl.className = 'fp-stat-lbl';
     lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
     lblEl.textContent = label;
     col.appendChild(numEl);
@@ -19969,6 +20009,7 @@ function mobShowSavedQuotes() {
     var mostRecent = _savedTs.length ? new Date(Math.max.apply(null, _savedTs)).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—';
     var carriers = new Set(quotes.map(q=>q.carrierName||(q.rates&&q.rates[0]&&(q.rates[0]._name||q.rates[0].name))||'').filter(Boolean)).size;
     var hdr = document.createElement('div');
+    hdr.className = 'fp-statrow';
     hdr.style.cssText = 'background:var(--card);border-bottom:1px solid var(--bdr);display:grid;grid-template-columns:repeat(4,1fr);flex-shrink:0;overflow:hidden;';
     [
       {label:'Saved', value:quotes.length, color:'var(--ac)'},
@@ -19977,8 +20018,9 @@ function mobShowSavedQuotes() {
       {label:'Last Saved', value:mostRecent, color:'var(--tx)'},
     ].forEach(function(s,idx,arr){
       var col = document.createElement('div');
-      col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;' + (idx<arr.length-1?'border-right:1px solid var(--bdr);':'');
-      col.innerHTML = '<div style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
+      col.className = 'fp-stat';
+      col.style.cssText = 'text-align:center;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;';
+      col.innerHTML = '<div class="fp-stat-num" style="font-size:18px;font-weight:600;color:'+s.color+';line-height:1;">'+s.value+'</div><div class="fp-stat-lbl" style="font-size:9px;color:var(--fa);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;">'+s.label+'</div>';
       hdr.appendChild(col);
     });
     container.appendChild(hdr);
@@ -20038,6 +20080,7 @@ async function mobShowInvoices() {
         var outstanding = invoices.reduce(function(sum,i){ var f=getInvoiceFields(i); return f.isPaid?sum:sum+(parseFloat(f.rawAmt)||0); },0);
         var strip = document.createElement('div');
         strip.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-bottom:1px solid var(--bdr);flex-shrink:0;overflow:hidden;';
+        strip.className = 'fp-statrow';
         [
           { label:'Outstanding', value: '$'+outstanding.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}), color:'var(--ac)' },
           { label:'Total', value: invoices.length, color:'var(--tx)' },
@@ -20045,11 +20088,14 @@ async function mobShowInvoices() {
           { label:'Paid', value: paid, color:'var(--tx)' },
         ].forEach(function(s, idx, arr) {
           var col = document.createElement('div');
+          col.className = 'fp-stat';
           col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < arr.length-1 ? '#c8c4bc;' : 'transparent;') + 'cursor:pointer;transition:background .15s;';
           var numEl = document.createElement('div');
+          numEl.className = 'fp-stat-num';
           numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:16px;font-weight:600;color:'+s.color+';line-height:1;';
           numEl.textContent = s.value;
           var lblEl = document.createElement('div');
+          lblEl.className = 'fp-stat-lbl';
           lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
           lblEl.textContent = s.label;
           col.appendChild(numEl);
@@ -20192,15 +20238,19 @@ async function mobShowShipments() {
         { label: 'Other', value: scheduled, color: 'var(--fa)' },
       ];
       statsEl.innerHTML = '';
+      statsEl.className = 'fp-statrow';
       statsEl.style.display = 'grid'; statsEl.style.gridTemplateColumns = 'repeat(4,1fr)'; statsEl.style.overflow = 'hidden'; statsEl.style.padding = '0';
       statItems.forEach(function(item, idx) {
         var col = document.createElement('div');
+        col.className = 'fp-stat';
         col.style.cssText = 'position:relative;height:56px;box-sizing:border-box;background:var(--card);border-right:1px solid ' + (idx < statItems.length - 1 ? '#c8c4bc;' : 'transparent;') + 'cursor:pointer;transition:background .15s;';
         col.style.position = 'relative';
         var numEl = document.createElement('div');
+        numEl.className = 'fp-stat-num';
         numEl.style.cssText = 'position:absolute;top:12px;left:0;right:0;text-align:center;font-size:18px;font-weight:600;color:' + item.color + ';line-height:1;';
         numEl.textContent = item.value;
         var lblEl = document.createElement('div');
+        lblEl.className = 'fp-stat-lbl';
         lblEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:9px;color:var(--fa);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;';
         lblEl.textContent = item.label;
         col.appendChild(numEl);
