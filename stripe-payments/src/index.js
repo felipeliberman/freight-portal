@@ -67,33 +67,56 @@ export default {
     // Find-or-create a Stripe Customer keyed by metadata.primusCustomerId
     // (stable, unlike email). Uses customers/search — NOT the legacy first-100
     // email scan. Mode is implicit in `sk` (test/live are separate accounts).
-    async function getCustomerByPrimus(sk, primusCustomerId, email) {
+    // KV mapping key. Mode-namespaced so test/live customer ids never collide.
+    function custKvKey(mode, primusCustomerId) { return `stripecust:${mode}:${primusCustomerId}`; }
+
+    async function getCustomerByPrimus(sk, mode, primusCustomerId, email) {
       if (!primusCustomerId) return null;
+      const kvKey = custKvKey(mode, primusCustomerId);
+      // 1) KV cache — strongly consistent, fixes read-after-write + dup-on-repeat.
+      if (env.STRIPE_KV) {
+        const cached = await env.STRIPE_KV.get(kvKey);
+        if (cached) return cached;
+      }
       const auth = { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION };
+      // 2) Stripe search — eventually consistent; a backstop when KV is cold.
       const q = encodeURIComponent(`metadata['primusCustomerId']:'${primusCustomerId}'`);
       const sr = await fetch(`https://api.stripe.com/v1/customers/search?query=${q}&limit=1`, { headers: auth });
       const sd = await sr.json();
-      if (sd.data && sd.data[0]) return sd.data[0].id;
-      const cr = await fetch('https://api.stripe.com/v1/customers', {
-        method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ email: email || '', 'metadata[primusCustomerId]': String(primusCustomerId) }).toString()
-      });
-      const c = await cr.json();
-      if (c.error) throw new Error(c.error.message);
-      return c.id || null;
+      let customerId = sd.data && sd.data[0] && sd.data[0].id;
+      // 3) create.
+      if (!customerId) {
+        const cr = await fetch('https://api.stripe.com/v1/customers', {
+          method: 'POST',
+          headers: { ...auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ email: email || '', 'metadata[primusCustomerId]': String(primusCustomerId) }).toString()
+        });
+        const c = await cr.json();
+        if (c.error) throw new Error(c.error.message);
+        customerId = c.id || null;
+      }
+      // Write KV immediately so the very next call is consistent.
+      if (customerId && env.STRIPE_KV) { try { await env.STRIPE_KV.put(kvKey, customerId); } catch(e) {} }
+      return customerId;
     }
 
     // Read-only customer lookup by Primus id (does NOT create). Used by
     // /get-saved-cards so listing cards never mints an empty customer.
-    async function findCustomerByPrimus(sk, primusCustomerId) {
+    async function findCustomerByPrimus(sk, mode, primusCustomerId) {
       if (!primusCustomerId) return null;
+      const kvKey = custKvKey(mode, primusCustomerId);
+      if (env.STRIPE_KV) {
+        const cached = await env.STRIPE_KV.get(kvKey);
+        if (cached) return cached;
+      }
       const q = encodeURIComponent(`metadata['primusCustomerId']:'${primusCustomerId}'`);
       const sr = await fetch(`https://api.stripe.com/v1/customers/search?query=${q}&limit=1`, {
         headers: { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION }
       });
       const sd = await sr.json();
-      return (sd.data && sd.data[0] && sd.data[0].id) || null;
+      const customerId = (sd.data && sd.data[0] && sd.data[0].id) || null;
+      if (customerId && env.STRIPE_KV) { try { await env.STRIPE_KV.put(kvKey, customerId); } catch(e) {} }
+      return customerId;
     }
 
     // ── GET PAYMENT METHODS ────────────────────────────────────────────────
@@ -217,10 +240,11 @@ export default {
     if (pathname === '/create-setup-intent' && request.method === 'POST') {
       try {
         const { mode, primusCustomerId, email } = await request.json();
-        const sk = skFor(mode);
+        const smode = mode === 'live' ? 'live' : 'test';
+        const sk = skFor(smode);
         if (!sk) return json({ error: 'Stripe key not configured for mode: ' + mode }, 500);
         if (!primusCustomerId) return json({ error: 'Missing primusCustomerId' }, 400);
-        const customerId = await getCustomerByPrimus(sk, primusCustomerId, email);
+        const customerId = await getCustomerByPrimus(sk, smode, primusCustomerId, email);
         if (!customerId) return json({ error: 'Could not resolve customer' }, 500);
         const siParams = new URLSearchParams({ customer: customerId, usage: 'off_session' });
         siParams.append('payment_method_types[]', 'card');
@@ -239,9 +263,10 @@ export default {
     if (pathname === '/get-saved-cards' && request.method === 'POST') {
       try {
         const { mode, primusCustomerId } = await request.json();
-        const sk = skFor(mode);
+        const smode = mode === 'live' ? 'live' : 'test';
+        const sk = skFor(smode);
         if (!sk) return json({ error: 'Stripe key not configured for mode: ' + mode }, 500);
-        const customerId = await findCustomerByPrimus(sk, primusCustomerId);
+        const customerId = await findCustomerByPrimus(sk, smode, primusCustomerId);
         if (!customerId) return json({ cards: [] });
         const pmRes = await fetch(`https://api.stripe.com/v1/payment_methods?customer=${customerId}&type=card`, {
           headers: { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION }

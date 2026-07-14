@@ -12,3 +12,11 @@
 name = "stripe-payments"
 main = "src/index.js"
 compatibility_date = "2026-06-17"
+
+# Phase 2.4: KV mapping primusCustomerId -> stripeCustomerId (keys "stripecust:<mode>:<id>").
+# Dedicated namespace, walled off from the customer-terms store: payments and terms are
+# separate trust domains, so a bug/compromise in one worker can't read or corrupt the
+# other's data. Mode-namespaced keys so test/live never collide.
+[[kv_namespaces]]
+binding = "STRIPE_KV"
+id = "61a138675f464fd3aa6ca671f043ad92"
