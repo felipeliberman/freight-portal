@@ -5943,7 +5943,7 @@ async function _chargeAtDispatch(BOLId, token) {
   const pid = currentCustomer && currentCustomer.primusCustomerId;
   if (!pid) return { ok: false, code: 'no_customer', error: 'No customer id on file — sign out and back in.' };
   // Quoted amount + BOL number, straight from the saved BOL.
-  let amount = 0, bolNumber = null;
+  let amount = 0, bolNumber = null, consigneeContact = '', shipperContact = '';
   try {
     const br = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + token } });
     if (br.ok) {
@@ -5954,9 +5954,19 @@ async function _chargeAtDispatch(BOLId, token) {
       // so the charge sees the real amount. A missing/zero/unparseable amount still => 0 => blocks.
       amount = Number(String((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0).replace(/[^\d.]/g, '')) || 0;
       bolNumber = r.BOLNumber || r.BOLNmbr || null;
+      // Same snapshot the charge is priced from — used just below to pre-validate dispatch.
+      consigneeContact = String((r.consignee && r.consignee.contact) || '').trim();
+      shipperContact = String((r.shipper && r.shipper.contact) || '').trim();
     }
   } catch(e) {}
   if (!amount || amount < 0.5) return { ok: false, code: 'no_amount', error: 'Could not read the quoted amount for this shipment.' };
+  // Pre-validate the dispatch preconditions Primus rejects on, on this SAME BOL snapshot,
+  // BEFORE charging — a missing required field blocks with NO charge, instead of leaving the
+  // card charged and the tender rejected (the charge-before-validate bug). Contact names are
+  // the confirmed Primus requirements; anything else Primus rejects still hits the D5 idempotent
+  // hold-and-retry net. Reaching here means the BOL fetch succeeded (otherwise: no_amount above).
+  if (!consigneeContact) return { ok: false, code: 'missing_field', error: formatDispatchError('consignee contact required') };
+  if (!shipperContact) return { ok: false, code: 'missing_field', error: formatDispatchError('shipper contact required') };
   try {
     const cr = await fetch(STRIPE_WORKER + '/charge-saved-card', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5976,6 +5986,11 @@ async function _chargeAtDispatch(BOLId, token) {
 // card it opens the save-card form so the customer can add one and dispatch again.
 function _dispatchChargeMessage(cd, bolNumber) {
   const code = cd && cd.code;
+  if (code === 'missing_field') {
+    // Not a payment problem — a required field is missing, so we blocked BEFORE charging.
+    // cd.error is the formatDispatchError text naming the field + the fix path.
+    return (cd && cd.error) || 'This shipment is missing a required field and was not dispatched. Open it in My Shipments, complete it, then dispatch again.';
+  }
   if (code === 'no_card' || code === 'no_customer') {
     setTimeout(() => { if (typeof showSaveCardModal === 'function') showSaveCardModal(); }, 400);
     return 'Before this shipment can dispatch we need a card on file — your account is set to prepaid. Opening the payment form now; add a card and dispatch again.';
