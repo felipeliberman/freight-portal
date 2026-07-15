@@ -5949,7 +5949,10 @@ async function _chargeAtDispatch(BOLId, token) {
     if (br.ok) {
       const bd = await br.json();
       const r = (bd.data && bd.data.results) || {};
-      amount = Number((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0);
+      // /book/{BOLId} returns customerQuoteAmount as a formatted string ("* 222.84"),
+      // unlike /book/bolnumber/ which returns a number. Strip "* ", "$", commas before Number()
+      // so the charge sees the real amount. A missing/zero/unparseable amount still => 0 => blocks.
+      amount = Number(String((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0).replace(/[^\d.]/g, '')) || 0;
       bolNumber = r.BOLNumber || r.BOLNmbr || null;
     }
   } catch(e) {}
