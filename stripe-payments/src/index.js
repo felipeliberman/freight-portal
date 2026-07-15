@@ -189,9 +189,48 @@ export default {
     // ── SEND CONFIRMATION ──────────────────────────────────────────────────
     if (pathname === '/send-confirmation' && request.method === 'POST') {
       try {
-        const { customerEmail, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4 } = await request.json();
+        const payload = await request.json();
+        const { customerEmail } = payload;
         if (!customerEmail) return json({ error: 'Missing customerEmail' }, 400);
 
+        // Phase 3 (#2): dispatch-charge receipt. Separate template + subject from the invoice
+        // flow. Invoice callers send no `type`, so they fall through to the existing path below
+        // UNCHANGED. Additive — no shared mutable state. Amount arrives in cents.
+        if (payload.type === 'dispatch') {
+          const amt = (Number(payload.amount || 0) / 100).toFixed(2);
+          const cardTxt = (payload.cardBrand ? payload.cardBrand.charAt(0).toUpperCase() + payload.cardBrand.slice(1) : 'Card') + ' ending in ' + (payload.cardLast4 || '----');
+          const dateTxt = payload.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+          const bol = payload.bolNumber || '';
+          const dispatchHtml =
+            '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.6;margin:0;padding:0;">' +
+            '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;padding:20px;">' +
+            '<tr><td style="border-bottom:2px solid #bd27bc;padding-bottom:16px;"><span style="font-size:20px;font-weight:700;color:#bd27bc;">Freight and Logistics, Inc.</span></td></tr>' +
+            '<tr><td style="padding:24px 0;">' +
+            '<p>Hi there,</p><p>BOL <strong>' + bol + '</strong> has been dispatched and your card on file was charged.</p>' +
+            '<table width="100%" cellpadding="0" cellspacing="0" style="background:#f9f8f5;border-radius:8px;">' +
+            '<tr><td style="padding:12px 14px;font-size:13px;color:#706c63;">Amount charged</td><td style="padding:12px 14px;font-size:13px;font-weight:600;color:#1a1a1a;text-align:right;">$' + amt + '</td></tr>' +
+            '<tr><td style="padding:12px 14px;font-size:13px;color:#706c63;">Card</td><td style="padding:12px 14px;font-size:13px;font-weight:600;color:#1a1a1a;text-align:right;">' + cardTxt + '</td></tr>' +
+            '<tr><td style="padding:12px 14px;font-size:13px;color:#706c63;">BOL</td><td style="padding:12px 14px;font-size:13px;font-weight:600;color:#1a1a1a;text-align:right;">' + bol + '</td></tr>' +
+            '<tr><td style="padding:12px 14px;font-size:13px;color:#706c63;">Date</td><td style="padding:12px 14px;font-size:13px;font-weight:600;color:#1a1a1a;text-align:right;">' + dateTxt + '</td></tr>' +
+            '</table><br>' +
+            '<p style="font-size:13px;color:#706c63;">Questions? Email <a href="mailto:support@freightandlogistics.ai" style="color:#bd27bc;">support@freightandlogistics.ai</a> or call <a href="tel:+18006873713" style="color:#bd27bc;">(800) 687-3713</a>.</p>' +
+            '</td></tr>' +
+            '<tr><td style="border-top:1px solid #e5e2d9;padding-top:16px;font-size:12px;color:#706c63;"><p style="margin:0;">Freight and Logistics, Inc. | Nationwide 3PL Freight Brokerage</p></td></tr>' +
+            '</table></body></html>';
+          const dispatchRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${SENDGRID_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: customerEmail }], subject: 'Dispatch charge receipt — BOL ' + bol }],
+              from: { email: 'support@freightandlogistics.com', name: 'Freight and Logistics' },
+              content: [{ type: 'text/html', value: dispatchHtml }]
+            })
+          });
+          if (dispatchRes.status !== 202) return json({ error: 'Failed to send email' }, 500);
+          return json({ success: true });
+        }
+
+        const { invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4 } = payload;
         const invoiceRows = (invoices || []).map(inv =>
           '<tr style="border-bottom:1px solid #e5e2d9;">' +
           '<td style="padding:10px 12px;font-size:13px;color:#1a1a1a;">Invoice #' + inv.invNum + '</td>' +
