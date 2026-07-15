@@ -6552,11 +6552,12 @@ function _renderPreChargeDisclosure(container, BOLId) {
   chargeLine.style.cssText = 'font-weight:700;color:var(--tx);margin-bottom:4px;';
   chargeLine.textContent = 'Checking your prepaid card…';
 
-  // 2. Terms line — left-aligned, smaller, muted grey. Net 15 link unchanged (/apply is a dead
-  //    link for now — no form yet, no traffic). Purple link stays in the two-tone palette.
+  // 2. Terms line — left-aligned, smaller, muted grey. The Net 15 link opens the Credit
+  //    Application panel on the public site via the ?apply=1 deep-link handler in index.html.
+  //    Purple link stays in the two-tone palette.
   const termsLine = document.createElement('div');
   termsLine.style.cssText = 'font-size:11px;color:var(--mu);text-align:left;';
-  termsLine.innerHTML = 'Prefer not to pay upfront? <a href="/apply" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
+  termsLine.innerHTML = 'Prefer not to pay upfront? <a href="/?apply=1" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
 
   // 3. Hairline divider (hardcoded hex — CSS vars do not resolve in dynamic inline styles).
   const divider = document.createElement('div');

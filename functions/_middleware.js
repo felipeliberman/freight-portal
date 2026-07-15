@@ -6,8 +6,11 @@
 // path not explicitly allowed below returns 404 and is never publicly readable at
 // www.freightandlogistics.ai — regardless of what else lands in the repo.
 //
-// Servable, and nothing else: the 2 HTML pages (index, portal), logo.png, logo-white.png,
-// sample-slip.png, and the logos/ + docs/ image directories.
+// Servable, and nothing else: the customer-facing HTML pages (index, portal, admin),
+// logo.png, logo-white.png, sample-slip.png, and the logos/ + docs/ image directories.
+//
+// The Credit Application is NOT a standalone page — it renders in the index.html right
+// pane and is opened via the /?apply=1 deep-link, so no /apply route is allowlisted here.
 //
 // NOTE: Pages serves the HTML at clean URLs (/portal, /) and 308-redirects the
 // .html forms to them, so both forms are allowed here — allowing the .html form just lets
