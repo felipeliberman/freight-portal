@@ -6,8 +6,9 @@
 // path not explicitly allowed below returns 404 and is never publicly readable at
 // www.freightandlogistics.ai — regardless of what else lands in the repo.
 //
-// Servable, and nothing else: the 2 HTML pages (index, portal), logo.png, logo-white.png,
-// sample-slip.png, and the logos/ + docs/ image directories.
+// Servable, and nothing else: the customer-facing HTML pages (index, portal, admin,
+// apply), logo.png, logo-white.png, sample-slip.png, and the logos/ + docs/ image
+// directories.
 //
 // NOTE: Pages serves the HTML at clean URLs (/portal, /) and 308-redirects the
 // .html forms to them, so both forms are allowed here — allowing the .html form just lets
@@ -17,6 +18,7 @@ const ALLOWED_EXACT = new Set([
   '/', '/index', '/index.html',
   '/portal', '/portal.html',
   '/admin', '/admin.html',
+  '/apply', '/apply.html',
   '/logo.png', '/logo-white.png', '/sample-slip.png',
 ]);
 const ALLOWED_PREFIXES = ['/logos/', '/docs/'];

@@ -275,6 +275,152 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── SUBMIT CREDIT APPLICATION (public /apply page) ─────────────────────
+    // Verifies reCAPTCHA, captures the server-side e-signature audit trail
+    // (IP / user-agent / ISO timestamp / doc version), and emails the signed
+    // agreement PDF (generated client-side, passed as base64) to us AND to the
+    // signer via SendGrid attachments. Additive — no shared state with other
+    // endpoints. Sender stays support@freightandlogistics.com (verified sender;
+    // intentionally .com for this legal document — do not change to .ai).
+    if (pathname === '/submit-application' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { record, pdfBase64, filename, signerEmail, recaptchaToken } = body || {};
+        if (!record || !pdfBase64) return json({ error: 'Missing application data' }, 400);
+
+        // reCAPTCHA v3 verification (reuses existing RECAPTCHA_SECRET).
+        if (RECAPTCHA_SECRET) {
+          if (!recaptchaToken) return json({ error: 'Verification failed' }, 400);
+          const vRes = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ secret: RECAPTCHA_SECRET, response: recaptchaToken }).toString()
+          });
+          const vData = await vRes.json();
+          if (!vData.success || (typeof vData.score === 'number' && vData.score < 0.3)) {
+            return json({ error: 'Verification failed' }, 400);
+          }
+        }
+
+        // Server-side e-signature audit trail.
+        const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+        const ua = request.headers.get('User-Agent') || 'unknown';
+        const serverTs = new Date().toISOString();
+        const docVersion = (record.docVersion || 'credit-app-v1');
+
+        const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const c = record.company || {};
+        const phys = c.physical || {};
+        const sig = record.signature || {};
+        const acks = record.acknowledgments || [];
+        const refs = record.references || [];
+        const consents = record.consents || {};
+
+        const rowsHtml =
+          [
+            ['Legal Entity Name', c.legalName],
+            ['DBA / Trade Name', c.dba],
+            ['Physical Address', [phys.street, [phys.city, phys.state, phys.zip].filter(Boolean).join(', ')].filter(Boolean).join(', ')],
+            ['Mailing Address', c.mailingSameAsPhysical ? 'Same as physical' : (c.mailing ? [c.mailing.street, [c.mailing.city, c.mailing.state, c.mailing.zip].filter(Boolean).join(', ')].filter(Boolean).join(', ') : '—')],
+            ['Company Phone', c.phone],
+            ['Taxpayer ID / EIN', c.ein],
+            ['Date Business Began', c.businessBegan],
+            ['Gross Annual Sales', c.grossAnnualSales],
+            ['Entity Type', c.entityType],
+            ['Preferred Payment', c.paymentMethod],
+            ['AP Contact', record.apContact ? (record.apContact.name + ' · ' + record.apContact.phone + ' · ' + record.apContact.email) : '—'],
+            ['Shipping Contact', record.shipContact ? (record.shipContact.name + ' · ' + record.shipContact.phone + ' · ' + record.shipContact.email) : '—'],
+          ].map(([k, v]) =>
+            '<tr><td style="padding:7px 10px;font-size:12px;color:#706c63;border-bottom:1px solid #e5e2d9;">' + esc(k) + '</td>' +
+            '<td style="padding:7px 10px;font-size:12px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #e5e2d9;">' + esc(v || '—') + '</td></tr>'
+          ).join('');
+
+        const refsHtml = refs.map((r, i) =>
+          '<tr><td style="padding:7px 10px;font-size:12px;color:#706c63;border-bottom:1px solid #e5e2d9;">Reference ' + (i + 1) + '</td>' +
+          '<td style="padding:7px 10px;font-size:12px;color:#1a1a1a;border-bottom:1px solid #e5e2d9;">' +
+          esc([r.company, r.contact, r.phone, r.fax, r.email].filter(Boolean).join(' · ')) + '</td></tr>'
+        ).join('');
+
+        const acksHtml = acks.map((a, i) =>
+          '<tr><td style="padding:7px 10px;font-size:12px;color:#706c63;border-bottom:1px solid #e5e2d9;">Acknowledgment ' + (i + 1) + '</td>' +
+          '<td style="padding:7px 10px;font-size:12px;color:#1a1a1a;border-bottom:1px solid #e5e2d9;">' +
+          esc(a.title) + ' — initialed <strong>' + esc(a.initials || '—') + '</strong>, agreed: ' + (a.agreed ? 'YES' : 'NO') + '</td></tr>'
+        ).join('');
+
+        const auditHtml =
+          '<table width="100%" cellpadding="0" cellspacing="0" style="background:#f9f8f5;border-radius:8px;margin-top:6px;">' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">Signer</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;font-weight:600;text-align:right;">' + esc(sig.printedName) + ', ' + esc(sig.title) + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">Signature method</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + esc(sig.method === 'draw' ? 'Drawn' : 'Typed') + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">T&amp;C consent</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + (consents.termsAndConditions ? 'AGREED' : 'NOT AGREED') + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">E-signature consent</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + (consents.electronicSignature ? 'AGREED' : 'NOT AGREED') + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">IP address</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + esc(ip) + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">Server timestamp</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + esc(serverTs) + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:12px;color:#706c63;">Document version</td><td style="padding:7px 12px;font-size:12px;color:#1a1a1a;text-align:right;">' + esc(docVersion) + '</td></tr>' +
+          '<tr><td style="padding:7px 12px;font-size:11px;color:#706c63;">User agent</td><td style="padding:7px 12px;font-size:10px;color:#706c63;text-align:right;">' + esc(ua) + '</td></tr>' +
+          '</table>';
+
+        const header =
+          '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.6;margin:0;padding:0;">' +
+          '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;padding:20px;">' +
+          '<tr><td style="border-bottom:2px solid #bd27bc;padding-bottom:16px;"><span style="font-size:20px;font-weight:700;color:#bd27bc;">Freight and Logistics, Inc.</span></td></tr>';
+        const footer =
+          '<tr><td style="border-top:1px solid #e5e2d9;padding-top:16px;font-size:12px;color:#706c63;"><p style="margin:0;">Freight and Logistics, Inc. | Nationwide 3PL Freight Brokerage</p></td></tr>' +
+          '</table></body></html>';
+
+        const internalHtml = header +
+          '<tr><td style="padding:20px 0 6px;"><p style="margin:0 0 12px;font-size:15px;font-weight:600;">New Credit Application — ' + esc(c.legalName || 'Applicant') + '</p>' +
+          '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + rowsHtml + refsHtml + acksHtml + '</table>' +
+          '<p style="margin:18px 0 4px;font-size:11px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.05em;">Electronic Signature Audit Record</p>' + auditHtml +
+          '<p style="font-size:12px;color:#706c63;margin-top:14px;">The signed agreement PDF is attached.</p></td></tr>' + footer;
+
+        const signerHtml = header +
+          '<tr><td style="padding:20px 0 6px;"><p style="margin:0 0 10px;">Hi ' + esc(sig.printedName || 'there') + ',</p>' +
+          '<p style="margin:0 0 12px;">Thank you for submitting your Credit Application &amp; Purchase Agreement to Freight and Logistics, Inc. A copy of your signed agreement is attached to this email for your records.</p>' +
+          '<p style="margin:0 0 12px;font-size:13px;color:#706c63;">Our onboarding team will review your application and reach out within one business day.</p>' +
+          '<p style="margin:14px 0 4px;font-size:11px;font-weight:700;color:#706c63;text-transform:uppercase;letter-spacing:.05em;">Your Electronic Signature</p>' + auditHtml +
+          '<p style="font-size:13px;color:#706c63;margin-top:16px;">Questions? Email <a href="mailto:support@freightandlogistics.com" style="color:#bd27bc;">support@freightandlogistics.com</a> or call <a href="tel:+18006873713" style="color:#bd27bc;">(800) 687-3713</a>.</p></td></tr>' + footer;
+
+        const attachments = [{
+          content: pdfBase64,
+          filename: (filename && /\.pdf$/i.test(filename)) ? filename : 'Credit-Application.pdf',
+          type: 'application/pdf',
+          disposition: 'attachment'
+        }];
+
+        // Isolated deliveries: the internal (audit) email and the signer copy are sent
+        // as separate SendGrid calls so recipients never see each other's address and
+        // each gets its own content body.
+        const sendOne = (persons, html) => fetch('https://api.sendgrid.com/v3/mail/send', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${SENDGRID_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            personalizations: persons,
+            from: { email: 'support@freightandlogistics.com', name: 'Freight and Logistics' },
+            content: [{ type: 'text/html', value: html }],
+            attachments
+          })
+        });
+
+        const internalRes = await sendOne(
+          [{ to: [{ email: 'support@freightandlogistics.com' }], subject: 'New Credit Application — ' + (c.legalName || 'Applicant') }],
+          internalHtml
+        );
+        if (internalRes.status !== 202) return json({ error: 'Failed to send application' }, 500);
+
+        if (signerEmail) {
+          // Best-effort copy to the signer; don't fail the whole submit if this bounces.
+          try {
+            await sendOne(
+              [{ to: [{ email: signerEmail }], subject: 'Your Signed Credit Application — Freight and Logistics, Inc.' }],
+              signerHtml
+            );
+          } catch (e) { /* ignore signer-copy failure */ }
+        }
+
+        return json({ success: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     // ── CREATE SETUP INTENT (Phase 2: save a card on file) ─────────────────
     if (pathname === '/create-setup-intent' && request.method === 'POST') {
       try {
