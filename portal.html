@@ -1914,6 +1914,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div class="sb-divider"></div>
     <div class="sb-link" id="nav-support" onclick="setNav(this);showSupportForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span class="sb-link-text">Email Support</span><span class="sb-tooltip">Email Support</span></div>
     <div class="sb-link" id="nav-settings" onclick="setNav(this);showSettings()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="sb-link-text">Settings</span><span class="sb-tooltip">Settings</span></div>
+    <div class="sb-link" id="nav-payment" style="display:none;" onclick="setNav(this);showSaveCardModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span class="sb-link-text">Payment Method</span><span class="sb-tooltip">Payment Method</span></div>
 
 
     <div class="sb-divider"></div>
@@ -2117,6 +2118,15 @@ const PRIMUS_BASE = 'https://freightandlogistics-api.shipprimus.com';
 // Self-sourced billing-terms store (Phase 1). Primus does not expose a customer's
 // terms code, so the portal reads it from the customer-terms Worker at login.
 const TERMS_WORKER = 'https://customer-terms.felipe-b80.workers.dev';
+// Phase 2: card-on-file (SetupIntent) for PRE customers, via the stripe-payments Worker.
+// Mode-scoped so Stripe test/live never cross. Flip STRIPE_MODE to 'live' as its own
+// reviewed change once the save->charge loop is proven on test. The invoice modal keeps
+// its own live key untouched; only the save-card flow uses _saveCardPK().
+const STRIPE_WORKER  = 'https://stripe-payments.felipe-b80.workers.dev';
+const STRIPE_MODE    = 'live';
+const STRIPE_PK_TEST = 'pk_test_51TjE6BAJRfa3jdmDg33gkHTWxsfL9Z2UkMUvB3JPDJOYDagfYtTqfr4BojpOMYpRFZx89LYzztcuU3yaflh1YaOE00oVpQkxul';
+const STRIPE_PK_LIVE = 'pk_live_51TjE6BAJRfa3jdmDq3AA0UTJF4OlLv6jOsvkxxiN4FfkXs2t3FbiWUzWolXgzzbOWyxYP6Nat05ywLCwaKvZGnTg00Wzj0pbwI';
+function _saveCardPK() { return STRIPE_MODE === 'live' ? STRIPE_PK_LIVE : STRIPE_PK_TEST; }
 
 // ── Redkik cargo insurance commodity catalog ──────────────────────────────────
 // Selected at quote time; the chosen commodity id + cargo value are passed to the
@@ -3777,6 +3787,96 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
   URL.revokeObjectURL(url);
 }
 
+
+// ── SAVE CARD ON FILE (Phase 2, PRE customers) ────────────────────────────────
+// SetupIntent via the stripe-payments Worker + the existing Card Element pattern +
+// confirmCardSetup. Saves a card for later off-session charging; NO charge here.
+let _saveCardStripe = null, _saveCardEl = null;
+function _saveCardMsg(kind, text) {
+  const el = document.getElementById('savecard-msg'); if (!el) return;
+  el.textContent = text;
+  el.style.color = kind === 'ok' ? '#166534' : kind === 'err' ? '#991b1b' : '#6b6660';
+}
+async function _loadSavedCard(pid) {
+  const cur = document.getElementById('savecard-current'); if (!cur) return;
+  try {
+    const r = await fetch(STRIPE_WORKER + '/get-saved-cards', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: STRIPE_MODE, primusCustomerId: pid })
+    });
+    const d = await r.json();
+    if (d.cards && d.cards.length) {
+      const c = d.cards[0];
+      cur.innerHTML = 'On file: <b style="color:#1c1a17;">' + (c.brand || 'card') + ' ••' + (c.last4 || '') +
+        '</b> (exp ' + (c.exp_month || '') + '/' + (c.exp_year || '') + ').';
+    } else {
+      cur.textContent = 'No card on file yet.';
+    }
+  } catch (e) { cur.textContent = 'Could not load your saved card.'; }
+}
+async function _submitSaveCard(pid) {
+  const btn = document.getElementById('savecard-save');
+  if (btn) btn.disabled = true;
+  _saveCardMsg('info', 'Saving…');
+  try {
+    const r = await fetch(STRIPE_WORKER + '/create-setup-intent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: STRIPE_MODE, primusCustomerId: pid, email: currentCustomer && currentCustomer.email })
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) { _saveCardMsg('err', 'Could not start: ' + (d.error || r.status)); if (btn) btn.disabled = false; return; }
+    const result = await _saveCardStripe.confirmCardSetup(d.clientSecret, {
+      payment_method: { card: _saveCardEl, billing_details: { name: (currentCustomer && currentCustomer.name) || '', email: (currentCustomer && currentCustomer.email) || '' } }
+    });
+    if (result.error) { _saveCardMsg('err', result.error.message); if (btn) btn.disabled = false; return; }
+    _saveCardMsg('ok', 'Card saved.');
+    if (_saveCardEl) _saveCardEl.clear();
+    _loadSavedCard(pid);
+  } catch (e) { _saveCardMsg('err', 'Network error — please try again.'); }
+  if (btn) btn.disabled = false;
+}
+function showSaveCardModal() {
+  // PRE-only guard (defensive; the nav entry is already gated on PRE).
+  if (!currentCustomer || currentCustomer.termsCode !== 'PRE') return;
+  const pid = currentCustomer.primusCustomerId;
+  const existing = document.getElementById('savecard-overlay');
+  if (existing) existing.remove();
+  const ov = document.createElement('div');
+  ov.id = 'savecard-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML =
+    '<div style="background:#fff;border:1px solid #e5e2d9;border-radius:12px;max-width:420px;width:100%;padding:22px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+        '<div style="font-size:16px;font-weight:700;color:#1c1a17;">Payment method</div>' +
+        '<button id="savecard-close" style="background:none;border:none;font-size:22px;line-height:1;color:#6b6660;cursor:pointer;font-family:inherit;">&times;</button>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#6b6660;margin-bottom:16px;">Save a card on file for prepaid booking. You won’t be charged now.</div>' +
+      '<div id="savecard-current" style="font-size:13px;color:#6b6660;margin-bottom:14px;">Loading saved card…</div>' +
+      '<div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6660;margin-bottom:6px;">Card details</div>' +
+      '<div id="savecard-element" style="padding:11px 12px;border:1px solid #c8c4bc;border-radius:8px;background:#f5f3ee;margin-bottom:14px;"></div>' +
+      '<button id="savecard-save" style="width:100%;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Save card</button>' +
+      '<div id="savecard-msg" style="font-size:13px;margin-top:12px;"></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); _saveCardEl = null; _saveCardStripe = null; };
+  ov.querySelector('#savecard-close').onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+
+  if (!pid) { _loadSavedCardMissingId(); return; }
+  _loadSavedCard(pid);
+
+  if (!window.Stripe) { _saveCardMsg('err', 'Payment library not loaded — refresh and try again.'); return; }
+  _saveCardStripe = window.Stripe(_saveCardPK());
+  const elements = _saveCardStripe.elements();
+  _saveCardEl = elements.create('card', { hidePostalCode: false, style: { base: { fontSize: '14px', color: '#1c1a17' } } });
+  _saveCardEl.mount('#savecard-element');
+  ov.querySelector('#savecard-save').onclick = () => _submitSaveCard(pid);
+}
+function _loadSavedCardMissingId() {
+  const cur = document.getElementById('savecard-current');
+  if (cur) cur.textContent = 'We could not read your account id — please sign out and back in, then try again.';
+  const btn = document.getElementById('savecard-save'); if (btn) btn.disabled = true;
+}
 
 // ── STRIPE PAYMENT MODAL ──────────────────────────────────────────────────────
 function showStripePaymentModal(invoices) {
@@ -7749,6 +7849,9 @@ function setLoggedIn(on){
     if(sIn) sIn.style.display='none'; if(acct) acct.style.display='flex';
     if(nm && currentCustomer) nm.textContent=(currentCustomer.firstName||currentCustomer.name);
     if(row) row.style.display='flex'; if(sr) sr.style.display='none';
+    // Phase 2: show the "Payment Method" nav entry only for PRE (prepaid) customers
+    var payNav=document.getElementById('nav-payment');
+    if(payNav) payNav.style.display = (currentCustomer && currentCustomer.termsCode === 'PRE') ? 'flex' : 'none';
     // Update greeting now that we know currentCustomer
     setTimeout(function(){
       var h=new Date().getHours();
@@ -7770,6 +7873,7 @@ function setLoggedIn(on){
   } else {
     if(sIn) sIn.style.display=''; if(acct) acct.style.display='none';
     if(row) row.style.display='none'; if(sr) sr.style.display='flex';
+    var payNav2=document.getElementById('nav-payment'); if(payNav2) payNav2.style.display='none';
   }
 }
 var ACCOUNT_ACTIONS=['My Shipments','My Invoices'];
