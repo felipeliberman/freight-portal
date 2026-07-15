@@ -6540,24 +6540,48 @@ async function _preChargeInfo(BOLId, token) {
 // `container`, fills in async from _preChargeInfo. Used by BOTH dispatch modals so the copy +
 // amount source live in one place. Caller MUST PRE-gate (termsCode==='PRE').
 function _renderPreChargeDisclosure(container, BOLId) {
-  const disc = document.createElement('div');
-  disc.className = 'pre-charge-disclosure';
-  disc.style.cssText = 'background:#faf6fc;border:1px solid #edd6ee;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.5;';
-  disc.innerHTML = '<div style="color:var(--mu);">Checking your prepaid card…</div>';
-  container.appendChild(disc);
+  // ONE bordered block = everything about "what happens if I click": charge line, Net 15 terms
+  // line, hairline divider, then the finality warning. Skeleton renders synchronously so the
+  // warning shows immediately; only the charge line fills in async once the amount + card load.
+  const block = document.createElement('div');
+  block.className = 'pre-charge-disclosure';
+  block.style.cssText = 'background:#faf6fc;border:1px solid #edd6ee;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;line-height:1.5;';
+
+  // 1. Charge line (primary, bold) — filled in async below.
+  const chargeLine = document.createElement('div');
+  chargeLine.style.cssText = 'font-weight:700;color:var(--tx);margin-bottom:4px;';
+  chargeLine.textContent = 'Checking your prepaid card…';
+
+  // 2. Terms line — left-aligned, smaller, muted grey. Net 15 link unchanged (/apply is a dead
+  //    link for now — no form yet, no traffic). Purple link stays in the two-tone palette.
+  const termsLine = document.createElement('div');
+  termsLine.style.cssText = 'font-size:11px;color:var(--mu);text-align:left;';
+  termsLine.innerHTML = 'Prefer not to pay upfront? <a href="/apply" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
+
+  // 3. Hairline divider (hardcoded hex — CSS vars do not resolve in dynamic inline styles).
+  const divider = document.createElement('div');
+  divider.style.cssText = 'border-top:0.5px solid #e5e2d9;margin:10px 0;';
+
+  // 4. Finality warning — one clean muted line, small alert icon, NO bolded fragment.
+  const warn = document.createElement('div');
+  warn.style.cssText = 'display:flex;align-items:flex-start;gap:7px;color:var(--mu);';
+  warn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+    '<span>Dispatching notifies the carrier and makes this BOL valid for tendering. This cannot be undone.</span>';
+
+  block.appendChild(chargeLine);
+  block.appendChild(termsLine);
+  block.appendChild(divider);
+  block.appendChild(warn);
+  container.appendChild(block);
+
   (async () => {
     const info = await _preChargeInfo(BOLId);
-    if (!document.body.contains(disc)) return; // modal closed while loading
-    const cardTxt = (info.brand ? (info.brand.charAt(0).toUpperCase() + info.brand.slice(1)) : 'Card') + ' ••' + info.last4;
-    // Net 15 alt-path (replaces the old carrier-liability "why"). "/apply" is intentionally a dead
-    // link for now — the form doesn't exist yet, no traffic. Purple link stays in the two-tone palette.
-    const termsLine = 'Prefer not to pay upfront? <a href="/apply" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
+    if (!document.body.contains(block)) return; // modal closed while loading
     if (!info.hasCard) {
-      disc.innerHTML = '<div style="font-weight:700;color:var(--tx);margin-bottom:4px;">No card on file.</div>' +
-        '<div style="color:var(--mu);">You\'ll be asked to add one to dispatch. ' + termsLine + '</div>';
+      chargeLine.textContent = 'No card on file — you\'ll be asked to add one to dispatch.';
     } else {
-      disc.innerHTML = '<div style="font-weight:700;color:var(--tx);margin-bottom:4px;">' + cardTxt + ' will be charged ' + (info.amount > 0 ? '$' + info.amount.toFixed(2) : 'the quoted rate') + ' to dispatch this shipment.</div>' +
-        '<div style="color:var(--mu);">' + termsLine + '</div>';
+      const cardTxt = (info.brand ? (info.brand.charAt(0).toUpperCase() + info.brand.slice(1)) : 'Card') + ' ••' + info.last4;
+      chargeLine.textContent = cardTxt + ' will be charged ' + (info.amount > 0 ? '$' + info.amount.toFixed(2) : 'the quoted rate') + ' to dispatch this shipment.';
     }
   })();
 }
@@ -6621,15 +6645,17 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     '</div>';
   body.appendChild(sumCard);
 
-  // Phase 3 (#1): PRE pre-charge disclosure — shared helper (identical block used by the
-  // post-save "Dispatch Now" modal), so the amount source + copy live in ONE place. Terms
-  // customers never see it.
-  if (currentCustomer && currentCustomer.termsCode === 'PRE') _renderPreChargeDisclosure(body, BOLId);
-
-  const notice = document.createElement('div');
-  notice.style.cssText = 'font-size:11px;color:var(--mu);line-height:1.5;margin-bottom:16px;';
-  notice.innerHTML = 'Dispatching will notify the carrier and make this BOL valid for tendering. <strong style="color:var(--tx);">This cannot be undone.</strong>';
-  body.appendChild(notice);
+  // Phase 3 (#1): PRE customers get the combined disclosure block (charge + Net 15 + finality
+  // warning) via the shared helper — used by the post-save "Dispatch Now" modal too. Non-PRE
+  // customers get the standalone finality warning (same clean, muted, one-line copy).
+  if (currentCustomer && currentCustomer.termsCode === 'PRE') {
+    _renderPreChargeDisclosure(body, BOLId);
+  } else {
+    const notice = document.createElement('div');
+    notice.style.cssText = 'font-size:11px;color:var(--mu);line-height:1.5;margin-bottom:16px;';
+    notice.innerHTML = 'Dispatching notifies the carrier and makes this BOL valid for tendering. This cannot be undone.';
+    body.appendChild(notice);
+  }
 
   const btnCol = document.createElement('div');
   btnCol.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
