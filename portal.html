@@ -9023,6 +9023,38 @@ function _hazmatShipmentFields(haz, specialInstructions) {
   };
 }
 
+// ── CANONICAL BOOK CALL ────────────────────────────────────────────────────────
+// Every booking path (form "Save", form "Book & Dispatch", chat-agent tool) routes
+// its POST/PUT /applet/v1/book through here, so the app has ONE place a shipment is
+// created in Primus — where a future PRE-customer charge gate will live. Each caller
+// still builds its OWN payload: the builders legitimately differ (multi-item vs
+// single-item, residential guard, dispatch) and are intentionally NOT merged here.
+// bookShipment owns only the call + response parsing. Throws on failure (callers keep
+// their existing try/catch). PUT when editBolId is set (edit/requote), else POST.
+async function bookShipment(payload, opts) {
+  opts = opts || {};
+  const token = opts.token || await getToken();
+  const editBolId = opts.editBolId || null;
+  const errLabel = opts.errLabel || 'Booking';
+  const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book' + (editBolId ? ('/' + editBolId) : ''), {
+    method: editBolId ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(payload)
+  });
+  const bookText = await bookRes.text();
+  if (!bookRes.ok) {
+    try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' ' + bookRes.status + ']', bookText, JSON.stringify(payload)); } catch(e) {}
+    throw new Error(errLabel + ' failed ' + bookRes.status + ': ' + bookText.slice(0, 300));
+  }
+  const bookData = JSON.parse(bookText);
+  const result = bookData.data && bookData.data.results && bookData.data.results[0];
+  if (!result) throw new Error('No booking result returned');
+  const BOLId = result.BOLId;
+  const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
+  const docs = result.documents || [];
+  return { BOLId, BOLNumber, docs, result };
+}
+
 async function submitBookingOnly(opts) {
   opts = opts || {};
   // Creates the BOL in Primus but does NOT dispatch — "Save Shipment" flow
@@ -9109,18 +9141,8 @@ async function submitBookingOnly(opts) {
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
-    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book' + (_editBolId ? ('/' + _editBolId) : ''), {
-      method: _editBolId ? 'PUT' : 'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
-    });
-    window._editingBOLId = null;
-    const bookText = await bookRes.text();
-    if (!bookRes.ok) { try { console.error('[SAVE ' + (_editBolId?'PUT':'POST') + ' ERROR]', bookRes.status, bookText, JSON.stringify(payload)); } catch(e){} throw new Error('Save failed ' + bookRes.status + ': ' + bookText.slice(0,300)); }
-    const bookData = JSON.parse(bookText);
-    const result = bookData.data && bookData.data.results && bookData.data.results[0];
-    if (!result) throw new Error('No booking result returned');
-    const BOLId = result.BOLId;
-    const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
-    const docs = result.documents || [];
+    window._editingBOLId = null; // cleared even on failure, matching prior behavior
+    const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token, editBolId: _editBolId, errLabel: 'Save' });
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
@@ -9286,21 +9308,7 @@ async function submitBooking() {
       }
     };
 
-    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body:    JSON.stringify(payload)
-    });
-    const bookText = await bookRes.text();
-    if (!bookRes.ok) throw new Error('Booking failed ' + bookRes.status + ': ' + bookText.slice(0, 300));
-
-    const bookData  = JSON.parse(bookText);
-    const result    = bookData.data && bookData.data.results && bookData.data.results[0];
-    if (!result)    throw new Error('No booking result returned');
-
-    const BOLId     = result.BOLId;
-    const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
-    const docs      = result.documents || [];
+    const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token });
 
     // Parcel: skip auto-dispatch — user must choose SCHEDULE PICKUP or DROP TO CARRIER from the picker.
     if (bookingRate && typeof isParcelRate === 'function' && isParcelRate(bookingRate)) {
@@ -10975,20 +10983,15 @@ async function _execBookShipment(input) {
       deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
     };
 
-    const bookRes = await fetch(PRIMUS_BASE + '/applet/v1/book', {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(payload)
-    });
-    const bookText = await bookRes.text();
-    if (!bookRes.ok) {
-      try { console.error('[BOOK 400] status:', bookRes.status, '\nresponse:', bookText, '\npayload:', JSON.stringify(payload)); } catch(e) {}
-      return { ok:false, error:'Booking failed (' + bookRes.status + '): ' + bookText.slice(0,500) };
+    let _booked;
+    try {
+      _booked = await bookShipment(payload, { token });
+    } catch (e) {
+      try { console.error('[BOOK 400]', e.message, '\npayload:', JSON.stringify(payload)); } catch(_) {}
+      return { ok:false, error: (e.message || 'Booking error') + '. Please try again or call (800) 687-3713.' };
     }
-    const bookData = JSON.parse(bookText);
-    const result = bookData.data && bookData.data.results && bookData.data.results[0];
-    if (!result) return { ok:false, error:'No booking confirmation returned. Please try again or call (800) 687-3713.' };
-
-    const BOLId = result.BOLId;
-    const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
+    const BOLId = _booked.BOLId;
+    const BOLNumber = _booked.BOLNumber;
     const carrierName = (rate.name||rate.carrier||rate.SCAC||'').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D');
     const price = Number((rate.billTo&&rate.billTo.total)||rate.total||0);
 
