@@ -5802,7 +5802,27 @@ function showBookingConfirmedModal(bc) {
   if (bc.pickupDate) stat('Pickup Date', dateCountdown(bc.pickupDate), '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>');
   if (bc.confirmation) stat('Pickup Confirmation', bc.confirmation, '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>');
 
+  // Phase 3 (#2): dispatch-charge confirmation (PRE). Reads the charge record set by
+  // _canonicalDispatch for THIS BOL (matched by BOL number so a stale record can't leak into
+  // a non-charged/other shipment's modal). Amount is in cents. Shown only when it dispatched.
+  var _dcCharge = window._lastDispatchCharge;
+  var _dcMatch = bc.dispatchOk && _dcCharge && String(_dcCharge.bolNumber) === String(bc.BOLNumber);
+  if (_dcMatch) {
+    var _dcCardTxt = (_dcCharge.brand ? (_dcCharge.brand.charAt(0).toUpperCase() + _dcCharge.brand.slice(1)) : 'Card') + ' ••' + (_dcCharge.last4 || '');
+    stat('Charged', '$' + (Number(_dcCharge.amount || 0) / 100).toFixed(2) + ' · ' + _dcCardTxt, '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>');
+  }
+
   body.appendChild(grid);
+
+  // Phase 3 (#2): reassure the charge went through and a receipt is coming (two-tone: neutral
+  // card + purple check). Only when this dispatch charged a PRE card (matched above).
+  if (_dcMatch) {
+    var _cl = document.createElement('div');
+    _cl.style.cssText = 'background:#faf9f6;border:1px solid #e5e2d9;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#1c1a17;display:flex;align-items:flex-start;gap:8px;';
+    _cl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2.5" style="flex-shrink:0;margin-top:1px;"><polyline points="20 6 9 17 4 12"/></svg>' +
+      '<span>Your card was charged <strong>$' + (Number(_dcCharge.amount || 0) / 100).toFixed(2) + '</strong>. A receipt is on its way' + ((currentCustomer && currentCustomer.email) ? ' to ' + currentCustomer.email : '') + '.</span>';
+    body.appendChild(_cl);
+  }
 
   // Dispatch warning if not dispatched
   if (!bc.dispatchOk) {
@@ -5977,7 +5997,7 @@ async function _chargeAtDispatch(BOLId, token) {
       })
     });
     const cd = await cr.json();
-    if (cd && cd.ok) return { ok: true, paymentIntentId: cd.paymentIntentId, amount: cd.amount, last4: cd.last4 };
+    if (cd && cd.ok) return { ok: true, paymentIntentId: cd.paymentIntentId, amount: cd.amount, last4: cd.last4, brand: cd.brand, bolNumber: bolNumber };
     return { ok: false, code: (cd && cd.code) || 'charge_failed', error: (cd && cd.error) || 'Charge failed' };
   } catch(e) { return { ok: false, code: 'network', error: 'Could not reach the payment service.' }; }
 }
@@ -6004,7 +6024,7 @@ function _dispatchChargeMessage(cd, bolNumber) {
   return 'We couldn’t charge your saved card, so BOL ' + (bolNumber || '') + ' was not dispatched. Update your payment method and dispatch again, or call (800) 687-3713.';
 }
 
-async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
+async function _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed } = {}) {
   if (window._dispatchingBOLId === BOLId)
     return { ok: false, inFlight: true };
   if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)
@@ -6020,13 +6040,24 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
     // customer whose card fails never gets a valid BOL. Terms customers are never
     // charged here. Idempotency-keyed on the BOL, so a re-dispatch never re-charges.
     if (currentCustomer && currentCustomer.termsCode === 'PRE') {
+      // ── CONSENT GATE (structural) ────────────────────────────────────────
+      // NEVER charge a prepaid card until the caller has surfaced the pre-charge
+      // disclosure and passed chargeDisclosed:true. Without it, return the exact
+      // figures the caller must disclose and do NOT charge. This makes a silent
+      // prepaid charge impossible from EVERY path — modal, post-save, agent, legacy.
+      if (!chargeDisclosed) {
+        const _info = await _preChargeInfo(BOLId, token);
+        window._dispatchingBOLId = null;
+        return { ok: false, needsDisclosure: true, amount: _info.amount, brand: _info.brand,
+                 last4: _info.last4, bolNumber: _info.bolNumber, hasCard: _info.hasCard };
+      }
       const _chg = await _chargeAtDispatch(BOLId, token);
       if (!_chg.ok) {
         window._dispatchingBOLId = null;
         return { ok: false, chargeFailed: true, code: _chg.code, error: _chg.error,
                  needCard: _chg.code === 'no_card' || _chg.code === 'no_customer' };
       }
-      window._lastDispatchCharge = { BOLId: BOLId, paymentIntentId: _chg.paymentIntentId, amount: _chg.amount, last4: _chg.last4 };
+      window._lastDispatchCharge = { BOLId: BOLId, paymentIntentId: _chg.paymentIntentId, amount: _chg.amount, last4: _chg.last4, brand: _chg.brand, bolNumber: _chg.bolNumber };
     }
 
     const _isParcel = !!smallPackageHandling;
@@ -6106,6 +6137,27 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
 
     if (window._lastBooked && window._lastBooked.BOLId === BOLId) window._lastBooked.dispatched = true;
     window._dispatchingBOLId = null;
+
+    // Phase 3 (#2): fire a one-time dispatch-charge RECEIPT email — best-effort, non-blocking.
+    // Only when THIS dispatch charged a PRE card (its record is in _lastDispatchCharge for this
+    // BOL). alreadyDispatched short-circuits above (no re-send on re-dispatch); the D5 charged-
+    // but-not-dispatched hold never reaches this success path. Reuses the invoice /send-confirmation
+    // endpoint via type:'dispatch' (additive branch; invoice flow untouched).
+    try {
+      const _dc = window._lastDispatchCharge;
+      if (_dc && _dc.BOLId === BOLId && currentCustomer && currentCustomer.email) {
+        fetch(STRIPE_WORKER + '/send-confirmation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'dispatch', customerEmail: currentCustomer.email,
+            bolNumber: _dc.bolNumber || BOLId, amount: _dc.amount,
+            cardBrand: _dc.brand, cardLast4: _dc.last4,
+            date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+          })
+        }).catch(function(){});
+      }
+    } catch(e) {}
+
     const hasClbl = docs.some(d => (d.type || '').toUpperCase() === 'CLBL');
     const hasConf = !!(confirmation && confirmation.trim() && confirmation !== 'N/A');
     return {
@@ -6172,6 +6224,10 @@ function showShipmentSavedModal(bc) {
     : 'This shipment is saved but <strong style="color:var(--tx);">not yet dispatched</strong>. The BOL is not valid for tendering until you dispatch it. You can edit or dispatch from <strong style="color:var(--tx);">My Shipments</strong>.';
   body.appendChild(notice);
 
+  // Phase 3 (#1): same PRE pre-charge disclosure as the row-detail dispatch modal (shared helper).
+  // This modal's "Dispatch Now" button reaches the same charge, so it must disclose too.
+  if (currentCustomer && currentCustomer.termsCode === 'PRE') _renderPreChargeDisclosure(body, bc.BOLId);
+
   // Buttons
   const btnCol = document.createElement('div');
   btnCol.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
@@ -6187,7 +6243,7 @@ function showShipmentSavedModal(bc) {
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
       return;
     }
-    const dr = await _canonicalDispatch(bc.BOLId, { smallPackageHandling });
+    const dr = await _canonicalDispatch(bc.BOLId, { smallPackageHandling, chargeDisclosed: true }); // disclosure block shown above
     if (dr.inFlight) { dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false; return; }
     if (dr.alreadyDispatched) { overlay.remove(); return; }
     if (dr.chargeFailed) {  // Phase 3: PRE charge blocked dispatch.
@@ -6452,6 +6508,84 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   }, 500);
 }
 
+// Phase 3 (#1): fetch the exact pre-charge figures — amount from customerQuoteAmount (the SAME
+// field _chargeAtDispatch charges) + saved-card brand/last4. ONE source of truth for the
+// disclosure everywhere: the modal blocks, the _canonicalDispatch consent gate, and the agent's
+// spoken read-back all read these figures, so the disclosed amount always equals the charged amount.
+async function _preChargeInfo(BOLId, token) {
+  let amount = 0, bolNumber = null, brand = '', last4 = '', hasCard = false;
+  try {
+    const tk = token || await getToken();
+    const br = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + tk } });
+    if (br.ok) {
+      const bd = await br.json();
+      const r = (bd.data && bd.data.results) || {};
+      amount = Number(String((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0).replace(/[^\d.]/g, '')) || 0;
+      bolNumber = r.BOLNumber || r.BOLNmbr || null;
+    }
+  } catch(e) {}
+  try {
+    const cr = await fetch(STRIPE_WORKER + '/get-saved-cards', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: STRIPE_MODE, primusCustomerId: currentCustomer && currentCustomer.primusCustomerId })
+    });
+    const cd = await cr.json();
+    const c = cd.cards && cd.cards[0];
+    if (c) { hasCard = true; last4 = c.last4 || ''; brand = c.brand || ''; }
+  } catch(e) {}
+  return { amount, bolNumber, brand, last4, hasCard };
+}
+
+// Phase 3 (#1): shared PRE pre-charge disclosure block for the dispatch modals. Renders into
+// `container`, fills in async from _preChargeInfo. Used by BOTH dispatch modals so the copy +
+// amount source live in one place. Caller MUST PRE-gate (termsCode==='PRE').
+function _renderPreChargeDisclosure(container, BOLId) {
+  // ONE bordered block = everything about "what happens if I click": charge line, Net 15 terms
+  // line, hairline divider, then the finality warning. Skeleton renders synchronously so the
+  // warning shows immediately; only the charge line fills in async once the amount + card load.
+  const block = document.createElement('div');
+  block.className = 'pre-charge-disclosure';
+  block.style.cssText = 'background:#faf6fc;border:1px solid #edd6ee;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;line-height:1.5;';
+
+  // 1. Charge line (primary, bold) — filled in async below.
+  const chargeLine = document.createElement('div');
+  chargeLine.style.cssText = 'font-weight:700;color:var(--tx);margin-bottom:4px;';
+  chargeLine.textContent = 'Checking your prepaid card…';
+
+  // 2. Terms line — left-aligned, smaller, muted grey. Net 15 link unchanged (/apply is a dead
+  //    link for now — no form yet, no traffic). Purple link stays in the two-tone palette.
+  const termsLine = document.createElement('div');
+  termsLine.style.cssText = 'font-size:11px;color:var(--mu);text-align:left;';
+  termsLine.innerHTML = 'Prefer not to pay upfront? <a href="/apply" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
+
+  // 3. Hairline divider (hardcoded hex — CSS vars do not resolve in dynamic inline styles).
+  const divider = document.createElement('div');
+  divider.style.cssText = 'border-top:0.5px solid #e5e2d9;margin:10px 0;';
+
+  // 4. Finality warning — one clean muted line, small alert icon, NO bolded fragment.
+  const warn = document.createElement('div');
+  warn.style.cssText = 'display:flex;align-items:flex-start;gap:7px;color:var(--mu);';
+  warn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+    '<span>Dispatching notifies the carrier and makes this BOL valid for tendering. This cannot be undone.</span>';
+
+  block.appendChild(chargeLine);
+  block.appendChild(termsLine);
+  block.appendChild(divider);
+  block.appendChild(warn);
+  container.appendChild(block);
+
+  (async () => {
+    const info = await _preChargeInfo(BOLId);
+    if (!document.body.contains(block)) return; // modal closed while loading
+    if (!info.hasCard) {
+      chargeLine.textContent = 'No card on file — you\'ll be asked to add one to dispatch.';
+    } else {
+      const cardTxt = (info.brand ? (info.brand.charAt(0).toUpperCase() + info.brand.slice(1)) : 'Card') + ' ••' + info.last4;
+      chargeLine.textContent = cardTxt + ' will be charged ' + (info.amount > 0 ? '$' + info.amount.toFixed(2) : 'the quoted rate') + ' to dispatch this shipment.';
+    }
+  })();
+}
+
 function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   // Popup that lets user dispatch + download docs from the My Shipments table
   // Styled like the residential accessorial warning modal
@@ -6511,10 +6645,17 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     '</div>';
   body.appendChild(sumCard);
 
-  const notice = document.createElement('div');
-  notice.style.cssText = 'font-size:11px;color:var(--mu);line-height:1.5;margin-bottom:16px;';
-  notice.innerHTML = 'Dispatching will notify the carrier and make this BOL valid for tendering. <strong style="color:var(--tx);">This cannot be undone.</strong>';
-  body.appendChild(notice);
+  // Phase 3 (#1): PRE customers get the combined disclosure block (charge + Net 15 + finality
+  // warning) via the shared helper — used by the post-save "Dispatch Now" modal too. Non-PRE
+  // customers get the standalone finality warning (same clean, muted, one-line copy).
+  if (currentCustomer && currentCustomer.termsCode === 'PRE') {
+    _renderPreChargeDisclosure(body, BOLId);
+  } else {
+    const notice = document.createElement('div');
+    notice.style.cssText = 'font-size:11px;color:var(--mu);line-height:1.5;margin-bottom:16px;';
+    notice.innerHTML = 'Dispatching notifies the carrier and makes this BOL valid for tendering. This cannot be undone.';
+    body.appendChild(notice);
+  }
 
   const btnCol = document.createElement('div');
   btnCol.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
@@ -6543,7 +6684,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       return;
     }
     if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...'; activeBtn.disabled = true; }
-    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling });
+    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed: true }); // disclosure block shown above
     if (dr.inFlight || dr.alreadyDispatched) { if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; } return; }
     if (dr.chargeFailed) {  // Phase 3: PRE charge blocked dispatch.
       if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
@@ -9542,6 +9683,16 @@ async function submitBooking() {
     // dispatch charge lives in exactly one location. _canonicalDispatch runs the same
     // v2 + /API electronic-tender sequence this block used to do inline.
     const _cd = await _canonicalDispatch(BOLId);
+    // Phase 3 (#1): prepaid consent gate — this legacy inline path must NEVER charge silently.
+    // For PRE the shipment is saved (booked) but dispatch is deferred to the disclosed modal in
+    // My Shipments, where the customer sees the exact charge before it fires.
+    if (_cd.needsDisclosure) {
+      removeTyping();
+      if (_bkBtn) { _bkBtn.textContent = 'Book & Dispatch'; _bkBtn.disabled = false; }
+      appendMessage('bot', 'Your shipment is saved. Because your account is prepaid, open it in My Shipments to review the exact charge and dispatch from there.');
+      bookingRate = null; bookingData = {}; window._bookingPanelContainer = null;
+      return;
+    }
     // PRE charge (inside _canonicalDispatch) blocks dispatch on a failed card — stop here.
     if (_cd.chargeFailed) {
       removeTyping();
@@ -11215,8 +11366,19 @@ async function _execDispatchShipment(input) {
     // Dismiss any open parcel picker popup so its buttons can't double-fire
     try { const _o = document.getElementById('bk-saved-overlay'); if (_o) _o.remove(); } catch(e2) {}
 
-    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling: input.smallPackageHandling });
+    const dr = await _canonicalDispatch(BOLId, { smallPackageHandling: input.smallPackageHandling, chargeDisclosed: !!input.chargeConfirmed });
     if (dr.inFlight) return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
+    if (dr.needsDisclosure) {  // Phase 3 (#1): prepaid consent gate — the customer MUST hear the exact charge BEFORE it fires.
+      if (!dr.hasCard) {
+        return { ok: true, needsCard: true, message: 'This is a prepaid account with no card on file yet. Ask the customer to add a card (Payment Method in the menu), then dispatch again.' };
+      }
+      // Build the disclosure from the EXACT figures the code will charge. The agent must relay
+      // amount/brand/last4 verbatim (see the PREPAID CHARGE DISCLOSURE rule) — never regenerate them.
+      const _brand = dr.brand ? (dr.brand.charAt(0).toUpperCase() + dr.brand.slice(1)) : 'Card';
+      const _amtStr = dr.amount > 0 ? '$' + dr.amount.toFixed(2) : 'the quoted amount';
+      const _msg = _brand + ' ending ' + dr.last4 + ' will be charged ' + _amtStr + ' to dispatch this shipment. If you\'d prefer not to pay upfront, you can apply for Net 15 terms. Want me to go ahead and dispatch?';
+      return { ok: true, needsChargeConfirm: true, amount: _amtStr, brand: _brand, last4: dr.last4, message: _msg };
+    }
     if (dr.chargeFailed) {  // Phase 3: PRE dispatch charge blocked dispatch — no valid BOL created.
       return { ok: false, chargeFailed: true, error: _dispatchChargeMessage(dr, (_lb && _lb.BOLNumber) || BOLId) };
     }
@@ -11421,6 +11583,8 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). NEVER call book_shipment more than once for the same shipment.
+
+7b. PREPAID CHARGE DISCLOSURE — prepaid (PRE) accounts only. A prepaid customer's card is charged the instant a shipment dispatches; this must NEVER happen silently. Your FIRST dispatch_shipment call for a prepaid account will NOT dispatch — it returns needsChargeConfirm:true with the exact amount, card brand, and last4, plus a ready-to-say message. You MUST relay that disclosure and get an explicit yes before dispatching. CRITICAL — VERBATIM FIGURES: state the amount, brand, and last4 EXACTLY as the tool returned them, character-for-character. Never generate, estimate, round, reformat, recompute, or infer any of these numbers yourself, and never substitute a price from earlier in the chat. The amount you say MUST match the tool's amount exactly, because the one dangerous failure is telling the customer a different number than the code will charge — when in doubt, read the tool's message field word-for-word. Say it plainly, e.g.: "Your Visa ending 4603 will be charged $222.84 to dispatch this. If you'd rather not pay upfront, you can apply for Net 15 terms. Want me to go ahead?" Mention the Net 15 option in words only — never read out a URL or link. Only after the customer clearly agrees, call dispatch_shipment again with chargeConfirmed:true to complete the charge and dispatch. If they hesitate or decline, do not dispatch — the saved shipment can wait. This disclosure is mandatory on every prepaid dispatch, no exceptions.
 For LTL: dispatch_shipment tenders to the carrier immediately and returns confirmation, PRO, and docs — report: "Done — dispatched to [carrier], pickup confirmation [confirmation], PRO [PRO]. Your BOL and label are ready to download."
 For PARCEL (FedEx Ground / UPS Ground): you MUST collect the pickup method — never assume it. Three values: SCHEDULE PICKUP (carrier comes to the pickup address), DROP TO CARRIER (customer drops off at a carrier location), PICKUP ALREADY SCHEDULED (a pickup is already confirmed with the carrier). (a) If the customer already stated how they want to ship ("I'll drop it off," "schedule a pickup," "pickup's already set"), map it to the exact enum value and call dispatch_shipment with smallPackageHandling set — it dispatches immediately and returns confirmation and your label. (b) If they have NOT stated a preference yet, call dispatch_shipment WITHOUT smallPackageHandling — a pickup-options popup appears on screen, AND ask in chat at the same time: "A pickup options panel just popped up — or just tell me: should the carrier pick it up at your address (Schedule Pickup), will you drop it off at a UPS or FedEx location (Drop to Carrier), or is there already a daily or standing pickup at this location so nothing needs to be scheduled (Pickup Already Scheduled)?" ALWAYS present all THREE of these pickup options every time you ask — never offer only two, no matter how you open the message. Do not assume or pick for the customer; let them choose. When they answer, call dispatch_shipment again with smallPackageHandling set to their choice. Do NOT report dispatch as done after the popup appears — the actual dispatch fires when the customer picks.
 If dispatch errors, say it's booked and our team will complete dispatch, give the phone line.
@@ -11590,7 +11754,7 @@ async function aiConverse(userText) {
             {
               name: 'dispatch_shipment',
               description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
-              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' } } }
+              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' }, chargeConfirmed: { type: 'boolean', description: 'Prepaid (PRE) accounts only. Leave UNSET on your FIRST dispatch_shipment call — the tool returns needsChargeConfirm with the exact amount, brand, and last4 you must disclose to the customer. Only after you have stated that exact charge verbatim and the customer explicitly agrees, call again with chargeConfirmed:true to complete the charge and dispatch.' } } }
             },
             {
               name: 'save_shipment',
