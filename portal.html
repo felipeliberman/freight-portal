@@ -5935,6 +5935,57 @@ function formatDispatchError(raw) {
 // ── CANONICAL DISPATCH ENGINE ──────────────────────────────────────────────────
 // Single source of truth for all dispatch calls. Every UI/agent path calls this.
 // Returns { ok, status, dispResult, confirmation, PRO, docs, hasClbl, dispatchOk, error }
+// Phase 3: charge a PRE customer's saved card off-session at dispatch. Reads the exact
+// amount the customer was quoted (customerQuoteAmount, D2) + the BOL number from Primus,
+// then charges via the stripe-payments worker. Idempotency-keyed on the BOL. Accessorials
+// added AFTER the quote are NOT included here — those are a separate later charge (flagged).
+async function _chargeAtDispatch(BOLId, token) {
+  const pid = currentCustomer && currentCustomer.primusCustomerId;
+  if (!pid) return { ok: false, code: 'no_customer', error: 'No customer id on file — sign out and back in.' };
+  // Quoted amount + BOL number, straight from the saved BOL.
+  let amount = 0, bolNumber = null;
+  try {
+    const br = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (br.ok) {
+      const bd = await br.json();
+      const r = (bd.data && bd.data.results) || {};
+      amount = Number((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0);
+      bolNumber = r.BOLNumber || r.BOLNmbr || null;
+    }
+  } catch(e) {}
+  if (!amount || amount < 0.5) return { ok: false, code: 'no_amount', error: 'Could not read the quoted amount for this shipment.' };
+  try {
+    const cr = await fetch(STRIPE_WORKER + '/charge-saved-card', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: STRIPE_MODE, primusCustomerId: pid, amount: amount,
+        bolNumber: bolNumber || String(BOLId),
+        idempotencyKey: 'dispatch-' + STRIPE_MODE + '-' + (bolNumber || BOLId)
+      })
+    });
+    const cd = await cr.json();
+    if (cd && cd.ok) return { ok: true, paymentIntentId: cd.paymentIntentId, amount: cd.amount, last4: cd.last4 };
+    return { ok: false, code: (cd && cd.code) || 'charge_failed', error: (cd && cd.error) || 'Charge failed' };
+  } catch(e) { return { ok: false, code: 'network', error: 'Could not reach the payment service.' }; }
+}
+
+// Phase 3: user-facing message when a PRE dispatch charge blocks dispatch. For a missing
+// card it opens the save-card form so the customer can add one and dispatch again.
+function _dispatchChargeMessage(cd, bolNumber) {
+  const code = cd && cd.code;
+  if (code === 'no_card' || code === 'no_customer') {
+    setTimeout(() => { if (typeof showSaveCardModal === 'function') showSaveCardModal(); }, 400);
+    return 'Before this shipment can dispatch we need a card on file — your account is set to prepaid. Opening the payment form now; add a card and dispatch again.';
+  }
+  if (code === 'authentication_required') {
+    // D4 FOLLOW-UP (TODO): build an on-session re-auth link (SetupIntent/PaymentIntent
+    // with 3DS) so a legitimate card whose bank wants a step-up can complete payment and
+    // dispatch, instead of falling through to this manual "call us" path. Fail-closed for v1.
+    return 'Your bank wants to verify this charge, which we can’t complete automatically. BOL ' + (bolNumber || '') + ' was not dispatched. Please call (800) 687-3713 or email support@freightandlogistics.ai so we can take payment and release it.';
+  }
+  return 'We couldn’t charge your saved card, so BOL ' + (bolNumber || '') + ' was not dispatched. Update your payment method and dispatch again, or call (800) 687-3713.';
+}
+
 async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
   if (window._dispatchingBOLId === BOLId)
     return { ok: false, inFlight: true };
@@ -5944,6 +5995,22 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling } = {}) {
   window._dispatchingBOLId = BOLId;
   try {
     const token = await getToken();
+
+    // ── Phase 3: PRE dispatch charge ────────────────────────────────────────
+    // For PRE (prepaid) customers ONLY, charge + capture the saved card BEFORE
+    // tendering to the carrier. A declined/absent card BLOCKS dispatch (D1) — a PRE
+    // customer whose card fails never gets a valid BOL. Terms customers are never
+    // charged here. Idempotency-keyed on the BOL, so a re-dispatch never re-charges.
+    if (currentCustomer && currentCustomer.termsCode === 'PRE') {
+      const _chg = await _chargeAtDispatch(BOLId, token);
+      if (!_chg.ok) {
+        window._dispatchingBOLId = null;
+        return { ok: false, chargeFailed: true, code: _chg.code, error: _chg.error,
+                 needCard: _chg.code === 'no_card' || _chg.code === 'no_customer' };
+      }
+      window._lastDispatchCharge = { BOLId: BOLId, paymentIntentId: _chg.paymentIntentId, amount: _chg.amount, last4: _chg.last4 };
+    }
+
     const _isParcel = !!smallPackageHandling;
     const dispBody = _isParcel
       ? { smallPackageHandling, forceDispatch: true }
@@ -6105,6 +6172,12 @@ function showShipmentSavedModal(bc) {
     const dr = await _canonicalDispatch(bc.BOLId, { smallPackageHandling });
     if (dr.inFlight) { dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false; return; }
     if (dr.alreadyDispatched) { overlay.remove(); return; }
+    if (dr.chargeFailed) {  // Phase 3: PRE charge blocked dispatch.
+      overlay.remove();
+      dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
+      appendMessage('bot', _dispatchChargeMessage(dr, bc.BOLNumber || bc.BOLId));
+      return;
+    }
     if (!dr.ok) {
       overlay.remove();
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
@@ -6454,6 +6527,11 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Dispatching...'; activeBtn.disabled = true; }
     const dr = await _canonicalDispatch(BOLId, { smallPackageHandling });
     if (dr.inFlight || dr.alreadyDispatched) { if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; } return; }
+    if (dr.chargeFailed) {  // Phase 3: PRE charge blocked dispatch.
+      if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
+      appendMessage('bot', _dispatchChargeMessage(dr, BOLId));
+      return;
+    }
     if (!dr.ok) {
       if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
       appendMessage('bot', formatDispatchError(dr.error));
@@ -9441,55 +9519,23 @@ async function submitBooking() {
     // come back "User dispatched manually" (success, but NO electronic tender sent to the
     // carrier). So after dispatch we ALWAYS fire the /API electronic-tender call to make
     // sure the carrier actually receives the pickup request — not only when v2 fails.
-    let dispResult = null, PRO = null, confirmation = null, dispatchedDocs = docs;
-    try {
-      // Step 1: v2 dispatch
-      const dispRes = await fetch(PRIMUS_BASE + '/applet/v2/dispatch/' + BOLId, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body:    JSON.stringify({ makeEDI: true, forceDispatch: true })
-      });
-      const dispText = await dispRes.text();
-      let dispData = {};
-      try { dispData = JSON.parse(dispText); } catch(e) {}
-      console.log('v2 dispatch status:', dispRes.status, dispText.slice(0,300));
-      const dispatchedManually = /dispatched manually/i.test(dispText);
-
-      if (dispRes.ok) {
-        dispResult = (dispData.data && dispData.data.results) || dispData.data || dispData;
-        confirmation = (dispResult && dispResult.confirmation) || null;
-        PRO = (dispResult && dispResult.PRO) || null;
-        const dispDocs = (dispResult && dispResult.documents) || [];
-        if (dispDocs.length) dispatchedDocs = [...(docs || []), ...dispDocs];
-        if (dispData.success === false) dispResult = null;
-      }
-
-      // Step 2: ALWAYS fire the electronic tender (/API) — this is what actually sends the
-      // pickup request to the carrier. Needed whether v2 failed OR returned "manually".
-      if (!dispRes.ok || dispatchedManually || !confirmation || confirmation === 'N/A') {
-        try {
-          const dApi = await fetch(PRIMUS_BASE + '/applet/v1/dispatch/' + BOLId + '/API', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-            body: JSON.stringify({})
-          });
-          const dApiText = await dApi.text();
-          console.log('electronic tender (/API) status:', dApi.status, dApiText.slice(0,200));
-          let dApiData = {}; try { dApiData = JSON.parse(dApiText); } catch(e) {}
-          if (dApi.ok) {
-            const apiRes = (dApiData.data && dApiData.data.results) || dApiData.data || dApiData;
-            if (apiRes) {
-              dispResult = dispResult || apiRes;
-              confirmation = (apiRes && apiRes.confirmation) || confirmation;
-              PRO = (apiRes && apiRes.PRO) || PRO;
-              const apiDocs = (apiRes && apiRes.documents) || [];
-              if (apiDocs.length) dispatchedDocs = [...(dispatchedDocs || []), ...apiDocs];
-            }
-          }
-        } catch(apiErr) { console.warn('electronic tender (/API) failed:', apiErr); }
-      }
-    } catch(dispErr) {
-      console.warn('Dispatch error:', dispErr);
+    // Phase 3 consolidation: dispatch via the canonical dispatch function so ALL
+    // dispatch — including this legacy path — flows through one place, and the PRE
+    // dispatch charge lives in exactly one location. _canonicalDispatch runs the same
+    // v2 + /API electronic-tender sequence this block used to do inline.
+    const _cd = await _canonicalDispatch(BOLId);
+    // PRE charge (inside _canonicalDispatch) blocks dispatch on a failed card — stop here.
+    if (_cd.chargeFailed) {
+      removeTyping();
+      if (_bkBtn) { _bkBtn.textContent = 'Book & Dispatch'; _bkBtn.disabled = false; }
+      appendMessage('bot', _dispatchChargeMessage(_cd, BOLNumber));
+      bookingRate = null; bookingData = {}; window._bookingPanelContainer = null;
+      return;
     }
+    let PRO = _cd.PRO || null;
+    let confirmation = _cd.confirmation || null;
+    let dispatchedDocs = (_cd.docs && _cd.docs.length) ? _cd.docs : docs;
+    let dispResult = (_cd.ok && (_cd.dispResult || _cd.dispatchOk)) ? (_cd.dispResult || { dispatchOk: true }) : null;
 
     removeTyping();
     if (_bkBtn) { _bkBtn.textContent = 'Booked!'; _bkBtn.disabled = true; _bkBtn.style.background = 'var(--ac)'; _bkBtn.style.opacity = '0.7'; _bkBtn.style.cursor = 'default'; }
@@ -11153,6 +11199,9 @@ async function _execDispatchShipment(input) {
 
     const dr = await _canonicalDispatch(BOLId, { smallPackageHandling: input.smallPackageHandling });
     if (dr.inFlight) return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
+    if (dr.chargeFailed) {  // Phase 3: PRE dispatch charge blocked dispatch — no valid BOL created.
+      return { ok: false, chargeFailed: true, error: _dispatchChargeMessage(dr, (_lb && _lb.BOLNumber) || BOLId) };
+    }
     if (!dr.ok) {
       console.error('dispatch_shipment error:', dr.error);
       return { ok: false, error: formatDispatchError(dr.error) };

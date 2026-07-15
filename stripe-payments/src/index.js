@@ -283,6 +283,57 @@ export default {
       } catch(e) { return json({ error: e.message, cards: [] }, 500); }
     }
 
+    // ── CHARGE SAVED CARD (Phase 3: off-session dispatch charge for PRE) ────
+    // Charge + capture the saved card immediately at dispatch. BOL number stamped
+    // as metadata for manual invoice matching. Idempotency-keyed on the BOL so a
+    // re-dispatch never double-charges. Additive — no existing endpoint touched.
+    if (pathname === '/charge-saved-card' && request.method === 'POST') {
+      try {
+        const { mode, primusCustomerId, amount, bolNumber, idempotencyKey } = await request.json();
+        const smode = mode === 'live' ? 'live' : 'test';
+        const sk = skFor(smode);
+        if (!sk) return json({ ok:false, code:'config', error:'Stripe key not configured for mode: ' + mode }, 500);
+        if (!primusCustomerId) return json({ ok:false, code:'bad_request', error:'Missing primusCustomerId' }, 400);
+        const cents = Math.round(Number(amount) * 100);
+        if (!cents || cents < 50) return json({ ok:false, code:'bad_amount', error:'Invalid amount' }, 400);
+
+        const auth = { 'Authorization': `Bearer ${sk}`, 'Stripe-Version': STRIPE_VERSION };
+        const customerId = await findCustomerByPrimus(sk, smode, primusCustomerId);
+        if (!customerId) return json({ ok:false, code:'no_customer', error:'No Stripe customer on file for this account' }, 200);
+
+        // Most-recently-saved card on the customer.
+        const pmRes = await fetch(`https://api.stripe.com/v1/payment_methods?customer=${customerId}&type=card&limit=1`, { headers: auth });
+        const pmData = await pmRes.json();
+        const pm = pmData.data && pmData.data[0];
+        if (!pm) return json({ ok:false, code:'no_card', error:'No card on file' }, 200);
+
+        const piParams = new URLSearchParams({
+          amount: String(cents), currency: 'usd', customer: customerId, payment_method: pm.id,
+          off_session: 'true', confirm: 'true', capture_method: 'automatic',
+          description: 'Dispatch charge — BOL ' + (bolNumber || '')
+        });
+        if (bolNumber) piParams.append('metadata[bolNumber]', String(bolNumber));
+        piParams.append('metadata[primusCustomerId]', String(primusCustomerId));
+
+        const piHeaders = { ...auth, 'Content-Type': 'application/x-www-form-urlencoded' };
+        if (idempotencyKey) piHeaders['Idempotency-Key'] = String(idempotencyKey);
+        const piRes = await fetch('https://api.stripe.com/v1/payment_intents', { method: 'POST', headers: piHeaders, body: piParams.toString() });
+        const pi = await piRes.json();
+
+        if (pi.error) {
+          // Off-session declines and SCA (authentication_required) come back as an error.
+          const code = pi.error.code === 'authentication_required'
+            ? 'authentication_required'
+            : (pi.error.decline_code || pi.error.code || 'card_declined');
+          return json({ ok:false, code, error: pi.error.message, paymentIntentId: pi.error.payment_intent && pi.error.payment_intent.id }, 200);
+        }
+        if (pi.status !== 'succeeded') {
+          return json({ ok:false, code: pi.status, error: 'Charge not completed (' + pi.status + ')', paymentIntentId: pi.id }, 200);
+        }
+        return json({ ok:true, paymentIntentId: pi.id, status: pi.status, amount: cents, brand: pm.card && pm.card.brand, last4: pm.card && pm.card.last4 });
+      } catch(e) { return json({ ok:false, code:'exception', error: e.message }, 500); }
+    }
+
     // ── 404 ───────────────────────────────────────────────────────────────
     return json({ error: 'Not found' }, 404);
   }
