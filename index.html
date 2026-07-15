@@ -300,37 +300,45 @@ body.movie-live #input-textarea{border-color:var(--ac);}
 
 /* ── CREDIT APPLICATION PANEL ── (single scrolling page in the right pane) */
 .ca-help{font-size:11.5px;color:var(--mu);line-height:1.55;margin:-2px 0 12px;}
-.ca-radios{display:flex;flex-direction:column;gap:7px;}
-.ca-radio{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--bdr);border-radius:9px;cursor:pointer;transition:border-color .15s,background .15s;font-size:13px;}
+/* Unified text inputs — all credit-app fields are boxed (scoped to .ca-form so the
+   signup form's underline .sf-input is untouched). */
+.ca-form .sf-input,.ca-form .ca-input-box{width:100%;border:1px solid #d8d4ca;border-radius:8px;padding:9px 11px;font-family:var(--sans);font-size:13px;color:var(--tx);background:#fff;outline:none;transition:border-color .15s,box-shadow .15s;}
+.ca-form .sf-input:focus,.ca-form .ca-input-box:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(189,39,188,.10);}
+.ca-form .sf-input::placeholder{color:var(--fa);font-size:12px;}
+.ca-form .sf-row{margin-bottom:11px;}
+.ca-input-box[readonly]{background:#f5f4f0;color:var(--mu);}
+#ca-sig-typed{font-family:'Dancing Script',cursive;font-size:26px;line-height:1.2;height:54px;}
+
+/* Branded selection controls — magenta when selected. Circles for pick-one radios,
+   squares for confirm checkboxes; custom-painted so they don't look like default HTML. */
+.ca-form input[type=radio],.ca-form input[type=checkbox]{appearance:none;-webkit-appearance:none;margin:0;flex-shrink:0;width:19px;height:19px;border:1.5px solid #c2bdb2;background:#fff;cursor:pointer;transition:border-color .15s,background-color .15s;}
+.ca-form input[type=radio]{border-radius:50%;}
+.ca-form input[type=checkbox]{border-radius:5px;}
+.ca-form input[type=radio]:hover,.ca-form input[type=checkbox]:hover{border-color:var(--ac);}
+.ca-form input[type=radio]:checked{border-color:var(--ac);background-image:radial-gradient(circle at center,var(--ac) 0 42%,#fff 48% 100%);}
+.ca-form input[type=checkbox]:checked{border-color:var(--ac);background-color:var(--ac);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");background-size:12px;background-position:center;background-repeat:no-repeat;}
+.ca-form input[type=radio]:focus-visible,.ca-form input[type=checkbox]:focus-visible{outline:2px solid var(--ac);outline-offset:2px;}
+
+.ca-radios{display:flex;flex-direction:column;gap:8px;}
+.ca-radio{display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid var(--bdr);border-radius:9px;cursor:pointer;transition:border-color .15s,background .15s;font-size:13px;}
 .ca-radio:hover{border-color:var(--ac);}
 .ca-radio.sel{border-color:var(--ac);background:var(--ac2);}
-.ca-radio input{accent-color:var(--ac);width:15px;height:15px;flex-shrink:0;}
 .ca-ack{border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:13px;}
 .ca-ack-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--tx);margin-bottom:7px;}
 .ca-ack-body{font-size:12px;color:var(--mu);line-height:1.6;margin-bottom:12px;}
-.ca-ack-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-.ca-init{display:flex;align-items:center;gap:7px;}
-.ca-init label{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mu);}
-.ca-init input{width:64px;border:none;border-bottom:1.5px solid var(--bdr);padding:5px 2px;font-family:var(--sans);font-size:13px;text-align:center;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:var(--tx);background:transparent;outline:none;}
-.ca-init input:focus{border-bottom-color:var(--ac);}
-.ca-consent{display:flex;gap:10px;align-items:flex-start;padding:12px 13px;border:1px solid var(--bdr);border-radius:10px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
+.ca-consent{display:flex;gap:11px;align-items:flex-start;padding:12px 13px;border:1px solid var(--bdr);border-radius:10px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;}
 .ca-consent:hover{border-color:var(--ac);}
 .ca-consent.sel{border-color:var(--ac);background:var(--ac2);}
-.ca-consent input{accent-color:var(--ac);width:16px;height:16px;margin-top:1px;flex-shrink:0;}
 .ca-consent-tx{font-size:12px;line-height:1.55;color:var(--tx);}
 .ca-sig-toggle{display:inline-flex;border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:12px;}
 .ca-sig-toggle button{border:none;background:#fff;padding:7px 16px;font-family:var(--sans);font-size:12px;font-weight:600;color:var(--mu);cursor:pointer;}
 .ca-sig-toggle button.on{background:var(--ac);color:#fff;}
-#ca-sig-typed{font-family:'Dancing Script',cursive;font-size:26px;line-height:1.2;height:52px;border-bottom-width:1.5px;}
 .ca-sig-hint{font-size:11px;color:var(--fa);margin-top:5px;}
 .ca-sig-canvas-wrap{position:relative;border:1px solid var(--bdr);border-radius:8px;background:#fff;overflow:hidden;}
 #ca-sig-canvas{display:block;width:100%;height:140px;touch-action:none;cursor:crosshair;}
 .ca-sig-clear{position:absolute;top:8px;right:9px;font-size:11px;font-weight:600;color:var(--ac);background:#fff;border:1px solid var(--bdr);border-radius:6px;padding:3px 8px;cursor:pointer;}
 .ca-err{display:none;padding:9px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#dc2626;margin:4px 0 12px;}
 .ca-note{font-size:10.5px;color:var(--fa);line-height:1.5;margin:12px 0 14px;}
-.ca-input-box{width:100%;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-family:var(--sans);font-size:13px;color:var(--tx);background:#fff;outline:none;transition:border-color .15s;}
-.ca-input-box:focus{border-color:var(--ac);}
-.ca-input-box[readonly]{background:#f5f4f0;color:var(--mu);}
 
 /* ── SERVICE PANEL STYLES ── */
 .svc-hero{padding:24px 20px 20px;background:#fdf0fd;border-bottom:1px solid rgba(189,39,188,.15);}
@@ -1353,7 +1361,7 @@ function openCreditAppPanel(){
     '<div class="svc-hero-title">Credit Application &amp; Purchase Agreement</div>'+
     '<div class="svc-hero-sub">Open a Net&nbsp;15 account with Freight and Logistics, Inc. Your responses are signed electronically and a copy of the signed agreement is emailed to you.</div>'+
   '</div>'+
-  '<div class="setup-form">'+
+  '<div class="setup-form ca-form">'+
 
     // Company
     '<div class="sf-section"><div class="sf-section-label">Company Information</div>'+
@@ -1416,12 +1424,10 @@ function openCreditAppPanel(){
       '<div class="ca-help">Read each statement, enter your initials, and check the box to confirm.</div>'+
       '<div class="ca-ack"><div class="ca-ack-title">1 · Broker Status &amp; Carrier Limited Liability</div>'+
         '<div class="ca-ack-body" id="ca-ack1-text">'+CA_ACK1_TEXT+'</div>'+
-        '<div class="ca-ack-foot"><div class="ca-init"><label>Initials</label><input id="ca-ack1-init" maxlength="5" placeholder="ABC"></div>'+
-          '<label class="ca-consent" style="flex:1 1 200px;margin:0;"><input type="checkbox" id="ca-ack1-check"><span class="ca-consent-tx">I have read and agree.</span></label></div></div>'+
+        '<label class="ca-consent" style="margin:0;"><input type="checkbox" id="ca-ack1-check"><span class="ca-consent-tx">I have read and agree to this statement.</span></label></div>'+
       '<div class="ca-ack"><div class="ca-ack-title">2 · Supplemental Cargo Insurance</div>'+
         '<div class="ca-ack-body" id="ca-ack2-text">'+CA_ACK2_TEXT+'</div>'+
-        '<div class="ca-ack-foot"><div class="ca-init"><label>Initials</label><input id="ca-ack2-init" maxlength="5" placeholder="ABC"></div>'+
-          '<label class="ca-consent" style="flex:1 1 200px;margin:0;"><input type="checkbox" id="ca-ack2-check"><span class="ca-consent-tx">I have read and agree.</span></label></div></div>'+
+        '<label class="ca-consent" style="margin:0;"><input type="checkbox" id="ca-ack2-check"><span class="ca-consent-tx">I have read and agree to this statement.</span></label></div>'+
     '</div>'+
 
     // Consents
@@ -1539,8 +1545,8 @@ function _caValidate(){
   for(let n=1;n<=2;n++){
     if(!_caVal('ca-ref'+n+'-company')||!_caVal('ca-ref'+n+'-phone')||!_caVal('ca-ref'+n+'-contact')) return 'Please provide company, phone, and contact name for both references.';
   }
-  if(!_caVal('ca-ack1-init')||!document.getElementById('ca-ack1-check').checked) return 'Please initial and confirm the first acknowledgment.';
-  if(!_caVal('ca-ack2-init')||!document.getElementById('ca-ack2-check').checked) return 'Please initial and confirm the second acknowledgment.';
+  if(!document.getElementById('ca-ack1-check').checked) return 'Please read and agree to the first acknowledgment.';
+  if(!document.getElementById('ca-ack2-check').checked) return 'Please read and agree to the second acknowledgment.';
   if(!document.getElementById('ca-tc-consent').checked) return 'Please agree to the Terms and Conditions to continue.';
   if(!document.getElementById('ca-esign-consent').checked) return 'Please provide electronic signature consent to continue.';
   if(_ca.mode==='type' && !_caVal('ca-sig-typed')) return 'Please type your signature.';
@@ -1570,8 +1576,8 @@ function _caBuildRecord(){
     shipContact:{name:_caVal('ca-ship-name'),phone:_caVal('ca-ship-phone'),email:_caVal('ca-ship-email')},
     references:refs,
     acknowledgments:[
-      {title:'Broker Status & Carrier Limited Liability', text:document.getElementById('ca-ack1-text').textContent, initials:_caVal('ca-ack1-init'), agreed:document.getElementById('ca-ack1-check').checked},
-      {title:'Supplemental Cargo Insurance', text:document.getElementById('ca-ack2-text').textContent, initials:_caVal('ca-ack2-init'), agreed:document.getElementById('ca-ack2-check').checked}
+      {title:'Broker Status & Carrier Limited Liability', text:document.getElementById('ca-ack1-text').textContent, agreed:document.getElementById('ca-ack1-check').checked},
+      {title:'Supplemental Cargo Insurance', text:document.getElementById('ca-ack2-text').textContent, agreed:document.getElementById('ca-ack2-check').checked}
     ],
     consents:{ termsAndConditions:document.getElementById('ca-tc-consent').checked, electronicSignature:document.getElementById('ca-esign-consent').checked },
     signature:{ method:_ca.mode, typedName:_ca.mode==='type'?_caVal('ca-sig-typed'):'', printedName:_caVal('ca-printed-name'), title:_caVal('ca-title'), date:document.getElementById('ca-sign-date').value }
@@ -1592,6 +1598,18 @@ async function _caGeneratePdf(rec){
     const lines=doc.splitTextToSize(String(v),W-160); doc.text(lines,M+160,y); y+=Math.max(15,lines.length*13); }
   function para(t,size){ pageBreak(28); doc.setFont('helvetica','normal'); doc.setFontSize(size||9.5); doc.setTextColor(80,80,80);
     const lines=doc.splitTextToSize(t,W); doc.text(lines,M,y); y+=lines.length*12.5+6; doc.setTextColor(26,26,26); }
+  // Draw a small check box (filled magenta + white check when agreed) with a wrapped label.
+  function agreeLine(agreed,label){ pageBreak(30);
+    const s=10, boxTop=y-8.5;
+    if(agreed){ doc.setDrawColor(189,39,188); doc.setFillColor(189,39,188); doc.roundedRect(M,boxTop,s,s,1.6,1.6,'FD');
+      doc.setDrawColor(255,255,255); doc.setLineWidth(1.2); doc.line(M+2.3,boxTop+5.2,M+4.2,boxTop+7.3); doc.line(M+4.2,boxTop+7.3,M+7.8,boxTop+2.8); doc.setLineWidth(1); }
+    else { doc.setDrawColor(180,180,180); doc.roundedRect(M,boxTop,s,s,1.6,1.6,'D'); }
+    doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(agreed?26:200, agreed?26:60, agreed?26:60);
+    doc.text((agreed?'Agreed':'NOT AGREED')+' — ',M+16,y);
+    const lead=doc.getTextWidth((agreed?'Agreed':'NOT AGREED')+' — ');
+    doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+    const lines=doc.splitTextToSize(label,W-16-lead); doc.text(lines,M+16+lead,y);
+    y+=Math.max(16,lines.length*12.5)+6; doc.setTextColor(26,26,26); }
 
   h1('Freight and Logistics, Inc.');
   doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.text('Credit Application & Purchase Agreement',M,y); y+=16;
@@ -1614,13 +1632,12 @@ async function _caGeneratePdf(rec){
     kv('Company',r.company); kv('Contact',r.contact); kv('Phone',r.phone); kv('Email',r.email); y+=4; });
 
   h2('Cargo Liability Acknowledgments');
-  rec.acknowledgments.forEach((a,i)=>{ para((i+1)+'. '+a.title,10.5); para(a.text,9.5); pageBreak(16);
-    doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(26,26,26);
-    doc.text('Initialed: '+(a.initials||'—')+'      Agreed: '+(a.agreed?'YES':'NO'),M,y); y+=18; });
+  rec.acknowledgments.forEach((a,i)=>{ para((i+1)+'. '+a.title,10.5); para(a.text,9.5);
+    agreeLine(a.agreed,'The signer confirmed reading and agreeing to this acknowledgment.'); y+=2; });
 
   h2('Terms & Electronic Signature Consent');
-  para('Terms and Conditions: '+(rec.consents.termsAndConditions?'AGREED':'NOT AGREED')+'. The Terms and Conditions and Privacy Policy at https://www.freightandlogistics.com/terms-and-conditions are incorporated into and made part of this agreement.',9.5);
-  para('Electronic Signature Consent: '+(rec.consents.electronicSignature?'AGREED':'NOT AGREED')+'. The signer agreed to sign electronically and to conduct this transaction electronically.',9.5);
+  agreeLine(rec.consents.termsAndConditions,'Terms and Conditions and Privacy Policy (https://www.freightandlogistics.com/terms-and-conditions), incorporated into and made part of this agreement.');
+  agreeLine(rec.consents.electronicSignature,'Consent to sign electronically and to conduct this transaction electronically.');
 
   h2('Authorized Signature'); pageBreak(120);
   const sig=rec.signature; let sigImg=null;

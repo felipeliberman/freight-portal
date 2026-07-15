@@ -344,7 +344,7 @@ export default {
         const acksHtml = acks.map((a, i) =>
           '<tr><td style="padding:7px 10px;font-size:12px;color:#706c63;border-bottom:1px solid #e5e2d9;">Acknowledgment ' + (i + 1) + '</td>' +
           '<td style="padding:7px 10px;font-size:12px;color:#1a1a1a;border-bottom:1px solid #e5e2d9;">' +
-          esc(a.title) + ' — initialed <strong>' + esc(a.initials || '—') + '</strong>, agreed: ' + (a.agreed ? 'YES' : 'NO') + '</td></tr>'
+          esc(a.title) + ' — <strong>' + (a.agreed ? 'Agreed ✓' : 'NOT agreed') + '</strong></td></tr>'
         ).join('');
 
         const auditHtml =
