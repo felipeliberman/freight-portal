@@ -9046,9 +9046,17 @@ async function bookShipment(payload, opts) {
     try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' ' + bookRes.status + ']', bookText, JSON.stringify(payload)); } catch(e) {}
     throw new Error(errLabel + ' failed ' + bookRes.status + ': ' + bookText.slice(0, 300));
   }
-  const bookData = JSON.parse(bookText);
+  // PRE-EXISTING PRODUCTION BUG (not part of the unification): Primus PUT /book/{id}
+  // (edit) returns 2xx with an EMPTY body on success, which made JSON.parse('') throw
+  // "Unexpected end of JSON input" and surface as a fake "Save error" on every edit.
+  // Guard the empty body; for an edit we already know the BOL, so treat empty-but-OK
+  // as success. A POST with no result still errors as before.
+  const bookData = bookText ? JSON.parse(bookText) : {};
   const result = bookData.data && bookData.data.results && bookData.data.results[0];
-  if (!result) throw new Error('No booking result returned');
+  if (!result) {
+    if (editBolId) return { BOLId: editBolId, BOLNumber: opts.editBolNumber || editBolId, docs: [], result: null };
+    throw new Error('No booking result returned');
+  }
   const BOLId = result.BOLId;
   const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
   const docs = result.documents || [];
@@ -9141,8 +9149,9 @@ async function submitBookingOnly(opts) {
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
+    const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
     window._editingBOLId = null; // cleared even on failure, matching prior behavior
-    const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token, editBolId: _editBolId, errLabel: 'Save' });
+    const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token, editBolId: _editBolId, editBolNumber: _editBolNum, errLabel: 'Save' });
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
