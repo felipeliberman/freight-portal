@@ -8577,180 +8577,71 @@ async function sendViaEmail({ to, toName, subject, htmlBody, textBody, attachmen
 function showSupportForm() {
   showChatArea();
   addRecent('Email Support');
-  window._supWizard = { active: true, issue: null, bol: null, shipment: null, details: null, files: [], step: 'chat' };
-  window._supModeActive = true;
 
-  const wrap = document.getElementById('messages');
-  if (!wrap) return;
+  // Conversational entry: one line, then the pre-filled form opens on the right.
+  appendMessage('bot', "Sure — I've opened a support form on the right. Fill it in and we'll get right back to you, typically within about an hour during business hours.");
 
-  const row = document.createElement('div');
-  row.className = 'msg-row bot';
-  const bub = document.createElement('div');
-  bub.className = 'msg-bubble';
+  // Minimal holder for attachments (reused by _supAddFiles). NOT a chat wizard.
+  window._supWizard = { files: [] };
 
-  const txt = document.createElement('div');
-  txt.className = 'msg-text bot';
-  txt.textContent = "Hi! I'm here to help connect you with our support team. Just tell me what's going on, or pick a topic to get started.";
-  bub.appendChild(txt);
+  const acctName  = (currentCustomer && currentCustomer.name) || '';
+  const custName  = (currentCustomer && (currentCustomer.firstName || currentCustomer.name)) || '';
+  const custEmail = (currentCustomer && currentCustomer.email) || '';
+  const company   = acctName || (currentCustomer && currentCustomer.code) || '';
+  const esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
 
-  const tiles = [
-    { icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>', label: 'Shipment issue or delay' },
-    { icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>', label: 'Invoice or billing question' },
-    { icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>', label: 'Damage or loss claim' },
-    { icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>', label: 'Something else' }
-  ];
+  const iS  = 'width:100%;box-sizing:border-box;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);margin-bottom:12px;outline:none;';
+  const roS = 'width:100%;box-sizing:border-box;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--font);background:#f4f2ee;color:var(--mu);margin-bottom:12px;outline:none;';
+  const lbl = 'display:block;font-size:11px;font-weight:600;color:var(--mu);margin-bottom:4px;';
 
-  const tileWrap = document.createElement('div');
-  tileWrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
-  tiles.forEach(function(t) {
-    const btn = document.createElement('button');
-    btn.style.cssText = 'background:var(--card);border:1.5px solid var(--bdr);border-radius:10px;padding:10px 13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:all .15s;font-family:var(--font);text-align:left;width:100%;';
-    btn.innerHTML = '<div style="color:var(--ac);flex-shrink:0;">' + t.icon + '</div><div style="font-size:12px;font-weight:600;color:var(--tx);">' + t.label + '</div>';
-    btn.onmouseover = function() { btn.style.borderColor = 'var(--ac)'; btn.style.background = '#faf0fa'; };
-    btn.onmouseout  = function() { btn.style.borderColor = 'var(--bdr)'; btn.style.background = 'var(--card)'; };
-    btn.onclick = function() {
-      const ta = document.getElementById('input-textarea');
-      if (ta && ta.value.trim()) return; // user already typed — don't override
-      if (ta) ta.value = t.label;
-      sendMessage();
-    };
-    tileWrap.appendChild(btn);
-  });
-  bub.appendChild(tileWrap);
+  const c = document.createElement('div');
+  c.innerHTML =
+    '<div style="padding:24px 20px 20px;background:#fdf0fd;border-bottom:1px solid rgba(189,39,188,.15);">' +
+      '<div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);margin-bottom:8px;">Support</div>' +
+      '<div style="font-size:19px;font-weight:600;line-height:1.2;margin-bottom:8px;color:var(--tx);">Reach out &mdash; we&rsquo;ll get right on it.</div>' +
+      '<div style="font-size:12px;color:var(--mu);line-height:1.6;">Send us a message and our team will typically reply within an hour during business hours.</div>' +
+    '</div>' +
+    '<div style="padding:18px;max-width:560px;margin:0 auto;">' +
+      '<label style="'+lbl+'">Name</label><input id="sup-form-name" type="text" readonly value="'+esc(custName)+'" style="'+roS+'">' +
+      '<label style="'+lbl+'">Email</label><input id="sup-form-email" type="text" readonly value="'+esc(custEmail)+'" style="'+roS+'">' +
+      '<label style="'+lbl+'">Company</label><input id="sup-form-company" type="text" readonly value="'+esc(company)+'" style="'+roS+'">' +
+      '<label style="'+lbl+'">Topic</label><select id="sup-form-topic" style="'+iS+'cursor:pointer;"><option>Shipment issue or delay</option><option>Invoice or billing question</option><option>Damage or loss claim</option><option>Something else</option></select>' +
+      '<label style="'+lbl+'">BOL number <span style="color:var(--fa);font-weight:400;">(optional)</span></label><input id="sup-form-bol" type="text" placeholder="e.g. 14000000123" style="'+iS+'">' +
+      '<label style="'+lbl+'">Message</label><textarea id="sup-form-message" rows="5" placeholder="Describe your issue or question&hellip;" style="'+iS+'resize:vertical;min-height:100px;"></textarea>' +
+      '<div id="sup-wiz-drop" style="border:2px dashed var(--bdr);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:11px;color:var(--fa);transition:border-color .15s;margin-bottom:6px;" onclick="document.getElementById(\'sup-wiz-file-input\').click()" ondragover="event.preventDefault();this.style.borderColor=\'var(--ac)\'" ondragleave="this.style.borderColor=\'var(--bdr)\'" ondrop="event.preventDefault();this.style.borderColor=\'var(--bdr)\';_supAddFiles(event.dataTransfer.files);">Attach supporting files <span style="color:var(--ac);font-weight:500;">(click or drag)</span></div>' +
+      '<input id="sup-wiz-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="_supAddFiles(this.files);this.value=\'\'">' +
+      '<div id="sup-wiz-file-list" style="margin-bottom:10px;display:flex;flex-direction:column;gap:3px;"></div>' +
+      '<div id="sup-form-error" style="display:none;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:8px;"></div>' +
+      '<button id="sup-form-send" style="width:100%;background:var(--ac);color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Send request</button>' +
+      '<div style="text-align:center;margin-top:8px;font-size:11px;color:var(--fa);">We typically reply within an hour during business hours</div>' +
+    '</div>';
 
-  const ts = document.createElement('div');
-  ts.className = 'msg-time bot';
-  ts.textContent = nowStr();
-  bub.appendChild(ts);
-  row.appendChild(bub);
-  wrap.appendChild(row);
-  wrap.scrollTop = wrap.scrollHeight;
+  const sendBtn = c.querySelector('#sup-form-send');
+  if (sendBtn) sendBtn.onclick = function() { _supSubmitForm(); };
+
+  openRightPanel(c, 'Email Support');
 }
 
-async function _supHandleDraftSignal(aiText) {
-  const w = window._supWizard;
-  if (!w || !w.active) return;
-  const history = window.chatHistory || [];
-  let bol = w.bol, issue = w.issue, detailParts = [];
-  for (let i = 0; i < history.length; i++) {
-    const msg = history[i];
-    const content = typeof msg.content === 'string' ? msg.content : '';
-    if (msg.role === 'user') {
-      const bolMatch = content.match(/\b(1[46]\d{7,9})\b/);
-      if (bolMatch) bol = bolMatch[1];
-      if (!issue) {
-        if (/damage|claim|loss|broken|cracked|missing piece/i.test(content)) issue = 'claim';
-        else if (/invoice|billing|charge|reweigh|rebill|overcharge/i.test(content)) issue = 'billing';
-        else if (/delay|late|pickup|delivery|tracking|missed|where is/i.test(content)) issue = 'shipment';
-        else issue = 'other';
-      }
-      if (content.length > 5) detailParts.push(content);
-    }
+async function _supSubmitForm() {
+  const topicEl = document.getElementById('sup-form-topic');
+  const bolEl   = document.getElementById('sup-form-bol');
+  const msgEl   = document.getElementById('sup-form-message');
+  const errEl   = document.getElementById('sup-form-error');
+  const sendBtn = document.getElementById('sup-form-send');
+  const message = msgEl ? msgEl.value.trim() : '';
+  if (!message) {
+    if (errEl) { errEl.textContent = 'Please add a message so we know how to help.'; errEl.style.display = 'block'; }
+    if (msgEl) msgEl.focus();
+    return;
   }
-  // Also extract details from AI messages (they summarize what was said)
-  for (let i = 0; i < history.length; i++) {
-    const msg = history[i];
-    const content = typeof msg.content === 'string' ? msg.content : '';
-    if (msg.role === 'assistant' && content.length > 10 && !content.includes('[[DRAFT]]')) {
-      // Don't add AI messages to details — just use user messages
-    }
-  }
-  w.bol = bol; w.issue = issue || 'other';
-  // Build a clean details string from user messages, skipping very short ones
-  w.details = detailParts.filter(function(d) { return d.length > 3 && !/^(yes|no|both|ok|sure|not sure|i don.t know)$/i.test(d.trim()); }).join('. ');
-  if (!w.details) w.details = detailParts.join('. ');
-  if (bol && !w.shipment) {
-    try {
-      const token = await getToken();
-      const r = await fetch(PRIMUS_BASE + '/applet/v1/shipment?limit=5&bolNumber=' + encodeURIComponent(bol), { headers: { 'Authorization': 'Bearer ' + token } });
-      if (r.ok) { const d = await r.json(); const res = (d.data && d.data.results) || d.results || []; if (res.length) w.shipment = res[0]; }
-    } catch(e) {}
-  }
-  await _supShowDraft();
-}
-
-async function _supShowDraft() {
-  const w = window._supWizard;
-  if (!w) return;
-  w.step = 'confirm';
-  const acctName  = currentCustomer ? currentCustomer.name : 'Customer';
-  const acctCode  = currentCustomer ? currentCustomer.code : '';
-  const custEmail = currentCustomer ? currentCustomer.email : '';
-  const subjectMap = { shipment: 'Shipment Issue', billing: 'Invoice / Billing Question', claim: 'Damage or Loss Claim', other: 'General Inquiry' };
-  const issueIntros = { shipment: 'We are reaching out regarding a shipment issue.', billing: 'We are reaching out regarding an invoice or billing question.', claim: 'We are reaching out to file a freight claim.', other: 'We are reaching out with a general inquiry.' };
-  const bolLine = w.bol ? 'BOL #' + w.bol : '';
-  let shipInfo = null;
-  if (w.shipment) {
-    const s = w.shipment;
-    shipInfo = { carrier: (s.carrier && s.carrier.name) || s.carrierName || '', origin: (s.originCity || '') + (s.originState ? ', ' + s.originState : ''), dest: (s.destinationCity || '') + (s.destinationState ? ', ' + s.destinationState : ''), status: s.status || '', date: s.bookDate ? new Date(s.bookDate).toLocaleDateString('en-US') : '' };
-  }
-  const subject = (subjectMap[w.issue] || 'General Inquiry') + (bolLine ? ' — ' + bolLine : '') + ' | ' + acctName;
-  const bodyLines = ['Hi Support Team,', '', issueIntros[w.issue] || issueIntros.other, ''];
-  if (bolLine) bodyLines.push(bolLine);
-  if (shipInfo) {
-    if (shipInfo.carrier) bodyLines.push('Carrier: ' + shipInfo.carrier);
-    if (shipInfo.origin && shipInfo.dest) bodyLines.push('Route: ' + shipInfo.origin + ' → ' + shipInfo.dest);
-    if (shipInfo.status) bodyLines.push('Status: ' + shipInfo.status);
-    if (shipInfo.date) bodyLines.push('Ship Date: ' + shipInfo.date);
-    bodyLines.push('');
-  }
-  // Build a rich details section from the conversation
-  const _allDetails = [];
-  (window.chatHistory || []).forEach(function(msg) {
-    if (msg.role === 'user') {
-      const c = typeof msg.content === 'string' ? msg.content.trim() : '';
-      if (c.length > 3 && !/^(yes|no|both|ok|sure|not sure|i don.t know|edit|send|cancel)$/i.test(c)) {
-        _allDetails.push(c);
-      }
-    }
-  });
-  const _detailStr = _allDetails.join('. ');
-  if (_detailStr) { bodyLines.push('Details:', _detailStr, ''); }
-  else if (w.details) { bodyLines.push('Details:', w.details, ''); }
-  if (w.files && w.files.length) { bodyLines.push('Attachments: ' + w.files.map(function(f) { return f.name; }).join(', '), ''); }
-  bodyLines.push('Account: ' + acctName + (acctCode ? ' (' + acctCode + ')' : ''), 'Reply to: ' + (custEmail || 'on file'), '', 'Thank you,', acctName);
-  const draftText = bodyLines.join('\n');
-  w.draftText = draftText; w.draftSubject = subject;
-
-  const wrap = document.getElementById('messages');
-  if (!wrap) return;
-  const row = document.createElement('div'); row.className = 'msg-row bot';
-  const bub = document.createElement('div'); bub.className = 'msg-bubble';
-  const intro = document.createElement('div'); intro.className = 'msg-text bot';
-  intro.textContent = "Take a look — edit anything directly, attach files if you have them, then hit Send it when you're ready.";
-  bub.appendChild(intro);
-
-  const card = document.createElement('div');
-  card.style.cssText = 'margin-top:10px;background:#f9f8f5;border:1.5px solid var(--bdr);border-radius:10px;padding:14px 16px;';
-  card.innerHTML = '<div style="font-size:11px;color:var(--fa);margin-bottom:3px;">To: support@freightandlogistics.ai</div><div style="font-size:11px;color:var(--fa);margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--bdr);">Subject: ' + subject + '</div>';
-  const bodyTA = document.createElement('textarea');
-  bodyTA.id = 'sup-draft-body';
-  bodyTA.value = draftText;
-  bodyTA.style.cssText = 'width:100%;min-height:160px;border:none;background:transparent;font-size:12px;font-family:var(--font);color:var(--tx);resize:vertical;outline:none;line-height:1.6;box-sizing:border-box;';
-  bodyTA.oninput = function() { w.draftText = bodyTA.value; };
-  card.appendChild(bodyTA);
-  bub.appendChild(card);
-
-  const attachWrap = document.createElement('div');
-  attachWrap.style.cssText = 'margin-top:8px;';
-  attachWrap.innerHTML = '<div id="sup-wiz-drop" style="border:2px dashed var(--bdr);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:11px;color:var(--fa);transition:border-color .15s;" onclick="document.getElementById(\'sup-wiz-file-input\').click()" ondragover="event.preventDefault();this.style.borderColor=\'var(--ac)\'" ondragleave="this.style.borderColor=\'var(--bdr)\'" ondrop="event.preventDefault();this.style.borderColor=\'var(--bdr)\';_supAddFiles(event.dataTransfer.files);">Attach supporting files <span style="color:var(--ac);font-weight:500;">(click or drag)</span></div><input id="sup-wiz-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx" style="display:none;" onchange="_supAddFiles(this.files);this.value=\'\'"><div id="sup-wiz-file-list" style="margin-top:5px;display:flex;flex-direction:column;gap:3px;"></div>';
-  bub.appendChild(attachWrap);
-
-  const actDiv = document.createElement('div');
-  actDiv.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;';
-  const sendBtn = document.createElement('button');
-  sendBtn.id = 'sup-send-btn';
-  sendBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="margin-right:6px;flex-shrink:0;"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send it';
-  sendBtn.style.cssText = 'background:var(--ac);border:none;border-radius:20px;padding:8px 20px;font-size:12px;font-weight:600;color:#fff;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;';
-  sendBtn.onclick = function() { _supSendEmail(sendBtn); };
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = 'background:none;border:none;font-size:11px;color:var(--fa);cursor:pointer;font-family:var(--font);padding:8px 0;text-decoration:underline;';
-  cancelBtn.onclick = function() { window._supWizard = null; window._supModeActive = false; appendMessage('bot', 'Support request cancelled. Let me know if you need anything else.'); };
-  actDiv.appendChild(sendBtn); actDiv.appendChild(cancelBtn);
-  bub.appendChild(actDiv);
-  const ts = document.createElement('div'); ts.className = 'msg-time bot'; ts.textContent = nowStr();
-  bub.appendChild(ts); row.appendChild(bub); wrap.appendChild(row); wrap.scrollTop = wrap.scrollHeight;
+  if (errEl) errEl.style.display = 'none';
+  const topic    = (topicEl && topicEl.value) || 'Something else';
+  const bol      = bolEl ? bolEl.value.trim() : '';
+  const company  = (currentCustomer && currentCustomer.name) || 'Customer';
+  const subj     = topic + ' — ' + company;
+  const bodyText = (bol ? 'BOL #' + bol + '\n\n' : '') + message;
+  const files    = (window._supWizard && window._supWizard.files) || [];
+  await _supSendEmail(sendBtn, { subject: subj, bodyText: bodyText, files: files });
 }
 
 function _supAddFiles(files) {
@@ -8762,25 +8653,18 @@ function _supAddFiles(files) {
   list.innerHTML = (w.files || []).map(function(f, i) {
     return '<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#f0ede6;border-radius:5px;font-size:11px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="flex:1;color:var(--tx);">' + f.name + '</span><span style="color:var(--fa);">' + (f.size/1024).toFixed(0) + 'KB</span><button onclick="window._supWizard.files.splice(' + i + ',1);_supAddFiles(null)" style="background:none;border:none;cursor:pointer;color:var(--mu);font-size:12px;padding:0;line-height:1;">&#215;</button></div>';
   }).join('');
-  if (w.draftText) {
-    const ta = document.getElementById('sup-draft-body');
-    let txt = w.draftText.replace(/^Attachments:.*\n\n?/m, '');
-    if (w.files && w.files.length) txt = txt.replace(/^Account:/m, 'Attachments: ' + w.files.map(function(f){return f.name;}).join(', ') + '\n\nAccount:');
-    w.draftText = txt;
-    if (ta) ta.value = txt;
-  }
 }
 
-async function _supSendEmail(btn) {
-  const w = window._supWizard;
-  if (!w) return;
-  const ta = document.getElementById('sup-draft-body');
-  if (ta) w.draftText = ta.value;
+async function _supSendEmail(btn, opts) {
+  opts = opts || {};
+  const _origBtn = btn ? btn.innerHTML : '';
   if (btn) { btn.innerHTML = 'Sending…'; btn.disabled = true; }
   const acctName  = currentCustomer ? currentCustomer.name : 'Customer';
   const acctCode  = currentCustomer ? currentCustomer.code : '';
   const custEmail = currentCustomer ? currentCustomer.email : '';
-  const subj = w.draftSubject || 'Support Request';
+  const subj = opts.subject || 'Support Request';
+  const bodyText = opts.bodyText || '';
+  const files = opts.files || [];
   // 8-char reference — charset excludes ambiguous 0/O/1/I
   const _refChars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let ref = '';
@@ -8795,7 +8679,7 @@ async function _supSendEmail(btn) {
     '<p><strong>Subject:</strong> ' + subj + '</p>' +
     '<p><strong>Ref:</strong> ' + ref + '</p>' +
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
-    '<div style="white-space:pre-wrap;line-height:1.7;font-size:13px;">' + (w.draftText || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
+    '<div style="white-space:pre-wrap;line-height:1.7;font-size:13px;">' + (bodyText || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
     '<p style="font-size:11px;color:#999;">Sent via Freight and Logistics Portal</p></div>';
   const custHtml =
@@ -8818,7 +8702,7 @@ async function _supSendEmail(btn) {
     'Freight and Logistics, Inc. · Nationwide 3PL Freight Brokerage\n' +
     'support@freightandlogistics.ai · (800) 687-3713 · freightandlogistics.ai';
   try {
-    const attachments = await Promise.all((w.files || []).map(async function(f) {
+    const attachments = await Promise.all(files.map(async function(f) {
       const b64 = await new Promise(function(res, rej) { const rd = new FileReader(); rd.onload = function() { res(rd.result.split(',')[1]); }; rd.onerror = rej; rd.readAsDataURL(f); });
       return { content: b64, filename: f.name, type: f.type || 'application/octet-stream', disposition: 'attachment' };
     }));
@@ -8826,11 +8710,12 @@ async function _supSendEmail(btn) {
     if (custEmail) {
       try { await sendViaEmail({ to: custEmail, toName: firstName, subject: 'We received your message — ' + subj + ' [' + ref + ']', htmlBody: custHtml, textBody: custText }); } catch(e) { console.warn('Ack failed:', e); }
     }
-    window._supWizard = null; window._supModeActive = false;
+    window._supWizard = null;
+    if (btn) { btn.innerHTML = 'Sent ✓'; btn.disabled = true; }
     setTimeout(function() { appendMessage('bot', "Done! Your support request has been submitted and a confirmation is on its way to your email. We'll get back to you shortly — typically within about an hour during business hours."); }, 200);
   } catch(e) {
     console.error('Support send error:', e);
-    if (btn) { btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="margin-right:6px;flex-shrink:0;"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send it'; btn.disabled = false; }
+    if (btn) { btn.innerHTML = _origBtn; btn.disabled = false; }
     appendMessage('bot', 'Something went wrong: ' + e.message + '. You can also reach us at support@freightandlogistics.ai or (800) 687-3713.');
   }
 }
@@ -12072,16 +11957,6 @@ THINGS THAT NEED HUMAN HANDLING (give 1-sentence answer then route to support):
 ACCOUNT CONTEXT: ${shipCount} shipments loaded${dateRange ? ' (' + dateRange + ')' : ''}. Top carrier: ${topCarrierStr || 'unknown'}.`;
     }
 
-    if (window._supModeActive) {
-      sys += `
-
-=== SUPPORT MODE — OVERRIDE ALL OTHER BEHAVIOR ===
-You are collecting information to submit a support request for ${customerName}. Do NOT give standard freight advice. Do NOT tell them to use the Email Support form — they are already in it. Instead, ask natural follow-up questions to gather: the specific issue, a BOL number if available, and enough detail to write a professional support email.
-Ask ONE question at a time. Keep responses to 1-2 sentences. Be warm and direct.
-When you have the issue type and a description (BOL optional), end your response with [[DRAFT]] on its own line — nothing after it. The system will automatically generate the email draft.
-Example flow: customer says "damage claim on BOL 123" → you say "Got it. Was the damage noted on the delivery receipt, and roughly what is the value of the damaged items? [[DRAFT]]" if you have enough, or ask one more question if not.`;
-    }
-
     return sys;
   }());
   chatHistory.push({role:'user', content:t});
@@ -12106,13 +11981,7 @@ Example flow: customer says "damage claim on BOL 123" → you say "Got it. Was t
     let text = (d.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('\n').trim() || "I am having trouble connecting. Please try again.";
     chatHistory.push({role:'assistant', content:text});
     removeTyping();
-    if (window._supModeActive && text.includes('[[DRAFT]]')) {
-      const _dispText = text.replace(/\[\[DRAFT\]\]/g, '').trim();
-      if (_dispText) appendMessage('bot', _dispText);
-      await _supHandleDraftSignal(_dispText);
-    } else {
-      appendMessage('bot', text);
-    }
+    appendMessage('bot', text);
   } catch(e) {
     console.error('Claude error:', e);
     chatHistory.pop();
@@ -13124,7 +12993,7 @@ async function clientSideSearch(t, lower) {
   // ── Damage / claim questions ──
   // (Dead claim intercept removed — clientSideSearch is no longer called; claim-status/amount questions
   // now reach the get_claims tool in the waybAgent loop, and filing a new claim goes through the
-  // support-mode [[DRAFT]] flow.)
+  // Email Support form.)
 
   // ── Late shipment / overdue ──
   const isLateQuery = /\b(late|overdue|delayed|delay|past due|not delivered|hasn.?t arrived|where is|behind schedule|expected.*delivery|delivery.*expected|eta|estimated.*arrival|arrival.*estimated|when.*deliver|deliver.*when|when.*arrive|arrive.*when|when will|will it.*deliver|will.*be.*deliver)\b/.test(lower) && !/\b(invoice|invoices|payment|show me|list|all)\b/.test(lower);
@@ -13742,67 +13611,12 @@ async function handleInput(text) {
     return;
   }
 
-  // ── Support mode bypass — skip ALL pre-AI handlers, go straight to AI ──────────
-  if (window._supModeActive) {
-    // If draft is showing and user is giving edit instructions, update draft directly
-    const _wSup = window._supWizard;
-    if (_wSup && _wSup.step === 'confirm') {
-      const _ta = document.getElementById('sup-draft-body');
-      if (_ta) {
-        // Let AI update the draft content
-        showTyping();
-        const _editPrompt = 'The customer wants to edit this support email draft:\n\n' + _ta.value + '\n\nTheir instruction: ' + t + '\n\nRewrite ONLY the email body (everything after the greeting line) incorporating their change. Return just the updated email body text, nothing else. No subject line, no To: line, just the body starting with "Hi Support Team,"';
-        try {
-          const _er = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: 'You are a professional email editor. Follow instructions precisely.', messages: [{ role: 'user', content: _editPrompt }] })
-          });
-          const _newBody = (_er.content || []).filter(function(b) { return b.type === 'text'; }).map(function(b) { return b.text; }).join('').trim();
-          if (_newBody && _ta) { _ta.value = _newBody; _wSup.draftText = _newBody; }
-          removeTyping();
-          appendMessage('bot', 'Done — I\'ve updated the draft above.');
-        } catch(e) { removeTyping(); appendMessage('bot', 'Could not update the draft. Please edit it directly in the text area above.'); }
-        return;
-      }
-    }
-    showTyping();
-    const customerName = (currentCustomer && currentCustomer.name) || 'the customer';
-    const sysPrompt = 'You are a freight support assistant for Freight and Logistics, Inc. helping ' + customerName + ' submit a support request.\n\nRULES:\n- Plain prose only. No bullets, no lists, no markdown, no bold.\n- Maximum 2 sentences per response.\n- Warm, direct broker voice.\n\nYour job: collect what you need to write a professional support email, then draft it.\n\nSTRATEGY — follow this exactly:\n1. On the FIRST customer message: acknowledge their issue and ask ALL missing key questions at once in one natural sentence. For a damage claim ask: what was damaged, how bad is it, and approximate value. For a shipment issue ask: what is happening and when did it start. For billing ask: which invoice or charge and what is the discrepancy. Never ask more than 3 things in one message.\n2. After the customer responds: if you have enough to write a professional email (issue type + some description), immediately end your response with [[DRAFT]] on its own line. Nothing after [[DRAFT]].\n3. If one critical piece is still missing after their response, ask only that one thing, then [[DRAFT]] on the next exchange no matter what.\n4. Never ask more than 2 rounds of questions total before drafting.\n5. If the customer mentioned a BOL number earlier in the conversation, do not ask for it again. If they have not mentioned one, ask for it naturally as part of your first question.\n6. Do NOT tell them to use the Email Support form. Do NOT give freight advice. Do NOT apologize repeatedly.';
-    chatHistory.push({ role: 'user', content: t });
-    // Keep full history (capped 200); the API payload is sliced to the last 20 turns below.
-    if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
-    try {
-      const r = await (window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: sysPrompt, messages: chatHistory.slice(-20).map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })).filter(m => m.content) })
-      });
-      let text2 = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim() || 'I am having trouble connecting. Please try again.';
-      chatHistory.push({ role: 'assistant', content: text2 });
-      removeTyping();
-      if (text2.includes('[[DRAFT]]')) {
-        const displayText = text2.replace(/\[\[DRAFT\]\]/g, '').trim();
-        if (displayText) appendMessage('bot', displayText);
-        await _supHandleDraftSignal(displayText);
-      } else {
-        appendMessage('bot', text2);
-      }
-    } catch(e) {
-      console.error('Support mode AI error:', e);
-      chatHistory.pop();
-      removeTyping();
-      appendMessage('bot', 'I am having trouble connecting right now. Please try again.');
-    }
-    return;
-  }
-
   // ── Chart follow-up bypass ─────────────────────────────────────────────────────
   // Short chart requests ("in a pie chart", "as a bar chart", "make it a donut",
   // "show it as a line chart") carry no shipment keywords, so once a quote is open they get
   // grabbed by the _inQuoteConvo → aiConverse route just below. For a logged-in customer these
-  // must ALWAYS reach waybAgent, which owns the render_chart tool. Placed here — right after the
-  // support-mode check and before the quote-conversation interceptor — so nothing steals them.
+  // must ALWAYS reach waybAgent, which owns the render_chart tool. Placed here —
+  // before the quote-conversation interceptor — so nothing steals them.
   if (currentCustomer && /\b(pie chart|bar chart|line chart|donut|as a chart|in a chart|show.*chart|chart.*show)\b/i.test(t)) {
     await waybAgent(t);
     return;
