@@ -8779,27 +8779,54 @@ async function _supSendEmail(btn) {
   const acctName  = currentCustomer ? currentCustomer.name : 'Customer';
   const acctCode  = currentCustomer ? currentCustomer.code : '';
   const custEmail = currentCustomer ? currentCustomer.email : '';
+  const subj = w.draftSubject || 'Support Request';
+  // 8-char reference — charset excludes ambiguous 0/O/1/I
+  const _refChars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let ref = '';
+  for (let i = 0; i < 8; i++) ref += _refChars.charAt(Math.floor(Math.random() * _refChars.length));
+  const _fnRaw = ((currentCustomer && (currentCustomer.firstName || currentCustomer.name)) || '').trim().split(/\s+/)[0] || '';
+  const firstName = _fnRaw ? (_fnRaw.charAt(0).toUpperCase() + _fnRaw.slice(1).toLowerCase()) : 'there';
   const htmlBody =
     '<div style="font-family:sans-serif;font-size:14px;color:#333;max-width:600px;">' +
     '<h2 style="color:#bd27bc;margin-bottom:4px;">Support Request</h2>' +
     '<p><strong>Account:</strong> ' + acctName + (acctCode ? ' (' + acctCode + ')' : '') + '</p>' +
     '<p><strong>Reply to:</strong> ' + (custEmail || 'on file') + '</p>' +
-    '<p><strong>Subject:</strong> ' + (w.draftSubject || 'Support Request') + '</p>' +
+    '<p><strong>Subject:</strong> ' + subj + '</p>' +
+    '<p><strong>Ref:</strong> ' + ref + '</p>' +
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
     '<div style="white-space:pre-wrap;line-height:1.7;font-size:13px;">' + (w.draftText || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
     '<hr style="border:none;border-top:1px solid #e5e2d9;margin:16px 0;">' +
     '<p style="font-size:11px;color:#999;">Sent via Freight and Logistics Portal</p></div>';
+  const custHtml =
+    '<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#333;max-width:600px;line-height:1.6;">' +
+    '<div style="font-size:20px;font-weight:700;color:#bd27bc;">Freight and Logistics, Inc.</div>' +
+    '<div style="border-top:2px solid #bd27bc;margin:10px 0 20px;"></div>' +
+    '<p>Hi ' + firstName + ',</p>' +
+    '<p>Thanks for reaching out to Freight and Logistics. We&rsquo;ve received your message and someone on our team will get back to you shortly &mdash; typically within about an hour during business hours (Mon&ndash;Fri, 6:30 AM&ndash;4 PM PST).</p>' +
+    '<p>If it&rsquo;s time-sensitive, just reply to this email and we&rsquo;ll bump it to the top.</p>' +
+    '<p>&mdash; The Freight and Logistics team</p>' +
+    '<div style="border-top:1px solid #e5e2d9;margin:20px 0 12px;"></div>' +
+    '<p style="font-size:12px;color:#999;margin:0;">Freight and Logistics, Inc. &middot; Nationwide 3PL Freight Brokerage</p>' +
+    '<p style="font-size:12px;color:#999;margin:4px 0 0;"><a href="mailto:support@freightandlogistics.ai" style="color:#bd27bc;text-decoration:none;">support@freightandlogistics.ai</a> &middot; (800) 687-3713 &middot; <a href="https://freightandlogistics.ai" style="color:#bd27bc;text-decoration:none;">freightandlogistics.ai</a></p>' +
+    '</div>';
+  const custText =
+    'Hi ' + firstName + ',\n\n' +
+    'Thanks for reaching out to Freight and Logistics. We\'ve received your message and someone on our team will get back to you shortly — typically within about an hour during business hours (Mon–Fri, 6:30 AM–4 PM PST).\n\n' +
+    'If it\'s time-sensitive, just reply to this email and we\'ll bump it to the top.\n\n' +
+    '— The Freight and Logistics team\n\n' +
+    'Freight and Logistics, Inc. · Nationwide 3PL Freight Brokerage\n' +
+    'support@freightandlogistics.ai · (800) 687-3713 · freightandlogistics.ai';
   try {
     const attachments = await Promise.all((w.files || []).map(async function(f) {
       const b64 = await new Promise(function(res, rej) { const rd = new FileReader(); rd.onload = function() { res(rd.result.split(',')[1]); }; rd.onerror = rej; rd.readAsDataURL(f); });
       return { content: b64, filename: f.name, type: f.type || 'application/octet-stream', disposition: 'attachment' };
     }));
-    await sendViaEmail({ to: 'support@freightandlogistics.ai', toName: 'Freight and Logistics Support', subject: '[Support] ' + (w.draftSubject || 'Support Request'), htmlBody: htmlBody, attachments: attachments });
+    await sendViaEmail({ to: 'support@freightandlogistics.ai', toName: 'Freight and Logistics Support', subject: '[Support] ' + subj + ' [' + ref + ']', htmlBody: htmlBody, attachments: attachments });
     if (custEmail) {
-      try { await sendViaEmail({ to: custEmail, toName: acctName, subject: '[Copy] ' + (w.draftSubject || 'Support Request'), htmlBody: htmlBody, attachments: attachments }); } catch(e) { console.warn('CC failed:', e); }
+      try { await sendViaEmail({ to: custEmail, toName: firstName, subject: 'We received your message — ' + subj + ' [' + ref + ']', htmlBody: custHtml, textBody: custText }); } catch(e) { console.warn('Ack failed:', e); }
     }
     window._supWizard = null; window._supModeActive = false;
-    setTimeout(function() { appendMessage('bot', "Done! Your support request has been submitted and a copy is on its way to your email. We'll get back to you as soon as possible — usually within a few hours during business hours."); }, 200);
+    setTimeout(function() { appendMessage('bot', "Done! Your support request has been submitted and a confirmation is on its way to your email. We'll get back to you shortly — typically within about an hour during business hours."); }, 200);
   } catch(e) {
     console.error('Support send error:', e);
     if (btn) { btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="margin-right:6px;flex-shrink:0;"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send it'; btn.disabled = false; }
