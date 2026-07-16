@@ -3801,7 +3801,11 @@ document.addEventListener('DOMContentLoaded', function(){
   if(ita){ ita.addEventListener('focus',_movieTakeOver); ita.addEventListener('keydown',_movieTakeOver); }
   // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
   ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) _movieTakeOver(); }, true));
-  if(!_movieKilled() && window.innerWidth>768) _mt(startMovie, 2000); // no auto-play timer on mobile
+  // Panel deep-link present? (?apply=1 / ?terms=1 / ?privacy=1) — the visitor came for a
+  // specific panel, so suppress the demo auto-play, which would soft-reset and close it.
+  let _panelDeepLink=false;
+  try { const _q=new URLSearchParams(location.search); _panelDeepLink = _q.get('apply')==='1' || _q.get('terms')==='1' || _q.get('privacy')==='1'; } catch(e) {}
+  if(!_movieKilled() && !_panelDeepLink && window.innerWidth>768) _mt(startMovie, 2000); // no auto-play on mobile or when a panel deep-link is present
   initVoiceMode();
   // Deep-link: /?apply=1 opens the Credit Application panel (used by the dispatch
   // modal's "Apply for Net 15 terms" link in portal.html, and any future entry point).
