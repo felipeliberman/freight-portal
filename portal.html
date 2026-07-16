@@ -8101,7 +8101,7 @@ function setLoggedIn(on){
       if(day===1) subs.push('Happy Monday. Time to roll.');
       var sub=subs[Math.floor(Math.random()*subs.length)];
       var fullNm=currentCustomer&&(currentCustomer.name||currentCustomer.firstName)||null;
-      if(fullNm){var w=fullNm.trim().split(/\s+/);fullNm=w.length>2?w[0]+' '+w[1]:fullNm;fullNm=fullNm.replace(/[.,\s]+$/,'');}
+      if(fullNm){fullNm=fullNm.trim().replace(/^the\s+/i,'');var w=fullNm.split(/\s+/);fullNm=w.length>2?w[0]+' '+w[1]:fullNm;fullNm=fullNm.replace(/[.,\s]+$/,'');}
       var g=document.getElementById('welcome-greeting');
       var n=document.getElementById('welcome-name');
       var s=document.getElementById('welcome-subline');
@@ -8190,10 +8190,15 @@ async function doLogin() {
     primusToken = token;
     primusExpiry = Date.now() + 50 * 60 * 1000;
 
-    // Fetch first shipment to get company name
-    let companyName = email.split('@')[1].split('.')[0]; // fallback: domain name
-    let avatarText = email.slice(0,2).toUpperCase();
+    // Company name, in priority order (each step fails open — any error keeps the
+    // lower-priority value and never blocks login):
+    //   1. billToInformation company name from /applet/v1/profile (works with ZERO shipments)
+    //   2. first-shipment billPartyName || shipperName
+    //   3. email domain fallback (last resort)
+    let companyName = email.split('@')[1].split('.')[0]; // priority 3: domain fallback
     let firstName = '';
+
+    // priority 2 — first shipment
     try {
       const sr = await fetch(PRIMUS_BASE + '/applet/v1/book?limit=1&page=1', {
         headers: { 'Authorization': 'Bearer ' + token }
@@ -8201,18 +8206,14 @@ async function doLogin() {
       if (sr.ok) {
         const sd = await sr.json();
         const s = sd.data && sd.data.results && sd.data.results[0];
-        if (s) {
-          companyName = s.billPartyName || s.shipperName || companyName;
-          // Build avatar from first letters of company name words
-          const words = companyName.trim().split(/\s+/).filter(Boolean);
-          avatarText = words.length >= 2 ? (words[0][0] + words[1][0]).toUpperCase() : companyName.slice(0,2).toUpperCase();
-        }
+        if (s && (s.billPartyName || s.shipperName)) companyName = s.billPartyName || s.shipperName;
       }
     } catch(e) {}
 
-    // Resolve the real Primus customer ID. Primus doesn't return it at login;
-    // /applet/v1/profile is self-scoped to the logged-in account and exposes it
-    // as billToInformation.id. We need it to key the terms lookup below.
+    // Resolve the real Primus customer ID AND the real company name from the SAME
+    // /applet/v1/profile call. billToInformation is self-scoped to the logged-in
+    // account and populated even with zero shipment history, so its company name
+    // (priority 1) overrides the shipment-derived name above when present.
     let primusCustomerId = null;
     try {
       const pr = await fetch(PRIMUS_BASE + '/applet/v1/profile', {
@@ -8220,10 +8221,25 @@ async function doLogin() {
       });
       if (pr.ok) {
         const pd = await pr.json();
-        const bt = pd.data && pd.data.results && pd.data.results.billToInformation;
-        if (bt && bt.id != null) primusCustomerId = String(bt.id);
+        const bt = (pd.data && pd.data.results && pd.data.results.billToInformation) || null;
+        if (bt) {
+          if (bt.id != null) primusCustomerId = String(bt.id);
+          // Confirmed against live /applet/v1/profile: billToInformation.name holds the company
+          // name (e.g. "The Backpackers Shop"). The rest stay as defensive fallback since other
+          // Primus records may populate a different key.
+          const btName = bt.name || bt.company || bt.companyName || bt.billToName || bt.customerName || '';
+          if (btName && btName.trim()) companyName = btName.trim(); // priority 1 wins
+        }
       }
     } catch(e) {}
+
+    // Rebuild avatar initials from whichever name won the priority contest.
+    let avatarText;
+    {
+      const _w = companyName.trim().split(/\s+/).filter(Boolean);
+      avatarText = _w.length >= 2 ? (_w[0][0] + _w[1][0]).toUpperCase()
+                 : (companyName.slice(0,2) || email.slice(0,2)).toUpperCase();
+    }
 
     // Look up self-sourced billing terms (PRE / NET15 / …). Absence of an entry
     // — or ANY failure here — means normal/non-PRE terms and must never block login.
@@ -9696,7 +9712,7 @@ function applyGreeting(){
   var s=document.getElementById("welcome-subline");
   if(!g||!n) return;
   var nm=(currentCustomer&&(currentCustomer.name||currentCustomer.firstName))||null;
-  if(nm){var _w=nm.trim().split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;nm=nm.replace(/[.,\s]+$/,'');}
+  if(nm){nm=nm.trim().replace(/^the\s+/i,'');var _w=nm.split(/\s+/);nm=_w.length>2?_w[0]+" "+_w[1]:nm;nm=nm.replace(/[.,\s]+$/,'');}
   var pick=pickGreeting();
   // Greeting in its own span, name in #welcome-name, separator supplied by the static #welcome-sep
   // (", ") on desktop. No trailing period — appending one here left "Brothers." + the leftover ", "
