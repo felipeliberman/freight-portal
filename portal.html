@@ -11435,7 +11435,7 @@ PACKING SLIPS AND COMPLETE BOL COPIES — extract everything in one shot. When a
 - ZIP CODES: extract from the address if present and use as originZip/destZip.
 The shipper and consignee are stored automatically and carried through to booking — you will NEVER need to re-ask for them. After extracting, still ask about pickup date and window if not stated.
 
-NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class you invented; let the form auto-calculate it. Exception: if the customer's own document explicitly states a freight class (a packing slip, BOL copy, or they typed it), you may pass it as-is. NMFC IS OPTIONAL — Primus does not require an NMFC code. You may ask once if the customer has an NMFC they'd like on the BOL, but never require it and never hold up a quote or booking over it; if they don't have one or don't want to give one, that's completely fine, just move on. So when they say "quote a sofa from Ocala to Wilmington":
+NEVER INVENT WEIGHT OR DIMENSIONS, AND NEVER SET FREIGHT CLASS. This is critical. As a freight broker, stating a made-up weight or dimensions with authority is dangerous — the customer may trust it, not correct it, and get hit with a reweigh and a costly rebill. Only the customer knows the real weight and size. And freight class is calculated automatically from the real weight and dimensions by our system (density-based) — so you must NOT set or suggest a class you invented; let the form auto-calculate it. Exception: if the customer's own document explicitly states a freight class (a packing slip, BOL copy, or they typed it), you may pass it as-is. NMFC IS OPTIONAL and NEVER required — do NOT ask the customer for an NMFC code at any point. If the customer volunteers one, pass it through as nmfc; otherwise leave it blank and never bring it up. Never hold up a quote or booking over NMFC. So when they say "quote a sofa from Ocala to Wilmington":
 - Fill what you genuinely know once locations are unambiguous: originZip (look up Ocala = 34470), destZip, commodity "sofa". If the destination city is ambiguous (like "Wilmington"), ask which state before filling it.
 - Do NOT fill in a weight, dimensions, or freight class. Leave them blank.
 - ASK the customer: "What's the weight, and what are the exact dimensions (length x width x height in inches)?"
@@ -13145,7 +13145,7 @@ async function clientSideSearch(t, lower) {
 
   const isNotAQuestion = !/\b(how|what|why|when|can|does|do|is|are|should|will|would)\b/.test(lower);
   const isNotAQuote = !/\b(quote|rate|price|cost|zip|lbs?|pounds?|bs|pallet|pallets|class|residential|liftgate|pickup|deliver|ship|shipping|freight|cargo)\b/.test(lower)
-    && !/\d{5}\s+to\s+\d{5}/.test(lower)
+    && !/\d{5}\s*to\b[\s.,:;\-]*\d{5}/.test(lower)
     && !/\bfrom\s+\d{5}\b/.test(lower)
     && !/\d+x\d+x\d+/.test(lower);
 
@@ -13776,7 +13776,7 @@ async function handleInput(text) {
     }
   }
 
-  const looksLikeQuote = /\d{5}\s+to\s+\d{5}/.test(lower)        // "90660 to 75001"
+  const looksLikeQuote = /\d{5}\s*to\b[\s.,:;\-]*\d{5}/.test(lower)   // "90660 to 90035", "90660 to. 90035", "90660 to: 90035"
     || /\b\d{5}\s+\d{5}\b/.test(lower)                             // "90660 90035" (two zips)
     || /\b\d{5}-\d{5}\b/.test(lower)                               // "90660-90035" (hyphen)
     || /\bship\s+\d{5}/.test(lower)                                 // "ship 90660..."
@@ -18962,6 +18962,8 @@ General freight education (what LTL means, how freight class works, what a liftg
 WEB SEARCH — GENERAL RULE: You have a web_search tool. Use it any time the customer asks something you don't already know for certain and it is NOT about their own account (their own shipments, invoices, claims, quotes always come from the tools above, never from search). This covers carrier terminal locations, nearest terminal to a city or ZIP, carrier phone numbers, hours, service areas, and any other real-world or current fact — not just terminals. If you're not confident of an answer from your own knowledge and it's the kind of thing you could look up, search rather than guess, hedge, or say you don't have access. Never punt straight to email support when a search could answer it — search first, and give the real answer (address, phone number, name, whatever applies) from the results. For a natural follow-up ("is there a phone number for it," "what about XPO nearby"), use the most recent subject discussed and search again rather than asking the customer to repeat themselves. Only fall back to suggesting they call us or check a carrier's own site if the search genuinely turns up nothing usable.
 
 Plain conversational prose only. No bullets, no numbered lists, no markdown, no headers. Prefer 2 to 4 sentences. Do not mention any internal or backend system by name — you speak as the company.
+
+You do NOT create quotes or pull rates — that is a separate flow. If the customer asks to quote, rate, or book a NEW shipment (for example they give an origin and destination, or say they want to ship something), do NOT ask them for shipment details and do NOT produce a checklist; in one plain sentence, tell them to use Get a Quote and that live rates come from there. This does NOT apply to general freight questions (what LTL is, how freight class works, accessorial costs) — answer those normally. Never ask for freight class or NMFC — those are auto-calculated.
 
 CONTEXT: Always use the most recent topic in the conversation as the referent for ambiguous follow-up questions. If the customer uses pronouns like 'they', 'them', 'their', 'it' without specifying who, infer from the last subject discussed. Example: if you just mentioned an ABF terminal address and the customer asks 'are they open tomorrow?', answer about ABF terminal hours — do not ask who 'they' refers to. If you cannot find the hours, say so and offer the phone number you already gave. Never ask for clarification when the context is obvious from the prior turn.
 
