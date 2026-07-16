@@ -1279,7 +1279,7 @@ function openFormPanel() {
       </div></div>
     </div>
     <div id="sf-error" style="display:none;padding:9px 11px;background:#fef2f2;border:1px solid #fecaca;border-radius:7px;font-size:12px;color:#dc2626;margin-bottom:10px;"></div>
-    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" style="color:var(--mu);">Terms and Conditions</a> and <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" style="color:var(--mu);">Privacy Policy</a>.</div>
+    <div style="font-size:11px;color:var(--fa);text-align:center;margin-bottom:8px;">By submitting you agree to our <a href="https://www.freightandlogistics.ai/?terms=1" target="_blank" rel="noopener noreferrer" style="color:var(--mu);">Terms and Conditions</a> and <a href="https://www.freightandlogistics.ai/?privacy=1" target="_blank" rel="noopener noreferrer" style="color:var(--mu);">Privacy Policy</a>.</div>
     <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;"><label>Website<input class="sf-website" type="text" tabindex="-1" autocomplete="off"></label></div>
     <div style="display:flex;justify-content:center;margin:8px 0 12px;"><div class="sf-turnstile" style="min-height:65px;"></div></div>
     <button class="sf-submit" id="sf-submit-btn" onclick="submitForm()">Open My Account</button>
@@ -1332,8 +1332,8 @@ async function submitForm() {
     showErr('Network error — please try again or call (800) 687-3713.');
     return;
   }
-  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">We'll email your login details within about an hour during business hours — then you're ready to ship.</div><div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--bdr);font-size:12.5px;color:var(--mu);line-height:1.6;max-width:300px;">Want to be invoiced on Net 15 terms? <a href="#" onclick="event.preventDefault();openCreditAppPanel()" style="color:var(--ac);font-weight:600;text-decoration:none;">Apply for credit</a></div></div>`;
-  appendBot("You're all set. We'll email your login details within about an hour during business hours — then you're ready to ship. Want to be invoiced on Net 15 terms? Use the “Apply for credit” link on the confirmation to your right.");
+  document.getElementById('rp-body').innerHTML=`<div class="success-state"><div class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="success-title">You're all set.</div><div class="success-sub">We'll email your login details within about 1 hour during business hours — then you're ready to ship.</div><div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--bdr);font-size:12.5px;color:var(--mu);line-height:1.6;max-width:300px;">Want to be invoiced on Net 15 terms? <a href="#" onclick="event.preventDefault();openCreditAppPanel()" style="color:var(--ac);font-weight:600;text-decoration:none;">Apply for credit</a></div></div>`;
+  appendBot("You're all set. We'll email your login details within about 1 hour during business hours — then you're ready to ship. Want to be invoiced on Net 15 terms? Use the “Apply for credit” link on the confirmation to your right.");
 }
 
 // ── CREDIT APPLICATION PANEL ─────────────────────────────────────────────
@@ -1461,7 +1461,7 @@ function openCreditAppPanel(){
 
     // Consents
     '<div class="sf-section"><div class="sf-section-label">Terms &amp; Electronic Signature Consent</div>'+
-      '<label class="ca-consent"><input type="checkbox" id="ca-tc-consent"><span class="ca-consent-tx">I have read, understand, and agree to the <a href="https://www.freightandlogistics.com/terms-and-conditions" target="_blank" rel="noopener">Terms and Conditions</a> and <a href="https://www.freightandlogistics.com/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a> of Freight and Logistics, Inc., which are incorporated into and made part of this Credit Application &amp; Purchase Agreement.</span></label>'+
+      '<label class="ca-consent"><input type="checkbox" id="ca-tc-consent"><span class="ca-consent-tx">I have read, understand, and agree to the <a href="https://www.freightandlogistics.ai/?terms=1" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and <a href="https://www.freightandlogistics.ai/?privacy=1" target="_blank" rel="noopener noreferrer">Privacy Policy</a> of Freight and Logistics, Inc., which are incorporated into and made part of this Credit Application &amp; Purchase Agreement.</span></label>'+
       '<label class="ca-consent"><input type="checkbox" id="ca-esign-consent"><span class="ca-consent-tx">I agree to sign this document electronically and to conduct this transaction electronically. My electronic signature is the legal equivalent of my handwritten signature, and I consent to receive the signed agreement and related records electronically.</span></label>'+
     '</div>'+
 
@@ -1480,7 +1480,7 @@ function openCreditAppPanel(){
 
     '<div class="ca-err" id="ca-err"></div>'+
     '<button class="sf-submit" id="ca-submit">Sign &amp; Submit</button>'+
-    '<div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Questions? support@freightandlogistics.com · (800) 687-3713</div>'+
+    '<div style="text-align:center;margin-top:9px;font-size:11px;color:var(--fa);">Questions? support@freightandlogistics.ai · (800) 687-3713</div>'+
   '</div>';
 
   openRightPanel('Credit Application', html);
@@ -1665,7 +1665,7 @@ async function _caGeneratePdf(rec){
     agreeLine(a.agreed,'The signer confirmed reading and agreeing to this acknowledgment.'); y+=2; });
 
   h2('Terms & Electronic Signature Consent');
-  agreeLine(rec.consents.termsAndConditions,'Terms and Conditions and Privacy Policy (https://www.freightandlogistics.com/terms-and-conditions), incorporated into and made part of this agreement.');
+  agreeLine(rec.consents.termsAndConditions,'Terms and Conditions and Privacy Policy (https://www.freightandlogistics.ai/?terms=1), incorporated into and made part of this agreement.');
   agreeLine(rec.consents.electronicSignature,'Consent to sign electronically and to conduct this transaction electronically.');
 
   h2('Authorized Signature'); pageBreak(120);
@@ -3805,7 +3805,14 @@ document.addEventListener('DOMContentLoaded', function(){
   initVoiceMode();
   // Deep-link: /?apply=1 opens the Credit Application panel (used by the dispatch
   // modal's "Apply for Net 15 terms" link in portal.html, and any future entry point).
-  try { if(new URLSearchParams(location.search).get('apply')==='1' && typeof openCreditAppPanel==='function'){ _mt(openCreditAppPanel, 300); } } catch(e) {}
+  // /?terms=1 and /?privacy=1 open the Terms and Privacy panels — used by the credit-app
+  // form's legal links so they open in a NEW TAB without losing the customer's form data.
+  try {
+    const _dl = new URLSearchParams(location.search);
+    if(_dl.get('apply')==='1' && typeof openCreditAppPanel==='function'){ _mt(openCreditAppPanel, 300); }
+    if(_dl.get('terms')==='1' && typeof openTermsPanel==='function'){ _mt(openTermsPanel, 300); }
+    if(_dl.get('privacy')==='1' && typeof openPrivacyPanel==='function'){ _mt(openPrivacyPanel, 300); }
+  } catch(e) {}
 });
 </script>
 
