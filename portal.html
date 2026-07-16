@@ -951,7 +951,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 <!-- TOP HEADER -->
 <nav id="topbar">
   <div class="nav-left">
-    <a href="/portal" style="text-decoration:none;"><img src="logo.png" class="nav-logo" alt="Freight and Logistics, Inc." style="cursor:pointer;"></a>
+    <a href="/portal" style="text-decoration:none;" onclick="if(currentCustomer){event.preventDefault();goHomeTop();}"><img src="logo.png" class="nav-logo" alt="Freight and Logistics, Inc." style="cursor:pointer;"></a>
   </div>
   <div class="nav-right">
     <a href="tel:8006873713" class="nav-phone-link"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.69a16 16 0 0 0 6 6l1.27-.9a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg><span>(800) 687-3713</span></a>
@@ -975,7 +975,7 @@ You represent Freight and Logistics, Inc. Est. 2010. Phone (800) 687-3713. Email
 </div>
 
 <div id="login-screen" style="display:none!important;">
-<div class="log-box" style="position:relative;"><button class="log-close" onclick="closeLogin()" aria-label="Close">×</button>
+<div class="log-box" style="position:relative;"><button class="log-close" onclick="dismissLogin()" aria-label="Close">×</button>
   <div style="text-align:center;margin-bottom:20px;">
     <img src="logo.png" style="height:44px;width:auto;display:block;margin:0 auto 10px;" alt="Logo">
     <div style="font-size:13px;color:var(--mu);">Your AI-powered freight assistant</div>
@@ -8076,6 +8076,7 @@ function showLogin(){
 }
 function openLogin(){ showLogin(); }
 function closeLogin(){ var ls=document.getElementById('login-screen'); if(ls) ls.style.setProperty('display','none','important'); var er=document.getElementById('login-error'); if(er) er.style.display='none'; var lb=document.getElementById('login-btn'); if(lb){lb.textContent='Sign in';lb.disabled=false;} }
+function dismissLogin(){ if (currentCustomer) { closeLogin(); } else { window.location.href = '/'; } }
 function setLoggedIn(on){
   var loader=document.getElementById('fl-loading'); if(loader) loader.style.display='none';
   var sIn=document.getElementById('nav-signin'), acct=document.getElementById('nav-account');
@@ -8898,7 +8899,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   // Restore tabs from previous session after a short delay (needs auth first)
   setTimeout(() => { try { restoreTabState(); } catch(e) {} }, 2000);
-  var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) closeLogin(); });
+  var _ls=document.getElementById('login-screen'); if(_ls) _ls.addEventListener('click',function(e){ if(e.target===_ls) dismissLogin(); });
   const lb=document.getElementById('login-btn');
   const lp=document.getElementById('login-pw');
   const sb=document.getElementById('btn-send');
