@@ -2118,6 +2118,7 @@ const PRIMUS_BASE = 'https://freightandlogistics-api.shipprimus.com';
 // Self-sourced billing-terms store (Phase 1). Primus does not expose a customer's
 // terms code, so the portal reads it from the customer-terms Worker at login.
 const TERMS_WORKER = 'https://customer-terms.felipe-b80.workers.dev';
+const TERMS_PROXY  = 'https://terms-proxy.felipe-b80.workers.dev'; // live console terms (billToInformation.code + name)
 // Phase 2: card-on-file (SetupIntent) for PRE customers, via the stripe-payments Worker.
 // Mode-scoped so Stripe test/live never cross. Flip STRIPE_MODE to 'live' as its own
 // reviewed change once the save->charge loop is proven on test. The invoice modal keeps
@@ -6039,6 +6040,7 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed
     // tendering to the carrier. A declined/absent card BLOCKS dispatch (D1) — a PRE
     // customer whose card fails never gets a valid BOL. Terms customers are never
     // charged here. Idempotency-keyed on the BOL, so a re-dispatch never re-charges.
+    await ensureTermsResolved(); // belt-and-suspenders: resolve terms if the login lookup was slow/offline
     if (currentCustomer && currentCustomer.termsCode === 'PRE') {
       // ── CONSENT GATE (structural) ────────────────────────────────────────
       // NEVER charge a prepaid card until the caller has surfaced the pre-charge
@@ -8215,6 +8217,7 @@ async function doLogin() {
     // account and populated even with zero shipment history, so its company name
     // (priority 1) overrides the shipment-derived name above when present.
     let primusCustomerId = null;
+    let billToCode = null; // billToInformation.code === console accountingId (the terms join key)
     try {
       const pr = await fetch(PRIMUS_BASE + '/applet/v1/profile', {
         headers: { 'Authorization': 'Bearer ' + token }
@@ -8224,6 +8227,7 @@ async function doLogin() {
         const bt = (pd.data && pd.data.results && pd.data.results.billToInformation) || null;
         if (bt) {
           if (bt.id != null) primusCustomerId = String(bt.id);
+          if (bt.code != null) billToCode = String(bt.code);
           // Confirmed against live /applet/v1/profile: billToInformation.name holds the company
           // name (e.g. "The Backpackers Shop"). The rest stay as defensive fallback since other
           // Primus records may populate a different key.
@@ -8241,18 +8245,13 @@ async function doLogin() {
                  : (companyName.slice(0,2) || email.slice(0,2)).toUpperCase();
     }
 
-    // Look up self-sourced billing terms (PRE / NET15 / …). Absence of an entry
-    // — or ANY failure here — means normal/non-PRE terms and must never block login.
+    // Billing terms (PRE / NET15 / …) are resolved LIVE from the terms-proxy Worker,
+    // keyed by billToInformation.code (= console accountingId) + name. This is fired
+    // fire-and-forget AFTER _finalizeLogin (below) via resolveTermsAtLogin — login must
+    // NEVER wait on or fail because of the console. termsCode starts null (= standard /
+    // non-PRE) and fills in asynchronously once the Worker responds.
     let termsCode = null;
-    if (primusCustomerId) {
-      try {
-        const tr = await fetch(TERMS_WORKER + '/terms?customerId=' + encodeURIComponent(primusCustomerId));
-        if (tr.ok) {
-          const td = await tr.json();
-          termsCode = (td && td.termsCode) || null;
-        }
-      } catch(e) {}
-    }
+    let isPrepaid = false;
 
     // Build customer object dynamically
     const dynCustomer = {
@@ -8262,16 +8261,19 @@ async function doLogin() {
       code: email.replace(/[^a-z0-9]/gi,'').slice(0,8).toUpperCase(),
       avatar: avatarText,
       primusCustomerId,
+      billToCode,
       primusUser: email,
       primusPass: pw,
       billingType: 'thirdParty',
       arCode: null,
       termsCode,
+      isPrepaid,
       _dynamic: true,
     };
 
     _finalizeLogin(dynCustomer, email, pw);
     setTimeout(applyGreeting, 100); // re-apply after name is set
+    resolveTermsAtLogin(dynCustomer); // fire-and-forget live terms lookup — never blocks login
 
   } catch(e) {
     err.textContent = 'Invalid credentials. Please check your email and password.';
@@ -8281,6 +8283,61 @@ async function doLogin() {
 }
 
 let _userManualLogin = false; // set true when user manually clicks sign in
+
+// ── Live billing-terms resolution (terms-proxy Worker) ─────────────────────────
+// Terms live on the ShipPrimus console, reachable only with master creds that must
+// never touch the browser. The terms-proxy Worker holds that session and resolves
+// terms from billToInformation.code (= console accountingId) + name; primusCustomerId
+// is the Worker's cache key. All of this is best-effort: any timeout or failure leaves
+// termsCode null => standard (non-PRE) handling. NO email matching (a customer has many
+// login emails and the general email is often blank).
+
+// Refresh only the PRE-gated UI (the "Payment Method" nav entry) after terms resolve.
+function _refreshTermsUI() {
+  var payNav = document.getElementById('nav-payment');
+  if (payNav) payNav.style.display = (currentCustomer && currentCustomer.termsCode === 'PRE') ? 'flex' : 'none';
+}
+
+// One terms-proxy call with an AbortController timeout. Returns the parsed JSON or null.
+async function fetchTerms(c, timeoutMs) {
+  if (!c || (!c.billToCode && !c.name)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || 1500);
+  try {
+    const qs = 'code=' + encodeURIComponent(c.billToCode || '') +
+               '&name=' + encodeURIComponent(c.name || '') +
+               '&id='   + encodeURIComponent(c.primusCustomerId || '');
+    const r = await fetch(TERMS_PROXY + '/terms?' + qs, { signal: ctrl.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+  finally { clearTimeout(timer); }
+}
+
+// Apply a resolved terms payload onto the logged-in customer + refresh UI. Guarded so a
+// stale response (user switched accounts) is ignored.
+function _applyTerms(c, td) {
+  if (!td) return;
+  if (!currentCustomer || currentCustomer.email !== c.email) return;
+  currentCustomer.termsCode = (td && td.termsCode) || null;
+  currentCustomer.isPrepaid = !!(td && td.isPrepaid);
+  currentCustomer._termsResolved = true; // even a "standard" (null) answer counts as resolved
+  _refreshTermsUI();
+}
+
+// Fire-and-forget: called AFTER _finalizeLogin so login never waits on the console.
+async function resolveTermsAtLogin(c) {
+  _applyTerms(c, await fetchTerms(c, 1500));
+}
+
+// Belt-and-suspenders: before any PRE-gated money path, if terms never resolved at login
+// (Worker slow/offline), do ONE quick synchronous re-check. Cache-backed => near-instant
+// on the retry. Never throws; leaves standard (non-PRE) on failure.
+async function ensureTermsResolved() {
+  if (!currentCustomer || !currentCustomer._dynamic) return;
+  if (currentCustomer._termsResolved) return; // login-time lookup already answered
+  _applyTerms(currentCustomer, await fetchTerms(currentCustomer, 2500));
+}
 
 function _finalizeLogin(c, email, pw) {
   currentCustomer = c;

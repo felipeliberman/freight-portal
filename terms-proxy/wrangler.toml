@@ -1,0 +1,21 @@
+# terms-proxy — live customer billing terms, read from the ShipPrimus admin console.
+#
+# Deploy:  cd terms-proxy && wrangler deploy
+# KV:      wrangler kv namespace create SESSION_KV        (session cookie cache)
+#          wrangler kv namespace create TERMS_CACHE_KV    (resolved-terms cache)
+# Secrets: wrangler secret put PRIMUS_CONSOLE_USER         (master console username)
+#          wrangler secret put PRIMUS_CONSOLE_PASS         (master console password)
+#          — set once; NEVER stored in this repo or in any page HTML.
+name = "terms-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Short-lived PHPSESSID for the master console session.
+[[kv_namespaces]]
+binding = "SESSION_KV"
+id = "c76e79fd8a424287a508140850edd157"
+
+# Resolved terms, keyed by primusCustomerId (billToInformation.id). TTL ~24h.
+[[kv_namespaces]]
+binding = "TERMS_CACHE_KV"
+id = "e003ea3bb58b42718cc73c000a729b0a"
