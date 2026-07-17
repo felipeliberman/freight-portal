@@ -2224,6 +2224,7 @@ function resetShipmentState(wipeConversation) {
   console.log('[FP] resetShipmentState — wipe:', !!wipeConversation, '| _quoteFormOpen was:', window._quoteFormOpen, '| _bookingLock was:', !!window._bookingLock);
   try {
     window._lastRates = null; window._lastRatesRaw = null; window._lastRatesShipment = null;
+    window._lastRatePullError = null;
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
@@ -2604,6 +2605,10 @@ function _insGateBeforeRates(shipment, summary) {
 }
 
 async function fetchRates(shipment) {
+  // Clear any prior pull's outcome marker up front so an early throw (e.g. the ZIP gate below)
+  // leaves it null and the ZIP/outage branches own the messaging. It is set again further down
+  // ONLY on a transport failure or a genuinely empty lane, so the agent can tell them apart.
+  window._lastRatePullError = null;
   // Resolve both ZIPs to cities, record the resolution, and GATE before any backend call.
   const _o = await lookupZip(shipment.originZip);
   const _d = await lookupZip(shipment.destinationZip);
@@ -2687,26 +2692,75 @@ async function fetchRates(shipment) {
 
   console.log('📡 Fetching rates:', params.substring(0, 200));
 
-  const r    = await fetch(PRIMUS_BASE + '/applet/v1/rate/multiple?' + params, { headers: { 'Authorization': 'Bearer ' + token } });
-  const text = await r.text();
+  // Primus rate calls on slow lanes intermittently drop at the network layer (~25% observed on
+  // some lanes) or return 5xx / hang. A single un-retried fetch surfaces that transient failure
+  // as an empty lane, which the agent then rationalizes with a fabricated cause. Retry TWICE
+  // (three attempts total) on a network reject / timeout / 5xx before giving up — that takes a
+  // ~25% single-call drop to ~2%. The slower worst case is acceptable; a false "no carriers" is
+  // the expensive failure. A transport failure and a genuinely empty lane are marked DIFFERENTLY
+  // on window._lastRatePullError so the agent never mistakes a hiccup for an empty lane.
+  const _rateUrl = PRIMUS_BASE + '/applet/v1/rate/multiple?' + params;
+  let r = null, text = '';
+  for (let _attempt = 0; _attempt < 3; _attempt++) {
+    if (_attempt > 0) await new Promise(res => setTimeout(res, 600 * _attempt)); // backoff: 600ms, then 1200ms
+    const _ac = new AbortController();
+    const _to = setTimeout(() => _ac.abort(), 35000); // hard cap above Primus timeout=30 so a hung socket becomes a retryable abort
+    try {
+      r = await fetch(_rateUrl, { headers: { 'Authorization': 'Bearer ' + token }, signal: _ac.signal });
+    } catch (e) {
+      clearTimeout(_to);
+      console.warn('Rate fetch attempt ' + (_attempt + 1) + '/3 failed (transport):', String((e && e.message) || e));
+      r = null;
+      continue; // network reject or abort (timeout) — retryable
+    }
+    clearTimeout(_to);
+    if (r.status >= 500) { // server error — retryable
+      console.warn('Rate fetch attempt ' + (_attempt + 1) + '/3 got HTTP ' + r.status + ' — retrying');
+      r = null;
+      continue;
+    }
+    text = await r.text();
+    break; // got a non-5xx response (may still be a 4xx, handled below)
+  }
+
+  // All attempts failed at the transport layer (network reject / timeout / 5xx). This is NOT an
+  // empty lane — mark it 'transport' so the agent tells the customer the service hiccuped.
+  if (!r) {
+    window._lastRatePullError = { kind: 'transport' };
+    throw new Error("We couldn't reach the rate service just now — please try again in a moment.");
+  }
+
   if (!r.ok) {
     console.error('Rate fetch failed', r.status, text.slice(0, 300));
     if (r.status === 400 && /originCity|destinationCity|Missing required parameter/i.test(text)) {
       throw new Error("We couldn't match one of your ZIP codes to a city, so we can't pull rates. Please double-check the origin and destination ZIP and try again.");
     }
+    // Non-retryable client-side failure — still a failed call, NOT an empty lane.
+    window._lastRatePullError = { kind: 'transport' };
     throw new Error("We couldn't retrieve rates just now. Please try again in a moment.");
   }
 
-  const d     = JSON.parse(text);
+  let d;
+  try { d = JSON.parse(text); }
+  catch (e) {
+    // A 200 whose body isn't valid JSON is a transport-level problem (proxy / error page), not an empty lane.
+    console.error('Rate response not JSON:', text.slice(0, 200));
+    window._lastRatePullError = { kind: 'transport' };
+    throw new Error("We couldn't read the rate service response — please try again in a moment.");
+  }
   let   rates = (d.data && d.data.results && d.data.results.rates) ||
                 (d.data && d.data.results) ||
                 (Array.isArray(d) ? d : null);
 
   if (!rates || !rates.length) {
+    // Successful call, zero carriers — a GENUINELY empty lane, distinct from a transport failure.
     const noRates = d.data && d.data.results && d.data.results.noRates;
     console.log('No rates. noRates:', JSON.stringify(noRates));
+    window._lastRatePullError = { kind: 'empty' };
     throw new Error('No rates returned. ' + (noRates ? noRates.map(n => n.error).join('; ') : text.slice(0, 200)));
   }
+
+  window._lastRatePullError = null; // success — clear the marker
 
   // Log first rate object to identify service level message field
   if (rates.length > 0) {
@@ -11860,6 +11914,8 @@ async function aiConverse(userText) {
                   _note = 'Rates NOT pulled — could not match ' + _nf.join(' or ') + ' to a city. Tell the customer you could not find a city for that ZIP and ask them to double-check it. Do NOT say carriers were unavailable or blame the lane — the ZIP did not resolve.';
                 } else if (_zr && (_zr.originReason === 'outage' || _zr.destReason === 'outage')) {
                   _note = 'Rates NOT pulled — the address lookup service was momentarily unavailable. Ask the customer to try again in a moment. Do NOT blame carriers or the lane.';
+                } else if (window._lastRatePullError && window._lastRatePullError.kind === 'transport') {
+                  _note = 'Rates NOT pulled — the rate service hiccuped after retries. This was a connection problem, NOT an empty lane. Ask the customer to try again in a moment; do NOT say no carriers came back and do NOT blame the lane, the carriers, or the freight.';
                 } else {
                   _note = 'Pull complete — no carriers returned for this lane.';
                 }
@@ -11871,7 +11927,10 @@ async function aiConverse(userText) {
             // Wait for any in-flight rate pull to finish before reading, so we never
             // report "no rates came back" while Primus is still responding (~5s).
             if (window._ratePullInFlight) { await _awaitRatePull(); }
-            const _rr = window._lastRates ? Object.assign({}, window._lastRates) : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' };
+            const _rr = window._lastRates ? Object.assign({}, window._lastRates)
+              : ((window._lastRatePullError && window._lastRatePullError.kind === 'transport')
+                  ? { count: 0, options: [], note: 'The last rate pull did not complete — the rate service hiccuped after retries. This was a connection problem, not an empty lane. Ask the customer to try again in a moment.' }
+                  : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' });
             if (window._residentialStatus) _rr.residentialStatus = window._residentialStatus;
             result = _rr;
           } else if (toolUse.name === 'book_shipment') {
@@ -16903,6 +16962,10 @@ function showQuoteForm(prefill, silent) {
     container.querySelector('#qt-rates-table-wrap').style.display='none';
     container.querySelector('#qt-rates-empty').style.display='none';
     container.querySelector('#qt-rates-error').style.display='none';
+    // Clear any prior rates from agent-facing state at the START of a (re-)pull. Without this, a
+    // re-pull that fails transiently would leave the PREVIOUS pull's carriers in window._lastRates,
+    // so the agent would read back stale rates instead of seeing the failure. Success republishes below.
+    if (typeof _publishRatesForAI === 'function') _publishRatesForAI(null, null);
 
     // Rotating loading messages
     const _loadMsgs = [
