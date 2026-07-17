@@ -8424,8 +8424,34 @@ function sendMessage() {
   if (window._vm && window._vm.active) _vmExit();
   ta.value=''; ta.style.height='auto';
   showChatArea();
+  // Reentrancy guard: customers double-send during slow turns (seen in real screenshots).
+  // Concurrent handleInput/aiConverse runs share chatHistory + all _* globals, so one turn's
+  // chatHistory.pop() can pop the OTHER turn's message. If a turn is already in flight, queue
+  // only the most recent message and replay it when the current turn finishes — never run two
+  // turns at once. The queued message's bubble is shown when it actually runs (on drain), so a
+  // superseded double-send never leaves an orphaned bubble with no reply.
+  if (window._turnInFlight) { window._queuedSend = txt; return; }
   appendMessage('user',txt);
-  handleInput(txt);
+  _runTurn(txt);
+}
+
+// Single-in-flight turn runner. Holds the reentrancy lock for the whole turn (including
+// handleInput's own recursive self-calls), then drains one queued send when it ends.
+async function _runTurn(txt) {
+  window._turnInFlight = true;
+  try {
+    await handleInput(txt);
+  } catch (e) {
+    console.error('[FP] turn error:', e);
+  } finally {
+    window._turnInFlight = false;
+    if (window._queuedSend) {
+      const _q = window._queuedSend;
+      window._queuedSend = null;
+      appendMessage('user', _q);
+      _runTurn(_q);
+    }
+  }
 }
 
 // ── QUICK ACTION (with showChatArea + addRecent) ──────────────────────────────
@@ -11666,28 +11692,44 @@ async function aiConverse(userText) {
     let loops = 0;
     let convo = msgs.slice();
 
-    // Retry wrapper: transient API errors (overloaded / rate-limited / 5xx) get
-    // a short backoff and retry instead of surfacing "trouble connecting" to the customer.
+    // Retry wrapper: transient API errors (overloaded / rate-limited / 5xx / Cloudflare
+    // edge timeouts / proxy hiccups) get a short backoff and retry instead of surfacing
+    // "trouble connecting" to the customer. Each attempt is hard-capped by an AbortController
+    // timeout so a hung request aborts and retries rather than hanging until Cloudflare times
+    // it out (~100s). Mirrors the bounded-retry + abort pattern on the rate path.
     async function _callWithRetry(url, opts, tries) {
       tries = tries || 3;
       let lastErr;
+      // Transient = worth a retry: Anthropic overload / rate-limit, any 5xx, Cloudflare edge
+      // timeouts (520/522/524), an aborted (timed-out) attempt, a network blip, or the proxy's
+      // own {error:'Proxy error'} failure shape.
+      const _transient = (s) => /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s));
       for (let attempt = 1; attempt <= tries; attempt++) {
+        const _ac = new AbortController();
+        const _to = setTimeout(() => { try { _ac.abort(); } catch (e) {} }, 45000); // per-attempt hard cap, set above observed slow (~28s) swings but well below CF's ~100s edge timeout
         try {
-          const d = await _call(url, opts);
-          // Some wrappers return an error object instead of throwing
+          const d = await _call(url, Object.assign({}, opts, { signal: _ac.signal }));
+          // Some wrappers return an error object instead of throwing.
           if (d && d.type === 'error') {
             const msg = (d.error && (d.error.type + ' ' + (d.error.message||''))) || 'api error';
-            const transient = /overloaded|rate|429|5\d\d|529|timeout/i.test(msg);
-            if (transient && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
+            if (_transient(msg) && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
             throw new Error(msg);
+          }
+          // Proxy-level failure shape ({error:'Proxy error', detail}) with no content: the
+          // bare-fetch fallback resolves this instead of throwing, so retry it here rather than
+          // letting it fall through to empty text / "trouble connecting". (The status-aware
+          // flAnthropic wrapper throws on this and is caught below.)
+          if (d && typeof d.error === 'string' && !(d.content && d.content.length)) {
+            if (attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
+            throw new Error(d.error);
           }
           return d;
         } catch (err) {
           lastErr = err;
-          const m = String(err && err.message || err);
-          const transient = /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch/i.test(m);
-          if (transient && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
+          if (_transient(err && err.message || err) && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
           throw err;
+        } finally {
+          clearTimeout(_to);
         }
       }
       throw lastErr;
