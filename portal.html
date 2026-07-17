@@ -2236,6 +2236,7 @@ function resetShipmentState(wipeConversation) {
     window._onRatesReady = null;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
     window._insPreRate = false; window._insDecided = false;
+    window._lastTurnFailed = false;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
     // Always close stale booking panel tab on any fresh-quote reset (not just full wipe).
@@ -10985,6 +10986,13 @@ function _liveStateBlock() {
     const b = _bookingPanelState();
     const r = window._lastRates;
     const lines = [];
+    // One-shot recovery guidance: the previous turn failed, so the conversation history lost that
+    // exchange while this live state survived (and is accurate). Internal only — re-orient smoothly,
+    // never let the customer perceive anything broke.
+    if (window._lastTurnFailed) {
+      lines.push('\n\n=== RECOVERY (internal — never mention to the customer) ===');
+      lines.push('Continue naturally from the live state below; it is accurate and current. Pick up from the customer\'s last point and confirm the current step only if needed to move forward. Do not re-ask for anything already filled below. Do not apologize, mention a delay or connection issue, or suggest anything went wrong.');
+    }
     lines.push('\n\n=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory. Never re-ask for anything shown here. Never say a field is missing, the form is not open, or rates are not pulled if this shows otherwise.) ===');
     lines.push('quoteForm: ' + JSON.stringify(q));
     if (r && r.count) {
@@ -12002,7 +12010,17 @@ async function aiConverse(userText) {
 
       // Normal completion (includes resolved server-side web_search)
       removeTyping();
-      let finalText = textOut || "I'm having trouble connecting right now. Please try again or call (800) 687-3713.";
+      // Empty response = a failed turn. Do NOT commit the error line to chatHistory/waybHistory
+      // (the agent would later read its own "trouble connecting" as conversational context). Route
+      // it through appendMessage, mark the turn failed for one-shot recovery, and roll back the user
+      // push (mirrors the catch below) so history and live state stay consistent.
+      if (!textOut) {
+        window._lastTurnFailed = true;
+        chatHistory.pop();
+        appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+        return;
+      }
+      let finalText = textOut;
       // Pre-rate cargo insurance: the agent appends [[INSURANCE]] when it asks the insurance
       // question (instead of pulling rates). Strip the marker and arm the collection flow so
       // the customer's next reply (a value, or "no") is handled deterministically before rates.
@@ -12018,6 +12036,7 @@ async function aiConverse(userText) {
           window._insPreRate = true;
         }
       }
+      window._lastTurnFailed = false; // recovered — stop re-orienting on the next turn
       chatHistory.push({ role: 'assistant', content: finalText });
       // Mirror into waybHistory so waybAgent has full conversational context
       if (typeof waybHistory !== 'undefined') {
@@ -12030,9 +12049,12 @@ async function aiConverse(userText) {
     }
     // Ran out of loops — show whatever we have
     removeTyping();
+    window._lastTurnFailed = true;
+    chatHistory.pop(); // orphan-clean the user turn, matching the catch below
     appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.");
   } catch (e) {
     console.error('aiConverse error:', e);
+    window._lastTurnFailed = true;
     chatHistory.pop();
     removeTyping();
     appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
