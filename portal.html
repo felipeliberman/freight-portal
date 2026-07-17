@@ -12001,9 +12001,19 @@ async function aiConverse(userText) {
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
-        // Feed the result back so Claude can continue naturally
+        // Feed the result back so Claude can continue naturally. Every tool_use block in the
+        // assistant content we echo must have a matching tool_result, or the next call 400s on an
+        // unpaired tool_use. We execute only the FIRST client tool (one action per turn — unlike
+        // the read-only waybAgent, these tools include irreversible writes like dispatch, so
+        // auto-running a second emitted tool could book+dispatch in one shot). Pair every OTHER
+        // tool_use the model emitted with a synthetic "not processed" result so the turn stays valid.
+        // These synthetic notes are model-facing only (consumed as tool_result on the next loop) and
+        // never reach the customer — only finalText / _showBot / appendMessage render to chat.
+        const _pairResult = (tu) => tu.id === toolUse.id
+          ? { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) }
+          : { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify({ ok: false, ignored: true, note: 'Only one action runs per turn; this was not processed. Take actions one at a time — reissue it as your next step if still needed.' }) };
         convo.push({ role: 'assistant', content: content });
-        convo.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }] });
+        convo.push({ role: 'user', content: content.filter(b => b.type === 'tool_use').map(_pairResult) });
         showTyping();
         continue; // loop for Claude's natural follow-up
       }
