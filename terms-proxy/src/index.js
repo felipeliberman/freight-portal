@@ -23,7 +23,7 @@ const MANAGE = CONSOLE_BASE + '/manage.php';
 
 const SESSION_KEY = 'console_session';
 const SESSION_TTL_MS = 45 * 60 * 1000;   // refresh well before the ~50min server session
-const TERMS_TTL_MS = 4 * 60 * 60 * 1000; // resolved terms good for 4h — backstop for a missed runbook purge; the KV expirationTtl below is derived from this, so the two never drift
+const TERMS_TTL_MS = 60 * 1000; // resolved terms good for ~60s — long enough to absorb repeat lookups within a page session, short enough that the portal reflects console terms live (no manual purge needed). 60s is also Cloudflare KV's minimum expirationTtl (derived below), so this is the floor; the KV expirationTtl and the freshness check both derive from this constant, so they never drift
 
 // ─── CORS ──────────────────────────────────────────────────────────────────────
 const ALLOWED_ORIGINS = [

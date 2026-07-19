@@ -5,76 +5,76 @@
 > (which is compiled into the customer-facing agent KB). Do not move this into `docs/` or
 > `KNOWLEDGE.md` — both are served/surfaced.
 
-**The terms cache TTL is 4 hours.** If you skip the purge below, the portal keeps showing the
-customer's OLD terms for up to **4 hours** — that is the worst case, not "until someone notices."
+**The portal resolves billing terms live at login and caches them for only ~60 seconds.** A change
+you make in the ShipPrimus console is reflected automatically within about a minute — for granting
+credit, changing a term, and reverting to Prepaid alike. **There is no required manual step.**
 
-**The purge in Step 2 is MANDATORY on every terms change** — granting credit, changing a term,
-**and reverting to Prepaid.** Reverting counts just as much as granting: a skipped purge on a
-revert is exactly how a downgraded customer keeps seeing credit-only UI. Do the steps in order.
+> ⚠️ **The ~60s TTL is load-bearing — do not raise it.** This short TTL is the entire mechanism that
+> makes terms self-heal from the console without a manual purge. It is set in `terms-proxy/src/index.js`
+> as `TERMS_TTL_MS`. Raising it back up reintroduces exactly the staleness gap this was built to close:
+> a console change would be invisible to the portal for the length of the TTL, and someone would again
+> have to run a manual purge to force it. If console search load ever becomes a concern, address that
+> directly (see the rate-limit note) rather than lengthening this TTL. 60s is also Cloudflare KV's
+> minimum, so it cannot go lower while keeping KV expiry.
 
-**You need:**
-- **primusCustomerId** — the KV cache key.
-- **billToCode / accountingId** and **company name** — for the verification lookup.
+## Normal flow
 
-*Example (Haynes Brothers Furniture): primusCustomerId `1123086640`, code `5300`, name `Haynes Brothers Furniture`.*
+1. Change the customer's billing terms in the ShipPrimus admin console customer record, and **save**.
+2. That's it. Within ~60 seconds the portal reflects the change. If the customer is looking right now,
+   have them **reload the page** after a minute (a plain reload re-resolves terms; an in-app click keeps
+   the stale in-memory verdict from before the reload).
+
+**What the customer sees after it takes effect:**
+- **PREPAID** → the **Payment Method** tile appears, and **Apply for Credit** opens the application.
+- **Credit terms (e.g. Net 15)** → no Payment Method tile, and **Apply for Credit** opens the
+  "already have credit terms" confirmation.
 
 ---
 
-## Steps — in this order
+## Troubleshooting — only if the portal and console DISAGREE for more than a couple of minutes
 
-### 1. Console (do this first)
-Change the customer's billing terms in the ShipPrimus admin console customer record, and **save**.
+Everything below is a diagnostic/force-refresh tool. You should not need it in normal operation; reach
+for it only when a change hasn't taken effect well past the ~60s window.
 
-### 2. Purge the one cache key (MANDATORY)
-Key-scoped, production. `--remote` is required — without it wrangler edits the empty local store and nothing changes.
+### Force-refresh a single customer immediately (optional)
+Purges that customer's cached entry so the very next lookup re-resolves from the console. Key-scoped,
+production — `--remote` is required or wrangler edits the empty local store and nothing happens.
 
 ```
 cd terms-proxy && npx wrangler kv key delete <primusCustomerId> \
   --namespace-id e003ea3bb58b42718cc73c000a729b0a --remote
 ```
 
-### 3. Verify (also repopulates the cache with the new value)
-```
-curl -sS "https://terms-proxy.felipe-b80.workers.dev/terms?code=<code>&name=<url-encoded company>&id=<primusCustomerId>"
-```
-Expect the **new** terms — e.g. `"termsCode":"PRE","isPrepaid":true` after reverting to Prepaid, or
-`"termsCode":"NET15"` after granting Net 15.
+*You need the **primusCustomerId** (the cache key). Example (Haynes Brothers Furniture): primusCustomerId
+`1123086640`, code `5300`, name `Haynes Brothers Furniture`.*
 
-### 4. Confirm in the portal
-**A reload is enough — no logout needed.** Reload re-runs login-from-session and re-resolves terms;
-a plain in-app click keeps the stale in-memory verdict, so do a full page reload.
-- **PREPAID** → the **Payment Method** tile appears, and **Apply for Credit** opens the application.
-- **Credit terms** → no Payment Method tile, and **Apply for Credit** opens the "already have credit terms" confirmation.
+### Check what the portal is actually getting
 
----
+- **Cached (what the portal sees), with `&id=`:**
+  ```
+  curl -sS "https://terms-proxy.felipe-b80.workers.dev/terms?code=<code>&name=<url-encoded company>&id=<primusCustomerId>"
+  ```
+- **Console truth, cache bypassed (no `&id=`):**
+  ```
+  curl -sS "https://terms-proxy.felipe-b80.workers.dev/terms?code=<code>&name=<url-encoded company>"
+  ```
 
-## Troubleshooting — the verification curl (Step 3) still returns the OLD value
+### If they still disagree, check in this order
 
-Check in this order (most common first):
-
-1. **Purge ran against the local store, not production.**
-   Symptom: the delete "succeeded" but the value is unchanged.
-   Cause: missing `--remote` (wrangler v4 defaults to the local `.wrangler` store).
-   Fix: re-run Step 2 **with `--remote`**.
-
-2. **Wrong key or namespace id.**
-   Symptom: delete reports success but nothing changed, or the key you read differs from the one you purged.
-   Cause: the key must be the **primusCustomerId** (NOT billToCode/accountingId), and the namespace must be `e003ea3bb58b42718cc73c000a729b0a`.
-   Fix: confirm the key — `npx wrangler kv key get <primusCustomerId> --namespace-id e003ea3bb58b42718cc73c000a729b0a --remote` — then re-purge the correct key.
-
-3. **The console change did not save.**
-   Symptom: the **cache-bypassed** read (no `&id=`) still shows the old terms:
-   ```
-   curl -sS "https://terms-proxy.felipe-b80.workers.dev/terms?code=<code>&name=<url-encoded company>"
-   ```
-   If this shows the OLD terms with `"source":"live"`, the console edit didn't persist.
-   Fix: redo Step 1 in the console and save, then purge again (Step 2).
-
-4. **Re-cached a stale console read between the change and the purge.**
-   Symptom: the cache-bypassed read shows the NEW terms, but the cached (`&id=`) read shows the OLD one again.
-   Cause: a lookup (someone logging in, or an earlier verify) repopulated the cache from the console **before** the console change actually saved — or you purged before saving.
-   Fix: confirm console truth is correct (the no-`&id=` read above), then purge once more (Step 2) and re-resolve (Step 3 with `&id=`); this time the repopulate picks up the correct value.
+1. **The console change did not save.** Symptom: the **cache-bypassed** read (no `&id=`) still shows the
+   old terms with `"source":"live"`. Fix: redo the console edit and save.
+2. **Force-refresh didn't hit production.** Symptom: you ran the purge but the cached (`&id=`) read is
+   unchanged. Cause: missing `--remote` (wrangler v4 defaults to the local `.wrangler` store). Fix:
+   re-run the purge **with `--remote`**.
+3. **Wrong key or namespace.** Symptom: purge reports success but nothing changes. Cause: the key must be
+   the **primusCustomerId** (NOT billToCode/accountingId), namespace `e003ea3bb58b42718cc73c000a729b0a`.
+   Fix: `npx wrangler kv key get <primusCustomerId> --namespace-id e003ea3bb58b42718cc73c000a729b0a --remote`
+   to confirm, then re-purge the right key.
+4. **Console outage serving a stale value.** Symptom: cache-bypassed read errors or shows `"source":"cache-stale"`.
+   Cause: the console is unreachable, so the proxy is serving the last cached verdict (≤60s old) until it
+   expires. Fix: wait — once the console recovers, the next lookup self-heals; nothing to do.
 
 ---
 
-**Rule of thumb:** always confirm the **cache-bypassed** read (no `&id=`) is correct *before* trusting the cached (`&id=`) read — that isolates "the console didn't save" from "the cache is stale."
+**Rule of thumb:** always confirm the **cache-bypassed** read (no `&id=`) is correct *before* trusting the
+cached (`&id=`) read — that isolates "the console didn't save" from "the cache is stale."
