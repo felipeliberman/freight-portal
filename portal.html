@@ -1914,6 +1914,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div class="sb-divider"></div>
     <div class="sb-link" id="nav-support" onclick="setNav(this);showSupportForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span class="sb-link-text">Email Support</span><span class="sb-tooltip">Email Support</span></div>
     <div class="sb-link" id="nav-settings" onclick="setNav(this);showSettings()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="sb-link-text">Settings</span><span class="sb-tooltip">Settings</span></div>
+    <div class="sb-link" id="nav-credit" onclick="setNav(this);openCreditApp()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><path d="M9 14l2 2 4-4"/></svg><span class="sb-link-text">Apply for Credit</span><span class="sb-tooltip">Apply for Credit</span></div>
     <div class="sb-link" id="nav-payment" style="display:none;" onclick="setNav(this);showSaveCardModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span class="sb-link-text">Payment Method</span><span class="sb-tooltip">Payment Method</span></div>
 
 
@@ -8392,6 +8393,51 @@ async function ensureTermsResolved() {
   if (!currentCustomer || !currentCustomer._dynamic) return;
   if (currentCustomer._termsResolved) return; // login-time lookup already answered
   _applyTerms(currentCustomer, await fetchTerms(currentCustomer, 2500));
+}
+
+// ── CREDIT: canonical "does this customer have credit terms" accessor ───────────
+// SINGLE source of truth for the Apply-for-Credit flow. Awaits the live terms lookup,
+// then returns true ONLY for an explicitly resolved, non-prepaid terms value. Prepaid,
+// unresolved/null, logged-out, or any lookup failure all return false → the customer
+// sees the application. We never claim a customer has terms on a failed/missing lookup.
+// Do NOT inline this logic anywhere else.
+async function customerHasCredit() {
+  try { await ensureTermsResolved(); } catch (e) {}
+  if (!currentCustomer || !currentCustomer._termsResolved) return false;
+  if (currentCustomer.isPrepaid) return false;
+  const tc = currentCustomer.termsCode;
+  return !!tc && tc !== 'PRE';
+}
+
+// Apply-for-Credit nav tile. Prepaid / unresolved / logged-out customers get the ONE
+// public Credit Application, embedded same-origin via /?apply=1&embed=1 so there is
+// exactly one copy of the legal document; customers with resolved credit terms get a
+// short confirmation instead. Verdict comes only from customerHasCredit().
+async function openCreditApp() {
+  if (await customerHasCredit()) {
+    const c = document.createElement('div');
+    c.style.cssText = 'padding:24px;max-width:520px;margin:0 auto;font-size:14px;line-height:1.7;color:var(--tx);';
+    c.innerHTML = 'Your account is already set up with credit terms — no application needed. To review your terms or request a higher limit, email <a href="mailto:support@freightandlogistics.ai" style="color:#bd27bc;text-decoration:none;">support@freightandlogistics.ai</a> or call <a href="tel:+18006873713" style="color:#bd27bc;text-decoration:none;">(800) 687-3713</a>.';
+    openRightPanel(c, 'Credit Terms');
+    return;
+  }
+  const existing = document.getElementById('creditapp-overlay');
+  if (existing) existing.remove();
+  const ov = document.createElement('div');
+  ov.id = 'creditapp-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
+  ov.innerHTML =
+    '<div style="background:#fff;border:1px solid #e5e2d9;border-radius:12px;max-width:560px;width:100%;height:90vh;max-height:900px;display:flex;flex-direction:column;overflow:hidden;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #e5e2d9;flex-shrink:0;">' +
+        '<div style="font-size:16px;font-weight:700;color:#1c1a17;">Apply for Credit</div>' +
+        '<button id="creditapp-close" title="Close" style="background:none;border:none;font-size:22px;line-height:1;color:#6b6660;cursor:pointer;font-family:inherit;">&times;</button>' +
+      '</div>' +
+      '<iframe id="creditapp-frame" src="/?apply=1&embed=1" title="Credit Application" style="border:none;width:100%;flex:1;display:block;"></iframe>' +
+    '</div>';
+  document.body.appendChild(ov);
+  // No backdrop-click dismissal — the application is long (contacts, references,
+  // acknowledgments, signature); a stray outside click must never discard it. The ✕ only.
+  ov.querySelector('#creditapp-close').onclick = () => ov.remove();
 }
 
 function _finalizeLogin(c, email, pw) {
