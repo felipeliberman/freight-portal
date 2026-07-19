@@ -3373,7 +3373,7 @@ function _speechTextFor(t) {
 }
 
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
-const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'' };
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null };
 window._vm = _vm;
 _vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
 _vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
@@ -3451,12 +3451,14 @@ function _vmTeardown() {
   _vm.listening = false;
   if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
   if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
+  if (_vm.tailTimer)    { clearTimeout(_vm.tailTimer);    _vm.tailTimer = null; }
   [_vm.rec, _vm.bargeRec].forEach(function(rec) {
     if (!rec) return;
     try { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); } catch(e) {}
   });
   _vm.rec = null; _vm.bargeRec = null;
   try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
+  _vm.playStartedAt = null; _vm.speakingText = '';
 }
 
 function _vmExit() {
@@ -3488,6 +3490,14 @@ function _vmStartListen() {
   _vmDiag('recognizer constructed');
   _vmAttachListenHandlers(rec, false);
 }
+
+// ── Barge-in echo guards (Phase 0) — tunable thresholds ───────────────────────
+// Kept next to SILENCE_MS so all voice-timing knobs live together and are easy to tune.
+// Used by the barge detector (lead-in + echo veto) and the post-playback tail timer.
+const VM_LEADIN_MS      = 400;  // ignore candidate interrupts within this window after playback starts
+const VM_TAIL_MS        = 300;  // warm-promote path: wait before the mic resumes after playback ends
+const VM_TAIL_FRESH_MS  = 800;  // fresh-listen fallback: longer wait so the speaker fully clears
+const VM_ECHO_MIN_WORDS = 3;    // >= this many words → contiguous match; fewer → all-words-present match
 
 // Wire the full listening behavior (silence timer, finalText accumulation, dispatch to
 // _vmHandleFinal) onto a recognizer. Used for a freshly-created recognizer (_vmStartListen)
@@ -3565,6 +3575,30 @@ function _vmPromoteBargeToListen() {
   return true;
 }
 
+// Normalize text for echo comparison: lowercase, drop punctuation, collapse whitespace.
+function _vmNorm(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Single canonical echo test: is a bargeRec transcript just the TTS we're currently playing
+// bleeding back into the mic (not a real user interrupt)? Compares against _vm.speakingText.
+//  - 3+ words → the word sequence must appear contiguously in the spoken text.
+//  - fewer than VM_ECHO_MIN_WORDS → echo only if EVERY transcript word appears somewhere in it
+//    (short fragments like "the" / "and delivery" are almost always speaker bleed).
+//  - empty / whitespace-only transcript is always echo.
+function _vmIsEcho(transcript, spokenText) {
+  const t = _vmNorm(transcript);
+  if (!t) return true;
+  const spoken = _vmNorm(spokenText);
+  if (!spoken) return false;                 // nothing playing to echo → treat as a real hit
+  const tw = t.split(' ');
+  if (tw.length >= VM_ECHO_MIN_WORDS) {
+    return (' ' + spoken + ' ').indexOf(' ' + t + ' ') !== -1;
+  }
+  const set = new Set(spoken.split(' '));
+  return tw.every(w => set.has(w));
+}
+
 // ── Barge-in (interrupt) ──────────────────────────────────────────────────────
 // A lightweight recognizer kept live WHILE the agent speaks so the user can cut in
 // (Claude.ai-style). Requires >=3 heard chars on TWO consecutive onresult callbacks before
@@ -3585,6 +3619,18 @@ function _vmStartBargeDetector() {
   rec.onresult = (event) => {
     let heard = '';
     for (let i = event.resultIndex; i < event.results.length; i++) heard += event.results[i][0].transcript;
+    // Guard 1 — lead-in: TTS onset bleeds hardest into the mic. Ignore any candidate interrupt
+    // within VM_LEADIN_MS of playback actually starting. Not counted toward the debounce.
+    if (_vm.playStartedAt && (Date.now() - _vm.playStartedAt) < VM_LEADIN_MS) {
+      _vmDiag('barge veto (lead-in):', JSON.stringify(heard));
+      return;
+    }
+    // Guard 2 — echo veto: the transcript is our own TTS bleeding into the mic. Discard it and
+    // do NOT count it toward the 2-consecutive-hit debounce, so it can never trip barge-in.
+    if (_vmIsEcho(heard, _vm.speakingText)) {
+      _vmDiag('barge veto (echo):', JSON.stringify(heard));
+      return;   // leave hits untouched
+    }
     if (heard.trim().length >= 3) { hits++; if (hits >= 2) _vmBargeIn(); }
     else hits = 0;
   };
@@ -3608,7 +3654,9 @@ function _vmStopBargeDetector() {
 function _vmBargeIn() {
   if (_vm.state !== 'speak') return;
   _vm.speakToken++;                                   // invalidate in-flight speak/resume callbacks
+  if (_vm.tailTimer) { clearTimeout(_vm.tailTimer); _vm.tailTimer = null; }  // cancel any pending tail resume
   try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
+  _vm.playStartedAt = null; _vm.speakingText = '';   // pause() fires no onended — clear echo state here
   _vmSetState('listen');
   if (!_vmPromoteBargeToListen()) { _vmStopBargeDetector(); _vmStartListen(); }
 }
@@ -3708,12 +3756,13 @@ async function _vmSpeakReply(text) {
 
   _vmSetState('speak'); // mic shows the speaker animation while talking
   _vmStartBargeDetector(); // keep the mic live so the user can interrupt (and stay warm for handoff)
+  const spoken = _ttsClean(clean);   // exact utterance sent to TTS — also the echo-veto reference
   try {
     const resp = await fetch('https://elevenlabs-proxy.felipe-b80.workers.dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: _ttsClean(clean),
+        text: spoken,
         voice_id: '21m00Tcm4TlvDq8ikWAM',
         voice_settings: {
           stability: 0.5,
@@ -3732,22 +3781,39 @@ async function _vmSpeakReply(text) {
     _vmUpdateButtons();
     const audio = new Audio(url);
     _vm.audio = audio;
+    // Echo veto reference: set synchronously so the barge detector has it even if onplay is slow.
+    // playStartedAt (lead-in guard) is stamped the instant audio truly begins, not at fetch time.
+    _vm.speakingText = spoken;
+    _vm.playStartedAt = null;
+    audio.onplay = () => { _vm.playStartedAt = Date.now(); };
     audio.onended = () => {
       try { URL.revokeObjectURL(url); } catch(e) {}
+      _vm.playStartedAt = null; _vm.speakingText = '';   // playback done → echo state no longer applies
       if (!_vm.active || _vm.speakToken !== tok) return;
-      // Normal turn end: hand the warm barge recognizer straight to listening (Part 0.5) — no
-      // cold rec.start(), so turn-2+ first words aren't clipped. Fall back to a fresh listen.
-      if (_vmPromoteBargeToListen()) return;
-      _vmStopBargeDetector();
-      // 800ms lets the speaker sound fully clear before the mic reopens.
-      setTimeout(() => { if (_vm.active && _vm.speakToken === tok) { _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen(); } }, 800);
+      // Tail guard: wait after playback ends so the final syllable + room reverb aren't captured as
+      // the user's next utterance. Warm-promote path uses VM_TAIL_MS; the fresh-listen fallback (no
+      // warm detector) keeps the longer VM_TAIL_FRESH_MS so the speaker fully clears. Cancellable —
+      // _vm.tailTimer is cleared by _vmTeardown / _vmExit / a manual barge-in so we never resume a
+      // torn-down voice mode.
+      if (_vm.tailTimer) clearTimeout(_vm.tailTimer);
+      const tailMs = _vm.bargeRec ? VM_TAIL_MS : VM_TAIL_FRESH_MS;
+      _vm.tailTimer = setTimeout(() => {
+        _vm.tailTimer = null;
+        if (!_vm.active || _vm.speakToken !== tok) return;
+        // Normal turn end: hand the warm barge recognizer straight to listening (Part 0.5) — no
+        // cold rec.start(), so turn-2+ first words aren't clipped. Fall back to a fresh listen.
+        if (_vmPromoteBargeToListen()) return;
+        _vmStopBargeDetector();
+        _vm.state = 'listen'; _vmUpdateButtons(); _vmStartListen();
+      }, tailMs);
     };
     audio.onerror = () => {
+      _vm.playStartedAt = null; _vm.speakingText = '';
       if (!_vm.active || _vm.speakToken !== tok) return;
       _vmStopBargeDetector();
       setTimeout(() => { if (_vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     };
-    audio.play().catch(() => { if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
+    audio.play().catch(() => { _vm.playStartedAt = null; _vm.speakingText = ''; if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
   } catch(e) { resume(); }
 }
 
