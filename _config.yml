@@ -12,6 +12,7 @@ exclude:
   - anthropic-proxy
   - qbo-api
   - functions
+  - ops               # internal ops runbooks — never customer-facing
   - node_modules
   - package.json
   - package-lock.json

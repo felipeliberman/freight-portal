@@ -23,7 +23,7 @@ const MANAGE = CONSOLE_BASE + '/manage.php';
 
 const SESSION_KEY = 'console_session';
 const SESSION_TTL_MS = 45 * 60 * 1000;   // refresh well before the ~50min server session
-const TERMS_TTL_MS = 24 * 60 * 60 * 1000; // resolved terms good for 24h
+const TERMS_TTL_MS = 4 * 60 * 60 * 1000; // resolved terms good for 4h — backstop for a missed runbook purge; the KV expirationTtl below is derived from this, so the two never drift
 
 // ─── CORS ──────────────────────────────────────────────────────────────────────
 const ALLOWED_ORIGINS = [
