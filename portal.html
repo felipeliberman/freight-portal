@@ -8146,9 +8146,9 @@ function setLoggedIn(on){
     if(sIn) sIn.style.display='none'; if(acct) acct.style.display='flex';
     if(nm && currentCustomer) nm.textContent=(currentCustomer.firstName||currentCustomer.name);
     if(row) row.style.display='flex'; if(sr) sr.style.display='none';
-    // Phase 2: show the "Payment Method" nav entry only for PRE (prepaid) customers
-    var payNav=document.getElementById('nav-payment');
-    if(payNav) payNav.style.display = (currentCustomer && currentCustomer.termsCode === 'PRE') ? 'flex' : 'none';
+    // Paint the prepaid-gated "Payment Method" nav entry from the canonical predicate. Hidden
+    // while terms are unresolved (fresh login), revealed only on a definite prepaid verdict.
+    _refreshTermsUI();
     // Update greeting now that we know currentCustomer
     setTimeout(function(){
       var h=new Date().getHours();
@@ -8348,10 +8348,12 @@ let _userManualLogin = false; // set true when user manually clicks sign in
 // termsCode null => standard (non-PRE) handling. NO email matching (a customer has many
 // login emails and the general email is often blank).
 
-// Refresh only the PRE-gated UI (the "Payment Method" nav entry) after terms resolve.
-function _refreshTermsUI() {
+// Paint the prepaid-gated UI (the "Payment Method" nav entry) from the canonical predicate.
+// Hidden until terms resolve to a definite prepaid verdict — unresolved shows nothing.
+async function _refreshTermsUI() {
+  const show = await customerIsPrepaid();
   var payNav = document.getElementById('nav-payment');
-  if (payNav) payNav.style.display = (currentCustomer && currentCustomer.termsCode === 'PRE') ? 'flex' : 'none';
+  if (payNav) payNav.style.display = show ? 'flex' : 'none';
 }
 
 // One terms-proxy call with an AbortController timeout. Returns the parsed JSON or null.
@@ -8381,32 +8383,57 @@ function _applyTerms(c, td) {
   _refreshTermsUI();
 }
 
-// Fire-and-forget: called AFTER _finalizeLogin so login never waits on the console.
+// Fire-and-forget: called AFTER _finalizeLogin so login never waits on the console. Delegates to
+// the shared resolver (2500ms + one retry on null + in-flight dedupe) so the login-time lookup
+// reliably wins the race and the nav settles on its own — no click needed to reveal a prepaid tile.
 async function resolveTermsAtLogin(c) {
-  _applyTerms(c, await fetchTerms(c, 1500));
+  await ensureTermsResolved();
 }
 
-// Belt-and-suspenders: before any PRE-gated money path, if terms never resolved at login
-// (Worker slow/offline), do ONE quick synchronous re-check. Cache-backed => near-instant
-// on the retry. Never throws; leaves standard (non-PRE) on failure.
+// The ONE terms-resolution path. If terms haven't resolved yet, fetch (2500ms) with a single
+// retry on a null (cold/slow-worker) result, then apply. Concurrent callers — the login paint,
+// resolveTermsAtLogin, and the money paths — share a single in-flight lookup via _termsPending,
+// so login never fires the console twice. Never throws; leaves standard (non-PRE) on failure.
 async function ensureTermsResolved() {
   if (!currentCustomer || !currentCustomer._dynamic) return;
-  if (currentCustomer._termsResolved) return; // login-time lookup already answered
-  _applyTerms(currentCustomer, await fetchTerms(currentCustomer, 2500));
+  if (currentCustomer._termsResolved) return;                              // already answered
+  if (currentCustomer._termsPending) return currentCustomer._termsPending; // dedupe concurrent callers
+  const cust = currentCustomer;
+  cust._termsPending = (async () => {
+    try {
+      let td = await fetchTerms(cust, 2500);
+      if (!td) td = await fetchTerms(cust, 2500);                          // single retry on null
+      _applyTerms(cust, td);
+    } finally { cust._termsPending = null; }
+  })();
+  return cust._termsPending;
 }
 
-// ── CREDIT: canonical "does this customer have credit terms" accessor ───────────
-// SINGLE source of truth for the Apply-for-Credit flow. Awaits the live terms lookup,
-// then returns true ONLY for an explicitly resolved, non-prepaid terms value. Prepaid,
-// unresolved/null, logged-out, or any lookup failure all return false → the customer
-// sees the application. We never claim a customer has terms on a failed/missing lookup.
-// Do NOT inline this logic anywhere else.
-async function customerHasCredit() {
+// ── CREDIT/PREPAID: one resolver, two thin predicate readers (no split-brain) ───
+// resolveCustomerTerms() is the SINGLE owner of the resolved-terms verdict: it awaits the live
+// lookup once (via ensureTermsResolved) and returns the resolved snapshot. customerHasCredit()
+// and customerIsPrepaid() are thin readers of that snapshot — neither calls the lookup itself,
+// so the two verdicts can never drift. Unresolved / logged-out / lookup-error => resolved:false,
+// and BOTH predicates return false: no credit claimed, and the Payment Method tile stays hidden
+// until a definite prepaid verdict. Do NOT re-derive either verdict from raw fields anywhere else.
+async function resolveCustomerTerms() {
   try { await ensureTermsResolved(); } catch (e) {}
-  if (!currentCustomer || !currentCustomer._termsResolved) return false;
-  if (currentCustomer.isPrepaid) return false;
-  const tc = currentCustomer.termsCode;
-  return !!tc && tc !== 'PRE';
+  const cc = currentCustomer;
+  return {
+    resolved: !!(cc && cc._termsResolved),
+    termsCode: cc ? cc.termsCode : null,
+    isPrepaid: !!(cc && cc.isPrepaid)
+  };
+}
+// Explicitly resolved, non-prepaid credit terms.
+async function customerHasCredit() {
+  const t = await resolveCustomerTerms();
+  return t.resolved && !t.isPrepaid && !!t.termsCode && t.termsCode !== 'PRE';
+}
+// Explicitly resolved to prepaid. Unresolved => false (tile hidden until a definite prepaid verdict).
+async function customerIsPrepaid() {
+  const t = await resolveCustomerTerms();
+  return t.resolved && (t.termsCode === 'PRE' || t.isPrepaid);
 }
 
 // Apply-for-Credit nav tile. Prepaid / unresolved / logged-out customers get the ONE
