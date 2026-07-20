@@ -7748,6 +7748,14 @@ function updateSessionTitle(title) {
   }
 }
 
+// A session is created ONLY by the first user-authored message (via handleInput),
+// never by a nav click or panel open. Single creation chokepoint — no split-brain.
+function ensureSession(firstUserText) {
+  if (currentSession) return;
+  startSession((firstUserText || '').slice(0, 60));   // reuse startSession's create logic + 60-char title
+  snapshotCurrentSession();                            // seed transcript from chatHistory (reused as-is; no-op when empty)
+}
+
 function renderSessionList() {
   const el = document.getElementById('recent-list');
   if (!el) return;
@@ -13745,7 +13753,7 @@ Company: Freight and Logistics, Inc. Est. 2010. (800) 687-3713. M-F 6:30 AM-4 PM
 async function handleInput(text) {
   const t = text.trim();
   const lower = t.toLowerCase();
-  if (!currentSession && t) { startSession(t.slice(0, 60)); } else if (currentSession && t) { updateSessionTitle(t.slice(0, 60)); }
+  if (t) { if (!currentSession) ensureSession(t); else updateSessionTitle(t.slice(0, 60)); }
 
   // ── Packing slip / BOL copy — auto-route to SmartPaste extraction ───────────────
   // When a customer pastes a full packing slip, structured extraction via SmartPaste
@@ -18306,7 +18314,6 @@ async function quickAction(action) {
   // Update active nav item
 
   appendMessage('user', action);
-  if (!currentSession) { startSession(action.slice(0, 60)); } else { updateSessionTitle(action.slice(0, 60)); }
   if (action === 'Get a Quote') { showQuoteForm(); return; }
 
   if (action === 'Track Shipment') { appendMessage('bot', 'Sure! Give me a BOL number, PRO/tracking number, customer name, company, or carrier and I\'ll find it right away.'); return; }
