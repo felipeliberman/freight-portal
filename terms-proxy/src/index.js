@@ -214,11 +214,15 @@ async function handleTerms(request, env) {
     records = await searchWithSession(env, name || code);
   } catch (e) {
     // Console/session failure -> last-known cached value (stale-but-safe), else standard.
+    // Log both degraded paths (customer id + source + underlying error) so a degraded console
+    // is visible in Cloudflare Workers Logs / `wrangler tail` instead of only via customer reports.
+    const errMsg = (e && e.message) || String(e);
     if (id) {
       try {
         const raw = await env.TERMS_CACHE_KV.get(id);
         if (raw) {
           const rec = JSON.parse(raw);
+          console.log('[terms-proxy] DEGRADED source=cache-stale id=' + id + ' termsCode=' + rec.termsCode + ' err=' + errMsg);
           return json(request, {
             termDescription: rec.termDescription, termsCode: rec.termsCode,
             isPrepaid: rec.isPrepaid, matchConfidence: rec.matchConfidence || 'resolved',
@@ -227,6 +231,7 @@ async function handleTerms(request, env) {
         }
       } catch (e2) { /* ignore */ }
     }
+    console.log('[terms-proxy] DEGRADED source=console-error id=' + (id || '(none)') + ' err=' + errMsg);
     return json(request, { ...STANDARD, matchConfidence: 'error', source: 'console-error' });
   }
 
