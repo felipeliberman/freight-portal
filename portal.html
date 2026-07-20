@@ -17524,6 +17524,12 @@ function showQuoteForm(prefill, silent) {
     // re-pull that fails transiently would leave the PREVIOUS pull's carriers in window._lastRates,
     // so the agent would read back stale rates instead of seeing the failure. Success republishes below.
     if (typeof _publishRatesForAI === 'function') _publishRatesForAI(null, null);
+    // Arm the in-flight flag for EVERY doGetRates trigger (card 2 Stage 1) — previously only the
+    // agent update_quote path set it, so form-button / requote / insurance / SmartPaste / accessorial
+    // re-pulls ran unguarded and an overlapping agent read did not wait for settlement. Cleared on
+    // success (below, after publish) and in the catch; force-cleared by _awaitRatePull's maxWait and
+    // resetShipmentState if a pull ever hangs.
+    window._ratePullInFlight = true;
 
     // Rotating loading messages
     const _loadMsgs = [
