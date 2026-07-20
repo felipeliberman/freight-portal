@@ -15848,7 +15848,7 @@ function showShippingItems() {
   delOverlay.style.cssText = 'display:none;position:absolute;inset:0;background:rgba(249,248,245,.85);backdrop-filter:blur(3px);z-index:20;align-items:center;justify-content:center;';
   delOverlay.innerHTML =
     '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:22px 24px;max-width:260px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.1);">' +
-      '<div style="font-size:22px;margin-bottom:8px;">🗑️</div>' +
+      '<div style="display:flex;justify-content:center;margin-bottom:8px;">' + trashIcon(22, '#706c63') + '</div>' +
       '<div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:4px;">Delete this item?</div>' +
       '<div id="si-del-name" style="font-size:12px;color:var(--mu);margin-bottom:16px;"></div>' +
       '<div style="display:flex;gap:8px;">' +
@@ -16167,7 +16167,7 @@ function showAddressBook() {
   delOverlay.style.cssText = 'display:none;position:absolute;inset:0;background:rgba(249,248,245,.85);backdrop-filter:blur(3px);z-index:20;align-items:center;justify-content:center;';
   delOverlay.innerHTML =
     '<div style="background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:22px 24px;max-width:260px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.1);">' +
-      '<div style="font-size:22px;margin-bottom:8px;">🗑️</div>' +
+      '<div style="display:flex;justify-content:center;margin-bottom:8px;">' + trashIcon(22, '#706c63') + '</div>' +
       '<div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:4px;">Delete this address?</div>' +
       '<div id="ab-del-name" style="font-size:12px;color:var(--mu);margin-bottom:16px;"></div>' +
       '<div style="display:flex;gap:8px;">' +
