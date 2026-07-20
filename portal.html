@@ -11334,7 +11334,7 @@ function _quoteFormState() {
       stc: first.stc,
       items: items,
       accessorials: accs.map(c => ACC_LABEL[c] || c),
-      ratesPulled: !!(window._lastRates && window._lastRates.count),
+      ratesPulled: _rateAvailability().state === 'settled_with_rates',
       // ZIP resolution from the last rate pull (Fix C). Only surfaced when it still matches the
       // ZIP currently on the form, so a stale resolution never mislabels a freshly-changed ZIP.
       originCityResolved: (window._zipResolution && String(window._zipResolution.originZip) === g('#qt-origin')) ? !!window._zipResolution.originResolved : undefined,
@@ -11379,6 +11379,30 @@ function _bookingPanelState() {
   } catch(e) { return { bookingPanelOpen: false }; }
 }
 
+// ── Canonical rate-availability tri-state ─────────────────────────────────────
+// SINGLE source of truth for "are there rates?", read by BOTH the agent path
+// (_liveStateBlock, read_rates, update_quote getRates, _quoteFormState) and the
+// client chat summary. Distinguishes three states that the old bare-_lastRates check
+// could not, which is why the agent claimed "no carriers" while a full table was on screen:
+//   'settled_with_rates' — a pull completed and carriers came back
+//   'settled_empty'      — a pull COMPLETED and genuinely returned zero carriers
+//   'not_settled'        — no pull has completed (null, never run, in flight, or a
+//                          transport hiccup). NEVER assert a count in either direction here.
+// Only a genuinely empty lane sets window._lastRatePullError.kind === 'empty' (in fetchRates,
+// which THROWS rather than returning []), so that marker is the ONLY thing that may unlock the
+// "no carriers came back" copy. fetchRates clears the marker at entry, so an in-flight pull
+// always reads not_settled.
+function _rateAvailability() {
+  try {
+    var r = window._lastRates;
+    if (r && r.count) return { state: 'settled_with_rates', count: r.count };
+    var err = window._lastRatePullError;
+    if (err && err.kind === 'empty')     return { state: 'settled_empty', count: 0 };
+    if (err && err.kind === 'transport') return { state: 'not_settled', reason: 'transport', count: null };
+    return { state: 'not_settled', reason: 'none', count: null };
+  } catch (e) { return { state: 'not_settled', reason: 'none', count: null }; }
+}
+
 // Compact live-state block injected into the agent's system prompt every turn.
 // Gives the model an always-on view of the form, rates, and booking panel so it never
 // re-asks for filled fields or offers to pull rates that are already on screen.
@@ -11397,10 +11421,13 @@ function _liveStateBlock() {
     }
     lines.push('\n\n=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory. Never re-ask for anything shown here. Never say a field is missing, the form is not open, or rates are not pulled if this shows otherwise.) ===');
     lines.push('quoteForm: ' + JSON.stringify(q));
-    if (r && r.count) {
+    var _avail = _rateAvailability();
+    if (_avail.state === 'settled_with_rates') {
       lines.push('ratesOnScreen: ' + r.count + ' option(s)' + (r.lane ? (' for ' + r.lane) : '') + '. Top: ' + (r.options||[]).slice(0,3).map(function(o){ return o.rank + ') ' + o.carrier + ' $' + o.price + (o.transitDays ? (' ' + o.transitDays + 'd') : ''); }).join('  |  '));
+    } else if (_avail.state === 'settled_empty') {
+      lines.push('ratesOnScreen: a rate pull finished and no carriers came back for this lane. You MAY tell the customer no carriers came back — state that fact and point them to support; never invent a reason.');
     } else {
-      lines.push('ratesOnScreen: none pulled yet');
+      lines.push('ratesOnScreen: no rate result has settled yet — a pull may still be running or none has run. Do NOT tell the customer whether carriers are available. Do not say rates came back and do not say none came back. If they just asked for a price, tell them you are pulling it and will have it in a moment.');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
     const _rs = window._residentialStatus;
@@ -11479,6 +11506,7 @@ function _publishRatesForAI(rates, shipment) {
 
 function _summarizeRatesToChat() {
   try {
+    if (_rateAvailability().state !== 'settled_with_rates') return;
     var r = window._lastRates;
     if (!r || !r.count || !r.options || !r.options.length) return;
     var top = r.options[0];
@@ -12353,26 +12381,31 @@ async function aiConverse(userText) {
             // result, so the AI doesn't narrate "no rates" while Primus is still responding.
             if (toolUse.input && toolUse.input.getRates) {
               await _awaitRatePull();
-              if (window._lastRates) { result = Object.assign({}, result, { ratesReady:true, rateCount: window._lastRates.count }); }
+              const _avail = _rateAvailability();
+              if (_avail.state === 'settled_with_rates') { result = Object.assign({}, result, { ratesReady:true, rateCount: _avail.count }); }
               else {
-                // No rates. If the last pull was gated by an unresolvable ZIP, tell the agent the REAL
-                // cause so it can't fabricate "no carriers / local lane." Distinguish bad ZIP from outage.
+                // No rates on the agent snapshot. Distinguish, IN ORDER, an unresolvable ZIP, an
+                // address-lookup outage, a transport hiccup, a genuinely empty lane, and an
+                // as-yet-unsettled/in-flight pull — so the agent gets the REAL cause and can't
+                // fabricate "no carriers / local lane." Only a settled_empty pull may say no carriers.
                 const _zr = window._zipResolution;
                 const _nf = _zr ? [
                   _zr.originReason === 'notfound' ? ('origin ZIP ' + _zr.originZip) : null,
                   _zr.destReason   === 'notfound' ? ('destination ZIP ' + _zr.destZip) : null
                 ].filter(Boolean) : [];
-                let _note;
+                let _note; let _rc = null; let _ready = true;
                 if (_nf.length) {
                   _note = 'Rates NOT pulled — could not match ' + _nf.join(' or ') + ' to a city. Tell the customer you could not find a city for that ZIP and ask them to double-check it. Do NOT say carriers were unavailable or blame the lane — the ZIP did not resolve.';
                 } else if (_zr && (_zr.originReason === 'outage' || _zr.destReason === 'outage')) {
                   _note = 'Rates NOT pulled — the address lookup service was momentarily unavailable. Ask the customer to try again in a moment. Do NOT blame carriers or the lane.';
-                } else if (window._lastRatePullError && window._lastRatePullError.kind === 'transport') {
+                } else if (_avail.reason === 'transport') {
                   _note = 'Rates NOT pulled — the rate service hiccuped after retries. This was a connection problem, NOT an empty lane. Ask the customer to try again in a moment; do NOT say no carriers came back and do NOT blame the lane, the carriers, or the freight.';
+                } else if (_avail.state === 'settled_empty') {
+                  _note = 'Pull complete — no carriers returned for this lane.'; _rc = 0;
                 } else {
-                  _note = 'Pull complete — no carriers returned for this lane.';
+                  _note = 'The rate result has not settled yet — a pull may still be running or none has run. Do NOT tell the customer no carriers came back and do NOT say rates are ready. If they asked for a price, tell them you are pulling it and will have it in a moment.'; _ready = false;
                 }
-                result = Object.assign({}, result, { ratesReady:true, rateCount: 0, note: _note });
+                result = Object.assign({}, result, { ratesReady:_ready, rateCount: _rc, note: _note });
               }
             }
             }
@@ -12380,10 +12413,17 @@ async function aiConverse(userText) {
             // Wait for any in-flight rate pull to finish before reading, so we never
             // report "no rates came back" while Primus is still responding (~5s).
             if (window._ratePullInFlight) { await _awaitRatePull(); }
-            const _rr = window._lastRates ? Object.assign({}, window._lastRates)
-              : ((window._lastRatePullError && window._lastRatePullError.kind === 'transport')
-                  ? { count: 0, options: [], note: 'The last rate pull did not complete — the rate service hiccuped after retries. This was a connection problem, not an empty lane. Ask the customer to try again in a moment.' }
-                  : { count: 0, options: [], note: 'No rates pulled yet — fill the quote and pull rates first.' });
+            const _avail = _rateAvailability();
+            let _rr;
+            if (_avail.state === 'settled_with_rates') {
+              _rr = Object.assign({}, window._lastRates);
+            } else if (_avail.state === 'settled_empty') {
+              _rr = { count: 0, settledEmpty: true, options: [], note: 'A rate pull finished and zero carriers came back for this lane. You may tell the customer no carriers came back — state the fact and point them to support; do not invent a cause.' };
+            } else if (_avail.reason === 'transport') {
+              _rr = { count: null, settled: false, options: [], note: 'The last rate pull did not complete — the rate service hiccuped after retries. This was a connection problem, not an empty lane. Ask the customer to try again in a moment. Do NOT say no carriers came back.' };
+            } else {
+              _rr = { count: null, settled: false, options: [], note: 'No rate result has settled yet — a pull may still be running or none has run. Do NOT tell the customer no carriers came back and do NOT say rates are ready. If they asked for a price, tell them you are pulling it and will have it shortly.' };
+            }
             if (window._residentialStatus) _rr.residentialStatus = window._residentialStatus;
             result = _rr;
           } else if (toolUse.name === 'book_shipment') {
