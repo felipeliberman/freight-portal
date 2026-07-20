@@ -8967,7 +8967,9 @@ function showSettings() {
 
   // ── DEFAULT SHIPPER ────────────────────────────────────────────────────────
   const shipperSec = section('Default Pickup Address');
-  const ds = s.defaultShipper || {};
+  // The Address Book owns the default pickup. Fall back to a legacy Settings entry so
+  // customers who saved one there before still see their address.
+  const ds = getDefaultPickup() || getLegacyDefaultShipper() || {};
   const flds = [
     { key:'name',    label:'Business Name',   ph:'e.g. Haynes Brothers Furniture', w:'220px' },
     { key:'street',  label:'Street Address',  ph:'e.g. 123 Main St',               w:'220px' },
@@ -9032,17 +9034,22 @@ function showSettings() {
   saveBtn.textContent = 'Save Settings';
   saveBtn.style.cssText = 'width:100%;background:var(--ac);color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);margin-top:4px;';
   saveBtn.onclick = () => {
-    const newSettings = {
-      defaultShipper: {},
+    const existing = getSettings();
+    const newSettings = Object.assign({}, existing, {
       defaultCommodity: {
         commodity:    commEl.value.trim(),
         nmfc:         nmfcEl.value.trim(),
         freightClass: classEl.value.trim(),
       },
       defaultAccessorials: accOpts.filter(o => o._cb.checked).map(o => o.code),
-    };
-    flds.forEach(f => { newSettings.defaultShipper[f.key] = shipperInputs[f.key].value.trim(); });
+    });
+    // Leave any legacy defaultShipper key in place as a dormant fallback (not rewritten here).
     saveSettings(newSettings);
+    // The default pickup address now lives in the Address Book. Upsert it there through the
+    // single chokepoint, but only when the customer actually entered an address.
+    const shipper = {};
+    flds.forEach(f => { shipper[f.key] = shipperInputs[f.key].value.trim(); });
+    if (shipper.name || shipper.street) setDefaultPickup(shipper);
     saveBtn.textContent = '✓ Saved';
     saveBtn.style.background = '#16a34a';
     setTimeout(() => { saveBtn.textContent = 'Save Settings'; saveBtn.style.background = 'var(--ac)'; }, 2000);
@@ -9054,8 +9061,9 @@ function showSettings() {
 
 // Apply default settings to forms when they open
 function applyDefaultShipper() {
-  const s = getSettings();
-  const ds = s.defaultShipper;
+  // Prefill the booking pickup from the Address Book default; fall back to a legacy
+  // Settings entry for customers who have not converged yet.
+  const ds = getDefaultPickup() || getLegacyDefaultShipper();
   if (!ds || !ds.name) return;
   const map = { 'bk-pu-name': ds.name, 'bk-pu-street': ds.street, 'bk-pu-suite': ds.suite,
     'bk-pu-city': ds.city, 'bk-pu-state': ds.state, 'bk-pu-zip': ds.zip,
@@ -15286,9 +15294,10 @@ function showBookingPanel(rate, shipmentData) {
       if (savePuBtn._updateIdx >= 0 && bk[savePuBtn._updateIdx]) {
         // Update existing entry
         bk[savePuBtn._updateIdx] = Object.assign(bk[savePuBtn._updateIdx], newEntry);
+        clearOtherDefaults(bk, savePuBtn._updateIdx);
       } else {
-        bk.forEach(a => a.isDefault = false);
         bk.unshift(newEntry);
+        clearOtherDefaults(bk, 0);
       }
       saveAddressBook(bk);
       savePuBtn.textContent = 'Saved!';
@@ -16141,6 +16150,51 @@ function saveAddressBook(book) {
 function getDefaultPickup() {
   return getAddressBook().find(a => a.isDefault) || null;
 }
+// Legacy fallback: customers who saved a default pickup address in Settings before it
+// lived in the Address Book. Read-only — used to display and prefill their address until
+// their next save converges it into the Address Book. The old key is never rewritten here.
+function getLegacyDefaultShipper() {
+  const s = getSettings();
+  return (s && s.defaultShipper && s.defaultShipper.name) ? s.defaultShipper : null;
+}
+// Single-default-pickup invariant, in one place: exactly one Address Book entry may be
+// starred. Clears isDefault on every entry except keepIdx (pass -1 to clear all — the
+// caller then stars the entry it keeps). Every writer that marks a default pickup routes
+// its star-clearing through here so the rule can never drift between them.
+function clearOtherDefaults(book, keepIdx) {
+  book.forEach((a, i) => { if (i !== keepIdx) a.isDefault = false; });
+}
+// Single write chokepoint for the default pickup address. Both the Settings save and the
+// booking "Save as default" button route through here — nothing else marks the default.
+// Upserts into the Address Book: updates the current default in place (or a matching entry)
+// so repeated saves never pile up duplicates, and stars exactly one address.
+function setDefaultPickup(addr) {
+  const book = getAddressBook();
+  const clean = {
+    name:    (addr.name    || '').trim(),
+    street:  (addr.street  || '').trim(),
+    suite:   (addr.suite   || '').trim(),
+    city:    (addr.city    || '').trim(),
+    state:   (addr.state   || '').trim().toUpperCase(),
+    zip:     (addr.zip     || '').trim(),
+    contact: (addr.contact || '').trim(),
+    phone:   (addr.phone   || '').trim(),
+  };
+  // Prefer the existing default; otherwise reuse an address that already matches so we
+  // don't create a near-duplicate row.
+  let idx = book.findIndex(a => a.isDefault);
+  if (idx < 0) idx = book.findIndex(a =>
+    (a.name   || '').trim().toLowerCase() === clean.name.toLowerCase() &&
+    (a.street || '').trim().toLowerCase() === clean.street.toLowerCase() &&
+    (a.zip    || '').trim() === clean.zip);
+  clearOtherDefaults(book, -1);   // clear all; we star exactly one below
+  if (idx >= 0) {
+    book[idx] = Object.assign({}, book[idx], clean, { isDefault: true, locTag: book[idx].locTag || 'from' });
+  } else {
+    book.unshift(Object.assign({}, clean, { isDefault: true, locTag: 'from' }));
+  }
+  saveAddressBook(book);
+}
 
 function lookupZipCity(zip, cityId, stateId) {
   if (!zip || zip.length !== 5) return;
@@ -16519,8 +16573,8 @@ function showAddressBook() {
       isDefault: document.getElementById('ab-default').checked,
       locTag:    activeTag,
     };
-    if (addr.isDefault) bk.forEach(a => a.isDefault = false);
     if (editIdx >= 0) bk[editIdx] = addr; else bk.push(addr);
+    if (addr.isDefault) clearOtherDefaults(bk, editIdx >= 0 ? editIdx : bk.length - 1);
     saveAddressBook(bk);
     formWrap.style.display = 'none';
     editIdx = -1;
@@ -16558,9 +16612,7 @@ function showAddressBook() {
     };
     const savePuBtn = document.getElementById('bk-pu-save-ab');
     if (savePuBtn) savePuBtn.onclick = () => {
-      const bk = getAddressBook();
-      bk.forEach(a => a.isDefault = false);
-      bk.unshift({
+      setDefaultPickup({
         name:      document.getElementById('bk-pu-name').value.trim(),
         street:    document.getElementById('bk-pu-street').value.trim(),
         suite:     document.getElementById('bk-pu-suite').value.trim(),
@@ -16569,10 +16621,7 @@ function showAddressBook() {
         zip:       document.getElementById('bk-pu-zip').value.trim(),
         contact:   document.getElementById('bk-pu-contact').value.trim(),
         phone:     document.getElementById('bk-pu-phone').value.trim(),
-        isDefault: true,
-        locTag:    'from',
       });
-      saveAddressBook(bk);
       savePuBtn.textContent = 'Saved!';
       setTimeout(() => { savePuBtn.textContent = 'Save default'; }, 2000);
     };
