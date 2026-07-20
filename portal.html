@@ -2231,6 +2231,7 @@ function resetShipmentState(wipeConversation) {
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
+    window._pendingContactRestore = null; // card 5: one-shot form-requote restore guard
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
@@ -11635,8 +11636,54 @@ function _setBkField(id, val, evt) {
   return true;
 }
 
+// ── Canonical: reconcile the booking panel FORWARD from _quotedContacts (card 5) ──
+// The single restore BOTH the form path (showBookingPanel) and the agent path
+// (_applyBookingFields) call, so party + pickup + PO + instructions + hazmat come back the same
+// way no matter how the quote was entered. FILL-IF-EMPTY — never clobbers a value the customer or
+// agent already typed; it only supersedes a blank field, an address-book default, or the pickup
+// placeholder. Pickup date/window replace only a blank or the exact placeholder default and never a
+// past date; on the form path this runs BEFORE applyDefaultShipper so entered values win.
+function _restoreBookingFromQuoted() {
+  try {
+    const _qc = window._quotedContacts || {};
+    const sp = _qc.shipper || {}, cn = _qc.consignee || {}, pu = _qc.pickup || {}, hz = _qc.hazmat || {};
+    const fillEmpty = (id, val, evt) => {
+      if (val === undefined || val === null || val === '') return;
+      const el = document.getElementById(id);
+      if (!el || (el.value && String(el.value).trim() !== '')) return;
+      _setBkField(id, val, evt);
+    };
+    const fillPickup = (id, val, evt, def) => {
+      if (val === undefined || val === null || val === '') return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      const cur = String(el.value || '').trim();
+      if (cur === '' || cur === def) _setBkField(id, val, evt); // replace blank or placeholder only
+    };
+    fillEmpty('bk-pu-name', sp.name);
+    fillEmpty('bk-pu-street', sp.address || sp.street);
+    fillEmpty('bk-pu-suite', sp.suite);
+    fillEmpty('bk-pu-contact', sp.contact);
+    fillEmpty('bk-pu-phone', sp.phone);
+    fillEmpty('bk-pu-ref', _qc.referenceNumber || sp.referenceNumber);
+    if (pu.date && (typeof isPastPickup !== 'function' || !isPastPickup(pu.date))) fillPickup('bk-pu-date', pu.date, 'change', (typeof getTomorrow === 'function' ? getTomorrow() : ''));
+    fillPickup('bk-pu-open', pu.open, 'change', '12:00');
+    fillPickup('bk-pu-close', pu.close, 'change', '16:00');
+    fillEmpty('bk-dl-name', cn.name);
+    fillEmpty('bk-dl-street', cn.address || cn.street);
+    fillEmpty('bk-dl-suite', cn.suite);
+    fillEmpty('bk-dl-contact', cn.contact);
+    fillEmpty('bk-dl-phone', cn.phone);
+    fillEmpty('bk-special-instructions', _qc.specialInstructions);
+    if (hz.unNumber) { const el = document.getElementById('bk-haz-un'); if (el && !el.value) { el.value = String(hz.unNumber); if (hz.packingGroup) el.dataset.unPg = String(hz.packingGroup); } }
+    fillEmpty('bk-haz-contact', hz.contact);
+    fillEmpty('bk-haz-phone', hz.phone);
+  } catch (e) { console.warn('[FP] _restoreBookingFromQuoted failed', e); }
+}
+
 function _applyBookingFields(input) {
   input = input || {};
+  _restoreBookingFromQuoted(); // card 5: fill-if-empty baseline from _quotedContacts (shared with the form path)
   // Merge quote-time captured contacts as baseline so the booking panel auto-fills
   // from a prior update_quote call that included shipper/consignee, or from a
   // requote where bookingData was snapshotted into _quotedContacts before panel closed.
@@ -15344,6 +15391,14 @@ function showBookingPanel(rate, shipmentData) {
 
   openRightPanel(c, 'Book Shipment');
   setTimeout(() => {
+    // Card 5 — form-path requote restore: bring the customer's entered pickup/delivery/PO/
+    // instructions/hazmat back from _quotedContacts BEFORE the address-book default fills anything,
+    // so their entries win and the default only fills what is still blank. One-shot, lane-gated so a
+    // genuinely new quote (different lane, or no pending flag) never inherits a prior shipment's detail.
+    if (window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip)) {
+      _restoreBookingFromQuoted();
+      window._pendingContactRestore = null;
+    }
     applyDefaultShipper();
     const _rqCtx = window._requoteContext;
     if (_rqCtx && _rqCtx.bolId) {
@@ -15524,6 +15579,10 @@ function showBookingPanel(rate, shipmentData) {
             }
             if (bookingData.specialInstructions) window._quotedContacts.specialInstructions = bookingData.specialInstructions;
             if (bookingData.shipperRef) window._quotedContacts.referenceNumber = bookingData.shipperRef;
+            // Card 5 — also carry pickup + hazmat through the requote, and arm the one-shot lane-gated restore.
+            window._quotedContacts.pickup = { date: bookingData.pickupDate||'', open: bookingData.pickupOpen||'', close: bookingData.pickupClose||'' };
+            if (bookingData.hazUnNumber || bookingData.hazContact || bookingData.hazPhone) window._quotedContacts.hazmat = { unNumber: bookingData.hazUnNumber||'', packingGroup: bookingData.hazPkgGroup||'', contact: bookingData.hazContact||'', phone: bookingData.hazPhone||'' };
+            window._pendingContactRestore = { lane: (originZip||'') + '->' + (destZip||'') };
             window._bookingPanelContainer = null;
             if (typeof applyRequoteAccessorials === 'function') applyRequoteAccessorials(toAdd_sb);
             else if (window._showRequoteToast) window._showRequoteToast('Residential' + (addLFD_sb?' + Liftgate':''), toAdd_sb.join('+'));
@@ -15747,6 +15806,10 @@ function showBookingPanel(rate, shipmentData) {
               }
               if (bookingData.specialInstructions) window._quotedContacts.specialInstructions = bookingData.specialInstructions;
               if (bookingData.shipperRef) window._quotedContacts.referenceNumber = bookingData.shipperRef;
+              // Card 5 — also carry pickup + hazmat through the requote, and arm the one-shot lane-gated restore.
+              window._quotedContacts.pickup = { date: bookingData.pickupDate||'', open: bookingData.pickupOpen||'', close: bookingData.pickupClose||'' };
+              if (bookingData.hazUnNumber || bookingData.hazContact || bookingData.hazPhone) window._quotedContacts.hazmat = { unNumber: bookingData.hazUnNumber||'', packingGroup: bookingData.hazPkgGroup||'', contact: bookingData.hazContact||'', phone: bookingData.hazPhone||'' };
+              window._pendingContactRestore = { lane: (originZip||'') + '->' + (destZip||'') };
               window._bookingPanelContainer = null;
 
               // Close the booking tab first
