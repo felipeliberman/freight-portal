@@ -2226,6 +2226,7 @@ function resetShipmentState(wipeConversation) {
   try {
     window._lastRates = null; window._lastRatesRaw = null; window._lastRatesShipment = null;
     window._lastRatePullError = null;
+    window._accMismatch = {}; // card 3 Stage 1: fresh quote = fresh accessorial-retry history (no stale strikes)
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
@@ -12352,6 +12353,7 @@ async function aiConverse(userText) {
                 result = { ok:true, mobile:true, summary:'MOBILE: No prefill. Tell the customer in one sentence to tap the Quote tab at the bottom and fill in the shipment details.' };
               }
             } else {
+            const _wasOpen = window._quoteFormOpen; // capture BEFORE _execUpdateQuote: decides whether accessorial toggles are settled synchronously (form already open) or deferred ~350ms (form-open path), so the verification below never reads mid-render state
             result = _execUpdateQuote(toolUse.input);
             // Write-time ZIP resolve: if the agent set a ZIP, resolve it NOW so it learns 'notfound'
             // this turn (up front), not only after a failed pull. Reuses window._zipResolution +
@@ -12406,6 +12408,56 @@ async function aiConverse(userText) {
                   _note = 'The rate result has not settled yet — a pull may still be running or none has run. Do NOT tell the customer no carriers came back and do NOT say rates are ready. If they asked for a price, tell them you are pulling it and will have it in a moment.'; _ready = false;
                 }
                 result = Object.assign({}, result, { ratesReady:_ready, rateCount: _rc, note: _note });
+              }
+            }
+            // ── Accessorial verification (card 3 Stage 1): never confirm a silent drop ──
+            // Compare what the agent asked to add/remove against the SETTLED accessorial set (plain
+            // labels from _quoteFormState). Runs only where state is settled: the getRates branch
+            // awaited the pull above, and the non-getRates already-open path toggled synchronously.
+            // The form-OPEN path defers toggles ~350ms, so _wasOpen gates it out (nothing to falsely
+            // fail). _filterLiftgateCodes has already mutated toolUse.input.addAccessorials in place, so
+            // a deliberately-suppressed liftgate is no longer requested and cannot false-mismatch.
+            {
+              const _ai = toolUse.input || {};
+              const _hasAccReq = !!((_ai.addAccessorials && _ai.addAccessorials.length) || (_ai.removeAccessorials && _ai.removeAccessorials.length));
+              if (_hasAccReq && (_ai.getRates || _wasOpen)) {
+                const _actualAcc = (_quoteFormState().accessorials || []);
+                if (!window._accMismatch) window._accMismatch = {};
+                // Classify each requested code as satisfied (add→present / remove→absent) or mismatched,
+                // and keep a per-code consecutive-mismatch counter. Reset-to-0 on a satisfied code is what
+                // stops a later re-add from inheriting stale strikes (fail once → succeed → remove → re-add
+                // fails = strike 1, not strike 2). Codes without a plain label are skipped so none can leak.
+                const _missAdd = [], _stuckRem = [];
+                (_ai.addAccessorials || []).forEach(c => {
+                  if (!ACC_LABEL[c]) return;
+                  if (_actualAcc.includes(ACC_LABEL[c])) { window._accMismatch[c] = 0; }
+                  else { _missAdd.push(c); window._accMismatch[c] = (window._accMismatch[c] || 0) + 1; }
+                });
+                (_ai.removeAccessorials || []).forEach(c => {
+                  if (!ACC_LABEL[c]) return;
+                  if (!_actualAcc.includes(ACC_LABEL[c])) { window._accMismatch[c] = 0; }
+                  else { _stuckRem.push(c); window._accMismatch[c] = (window._accMismatch[c] || 0) + 1; }
+                });
+                const _failed = _missAdd.concat(_stuckRem);
+                if (_failed.length) {
+                  const _bits = [];
+                  if (_missAdd.length)  _bits.push('did not get added: ' + _missAdd.map(c => ACC_LABEL[c].toLowerCase()).join(', '));
+                  if (_stuckRem.length) _bits.push('did not get removed: ' + _stuckRem.map(c => ACC_LABEL[c].toLowerCase()).join(', '));
+                  // Strike 2+ on any failed code → stop retrying and hand off to support (mirrors the
+                  // empty-lane pattern at the EMPTY RATE RESULT rule). Strike 1 → re-apply once. Either way:
+                  // plain names only, no invented cause, no blaming the system/carrier/lane, no negative commentary.
+                  if (_failed.some(c => (window._accMismatch[c] || 0) >= 2)) {
+                    result = Object.assign({}, result, {
+                      ok: false, ratesReady: false, accessorialMismatch: true,
+                      note: 'ACCESSORIAL COULD NOT BE APPLIED — ' + _bits.join('; ') + '. Do NOT try again and do NOT pull rates again. Tell the customer plainly that you could not add it and that it is best to email support@freightandlogistics.ai so the team can get it on the quote. Do NOT say it was added or removed. Do NOT invent or guess a reason and do NOT blame the system, the carrier, or the lane. Use plain accessorial names only, never a code.'
+                    });
+                  } else {
+                    result = Object.assign({}, result, {
+                      ok: false, ratesReady: false, accessorialMismatch: true,
+                      note: 'ACCESSORIAL DID NOT TAKE — ' + _bits.join('; ') + '. Silently re-apply it now (call update_quote again with the same accessorial), and tell the customer only that it did not take and you are adding it now. Do NOT tell the customer it was added or removed. Do NOT invent or guess a reason and do NOT blame the system, the carrier, the lane, or anything else. Use plain accessorial names only, never a code.'
+                    });
+                  }
+                }
               }
             }
             }
