@@ -8097,7 +8097,7 @@ function showAllChats() {
   footer.style.cssText = 'display:none;flex-shrink:0;border-top:1px solid #e5e2d9;background:#f9f8f5;padding:10px 18px;align-items:center;justify-content:space-between;gap:10px;';
   footer.innerHTML =
     '<button id="chats-selall" style="background:none;border:none;color:#bd27bc;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';padding:6px 4px;">Select all</button>' +
-    '<button id="chats-del" style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';">Delete</button>';
+    '<button id="chats-del" style="background:#bd27bc;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';">Delete</button>';
   container.appendChild(footer);
 
   // ── Batch delete confirm overlay — identical pattern to showSavedQuotes ───────
@@ -8110,7 +8110,7 @@ function showAllChats() {
       '<div style="font-size:12px;color:#706c63;margin-bottom:16px;">This can\'t be undone.</div>' +
       '<div style="display:flex;gap:8px;">' +
         '<button id="chats-del-cancel" style="flex:1;background:#f9f8f5;border:1px solid #e5e2d9;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';">Cancel</button>' +
-        '<button id="chats-del-confirm" style="flex:1;background:#dc2626;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';">Delete</button>' +
+        '<button id="chats-del-confirm" style="flex:1;background:#bd27bc;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:' + FONT + ';">Delete</button>' +
       '</div>' +
     '</div>';
   container.appendChild(delOverlay);
@@ -8223,19 +8223,25 @@ function showAllChats() {
     render();
   };
 
-  footer.querySelector('#chats-del').onclick = () => {
+  const _delBtn = footer.querySelector('#chats-del');
+  _delBtn.onclick = () => {
     if (!selected.size) return;
     delOverlay.querySelector('#chats-del-title').textContent = 'Delete ' + selected.size + ' chat' + (selected.size === 1 ? '' : 's') + '?';
     delOverlay.style.display = 'flex';
   };
+  _delBtn.onmouseenter = () => { if (!_delBtn.disabled) _delBtn.style.background = '#a020a0'; };
+  _delBtn.onmouseleave = () => { _delBtn.style.background = '#bd27bc'; };
   delOverlay.querySelector('#chats-del-cancel').onclick = () => { delOverlay.style.display = 'none'; };
-  delOverlay.querySelector('#chats-del-confirm').onclick = () => {
+  const _delConfirm = delOverlay.querySelector('#chats-del-confirm');
+  _delConfirm.onclick = () => {
     deleteSessions([...selected]);
     selected.clear();
     selectMode = false;
     delOverlay.style.display = 'none';
     render();
   };
+  _delConfirm.onmouseenter = () => { _delConfirm.style.background = '#a020a0'; };
+  _delConfirm.onmouseleave = () => { _delConfirm.style.background = '#bd27bc'; };
 
   openRightPanel(container, 'Chats');
 }
