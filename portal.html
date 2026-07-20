@@ -6342,7 +6342,7 @@ function showShipmentSavedModal(bc) {
 
   // Phase 3 (#1): same PRE pre-charge disclosure as the row-detail dispatch modal (shared helper).
   // This modal's "Dispatch Now" button reaches the same charge, so it must disclose too.
-  if (currentCustomer && currentCustomer.termsCode === 'PRE') _renderPreChargeDisclosure(body, bc.BOLId);
+  if (currentCustomer && currentCustomer.termsCode === 'PRE') _renderPreChargeDisclosure(body, bc.BOLId, function () { showShipmentSavedModal(bc); });
 
   // Buttons
   const btnCol = document.createElement('div');
@@ -6655,7 +6655,7 @@ async function _preChargeInfo(BOLId, token) {
 // Phase 3 (#1): shared PRE pre-charge disclosure block for the dispatch modals. Renders into
 // `container`, fills in async from _preChargeInfo. Used by BOTH dispatch modals so the copy +
 // amount source live in one place. Caller MUST PRE-gate (termsCode==='PRE').
-function _renderPreChargeDisclosure(container, BOLId) {
+function _renderPreChargeDisclosure(container, BOLId, reopen) {
   // ONE bordered block = everything about "what happens if I click": charge line, Net 15 terms
   // line, hairline divider, then the finality warning. Skeleton renders synchronously so the
   // warning shows immediately; only the charge line fills in async once the amount + card load.
@@ -6668,12 +6668,27 @@ function _renderPreChargeDisclosure(container, BOLId) {
   chargeLine.style.cssText = 'font-weight:700;color:var(--tx);margin-bottom:4px;';
   chargeLine.textContent = 'Checking your prepaid card…';
 
-  // 2. Terms line — left-aligned, smaller, muted grey. The Net 15 link opens the Credit
-  //    Application panel on the public site via the ?apply=1 deep-link handler in index.html.
-  //    Purple link stays in the two-tone palette.
+  // 2. Terms line — left-aligned, smaller, muted grey. The Net 15 link opens the IN-PORTAL
+  //    Credit Application panel (openCreditApp) with the session intact — never the public
+  //    logged-out page. When the calling dispatch modal passes `reopen`, openCreditApp shows a
+  //    "Back to dispatch" control so a customer who changes their mind (e.g. to add a card
+  //    instead) lands back on the same modal. Purple link stays in the two-tone palette.
   const termsLine = document.createElement('div');
   termsLine.style.cssText = 'font-size:11px;color:var(--mu);text-align:left;';
-  termsLine.innerHTML = 'Prefer not to pay upfront? <a href="/?apply=1" style="color:#bd27bc;text-decoration:underline;">Apply for Net 15 terms</a>.';
+  termsLine.appendChild(document.createTextNode('Prefer not to pay upfront? '));
+  const applyLink = document.createElement('a');
+  applyLink.href = '#';
+  applyLink.textContent = 'Apply for Net 15 terms';
+  applyLink.style.cssText = 'color:#bd27bc;text-decoration:underline;';
+  applyLink.addEventListener('click', function (e) {
+    e.preventDefault();
+    // Dismiss the dispatch overlay first so it does not cover the right panel.
+    const ov = applyLink.closest('#row-dispatch-overlay, #bk-saved-overlay');
+    if (ov) ov.remove();
+    openCreditApp(typeof reopen === 'function' ? reopen : undefined);
+  });
+  termsLine.appendChild(applyLink);
+  termsLine.appendChild(document.createTextNode('.'));
 
   // 3. Hairline divider (hardcoded hex — CSS vars do not resolve in dynamic inline styles).
   const divider = document.createElement('div');
@@ -6766,7 +6781,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
   // warning) via the shared helper — used by the post-save "Dispatch Now" modal too. Non-PRE
   // customers get the standalone finality warning (same clean, muted, one-line copy).
   if (currentCustomer && currentCustomer.termsCode === 'PRE') {
-    _renderPreChargeDisclosure(body, BOLId);
+    _renderPreChargeDisclosure(body, BOLId, function () { showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }); });
   } else {
     const notice = document.createElement('div');
     notice.style.cssText = 'font-size:11px;color:var(--mu);line-height:1.5;margin-bottom:16px;';
@@ -8725,7 +8740,7 @@ async function customerIsPrepaid() {
 // public Credit Application, embedded same-origin via /?apply=1&embed=1 so there is
 // exactly one copy of the legal document; customers with resolved credit terms get a
 // short confirmation instead. Verdict comes only from customerHasCredit().
-async function openCreditApp() {
+async function openCreditApp(onBack) {
   if (await customerHasCredit()) {
     const c = document.createElement('div');
     c.style.cssText = 'padding:24px;max-width:520px;margin:0 auto;font-size:14px;line-height:1.7;color:var(--tx);';
@@ -8735,17 +8750,40 @@ async function openCreditApp() {
   }
   // Prepaid / unresolved / logged-out → the ONE public application, embedded same-origin so
   // there is one copy of the legal document. It opens in the RIGHT PANE (not a dialog): the
-  // chat stays live on the left, and the pane's own tab-bar × (closeRightPanel) is the only way
-  // to dismiss it — no second close button, no click-outside close, so a stray click can never
-  // discard a long half-filled application. The wrapper's negative margin cancels #rp-body's
-  // 16px padding so the iframe fills the pane edge to edge with no internal scrollbar of its own.
+  // chat stays live on the left, and the pane's own tab-bar × (closeRightPanel) dismisses it —
+  // no click-outside close, so a stray click can never discard a long half-filled application.
+  // The wrapper's negative margin cancels #rp-body's 16px padding so the iframe fills the pane
+  // edge to edge with no internal scrollbar of its own.
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'margin:-16px;width:calc(100% + 32px);height:calc(100% + 32px);overflow:hidden;';
   const frame = document.createElement('iframe');
   frame.id = 'creditapp-frame';
   frame.src = '/?apply=1&embed=1';
   frame.title = 'Credit Application';
-  frame.style.cssText = 'width:100%;height:100%;border:none;display:block;';
+  // When launched from a dispatch modal, `onBack` is the thunk that re-opens that modal. Prepend
+  // a "Back to dispatch" bar (hardcoded hex — CSS vars do not resolve in JS-set inline styles) so
+  // a customer who changes their mind returns to where they were. Close-only: a submitted
+  // application ends on the iframe's own success state — approval is manual, nothing to return to.
+  if (typeof onBack === 'function') {
+    wrap.style.cssText = 'margin:-16px;width:calc(100% + 32px);height:calc(100% + 32px);overflow:hidden;display:flex;flex-direction:column;';
+    const backBar = document.createElement('div');
+    backBar.style.cssText = 'flex-shrink:0;padding:9px 14px;border-bottom:1px solid #e5e2d9;background:#faf9f6;';
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:none;border:none;padding:0;cursor:pointer;color:#bd27bc;font-size:13px;font-weight:600;';
+    backBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bd27bc" stroke-width="2" style="flex-shrink:0;"><polyline points="15 18 9 12 15 6"/></svg><span>Back to dispatch</span>';
+    backBtn.addEventListener('click', function () {
+      // Close the credit panel the same way its own × would, on desktop and mobile, then reopen.
+      if (isMobile()) { closeMobContent(); }
+      else { const t = rpState.tabs.find(function (t) { return t.title === 'Apply for Credit'; }); if (t) closeTab(t.id); else closeRightPanel(); }
+      onBack();
+    });
+    backBar.appendChild(backBtn);
+    wrap.appendChild(backBar);
+    frame.style.cssText = 'width:100%;flex:1;min-height:0;border:none;display:block;';
+  } else {
+    wrap.style.cssText = 'margin:-16px;width:calc(100% + 32px);height:calc(100% + 32px);overflow:hidden;';
+    frame.style.cssText = 'width:100%;height:100%;border:none;display:block;';
+  }
   wrap.appendChild(frame);
   openRightPanel(wrap, 'Apply for Credit');
 }
