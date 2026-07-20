@@ -2530,8 +2530,8 @@ function parseAccessorials(text) {
 
 // ── Redkik insurance: the quote-form selection is the source of truth ──────────
 // Reads the INS accessorial state + commodity/value inputs from the live quote form.
-function _readQuoteInsurance() {
-  const qc = window._quoteContainer;
+function _readQuoteInsurance(panel) {
+  const qc = panel || window._quoteContainer;
   if (!qc) return { active: false };
   const btn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
   const active = !!(btn && btn.classList.contains('acc-active'));
@@ -11322,6 +11322,19 @@ function _quoteFormState() {
     }));
     const first = items[0] || {};
     const accs = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code);
+    // Cargo-insurance status for the agent snapshot — DOM-first via the canonical _readQuoteInsurance,
+    // in its OWN try/catch so it can never throw and collapse the whole snapshot. Complete-only maps to
+    // 'added'; any ambiguity or throw omits the field so the agent re-asks (fail toward asking). Active
+    // signals (being-collected, chip-on) are checked before the sticky 'declined' so a re-request wins.
+    let _ins;
+    try {
+      const _ir = _readQuoteInsurance(panel);
+      if (window._insCollecting === 'value' || window._insCollecting === 'commodity') _ins = { status: 'being added' };
+      else if (_ir.active && _ir.complete) _ins = { status: 'added', declaredValue: _ir.amount };
+      else if (_ir.active) _ins = { status: 'started, no value yet' };
+      else if (window._insDecided) _ins = { status: 'declined' };
+      else _ins = { status: 'not addressed' };
+    } catch (e) { _ins = undefined; }
     return {
       quoteFormOpen: true,
       origin: g('#qt-origin'),
@@ -11335,6 +11348,7 @@ function _quoteFormState() {
       stc: first.stc,
       items: items,
       accessorials: accs.map(c => ACC_LABEL[c] || c),
+      insurance: _ins,
       ratesPulled: _rateAvailability().state === 'settled_with_rates',
       // ZIP resolution from the last rate pull (Fix C). Only surfaced when it still matches the
       // ZIP currently on the form, so a stale resolution never mislabels a freshly-changed ZIP.
@@ -11433,6 +11447,16 @@ function _liveStateBlock() {
     lines.push('bookingPanel: ' + JSON.stringify(b));
     const _rs = window._residentialStatus;
     if (_rs) lines.push('residentialStatus: ' + JSON.stringify(_rs));
+    // Cargo insurance — plain broker language, no internal field names or codes. Surfacing this here
+    // (under the "Never re-ask for anything shown here" directive above) is what stops the agent
+    // re-asking for a value it already has. 'declined' allows a later customer-initiated re-request.
+    if (q && q.insurance && q.insurance.status && q.insurance.status !== 'not addressed') {
+      var _is = q.insurance.status;
+      if (_is === 'added') lines.push('cargoInsurance: added, declared value $' + Number(q.insurance.declaredValue||0).toLocaleString('en-US') + ' — do not ask about cargo insurance again.');
+      else if (_is === 'being added') lines.push('cargoInsurance: the declared value is being collected right now — do not ask about cargo insurance.');
+      else if (_is === 'started, no value yet') lines.push('cargoInsurance: selected but the declared value is still needed — do not treat it as fully added.');
+      else if (_is === 'declined') lines.push('cargoInsurance: the customer declined it earlier for this quote — do not re-offer it on your own, but if they now ask to add it, go ahead normally.');
+    }
     return lines.join('\n');
   } catch(e) { return ''; }
 }
