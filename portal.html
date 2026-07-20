@@ -3170,11 +3170,21 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   dlBtn.onmouseover = () => dlBtn.style.background = '#ede9e2';
   dlBtn.onmouseout  = () => dlBtn.style.background = '#f7f5f2';
   dlBtn.onclick = async () => {
-    const toDownload = allInvoices.filter(inv => {
-      const f = getInvoiceFields(inv);
-      return selectedInvoices.has(f.invNum);
-    });
-    if (!toDownload.length) return;
+    // Same canonical resolver as Pay — 2nd arg MUST be footer._invoices (the exact list the visible
+    // tbody was rendered from, which the stat-tile/bucket filters narrow in place), never allInvoices.
+    // Abort loudly (never a partial download) if any checked row no longer resolves.
+    const { matched, unresolved } = resolveInvoiceSelection(tbody, footer._invoices);
+    if (unresolved.length) {
+      console.warn('[invoice download] selection references invoices not in the current view; aborting', unresolved);
+      showInvToast('Your selection is out of date — please reselect the invoices and try again.');
+      return;
+    }
+    const toDownload = matched;
+    if (!toDownload.length) {
+      console.warn('[invoice download] nothing selected');
+      showInvToast('No invoices selected — check one or more to download.');
+      return;
+    }
     dlBtn.querySelector('.dl-btn-label').textContent = 'Downloading...';
     dlBtn.disabled = true;
     const token = await getToken();
@@ -3308,16 +3318,24 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   payTooltip.style.cssText = 'position:absolute;bottom:calc(100% + 8px);right:0;background:#1a1a1a;color:#fff;font-size:11px;padding:7px 10px;border-radius:7px;white-space:normal;width:200px;line-height:1.4;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;text-align:left;font-weight:400;';
   payBtn.appendChild(payTooltip);
   payBtn.onclick = async () => {
-    const unpaidSelected = [...selectedInvoices].filter(key => {
-      const inv = (window._currentInvoiceList || []).find(i => getInvoiceFields(i).invNum === key);
-      return inv && !getInvoiceFields(inv).isPaid;
-    });
-    if (!unpaidSelected.length) {
-      const tt = document.getElementById('pay-btn-tooltip');
-      if (tt) { tt.style.opacity = '1'; setTimeout(() => { tt.style.opacity = '0'; }, 2500); }
+    // 2nd arg MUST be footer._invoices — the EXACT list renderInvoiceRows drew the visible tbody
+    // from — never allInvoices. The stat-tile / aging-bucket / paid-unpaid filters narrow
+    // footer._invoices to a subset and re-render the rows WITHOUT clearing the selection, so a box
+    // checked under a wider view would still resolve against allInvoices and slip an off-screen
+    // invoice into the charge. Against footer._invoices any such row is unresolved → abort the whole
+    // action: never charge an out-of-view invoice, never pay a partial set.
+    const { matched, unresolved } = resolveInvoiceSelection(tbody, footer._invoices);
+    if (unresolved.length) {
+      console.warn('[invoice pay] selection references invoices not in the current view; aborting', unresolved);
+      showInvToast('Your selection is out of date — please reselect the invoices and try again.');
       return;
     }
-    const invsToPay = (window._currentInvoiceList || []).filter(i => unpaidSelected.includes(getInvoiceFields(i).invNum));
+    const invsToPay = matched.filter(inv => !getInvoiceFields(inv).isPaid);
+    if (!invsToPay.length) {
+      console.warn('[invoice pay] no unpaid invoices in the current selection');
+      showInvToast('No unpaid invoices selected — reselect and try again.');
+      return;
+    }
     // Resolve each selected invoice's QBO Id + Balance by its DocNumber before
     // opening the Stripe modal, so the payment can be recorded back to QBO on success.
     const lbl = payBtn.querySelector('.pay-btn-label');
@@ -3617,6 +3635,46 @@ function getInvoiceFields(inv) {
     status:    isPaid ? 'PAID' : 'UNPAID',
     docUrl:    inv.docUrl   || inv.url || '',
   };
+}
+
+// Canonical invoice-selection resolver — the SINGLE source of "which invoices did the customer
+// pick", shared by Pay Invoices and Download Selected so the two can never diverge. The live
+// checked boxes in the on-screen table are the customer's intent, so reconcile them into the
+// selection first; then resolve every selected invoice against the list THIS panel was rendered
+// with (passed in as renderedInvoices — never a mutable global window list). Returns the matched
+// invoice objects plus any selected keys that no longer resolve. Callers MUST abort loudly when
+// `unresolved` is non-empty — never act on a partial set — so a box left checked across a
+// filter/date-range change can't slip an out-of-scope invoice into a charge or a download.
+function resolveInvoiceSelection(tbody, renderedInvoices) {
+  if (tbody) {
+    tbody.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+      var key = cb.dataset.invKey;
+      if (!key) return;                                   // header select-all has no key
+      if (cb.checked) selectedInvoices.add(key); else selectedInvoices.delete(key);
+    });
+  }
+  var matched = [], unresolved = [];
+  [...selectedInvoices].forEach(function (key) {
+    var inv = (renderedInvoices || []).find(function (i) { return getInvoiceFields(i).invNum === key; });
+    if (inv) matched.push(inv); else unresolved.push(key);
+  });
+  return { matched: matched, unresolved: unresolved };
+}
+
+// Small bottom-center toast for the invoice panel (mirrors the address-book / shipping-items
+// toasts). Hardcoded colors + font stack so nothing depends on a CSS var resolving inline.
+function showInvToast(msg) {
+  var t = document.getElementById('inv-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'inv-toast';
+    t.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#111111;color:#ffffff;font-size:12px;font-weight:500;padding:8px 16px;border-radius:20px;z-index:9999;pointer-events:none;opacity:0;transition:opacity .2s;font-family:'Geist',system-ui,sans-serif;";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(function () { t.style.opacity = '0'; }, 2600);
 }
 
 // Canonical invoice roll-up — the SINGLE source of paid/unpaid/outstanding/aging math, shared by
