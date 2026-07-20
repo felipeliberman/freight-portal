@@ -7754,46 +7754,37 @@ function renderSessionList() {
   const sessions = chatSessions.filter(s => s.customer === (currentCustomer ? currentCustomer.code : 'guest'));
   if (!sessions.length) { el.innerHTML = ''; return; }
 
-  const now  = Date.now();
-  const day  = 86400000;
-  const groups = [
-    { label: 'Today',        items: sessions.filter(s => now - s.ts < day) },
-    { label: 'Yesterday',    items: sessions.filter(s => now - s.ts >= day && now - s.ts < 2*day) },
-    { label: 'Last 7 days',  items: sessions.filter(s => now - s.ts >= 2*day && now - s.ts < 7*day) },
-    { label: 'Older',        items: sessions.filter(s => now - s.ts >= 7*day) },
-  ];
+  // Render order only — do not sort chatSessions in place (saveSessions persists it).
+  const ordered = sessions.slice().sort((a, b) => b.ts - a.ts);
 
   el.innerHTML = '';
-  groups.forEach(g => {
-    if (!g.items.length) return;
-    const lbl = document.createElement('div');
-    lbl.className = 'sb-section-label';
-    lbl.textContent = g.label;
-    el.appendChild(lbl);
-    g.items.forEach(s => {
-      const row = document.createElement('div');
-      row.className = 'sb-link' + (s.id === currentSession ? ' active' : '');
-      row.dataset.sid = s.id;
-      row.title = s.title;
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;position:relative;';
-      const icon = document.createElement('span');
-      icon.style.cssText = 'flex-shrink:0;opacity:.5;display:flex;';
-      icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-      row.appendChild(icon);
-      const titleEl = document.createElement('span');
-      titleEl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      titleEl.textContent = s.title;
-      row.appendChild(titleEl);
-      const dot = document.createElement('button');
-      dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>';
-      dot.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 3px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
-      dot.onclick = (e) => { e.stopPropagation(); showSessionMenu(e, s, row); };
-      row.appendChild(dot);
-      row.onmouseenter = () => { dot.style.display = 'flex'; };
-      row.onmouseleave = () => { dot.style.display = 'none'; };
-      row.addEventListener('click', (e) => { if (e.target !== dot && !dot.contains(e.target)) restoreSession(s.id); });
-      el.appendChild(row);
-    });
+  const lbl = document.createElement('div');
+  lbl.className = 'sb-section-label';
+  lbl.textContent = 'Recents';
+  el.appendChild(lbl);
+  ordered.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'sb-link' + (s.id === currentSession ? ' active' : '');
+    row.dataset.sid = s.id;
+    row.title = s.title;
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;position:relative;';
+    const icon = document.createElement('span');
+    icon.style.cssText = 'flex-shrink:0;opacity:.5;display:flex;';
+    icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    row.appendChild(icon);
+    const titleEl = document.createElement('span');
+    titleEl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    titleEl.textContent = s.title;
+    row.appendChild(titleEl);
+    const dot = document.createElement('button');
+    dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>';
+    dot.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--fa);padding:2px 3px;border-radius:4px;flex-shrink:0;display:none;line-height:1;';
+    dot.onclick = (e) => { e.stopPropagation(); showSessionMenu(e, s, row); };
+    row.appendChild(dot);
+    row.onmouseenter = () => { dot.style.display = 'flex'; };
+    row.onmouseleave = () => { dot.style.display = 'none'; };
+    row.addEventListener('click', (e) => { if (e.target !== dot && !dot.contains(e.target)) restoreSession(s.id); });
+    el.appendChild(row);
   });
 }
 
