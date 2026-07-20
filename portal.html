@@ -16305,12 +16305,12 @@ function showAddressBook() {
     const book = getAddressBook();
 
     // Update hero counts
-    const cntEl   = document.querySelector('#ab-hdr-count span');
+    const cntEl   = document.getElementById('ab-hdr-count');
     const fromEl  = document.getElementById('ab-hdr-from');
     const toEl    = document.getElementById('ab-hdr-to');
     if (cntEl)  cntEl.textContent = book.length;
-    if (fromEl) fromEl.textContent = book.filter(a => a.locTag === 'from' || a.locTag === 'both').length;
-    if (toEl)   toEl.textContent   = book.filter(a => a.locTag === 'to'   || a.locTag === 'both').length;
+    if (fromEl) fromEl.textContent = book.filter(a => { const t = a.locTag || 'both'; return t === 'from' || t === 'both'; }).length;
+    if (toEl)   toEl.textContent   = book.filter(a => { const t = a.locTag || 'both'; return t === 'to'   || t === 'both'; }).length;
     listWrap.innerHTML = '';
     const query = (filter || '').toLowerCase().trim();
     const filtered = query
