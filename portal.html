@@ -11636,6 +11636,60 @@ function _setBkField(id, val, evt) {
   return true;
 }
 
+// ── Canonical: capture the booking panel BACK into _quotedContacts (card 5b) ──────
+// The mirror of _restoreBookingFromQuoted, and the only place a panel exit snapshots itself.
+// Reads the LIVE DOM, not bookingData: bookingData is reassigned to a bare six-key object at the
+// top of every showBookingPanel, and its party fields are only ever written by the submit handlers
+// — so on a quote the customer has never saved it holds nothing to snapshot. Merges forward with
+// newValue || previousValue || '' so a blank never erases a good earlier value.
+// Arms the one-shot lane-gated restore ONLY if the panel actually held customer data, so leaving an
+// untouched panel arms nothing and a genuinely new quote inherits nothing. resetShipmentState
+// clears the flag; the restore consumes it. Call this immediately BEFORE nulling
+// window._bookingPanelContainer on any path that leaves a filled panel.
+function _snapshotBookingToQuoted(originZip, destZip) {
+  try {
+    const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+    const puName = g('bk-pu-name'), puStreet = g('bk-pu-street'), puContact = g('bk-pu-contact'), puPhone = g('bk-pu-phone');
+    const dlName = g('bk-dl-name'), dlStreet = g('bk-dl-street');
+    // Nothing the customer entered — do not arm, do not overwrite a prior good snapshot.
+    if (!(puName || puStreet || puContact || puPhone || dlName || dlStreet)) return false;
+    if (!window._quotedContacts) window._quotedContacts = {};
+    const _psp = window._quotedContacts.shipper   || {};
+    const _pcn = window._quotedContacts.consignee || {};
+    window._quotedContacts.shipper = {
+      name: puName || _psp.name || '', address: puStreet || _psp.address || '', suite: g('bk-pu-suite') || _psp.suite || '',
+      city: g('bk-pu-city') || _psp.city || '', state: g('bk-pu-state') || _psp.state || '',
+      contact: puContact || _psp.contact || '', phone: puPhone || _psp.phone || '',
+      referenceNumber: g('bk-pu-ref') || _psp.referenceNumber || ''
+    };
+    window._quotedContacts.consignee = {
+      name: dlName || _pcn.name || '', address: dlStreet || _pcn.address || '', suite: g('bk-dl-suite') || _pcn.suite || '',
+      city: g('bk-dl-city') || _pcn.city || '', state: g('bk-dl-state') || _pcn.state || '',
+      contact: g('bk-dl-contact') || _pcn.contact || '', phone: g('bk-dl-phone') || _pcn.phone || ''
+    };
+    const _si = g('bk-special-instructions');
+    if (_si) window._quotedContacts.specialInstructions = _si;
+    const _ref = g('bk-pu-ref');
+    if (_ref) window._quotedContacts.referenceNumber = _ref;
+    const _ppu = window._quotedContacts.pickup || {};
+    window._quotedContacts.pickup = { date: g('bk-pu-date') || _ppu.date || '', open: g('bk-pu-open') || _ppu.open || '', close: g('bk-pu-close') || _ppu.close || '' };
+    // Hazmat: packing group rides on the UN field's dataset, matching the harvest path.
+    const _huEl = document.getElementById('bk-haz-un');
+    const _hu = _huEl ? String(_huEl.value || '').trim() : '';
+    const _hc = g('bk-haz-contact'), _hp = g('bk-haz-phone');
+    if (_hu || _hc || _hp) {
+      const _phz = window._quotedContacts.hazmat || {};
+      window._quotedContacts.hazmat = {
+        unNumber: _hu || _phz.unNumber || '',
+        packingGroup: ((_huEl && _huEl.dataset && _huEl.dataset.unPg) ? String(_huEl.dataset.unPg) : '') || _phz.packingGroup || '',
+        contact: _hc || _phz.contact || '', phone: _hp || _phz.phone || ''
+      };
+    }
+    window._pendingContactRestore = { lane: (originZip || '') + '->' + (destZip || '') };
+    return true;
+  } catch (e) { console.warn('[FP] _snapshotBookingToQuoted failed', e); return false; }
+}
+
 // ── Canonical: reconcile the booking panel FORWARD from _quotedContacts (card 5) ──
 // The single restore BOTH the form path (showBookingPanel) and the agent path
 // (_applyBookingFields) call, so party + pickup + PO + instructions + hazmat come back the same
@@ -15487,6 +15541,10 @@ function showBookingPanel(rate, shipmentData) {
     // Back to Rates
     const backBtn2 = document.getElementById('bk-back-btn');
     if (backBtn2) backBtn2.onclick = () => {
+      // Card 5b — a manual Back to Rates on a never-saved quote reaches none of the RDI-requote
+      // snapshot points, so without this the re-picked carrier reopens a blank panel. Capture
+      // before the panel goes away; the lane gate and the non-empty check keep it one-shot.
+      _snapshotBookingToQuoted(originZip, destZip);
       window._bookingPanelContainer = null;
       const ratesTab = document.getElementById('qt-tab-rates');
       if (ratesTab) ratesTab.click();
@@ -15870,7 +15928,8 @@ function showBookingPanel(rate, shipmentData) {
       laOv.appendChild(laBox);
       c.style.position = 'relative';
       c.appendChild(laOv);
-      document.getElementById('bk-la-requote').onclick = () => { laOv.remove(); window._bookingPanelContainer = null; if (window._showRequoteToast) window._showRequoteToast('Limited Access', _laCode); };
+      // Card 5b — same exit shape as Back to Rates: capture the filled panel before it is torn down.
+      document.getElementById('bk-la-requote').onclick = () => { laOv.remove(); _snapshotBookingToQuoted(originZip, destZip); window._bookingPanelContainer = null; if (window._showRequoteToast) window._showRequoteToast('Limited Access', _laCode); };
       document.getElementById('bk-la-proceed').onclick = async () => {
         laOv.remove(); btn.textContent = 'Submitting...'; btn.disabled = true;
         const fbLA = document.getElementById('bk-form-body'); if (fbLA) { fbLA.style.opacity='0.4'; fbLA.style.pointerEvents='none'; }
