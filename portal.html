@@ -397,8 +397,6 @@ You represent Freight and Logistics, Inc. Est. 2013. Phone (800) 687-3713. Email
 .nav-phone-link svg{width:13px;height:13px;stroke:var(--ac);}
 .nav-signin{font-size:13px;font-weight:500;color:var(--mu);background:none;border:none;font-family:var(--font);padding:6px 10px;border-radius:7px;transition:color .15s;cursor:pointer;}
 .nav-signin:hover{color:var(--ac);}
-.nav-portal{background:var(--ac);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .15s;display:inline-block;}
-.nav-portal:hover{background:#a020a0;transform:translateY(-1px);}
 .nav-account{display:flex;align-items:center;gap:8px;}
 .nav-acct-name{font-size:13px;font-weight:600;color:var(--tx);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .nav-logout{font-size:13px;font-weight:500;color:var(--mu);background:none;border:none;font-family:var(--font);padding:6px 10px;border-radius:7px;cursor:pointer;transition:color .15s;}
@@ -477,7 +475,6 @@ You represent Freight and Logistics, Inc. Est. 2013. Phone (800) 687-3713. Email
   #topbar .nav-logo{height:36px;}
   #topbar .nav-phone-link{display:none;}
   #nav-hamburger{display:flex !important;}
-  #topbar .nav-portal{display:none;}
   .nav-talk{display:none;}
   .nav-acct-name{max-width:110px;font-size:12px;}
   .nav-logout{font-size:12px;padding:5px 8px;}
@@ -962,7 +959,6 @@ You represent Freight and Logistics, Inc. Est. 2013. Phone (800) 687-3713. Email
       <button class="nav-logout" onclick="doLogout()">Log out</button>
     </div>
     <button id="nav-hamburger" onclick="var s=document.getElementById('mob-more-sheet');if(s)s.style.display='flex';" style="display:none;background:none;border:none;cursor:pointer;color:var(--tx);padding:6px;border-radius:8px;align-items:center;justify-content:center;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-    <a href="https://freightandlogistics-portal.shipprimus.com/auth" target="_blank" class="nav-portal">Classic Portal</a>
   </div>
 </nav>
 
@@ -1058,12 +1054,6 @@ nav{
   padding:6px 10px;border-radius:7px;transition:color .15s;
 }
 .nav-signin:hover{color:var(--ac);}
-.nav-portal{
-  background:var(--ac);color:#fff;border:none;border-radius:8px;
-  padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;
-  font-family:var(--sans);text-decoration:none;transition:all .15s;
-}
-.nav-portal:hover{background:#a020a0;transform:translateY(-1px);}
 
 /* MAIN */
 main{flex:1;display:flex;flex-direction:column;overflow-y:auto;position:relative;min-height:0;}
