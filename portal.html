@@ -1900,7 +1900,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div class="sb-divider"></div>
 
     <div class="sb-link" onclick="setNav(this);quickAction('My Shipments')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg><span class="sb-link-text">My Shipments</span><span id="nav-badge-ships" style="min-width:16px;height:16px;background:var(--ac);color:#fff;border-radius:8px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px;margin-left:auto;"></span><span class="sb-tooltip">My Shipments</span></div>
-    <div class="sb-link" onclick="setNav(this);showQuoteForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
+    <div class="sb-link" onclick="setNav(this);resetShipmentState(false);showQuoteForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
     <div class="sb-link" id="nav-saved-quotes" onclick="setNav(this);showSavedQuotes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="sb-link-text">Saved Quotes</span><span class="sb-tooltip">Saved Quotes</span></div>
     <div class="sb-link" onclick="setNav(this);quickAction('Track Shipment')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg><span class="sb-link-text">Track Shipment</span><span class="sb-tooltip">Track Shipment</span></div>
     <div class="sb-divider"></div>
@@ -8386,7 +8386,7 @@ function openMeetingPanel() {
 function closeTalk(){ var t=document.getElementById('talk-view'); if(t) t.style.display='none'; setLoggedIn(!!currentCustomer); }
 function talkToQuote(){
   closeTalk();
-  if(currentCustomer){ showQuoteForm(); return; }
+  if(currentCustomer){ resetShipmentState(false); showQuoteForm(); return; }
   var f=document.getElementById('public-frame');
   if(f && f.contentWindow){ try{ if(f.contentWindow.expandAndAsk){ f.contentWindow.expandAndAsk('I need a freight quote'); } else if(f.contentWindow.expandChat){ f.contentWindow.expandChat(); } }catch(e){} }
 }
@@ -16244,7 +16244,11 @@ function showShippingItems() {
           clearTimeout(t._tid);
           t._tid = setTimeout(()=>{ t.style.opacity='0'; }, 2000);
         } else {
-          // Open quote form first, then apply
+          // Open quote form first, then apply. No quote form exists on this branch (.qt-line is
+          // present whenever one is open — the rates sub-tab only display:none's the pane), so
+          // this starts a new quote: clear prior shipment state before opening. The item itself
+          // is applied by the re-click below, after the reset, so nothing intended is lost.
+          resetShipmentState(false);
           showQuoteForm();
           setTimeout(() => { card.querySelector('.si-use').click(); }, 400);
         }
@@ -16808,7 +16812,8 @@ function showAddressBook() {
 }
 
 
-function startQuote() { showQuoteForm(); }
+// Customer-initiated new quote — go through the state chokepoint first (see resetShipmentState).
+function startQuote() { resetShipmentState(false); showQuoteForm(); }
 
 // Entry-time ZIP gate (FORM UX only): grey out Get Rates while either ZIP is notfound.
 // The agent pull path is blocked separately by the fetchRates gate — not here.
@@ -18865,7 +18870,8 @@ async function quickAction(action) {
   // Update active nav item
 
   appendMessage('user', action);
-  if (action === 'Get a Quote') { showQuoteForm(); return; }
+  // Customer-initiated new quote — clear prior shipment/rate/booking state first.
+  if (action === 'Get a Quote') { resetShipmentState(false); showQuoteForm(); return; }
 
   if (action === 'Track Shipment') { appendMessage('bot', 'Sure! Give me a BOL number, PRO/tracking number, customer name, company, or carrier and I\'ll find it right away.'); return; }
   if (action === 'Freight Class Help')  { handleInput('freight class help'); return; }
@@ -21127,6 +21133,10 @@ function mobTab(tab) {
   } else if (tab === 'quote') {
     closeRightPanel();
     setTimeout(function() {
+      // Customer-initiated new quote — clear prior shipment state first. Guarded: when the agent
+      // has staged a mobile prefill the customer is opening THAT quote, not starting a new one,
+      // and resetShipmentState clears _mobilePendingQuoteInput — so skip the reset in that case.
+      if (!window._mobilePendingQuoteInput && typeof resetShipmentState === 'function') resetShipmentState(false);
       if (typeof showQuoteForm === 'function') showQuoteForm();
       // Apply any prefill the chat agent saved via update_quote on mobile, then clear it.
       var _pend = window._mobilePendingQuoteInput;
