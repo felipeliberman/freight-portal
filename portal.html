@@ -14541,8 +14541,16 @@ async function handleInput(text) {
   // portal's existing support hand-off wording (see the Email Support replies).
   // No [[TALK]] here — the portal chat has no consumer for it, so it rendered
   // as literal text to the customer.
-  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|53.?foot|53.?ft|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?size|over.?dimension)\b/i.test(lower) &&
-    !/\b(ltl|pallet|small|parcel|quote.*ltl|ltl.*quote)\b/i.test(lower);
+  //
+  // The trailing s? on BOTH patterns is load-bearing. A bare \b after the
+  // alternation fails on plurals: "truckloads" did not match truckload, so
+  // "2 full truckloads" fell through — but "pallets" did not match pallet
+  // either, so an LTL customer asking "10 pallets, is that a truckload?" lost
+  // their exclusion and got deflected to email. Adding s? to the include side
+  // alone would fix the miss and keep that false positive, so both sides move
+  // together. A false positive costs a booking; a miss costs an email.
+  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|53.?foot|53.?ft|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?size|over.?dimension)s?\b/i.test(lower) &&
+    !/\b(ltl|pallet|small|parcel|quote.*ltl|ltl.*quote)s?\b/i.test(lower);
   if (isTruckloadQ) {
     appendMessage('bot', 'We handle full truckload — email support@freightandlogistics.ai with your lane, weight, and equipment type and the team will get you options and pricing, typically within about an hour during business hours.');
     return;
