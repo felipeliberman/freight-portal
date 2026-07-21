@@ -12,7 +12,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Freight and Logistics, Inc. — AI-Powered LTL &amp; White Glove Freight</title>
-<meta name="description" content="Quote, book, and track LTL and white-glove freight in plain English. Freight and Logistics, Inc. is a nationwide AI-powered freight brokerage in operation since 2010 — instant rates from top national carriers, no phone calls, no waiting.">
+<meta name="description" content="Quote, book, and track LTL and white-glove freight in plain English. Freight and Logistics, Inc. is a nationwide AI-powered freight brokerage in operation since 2013 — instant rates from top national carriers, no phone calls, no waiting.">
 <link rel="canonical" href="https://www.freightandlogistics.ai/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#bd27bc">
@@ -32,7 +32,7 @@
   "name": "Freight and Logistics, Inc.",
   "url": "https://www.freightandlogistics.ai",
   "description": "Nationwide AI-powered LTL and white-glove freight brokerage",
-  "foundingDate": "2010",
+  "foundingDate": "2013",
   "telephone": "+1-800-687-3713",
   "email": "support@freightandlogistics.ai",
   "address": {
@@ -822,7 +822,7 @@ let formData = {};
 let isOnboarding = false;
 let uploadedInvoices = [];
 
-const SYSTEM_PROMPT = `You are the AI sales and onboarding assistant for Freight and Logistics, Inc., a nationwide LTL and white glove freight brokerage based in Los Angeles, in operation since 2010.
+const SYSTEM_PROMPT = `You are the AI sales and onboarding assistant for Freight and Logistics, Inc., a nationwide LTL and white glove freight brokerage based in Los Angeles, in operation since 2013.
 
 RESPONSE RULES:
 - Maximum 2-3 sentences. Conversational and warm, never robotic.
@@ -1735,7 +1735,30 @@ function handleInvoiceUpload(input) {
   callAI('I just uploaded '+files.length+' invoice file(s): '+files.map(f=>f.name).join(', '));
 }
 
+// ── Control-token safety net ───────────────────────────────────────────────
+// KEEP IN SYNC with the identical copy in portal.html (above appendMessage).
+// They cannot share one definition — separate single-file pages.
+//
+// Agent replies carry control tokens ([[OPENFORM]], and historically
+// [[FILL:…]] / [[DEMO:…]]) that a consumer is meant to intercept. The strip at
+// the sendChat call site only covers that one path; this covers every caller of
+// appendBot, so a token can never reach the customer regardless of path.
+//
+// Pattern: doubled brackets + ALL-CAPS identifier + optional :payload, no
+// newline inside. It cannot match a markdown link ([label](url) — single
+// bracket, mixed case) or ordinary prose, and it only ever runs on bot text,
+// so it cannot eat legitimate customer content.
+function stripControlTokens(role, text) {
+  if (role !== 'bot' || typeof text !== 'string') return text;
+  return text.replace(/\[\[[A-Z][A-Z0-9_]*(?::[^\]\n]*)?\]\]/g, '')
+             .replace(/[ \t]+\n/g, '\n')
+             .replace(/\n{3,}/g, '\n\n')
+             .trim();
+}
+
 function appendBot(text) {
+  // FIRST statement. appendBot only ever renders bot text, so role is 'bot'.
+  text = stripControlTokens('bot', text);
   const msgs=document.getElementById('messages');
   const row=document.createElement('div');
   row.className='msg-row';
@@ -1953,7 +1976,7 @@ function openAIDisclosurePanel() {
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Other things it looks up on the web, like a carrier's terminal address, phone number, or hours. Those results can be out of date or wrong, and the assistant is only as good as what it finds. If you're routing a truck somewhere based on an address it gave you, confirm it first.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">General freight guidance — freight class, accessorials, packaging, what a lane usually looks like — is information, not a guarantee. The final class and the final charges are determined by the carrier when they inspect the freight.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">So: before you book, verify the rate, the addresses, the dates, and the delivery details. A wrong address or a missed window costs you more than money, and it's a two-minute check.</div>
-    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, call us at (800) 687-3713 or email support@freightandlogistics.ai. We've been moving freight since 2010 and there is always a human here who can check it for you.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, call us at (800) 687-3713 or email support@freightandlogistics.ai. We've been moving freight since 2013 and there is always a human here who can check it for you.</div>
     <div style="font-size:12px;color:var(--fa);line-height:1.6;margin-top:16px;">The AI is here to make this faster. It isn't here to replace the people who make sure your freight actually shows up.</div>
   </div>`;
   openRightPanel('AI Disclosure', html);

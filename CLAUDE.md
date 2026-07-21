@@ -6,7 +6,7 @@ This is the source of truth for developing the FreightAI customer portal. Read t
 
 ## What this product is
 
-A conversational AI-powered TMS (Transportation Management System) customer portal for Freight and Logistics, Inc. — a nationwide LTL and white glove freight brokerage based in Los Angeles, in business since 2010. The portal layers Claude (claude-sonnet-4-6) as a conversational agent on top of Primus (ShipPrimus), the existing TMS backend. Customers quote, book, and dispatch freight entirely through chat or a form UI.
+A conversational AI-powered TMS (Transportation Management System) customer portal for Freight and Logistics, Inc. — a nationwide LTL and white glove freight brokerage based in Los Angeles, in business since 2013. The portal layers Claude (claude-sonnet-4-6) as a conversational agent on top of Primus (ShipPrimus), the existing TMS backend. Customers quote, book, and dispatch freight entirely through chat or a form UI.
 
 The business goal: build the stickiest TMS in the market by making freight as low-friction as possible. Legacy brokers (Echo, GlobalTranz, Priority One) are friction-dependent by design. Low-friction AI UX is the competitive wedge.
 
