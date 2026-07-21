@@ -14549,7 +14549,17 @@ async function handleInput(text) {
   // their exclusion and got deflected to email. Adding s? to the include side
   // alone would fix the miss and keep that false positive, so both sides move
   // together. A false positive costs a booking; a miss costs an email.
-  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|53.?foot|53.?ft|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?size|over.?dimension)s?\b/i.test(lower) &&
+  //
+  // Lengths are bounded to 48 and 53 on purpose. 20/40/45 are container
+  // lengths that show up in drayage and intermodal talk, and 28 is an LTL
+  // linehaul pup — none of those read as unambiguously truckload.
+  //
+  // Deliberately NOT matched: "TL" (collides with LTL for a two-letter
+  // token), "full trailer", "semi truck" — all three are things a shipper
+  // with six pallets might plausibly say. The exclusion below likely catches
+  // them, but likely is not good enough when a false positive costs a
+  // booking. Revisit if real traffic shows the miss.
+  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|(48|53).?(foot|ft)|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?siz(e|ed)|over.?dimension(al)?|conestoga|rgn|removable.?gooseneck|power.?only|hot.?shot)s?\b/i.test(lower) &&
     !/\b(ltl|pallet|small|parcel|quote.*ltl|ltl.*quote)s?\b/i.test(lower);
   if (isTruckloadQ) {
     appendMessage('bot', 'We handle full truckload — email support@freightandlogistics.ai with your lane, weight, and equipment type and the team will get you options and pricing, typically within about an hour during business hours.');
