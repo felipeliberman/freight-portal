@@ -1890,7 +1890,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div class="sb-divider"></div>
 
     <div class="sb-link" onclick="setNav(this);quickAction('My Shipments')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg><span class="sb-link-text">My Shipments</span><span id="nav-badge-ships" style="min-width:16px;height:16px;background:var(--ac);color:#fff;border-radius:8px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px;margin-left:auto;"></span><span class="sb-tooltip">My Shipments</span></div>
-    <div class="sb-link" onclick="setNav(this);resetShipmentState(false);showQuoteForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
+    <div class="sb-link" onclick="setNav(this);_snapshotOpenBookingTab();resetShipmentState(false);showQuoteForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
     <div class="sb-link" id="nav-saved-quotes" onclick="setNav(this);showSavedQuotes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="sb-link-text">Saved Quotes</span><span class="sb-tooltip">Saved Quotes</span></div>
     <div class="sb-link" onclick="setNav(this);quickAction('Track Shipment')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg><span class="sb-link-text">Track Shipment</span><span class="sb-tooltip">Track Shipment</span></div>
     <div class="sb-divider"></div>
@@ -2221,7 +2221,6 @@ function resetShipmentState(wipeConversation) {
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
-    window._pendingContactRestore = null; // card 5: one-shot form-requote restore guard
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
@@ -2246,6 +2245,10 @@ function resetShipmentState(wipeConversation) {
       // together on new chat (they mirror each other; otherwise stale waybAgent turns bleed across).
       if (typeof waybHistory !== 'undefined') waybHistory = [];
       window._quotedContacts = null;
+      // card 5: the one-shot form-requote restore guard is aligned with _quotedContacts —
+      // both survive a fresh-quote reset (false) and only clear on a full wipe (new/switch chat),
+      // so a booking panel snapshotted on the way out is still restorable after a same-chat re-rate.
+      window._pendingContactRestore = null;
       window._quoteContainer = null;
       // Clear shipment conversation context so "New chat" starts truly fresh
       // (previously these survived New chat and only cleared on logout/reload).
@@ -11666,20 +11669,8 @@ function _snapshotBookingToQuoted(originZip, destZip) {
     const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
     const puName = g('bk-pu-name'), puStreet = g('bk-pu-street'), puContact = g('bk-pu-contact'), puPhone = g('bk-pu-phone');
     const dlName = g('bk-dl-name'), dlStreet = g('bk-dl-street');
-    // [FP-T4] TEMPORARY instrumentation — remove after test 4 diagnosis. Read-only; changes nothing.
-    // found:false means the element was absent from the DOM; found:true with value:'' means present but blank.
-    const _t4probe = id => { const el = document.getElementById(id); return el ? { found: true, value: String(el.value || '').trim() } : { found: false, value: null }; };
-    console.log('[FP-T4] snapshot arm-check', {
-      'bk-pu-name':    _t4probe('bk-pu-name'),
-      'bk-pu-street':  _t4probe('bk-pu-street'),
-      'bk-pu-contact': _t4probe('bk-pu-contact'),
-      'bk-pu-phone':   _t4probe('bk-pu-phone'),
-      'bk-dl-name':    _t4probe('bk-dl-name'),
-      'bk-dl-street':  _t4probe('bk-dl-street'),
-      willArm: !!(puName || puStreet || puContact || puPhone || dlName || dlStreet),
-      lane: (originZip || '') + '->' + (destZip || '')
-    });
-    // Nothing the customer entered — do not arm, do not overwrite a prior good snapshot.
+    // Self-gating: nothing the customer entered — do not arm, do not overwrite a prior good snapshot.
+    // This makes the helper safe to call broadly on any panel exit (empty panel arms nothing).
     if (!(puName || puStreet || puContact || puPhone || dlName || dlStreet)) return false;
     if (!window._quotedContacts) window._quotedContacts = {};
     const _psp = window._quotedContacts.shipper   || {};
@@ -11714,9 +11705,22 @@ function _snapshotBookingToQuoted(originZip, destZip) {
       };
     }
     window._pendingContactRestore = { lane: (originZip || '') + '->' + (destZip || '') };
-    console.log('[FP-T4] snapshot ARMED', { lane: window._pendingContactRestore.lane }); // [FP-T4] TEMPORARY
     return true;
   } catch (e) { console.warn('[FP] _snapshotBookingToQuoted failed', e); return false; }
+}
+
+// Snapshot the open Book Shipment tab (if any) before a nav-away reset tears it down — used by the
+// sidebar "Get a Quote" link, which routes through resetShipmentState(false) and closes the panel.
+// Only effective while the booking DOM is live (its tab active); otherwise the fields aren't in the
+// document and _snapshotBookingToQuoted self-gates to a no-op, leaving any earlier snapshot intact.
+function _snapshotOpenBookingTab() {
+  try {
+    if (typeof rpState === 'undefined' || !rpState.tabs) return;
+    const _bkTab = rpState.tabs.find(t => t.title === 'Book Shipment');
+    if (!_bkTab || typeof _snapshotBookingToQuoted !== 'function') return;
+    const _lane = String(_bkTab.lane || '->').split('->');
+    _snapshotBookingToQuoted(_lane[0] || '', _lane[1] || '');
+  } catch (e) {}
 }
 
 // ── Canonical: reconcile the booking panel FORWARD from _quotedContacts (card 5) ──
@@ -15495,28 +15499,16 @@ function showBookingPanel(rate, shipmentData) {
   }, 100);
 
   openRightPanel(c, 'Book Shipment');
+  // Stash the lane on the tab so a chrome tab-bar switch can snapshot the panel without
+  // re-deriving ZIPs. Matches the lane string _snapshotBookingToQuoted / the restore gate use.
+  try { const _bkTab = rpState.tabs.find(t => t.id === rpState.activeId); if (_bkTab) _bkTab.lane = (originZip || '') + '->' + (destZip || ''); } catch(e){}
   setTimeout(() => {
     // Card 5 — form-path requote restore: bring the customer's entered pickup/delivery/PO/
     // instructions/hazmat back from _quotedContacts BEFORE the address-book default fills anything,
     // so their entries win and the default only fills what is still blank. One-shot, lane-gated so a
     // genuinely new quote (different lane, or no pending flag) never inherits a prior shipment's detail.
-    // [FP-T4] TEMPORARY instrumentation — remove after test 4 diagnosis. Read-only; changes nothing.
-    console.log('[FP-T4] restore gate', {
-      pendingTruthy: !!window._pendingContactRestore,
-      pendingLane:   window._pendingContactRestore ? window._pendingContactRestore.lane : null,
-      computedLane:  (originZip + '->' + destZip),
-      match: !!(window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip))
-    });
     if (window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip)) {
       _restoreBookingFromQuoted();
-      // [FP-T4] TEMPORARY — post-fill values, read after the restore has run.
-      const _t4v = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : '(element not found)'; };
-      console.log('[FP-T4] restore ran', {
-        'bk-pu-name':    _t4v('bk-pu-name'),
-        'bk-pu-street':  _t4v('bk-pu-street'),
-        'bk-pu-contact': _t4v('bk-pu-contact'),
-        'bk-pu-phone':   _t4v('bk-pu-phone')
-      });
       window._pendingContactRestore = null;
     }
     applyDefaultShipper();
@@ -19752,7 +19744,17 @@ function renderPanel() {
     btn.className = 'rp-chrome-tab' + (isActive ? ' active' : '');
     btn.dataset.idx = idx;
     btn.draggable = true;
-    btn.onclick = () => { rpState.activeId = tab.id; renderPanel(); };
+    btn.onclick = () => {
+      // Leaving a filled Book Shipment tab for another tab: snapshot it so the customer's
+      // entered contacts survive a re-rate. Canonical, self-gating helper — empty panel arms
+      // nothing. Lane comes from the booking tab itself (stashed in showBookingPanel).
+      const _cur = rpState.tabs.find(t => t.id === rpState.activeId);
+      if (_cur && _cur.title === 'Book Shipment' && tab.id !== _cur.id && typeof _snapshotBookingToQuoted === 'function') {
+        const _lane = String(_cur.lane || '->').split('->');
+        _snapshotBookingToQuoted(_lane[0] || '', _lane[1] || '');
+      }
+      rpState.activeId = tab.id; renderPanel();
+    };
 
     // Favicon — match by startsWith to handle dynamic titles like "My Shipments (35)"
     const iconKey = Object.keys(TAB_ICONS).find(k => tab.title.startsWith(k)) || 'Get a Quote';
