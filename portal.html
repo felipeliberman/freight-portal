@@ -11676,6 +11676,19 @@ function _snapshotBookingToQuoted(originZip, destZip) {
     const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
     const puName = g('bk-pu-name'), puStreet = g('bk-pu-street'), puContact = g('bk-pu-contact'), puPhone = g('bk-pu-phone');
     const dlName = g('bk-dl-name'), dlStreet = g('bk-dl-street');
+    // [FP-T4] TEMPORARY instrumentation — remove after test 4 diagnosis. Read-only; changes nothing.
+    // found:false means the element was absent from the DOM; found:true with value:'' means present but blank.
+    const _t4probe = id => { const el = document.getElementById(id); return el ? { found: true, value: String(el.value || '').trim() } : { found: false, value: null }; };
+    console.log('[FP-T4] snapshot arm-check', {
+      'bk-pu-name':    _t4probe('bk-pu-name'),
+      'bk-pu-street':  _t4probe('bk-pu-street'),
+      'bk-pu-contact': _t4probe('bk-pu-contact'),
+      'bk-pu-phone':   _t4probe('bk-pu-phone'),
+      'bk-dl-name':    _t4probe('bk-dl-name'),
+      'bk-dl-street':  _t4probe('bk-dl-street'),
+      willArm: !!(puName || puStreet || puContact || puPhone || dlName || dlStreet),
+      lane: (originZip || '') + '->' + (destZip || '')
+    });
     // Nothing the customer entered — do not arm, do not overwrite a prior good snapshot.
     if (!(puName || puStreet || puContact || puPhone || dlName || dlStreet)) return false;
     if (!window._quotedContacts) window._quotedContacts = {};
@@ -11711,6 +11724,7 @@ function _snapshotBookingToQuoted(originZip, destZip) {
       };
     }
     window._pendingContactRestore = { lane: (originZip || '') + '->' + (destZip || '') };
+    console.log('[FP-T4] snapshot ARMED', { lane: window._pendingContactRestore.lane }); // [FP-T4] TEMPORARY
     return true;
   } catch (e) { console.warn('[FP] _snapshotBookingToQuoted failed', e); return false; }
 }
@@ -15496,8 +15510,23 @@ function showBookingPanel(rate, shipmentData) {
     // instructions/hazmat back from _quotedContacts BEFORE the address-book default fills anything,
     // so their entries win and the default only fills what is still blank. One-shot, lane-gated so a
     // genuinely new quote (different lane, or no pending flag) never inherits a prior shipment's detail.
+    // [FP-T4] TEMPORARY instrumentation — remove after test 4 diagnosis. Read-only; changes nothing.
+    console.log('[FP-T4] restore gate', {
+      pendingTruthy: !!window._pendingContactRestore,
+      pendingLane:   window._pendingContactRestore ? window._pendingContactRestore.lane : null,
+      computedLane:  (originZip + '->' + destZip),
+      match: !!(window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip))
+    });
     if (window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip)) {
       _restoreBookingFromQuoted();
+      // [FP-T4] TEMPORARY — post-fill values, read after the restore has run.
+      const _t4v = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : '(element not found)'; };
+      console.log('[FP-T4] restore ran', {
+        'bk-pu-name':    _t4v('bk-pu-name'),
+        'bk-pu-street':  _t4v('bk-pu-street'),
+        'bk-pu-contact': _t4v('bk-pu-contact'),
+        'bk-pu-phone':   _t4v('bk-pu-phone')
+      });
       window._pendingContactRestore = null;
     }
     applyDefaultShipper();
