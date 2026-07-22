@@ -2261,6 +2261,7 @@ function resetShipmentState(wipeConversation) {
     window._accMismatch = {}; // card 3 Stage 1: fresh quote = fresh accessorial-retry history (no stale strikes)
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
     window._relockCarrier = null; window._lockDropped = null; // carrier-selection state travels with the lock
+    window._shipCtxStale = true; // force one fresh history load after any reset
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
@@ -10191,6 +10192,7 @@ async function submitBookingOnly(opts) {
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
+    window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
     if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
@@ -10353,6 +10355,7 @@ async function submitBooking() {
       if (_bkBtn) { _bkBtn.textContent = 'Booked!'; _bkBtn.disabled = true; _bkBtn.style.background = '#f0ede6'; _bkBtn.style.opacity = '0.7'; _bkBtn.style.cursor = 'default'; }
       const _pCn = (bookingRate._name||bookingRate.name||bookingRate.carrierName)||'';
       const _pCp = Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0);
+      window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
       window._lastBooked = { BOLId, BOLNumber, carrier:_pCn, price:_pCp, PRO:null, confirmation:null, dispatched:false };
       showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:_pCn, carrierPrice:_pCp, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:bookingRate.rateType||'SMALL PACKAGE', iconUrl:(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl)||'' });
       bookingRate = null; bookingData = {};
@@ -10403,6 +10406,7 @@ async function submitBooking() {
 
     // Record the booking so an AI-driven panel booking can detect completion and report
     // the BOL/dispatch result. dispatched reflects whether dispatch actually confirmed.
+    window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: carrierPrice,
       PRO: PRO || null, confirmation: confirmation || null, dispatched: !!(dispResult && dispResult.success !== false) };
 
@@ -10706,29 +10710,47 @@ async function parseShipQuery(text, activeContext){
 async function fetchNextBatch(){
   const token=await getToken();
   const perPage=10, BATCH=6;
-  const pages=[]; for(let p=shipCtx.page;p<shipCtx.page+BATCH;p++){ if(shipCtx.totalPages&&p>shipCtx.totalPages)break; pages.push(p); }
+  const headers={'Authorization':'Bearer '+token};
+  // Send the SAME server-side date window the My Shipments panel sends, so the agent and the panel
+  // work off one dataset. The agent path used to omit dateFrom/dateTo and re-filter client-side.
+  const _iso=function(d){ return d.toISOString().split('T')[0]; };
+  const _win = (shipCtx.from && shipCtx.to) ? ('&dateFrom='+_iso(shipCtx.from)+'&dateTo='+_iso(shipCtx.to)) : '';
+  const url=function(p){ return PRIMUS_BASE+'/applet/v1/book?limit='+perPage+'&page='+p+_win; };
+  // PAGE 1 FIRST, ALONE. The old code fanned out 6 pages before totalPages was known, so on an
+  // account with a single page of results pages 2-6 were always requested and always rejected — a
+  // 400 storm on every load, swallowed by `r.ok?…:null` and repeated on every agent data tool.
+  if(shipCtx.totalPages==null){
+    let t1=null;
+    try{ const r1=await fetch(url(shipCtx.page),{headers}); t1=r1.ok?await r1.text():null; }catch(e){ t1=null; }
+    if(!t1){ shipCtx.done=true; return; }
+    let d1; try{ d1=JSON.parse(t1); }catch(e){ shipCtx.done=true; return; }
+    const pd1=d1.data&&d1.data.pagingDetails;
+    shipCtx.totalPages = (pd1&&pd1.totalResults!=null) ? (Math.ceil(pd1.totalResults/perPage)||1) : 1;
+    const arr1=(d1.data&&d1.data.results)||[];
+    arr1.forEach(function(sh){ shipCtx.loaded.push(sh); });
+    if (typeof updateNavBadges === 'function') updateNavBadges();
+    shipCtx.page+=1;
+    if(!arr1.length||shipCtx.page>shipCtx.totalPages) shipCtx.done=true;
+    return;
+  }
+  const pages=[]; for(let p=shipCtx.page;p<shipCtx.page+BATCH;p++){ if(p>shipCtx.totalPages)break; pages.push(p); }
   if(!pages.length){ shipCtx.done=true; return; }
   const texts=await Promise.all(pages.map(function(p){
-    const url=PRIMUS_BASE+'/applet/v1/book?limit=10&page='+p;
-    return fetch(url,{headers:{'Authorization':'Bearer '+token}}).then(function(r){return r.ok?r.text():null;}).catch(function(){return null;});
+    return fetch(url(p),{headers}).then(function(r){return r.ok?r.text():null;}).catch(function(){return null;});
   }));
   let gotAny=false;
-  let hitDateBoundary=false;
   texts.forEach(function(txt){
     if(!txt)return; let d; try{d=JSON.parse(txt);}catch(e){return;}
-    const pd=d.data&&d.data.pagingDetails;
-    if(pd&&pd.totalResults!=null&&shipCtx.totalPages==null) shipCtx.totalPages=Math.ceil(pd.totalResults/perPage)||1;
     const arr=(d.data&&d.data.results)||[]; if(arr.length)gotAny=true;
-    arr.forEach(function(sh){
-      // Client-side date filter — stop when records go older than our window
-      const bd = sh.bookDate ? new Date(sh.bookDate) : null;
-      if(bd && shipCtx.from && bd < shipCtx.from){ hitDateBoundary=true; return; }
-      shipCtx.loaded.push(sh); if (typeof updateNavBadges === 'function') updateNavBadges();
-    });
+    // No client-side date drop any more: the server applied the window, and the old drop ALSO set
+    // done=true, so one out-of-window record anywhere in an unordered parallel batch aborted the
+    // whole scan and hid every shipment on the later pages.
+    arr.forEach(function(sh){ shipCtx.loaded.push(sh); });
   });
+  if (typeof updateNavBadges === 'function') updateNavBadges();
   shipCtx.page+=pages.length;
-  if(shipCtx.totalPages&&shipCtx.page>shipCtx.totalPages)shipCtx.done=true;
-  if(!gotAny||hitDateBoundary)shipCtx.done=true;
+  if(shipCtx.page>shipCtx.totalPages)shipCtx.done=true;
+  if(!gotAny)shipCtx.done=true;
 }
 function filteredList(){ return sortShips(shipCtx.loaded.filter(function(s){return matchQuery(s,shipCtx.query);}),shipCtx.query); }
 async function ensureMatches(target){
@@ -11011,7 +11033,11 @@ async function runShipQuery(q){
 // (90-day) query. Reuses the current context when it is already at least this wide.
 async function loadWideHistory(){
   const now=new Date(); const from=new Date(now); from.setFullYear(from.getFullYear()-2);
-  if(shipCtx&&shipCtx.loaded&&shipCtx.loaded.length&&shipCtx.from&&shipCtx.from<=from) return;
+  // Reuse the cached history only while it is still current. _shipCtxStale is set on every shipment
+  // write, so a just-saved BOL can no longer be invisible to the agent while the My Shipments panel
+  // (which always re-fetches) shows it.
+  if(!window._shipCtxStale && shipCtx&&shipCtx.loaded&&shipCtx.loaded.length&&shipCtx.from&&shipCtx.from<=from) return;
+  window._shipCtxStale=false;
   shipCtx={from:from,to:now,page:1,totalPages:null,loaded:[],done:false,query:{action:'list',sortField:'date',sortDir:'desc'},filtered:[]};
   shipShown=0;
   const deadline=Date.now()+15000;
@@ -12434,6 +12460,7 @@ async function _execBookShipment(input) {
     const price = Number((rate.billTo&&rate.billTo.total)||rate.total||0);
 
     // Stash for the dispatch step
+    window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false, isParcel: typeof isParcelRate === 'function' && isParcelRate(rate) };
     window._bookingLock = null; // booking complete — release the frozen rate
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
