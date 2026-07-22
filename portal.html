@@ -2164,23 +2164,9 @@ const CUSTOMERS = {};
 let appletToken = null;
 let appletExpiry = 0;
 
-const ACC_MAP = {
-  'Liftgate Delivery':     'LFD',
-  'Liftgate Pickup':       'LFO',
-  'Residential Delivery':  'RSD',
-  // 'Residential Pickup' is a shipper flag, not sent as an accessorial code
-  'Inside Delivery':       'IND',
-  'Inside Pickup':         'INO',
-  'Limited Access Delivery':'LAD',
-  'Limited Access Pickup': 'LAD',
-  'Limited Access':        'LAD',
-  // Cargo insurance — doGetRates labels the INS button as 'Cargo Insurance' (CODE_TO_LABEL);
-  // without this mapping fetchRates dropped it and INS never reached accessorialsList[].
-  'Cargo Insurance':       'INS',
-  // 'Appointment' is a booking flag, not sent to the rates API
-  // 'Appointment Delivery':  'APT',
-  // 'Appointment':           'APT',
-};
+// ACC_MAP (label -> code) is retired. It was the second, staler of two mappings: it lacked APT
+// entirely and mapped 'Limited Access Pickup' to LAD (the DELIVERY code). accessorialSet() in the
+// canonical block below is now the only label/code normalizer in the app.
 
 const ACC_LABEL = {
   RSD:'Residential Delivery',  RSO:'Residential Pickup',
@@ -2630,9 +2616,11 @@ function _insGateBeforeRates(shipment, summary) {
   if (!_quoteFormIsOpen()) {
     window._suppressQuoteAutoRun = true;
     try { showQuoteForm(_lqsToPrefill(shipment), true); } catch(e) { console.warn('[FP] ins gate: showQuoteForm failed', e); }
-    const _acc = (shipment.accessorials || [])
-      .map(a => (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) ? ACC_MAP[a] : a)
-      .filter(c => typeof c === 'string' && c.length >= 2 && c.length <= 4);
+    // One normalizer. The map this replaces had no APT entry, so 'Appointment Delivery' fell through
+    // as a 22-character label and was then killed by the 2-4 length filter — appointment silently
+    // lost whenever insurance was added with the quote form CLOSED. It also mapped limited-access
+    // PICKUP to the delivery code, lighting the wrong chip.
+    const _acc = accessorialSet(shipment.accessorials);
     const _qc = window._quoteContainer;
     if (_qc) _acc.forEach(code => {
       const b = [..._qc.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
@@ -14993,9 +14981,7 @@ async function handleInput(text) {
       window._suppressQuoteAutoRun = true;
       try { showQuoteForm(_lqsToPrefill(lastQuotedShipment), true); } catch(e) { console.warn('[FP] insurance: showQuoteForm failed', e); }
       // Re-apply the original accessorials so the requote matches the prior quote.
-      const _origAcc = (lastQuotedShipment.accessorials || [])
-        .map(a => (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) ? ACC_MAP[a] : a)
-        .filter(c => typeof c === 'string' && c.length >= 2 && c.length <= 4);
+      const _origAcc = accessorialSet(lastQuotedShipment.accessorials);
       const _qcNew = window._quoteContainer;
       if (_qcNew) _origAcc.forEach(code => {
         const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
