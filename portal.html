@@ -9939,6 +9939,30 @@ function _hazmatShipmentFields(haz, specialInstructions) {
 // single-item, residential guard, dispatch) and are intentionally NOT merged here.
 // bookShipment owns only the call + response parsing. Throws on failure (callers keep
 // their existing try/catch). PUT when editBolId is set (edit/requote), else POST.
+// Last gate before a shipment request leaves the browser. Primus rejects a create/update whose
+// shipper or consignee has no name ("Parameter 'shipper:name' required if 'shipper:id' is not
+// submitted") and we never send shipper:id — so a blank Name / Company field guarantees a 400.
+// The structural drop that used to omit the key entirely is fixed; what remains is the blank-VALUE
+// case, where we would knowingly send a doomed request and report the backend's failure afterwards.
+// Failing here instead names the actual missing field and never touches the network.
+//
+// Deliberately narrow. The product rule is that partial saves are allowed — Primus stores incomplete
+// shipments — so this checks ONLY fields the backend genuinely refuses to create a record without.
+// Do not grow it into a general required-field form validator.
+function validateBookingPayload(payload) {
+  const missing = [];
+  const p = payload || {};
+  const blank = v => v === undefined || v === null || String(v).trim() === '';
+  if (blank(p.shipper && p.shipper.name))       missing.push('pickup business name');
+  if (blank(p.consignee && p.consignee.name))   missing.push('delivery business name');
+  if (blank(p.shipper && p.shipper.zipCode))    missing.push('pickup ZIP');
+  if (blank(p.consignee && p.consignee.zipCode)) missing.push('delivery ZIP');
+  if (!missing.length) return { ok: true };
+  const list = missing.length === 1 ? missing[0] : (missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1]);
+  return { ok: false, code: 'MISSING_REQUIRED_FIELD', fields: missing,
+    message: 'Missing ' + list + '. Nothing was sent. Tell the customer exactly which detail is needed and ask for it. Do NOT say the shipment was saved or booked, and do NOT state a BOL number.' };
+}
+
 async function bookShipment(payload, opts) {
   opts = opts || {};
   const token = opts.token || await getToken();
@@ -10177,6 +10201,15 @@ async function submitBookingOnly(opts) {
       pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:accCodes.includes('APT') },
       deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
     };
+    // Validate BEFORE _editingBOLId is consumed: a rejected save must leave the edit target intact,
+    // otherwise a retry would POST a new BOL instead of PUT-ing the one being edited.
+    const _v = validateBookingPayload(payload);
+    if (!_v.ok) {
+      removeTyping();
+      if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
+      appendMessage('bot', 'I could not save this yet — ' + _v.fields.join(' and ') + ' ' + (_v.fields.length > 1 ? 'are' : 'is') + ' still needed. Nothing was sent.');
+      return { ok: false, error: { code: _v.code, message: _v.message } };
+    }
     const _editBolId = window._editingBOLId || null;
     const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
     window._editingBOLId = null; // cleared even on failure, matching prior behavior
@@ -10347,6 +10380,13 @@ async function submitBooking() {
       }
     };
 
+    const _v = validateBookingPayload(payload);
+    if (!_v.ok) {
+      removeTyping();
+      if (_bkBtn) { _bkBtn.textContent = 'Book & Dispatch'; _bkBtn.disabled = false; }
+      appendMessage('bot', 'I could not book this yet — ' + _v.fields.join(' and ') + ' ' + (_v.fields.length > 1 ? 'are' : 'is') + ' still needed. Nothing was sent.');
+      return;
+    }
     const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token });
 
     // Parcel: skip auto-dispatch — user must choose SCHEDULE PICKUP or DROP TO CARRIER from the picker.
@@ -12471,6 +12511,8 @@ async function _execBookShipment(input) {
       deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
     };
 
+    const _v = validateBookingPayload(payload);
+    if (!_v.ok) return { ok:false, code:_v.code, fields:_v.fields, error:_v.message };
     let _booked;
     try {
       _booked = await bookShipment(payload, { token });
