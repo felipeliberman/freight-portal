@@ -1477,7 +1477,10 @@ function scrollBottom(){const m=document.getElementById('messages');if(m)m.scrol
 
 function expandChat(){
   expanded = true;
-  var ta=document.getElementById('input-ta'); if(ta) ta.focus();
+  // 'input-ta' is the landing page's textarea; the logged-in portal's is 'input-textarea'. Focusing
+  // only the first made this a no-op in the portal. Try both, whichever this page actually has.
+  var ta=document.getElementById('input-ta') || document.getElementById('input-textarea');
+  if(ta) { try { ta.focus(); } catch(e) {} }
   scrollBottom();
 }
 
@@ -8901,6 +8904,10 @@ function sendMessage() {
   // Typing a message and sending it exits voice mode.
   if (window._vm && window._vm.active) _vmExit();
   ta.value=''; ta.style.height='auto';
+  // Give focus back to the chat box. Without this, focus is left wherever it was — and after a
+  // booking panel opens, the first Pickup field (Name / Company) is the natural place a customer's
+  // cursor ends up, so their NEXT chat message was typed straight into the company name.
+  try { ta.focus(); } catch(e) {}
   showChatArea();
   // Reentrancy guard: customers double-send during slow turns (seen in real screenshots).
   // Concurrent handleInput/aiConverse runs share chatHistory + all _* globals, so one turn's
@@ -20445,6 +20452,35 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ── KEYBOARD SHORTCUTS ────────────────────────────────────────────────────────
+// Typing with nothing focused goes to the chat box. Belt-and-braces for the case above: if focus has
+// been lost entirely (a panel re-rendered the element that had it, a click landed on empty chrome),
+// a printable keystroke would otherwise vanish or land in whatever the browser picked.
+//
+// STRICTLY GUARDED so it can never hijack real form typing: it bails whenever the event target is an
+// INPUT, TEXTAREA or SELECT, is contenteditable, or sits inside a contenteditable — i.e. any time the
+// customer is genuinely typing into a field, including every booking-panel input. It also bails on
+// any modifier chord, on non-printable keys, and when the portal chat box is absent or hidden.
+document.addEventListener('keydown', e => {
+  try {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;      // let shortcuts through untouched
+    if (!e.key || e.key.length !== 1) return;            // printable characters only
+    const el = e.target;
+    if (el && el !== document.body) {
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;  // real field typing — hands off
+      if (el.isContentEditable) return;
+      if (typeof el.closest === 'function' && el.closest('[contenteditable="true"]')) return;
+    }
+    const ta = document.getElementById('input-textarea');
+    if (!ta || ta.offsetParent === null) return;         // no visible portal chat box on this page
+    if (document.activeElement === ta) return;           // already there; let it type normally
+    e.preventDefault();
+    ta.focus();
+    ta.value += e.key;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (err) {}
+});
+
 document.addEventListener('keydown', e => {
   // Ctrl+W — close active tab
   if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
