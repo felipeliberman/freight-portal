@@ -117,10 +117,34 @@ const invariants = [
     id: 5, name: 'insurance toggle and declared value move together',
     property: "insuranceState().status === 'added' iff a commodity id and a positive amount both exist",
     catches: 'bug (d) — the insurance question repeated across turns',
-    expectFail: true, fixedBy: 'S7 insuranceState',
     run(ctx) {
-      const w = ctx.win;
-      A.ok(typeof w.insuranceState === 'function', 'no canonical insuranceState() owner exists yet — the toggle lives in _insCollecting/_insDecided and the value in lastQuotedShipment, with no single reader');
+      const w = ctx.win; openQuote(w); // the agent-facing snapshot only reports with a form open
+      A.ok(typeof w.insuranceState === 'function', 'no canonical insuranceState() owner');
+      A.ok(typeof w.setInsurance === 'function', 'no canonical setInsurance() writer');
+      const coherent = st => (st.status === 'added') === (!!st.commodityId && Number(st.amount) > 0);
+
+      A.ok(w.insuranceState().status === 'not-addressed', 'a fresh session should be not-addressed');
+      A.ok(coherent(w.insuranceState()), 'incoherent when fresh');
+
+      // A half-added write must be REFUSED, not recorded — that is the state the re-ask loop fed on.
+      let st = w.setInsurance({ status: 'added', amount: 5000 });         // no commodity
+      A.ok(st.status !== 'added', 'accepted an amount with no commodity id');
+      st = w.setInsurance({ status: 'added', commodityId: 'abc' });        // no amount
+      A.ok(st.status !== 'added', 'accepted a commodity id with no amount');
+
+      st = w.setInsurance({ status: 'added', amount: 5000, commodityId: 'abc', commodityName: 'General Goods' });
+      A.ok(st.status === 'added' && Number(st.amount) === 5000, 'a complete add did not stick: ' + JSON.stringify(st));
+      A.ok(coherent(st), 'incoherent after add');
+
+      // It must PERSIST — the agent reads this to decide whether to ask again.
+      A.ok(w.insuranceState().status === 'added', 'status did not survive the call');
+      A.ok(/added/.test(w._quoteFormState().insurance ? w._quoteFormState().insurance.status : ''), 'the agent snapshot does not report it as added');
+      A.ok(/do not ask about cargo insurance again/i.test(w._liveStateBlock()), 'the live state block does not tell the agent to stop asking');
+
+      st = w.setInsurance({ status: 'declined' });
+      A.ok(st.status === 'declined' && Number(st.amount) === 0, 'decline left a value behind: ' + JSON.stringify(st));
+      A.ok(coherent(st), 'incoherent after decline');
+      A.ok(/declined/.test(w._liveStateBlock()), 'a decline is not surfaced to the agent, so it will re-offer');
     },
   },
   // ── 6 ───────────────────────────────────────────────────────────────────────

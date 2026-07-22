@@ -2569,6 +2569,81 @@ function _readQuoteInsurance(panel) {
   const amount = vInp ? Number(vInp.value) : 0;
   return { active: true, complete: !!commodityId && amount > 0, commodityId, amount };
 }
+// ── CANONICAL INSURANCE STATE ─────────────────────────────────────────────────
+// ONE owner for the toggle AND the declared value. They used to live apart: the toggle in
+// _insCollecting/_insDecided/the INS chip, the value in lastQuotedShipment.insuranceAmount and the
+// #qt-ins-value input — with no single reader. That is why the agent re-asked about insurance turn
+// after turn: nothing could answer "has this been settled, and for how much?" in one place.
+//
+// DOM first (the form is the customer's own answer), chat flags second. Owns insurance state ONLY —
+// it writes no carrier, line-item, accessorial or booking-party state.
+//
+// INVARIANT: status === 'added' if and only if a commodity id AND a positive amount both exist.
+function insuranceState() {
+  try {
+    const dom = _readQuoteInsurance();
+    const lqs = (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) || {};
+    // Being collected right now beats everything — the customer is mid-answer.
+    if (window._insCollecting === 'value' || window._insCollecting === 'commodity')
+      return { status: 'collecting', commodityId: '', amount: 0, source: 'chat' };
+    // A complete form selection is the strongest settled signal.
+    if (dom.active && dom.complete)
+      return { status: 'added', commodityId: dom.commodityId, amount: Number(dom.amount) || 0, source: 'form' };
+    // The chat flow may have settled it before (or without) the form existing.
+    if (lqs.insuranceEnabled && Number(lqs.insuranceAmount) > 0 && lqs.insuranceCommodityId)
+      return { status: 'added', commodityId: lqs.insuranceCommodityId, amount: Number(lqs.insuranceAmount) || 0, source: 'chat' };
+    if (dom.active) return { status: 'selected-no-value', commodityId: dom.commodityId || '', amount: Number(dom.amount) || 0, source: 'form' };
+    if (window._insDecided) return { status: 'declined', commodityId: '', amount: 0, source: 'chat' };
+    return { status: 'not-addressed', commodityId: '', amount: 0, source: 'none' };
+  } catch (e) {
+    // Fail toward asking rather than toward a silent wrong answer.
+    return { status: 'not-addressed', commodityId: '', amount: 0, source: 'error' };
+  }
+}
+
+// Sole writer. Keeps the toggle and the value moving together so the invariant cannot be broken by
+// setting one without the other, and mirrors into the form when it is open.
+function setInsurance(next) {
+  next = next || {};
+  try {
+    const lqs0 = (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) ? lastQuotedShipment : (lastQuotedShipment = {});
+    if (next.status === 'added') {
+      const amt = Number(next.amount) || 0;
+      const cid = String(next.commodityId || '');
+      if (!cid || amt <= 0) return insuranceState(); // never record a half-added state
+      lqs0.insuranceEnabled = true; lqs0.insuranceCommodityId = cid; lqs0.insuranceAmount = amt;
+      lqs0.insuranceCommodityName = next.commodityName || lqs0.insuranceCommodityName || '';
+      window._insCollecting = null; window._insDecided = true; window._insPreRate = false;
+      const qc = window._quoteContainer;
+      if (qc) {
+        const cSel = qc.querySelector('#qt-ins-commodity'); if (cSel) cSel.value = cid;
+        const vInp = qc.querySelector('#qt-ins-value');     if (vInp) vInp.value = amt;
+        const btn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
+        if (btn && !btn.classList.contains('acc-active')) btn.click();
+      }
+    } else if (next.status === 'declined') {
+      lqs0.insuranceEnabled = false; lqs0.insuranceCommodityId = ''; lqs0.insuranceAmount = 0;
+      window._insCollecting = null; window._insDecided = true; window._insPreRate = false;
+      // Clear the FORM too. Declining while the chip was still lit left a live selection on screen
+      // that insuranceState would read back as "selected" — the toggle and the value must move
+      // together in BOTH directions, or the invariant is only half true.
+      const qcD = window._quoteContainer;
+      if (qcD) {
+        const vD = qcD.querySelector('#qt-ins-value');     if (vD) vD.value = '';
+        const cD = qcD.querySelector('#qt-ins-commodity');  if (cD) cD.value = '';
+        const bD = [...qcD.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
+        if (bD && bD.classList.contains('acc-active')) bD.click();
+        const pD = qcD.querySelector('#qt-insurance-panel'); if (pD) pD.style.display = 'none';
+      }
+    } else if (next.status === 'collecting') {
+      window._insCollecting = next.field || 'value';
+    } else if (next.status === 'not-addressed') {
+      window._insCollecting = null; window._insDecided = false;
+    }
+  } catch (e) { console.warn('[FP] setInsurance failed', e); }
+  return insuranceState();
+}
+
 function _showQuoteInsuranceError(msg) {
   const qc = window._quoteContainer; if (!qc) return;
   const errEl = qc.querySelector('#qt-ins-error');
@@ -11689,14 +11764,13 @@ function _quoteFormState() {
     // in its OWN try/catch so it can never throw and collapse the whole snapshot. Complete-only maps to
     // 'added'; any ambiguity or throw omits the field so the agent re-asks (fail toward asking). Active
     // signals (being-collected, chip-on) are checked before the sticky 'declined' so a re-request wins.
+    // From the one owner, so the agent's view can never disagree with the form or the chat flow.
     let _ins;
     try {
-      const _ir = _readQuoteInsurance(panel);
-      if (window._insCollecting === 'value' || window._insCollecting === 'commodity') _ins = { status: 'being added' };
-      else if (_ir.active && _ir.complete) _ins = { status: 'added', declaredValue: _ir.amount };
-      else if (_ir.active) _ins = { status: 'started, no value yet' };
-      else if (window._insDecided) _ins = { status: 'declined' };
-      else _ins = { status: 'not addressed' };
+      const _is = insuranceState();
+      const _label = { 'collecting': 'being added', 'added': 'added', 'selected-no-value': 'started, no value yet',
+                       'declined': 'declined', 'not-addressed': 'not addressed' }[_is.status] || 'not addressed';
+      _ins = (_is.status === 'added') ? { status: _label, declaredValue: _is.amount } : { status: _label };
     } catch (e) { _ins = undefined; }
     return {
       quoteFormOpen: true,
@@ -15116,13 +15190,9 @@ async function handleInput(text) {
       return;
     }
     const _val = Number(window._insTempValue) || 0;
-    if (!lastQuotedShipment) lastQuotedShipment = {};
-    lastQuotedShipment.insuranceEnabled = true;
-    lastQuotedShipment.insuranceCommodityId = _match.id;
-    lastQuotedShipment.insuranceCommodityName = _match.name;
-    lastQuotedShipment.insuranceAmount = _val;
-    window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
-    window._insPreRate = false; window._insDecided = true;
+    // Through the one owner: toggle and value move together, and the form mirrors automatically.
+    setInsurance({ status: 'added', amount: _val, commodityId: _match.id, commodityName: _match.name });
+    window._insTempValue = null; window._insTempCommodity = null;
     appendMessage('bot', 'Cargo insurance added — ' + _match.name + ', insured for $' + _val.toLocaleString('en-US') + '. Pulling rates with insurance included...');
 
     // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
