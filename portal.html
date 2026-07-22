@@ -9877,23 +9877,36 @@ async function bookShipment(payload, opts) {
     try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' ' + bookRes.status + ']', bookText, JSON.stringify(payload)); } catch(e) {}
     throw new Error(errLabel + ' failed ' + bookRes.status + ': ' + bookText.slice(0, 300));
   }
-  // PRE-EXISTING PRODUCTION BUG (not part of the unification): Primus PUT /book/{id}
-  // (edit) returns 2xx with an EMPTY body on success, which made JSON.parse('') throw
-  // "Unexpected end of JSON input" and surface as a fake "Save error" on every edit.
-  // Guard the empty body; for an edit we already know the BOL, so treat empty-but-OK
-  // as success. A POST with no result still errors as before.
+  // A BOL NUMBER may come ONLY from the backend RESPONSE — never synthesized from the request.
+  // This previously returned {BOLId: editBolId, BOLNumber: opts.editBolNumber || editBolId} for an
+  // id-less body, so the app could state a BOL the backend had never confirmed. Now the two cases
+  // are split, and `editBolId` — the SAME flag that made this a PUT rather than a POST — is what
+  // distinguishes them:
+  //   PUT  (editBolId set): Primus acknowledges a successful edit with 2xx and an EMPTY body. That
+  //        is real success, so it is NOT an error — but it carries no id, so editAcknowledged is
+  //        returned with BOLId/BOLNumber null and the caller must state no number.
+  //   POST (editBolId null): a create with no id back is NOT a confirmed booking — throw.
+  // (JSON.parse stays guarded against an empty body so this is a clean branch, never
+  // "Unexpected end of JSON input".)
   const bookData = bookText ? JSON.parse(bookText) : {};
   const result = bookData.data && bookData.data.results && bookData.data.results[0];
-  if (!result) {
-    if (editBolId) return { BOLId: editBolId, BOLNumber: opts.editBolNumber || editBolId, docs: [], result: null };
-    throw new Error('No booking result returned');
+  const BOLId = result && result.BOLId;
+  if (!BOLId) {
+    try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' no-id] status ' + bookRes.status + ' body:', bookText.slice(0, 300)); } catch(e) {}
+    if (editBolId) return { BOLId: null, BOLNumber: null, docs: [], result: null, editAcknowledged: true };
+    const _noId = new Error(errLabel + ' did not return a BOL id — the shipment was not confirmed.');
+    _noId.code = 'NO_BOL_IN_RESPONSE';
+    throw _noId;
   }
-  const BOLId = result.BOLId;
   const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
   const docs = result.documents || [];
   return { BOLId, BOLNumber, docs, result };
 }
 
+// Returns a TYPED result — { ok:true, bolId, bolNumber } or { ok:false, error:{code,message} }.
+// Callers must decide success from this return value, never from window._lastBooked: that global
+// survives from an earlier successful booking, so reading it after a failed save reported the
+// PREVIOUS shipment's BOL as confirmation of a save that never happened.
 async function submitBookingOnly(opts) {
   opts = opts || {};
   // Creates the BOL in Primus but does NOT dispatch — "Save Shipment" flow
@@ -9982,7 +9995,15 @@ async function submitBookingOnly(opts) {
     const _editBolId = window._editingBOLId || null;
     const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
     window._editingBOLId = null; // cleared even on failure, matching prior behavior
-    const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token, editBolId: _editBolId, editBolNumber: _editBolNum, errLabel: 'Save' });
+    const _bk = await bookShipment(payload, { token, editBolId: _editBolId, editBolNumber: _editBolNum, errLabel: 'Save' });
+    const _editAck = !!_bk.editAcknowledged;
+    // Routing identity: the response id when there is one, else — on an acknowledged edit — the BOL
+    // we PUT to, which is itself a backend id resolved earlier. Used ONLY to keep _lastBooked,
+    // dispatch and the saved-shipment view working exactly as before. It is deliberately NOT handed
+    // back in the return value below, so no caller can state it as confirmation of this save.
+    const BOLId     = _bk.BOLId     || (_editAck ? _editBolId  : null);
+    const BOLNumber = _bk.BOLNumber || (_editAck ? _editBolNum : null);
+    const docs      = _bk.docs || [];
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
@@ -9991,10 +10012,17 @@ async function submitBookingOnly(opts) {
     if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
+    return _editAck
+      ? { ok: true, editAcknowledged: true, bolId: null, bolNumber: null,
+          editedBolId:     _editBolId  ? String(_editBolId)  : null,
+          editedBolNumber: _editBolNum ? String(_editBolNum) : null }
+      : { ok: true, editAcknowledged: false,
+          bolId: String(_bk.BOLId), bolNumber: _bk.BOLNumber != null ? String(_bk.BOLNumber) : null };
   } catch(e) {
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
     appendMessage('bot', 'Save error: ' + e.message);
+    return { ok: false, error: { code: (e && e.code) || 'SAVE_FAILED', message: (e && e.message) || 'unknown error' } };
   }
 }
 
@@ -12096,13 +12124,26 @@ async function _execSaveShipment(input) {
       } catch(e) {}
       window._editingBOLId = resolvedBOLId;
     }
-    await submitBookingOnly();
-    const saved = window._lastBooked;
-    if (!saved || !saved.BOLId) {
-      return { ok: false, error: 'Save failed — see the error message in the chat panel.' };
+    // Success is decided ONLY by this call's typed result. Reading window._lastBooked here was the
+    // false-confirmation bug: it holds the last SUCCESSFUL booking, so a 404'd PUT still returned
+    // ok:true carrying a prior shipment's BOL — telling a live customer freight was saved when the
+    // backend had rejected it. Never state a BOL that did not come back from this save.
+    const _res = await submitBookingOnly();
+    // Saved = this call said ok AND either returned an id, or acknowledged an edit (a successful
+    // Primus edit PUT answers 2xx with an empty body, which is real success carrying no id).
+    if (!_res || _res.ok !== true || !(_res.bolId || _res.editAcknowledged)) {
+      const _why = (_res && _res.error && _res.error.message) || 'the save did not go through';
+      return { ok: false, saveFailed: true, error: _why,
+        note: 'THE SHIPMENT WAS NOT SAVED. Tell the customer plainly that it did not save and give the reason in one short plain sentence. Do NOT state any BOL number, do NOT say it is in My Shipments, and do NOT use any success wording ("saved", "all set", "you\'re booked"). Offer to try again, or to email support@freightandlogistics.ai if it keeps failing. Do not invent a cause and do not blame the carrier or the lane.' };
     }
-    return { ok: true, BOLId: saved.BOLId, BOLNumber: saved.BOLNumber,
-      message: 'Shipment saved. BOL ' + saved.BOLNumber + ' is in My Shipments — dispatch when ready.' };
+    if (!_res.bolId) {
+      return { ok: true, editAcknowledged: true, BOLId: null, BOLNumber: null,
+        message: 'Saved — check My Shipments.',
+        note: 'The update went through, but this call returned no BOL number. Tell the customer it saved and to check My Shipments. Do NOT state any BOL number — you do not have a confirmed one for this save — and do not reuse one from earlier in the conversation.' };
+    }
+    const _bolShown = _res.bolNumber || _res.bolId;
+    return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
+      message: 'Saved as BOL ' + _bolShown + ' — it is in My Shipments, dispatch when ready.' };
   } catch(e) {
     return { ok: false, error: 'Save error: ' + (e.message || 'unknown') };
   }
@@ -12260,6 +12301,7 @@ DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and 
 
 SAVING A SHIPMENT — you have a save_shipment tool:
 Booking has TWO steps: Save and Dispatch. A customer can save a shipment now and come back later to dispatch. When a customer says "save this for now," "book it but don't dispatch yet," or "I'll dispatch later," call save_shipment (NOT dispatch_shipment). It creates or updates the BOL in the system without scheduling pickup. When it returns ok, tell them the BOL number and that it's saved in My Shipments whenever they're ready to dispatch. To update an existing saved shipment, pass bol_id.
+SAVE OUTCOME — VERBATIM, NEVER ASSUMED. This is as strict as the prepaid charge disclosure. A BOL number is a fact the system returned, never something you carry forward, reconstruct, or infer. Only say a shipment is saved, and only state a BOL number, when THIS save_shipment call returned ok:true AND returned a BOLNumber or BOLId — and then state that returned value character-for-character. Never reuse a BOL number from earlier in the conversation, from a previous shipment, from a quote number, or from what the customer typed; those are different numbers and are not confirmation of this save. If the call returns ok:false, or returns ok with no BOL, the shipment was NOT saved: say so plainly in one sentence, give the short reason the tool returned, state no BOL number at all, and do not say it is in My Shipments or use any success wording. Offer to try again or to email support@freightandlogistics.ai. The same rule applies to book_shipment. Telling a customer their freight is saved or booked when it is not is the single worst failure in this product — when in doubt, report that it did not go through.
 Never pressure a customer to dispatch immediately — if they want to save and come back, that's the right flow.
 
 REQUOTING A SAVED SHIPMENT — you have a requote_shipment tool:
@@ -15857,16 +15899,22 @@ function showBookingPanel(rate, shipmentData) {
               const _snapBR = bookingRate ? Object.assign({}, bookingRate) : {};
               const _snapBD = Object.assign({}, bookingData);
               const _snapLQS = lastQuotedShipment ? Object.assign({}, lastQuotedShipment) : {};
-              try { await submitBookingOnly(); } catch(e) {
+              let _r;
+              try { _r = await submitBookingOnly(); } catch(e) {
                 if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
                 btn.textContent = 'Save Shipment'; btn.disabled = false; bookingStep = null; return;
               }
               if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
               bookingStep = null; window._bookingPanelContainer = null;
-              const _savedBOLId = window._lastBooked && window._lastBooked.BOLId;
-              const _savedBOLNum = window._lastBooked && window._lastBooked.BOLNumber;
-              // submitBookingOnly catches its own errors without re-throwing — detect silent failure.
-              if (!_savedBOLId) { btn.textContent = 'Save Shipment'; btn.disabled = false; return; }
+              // Success comes from THIS call's typed result. This used to read window._lastBooked,
+              // which holds the last SUCCESSFUL booking — so a failed save inherited the previous
+              // shipment's BOL and rendered as "Saved!". Same gate as the chat path: ok AND
+              // (an id, or an acknowledged edit whose 2xx body carried none).
+              const _saveOk = !!(_r && _r.ok === true && (_r.bolId || _r.editAcknowledged));
+              if (!_saveOk) { btn.textContent = 'Save Shipment'; btn.disabled = false; return; }
+              // Routing ids for the saved-shipment view only — never rendered as a save confirmation.
+              const _savedBOLId  = _r.bolId     || _r.editedBolId     || null;
+              const _savedBOLNum = _r.bolNumber || _r.editedBolNumber || null;
               btn.textContent = 'Saved!';
               const _savedOverlay = document.getElementById('bk-saved-overlay');
               if (_savedOverlay) _savedOverlay.remove();
