@@ -6519,6 +6519,11 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   })) : [{ pieces: Number(s.pieces || 1), weight: Number(s.weight || s.totalWeight || 0), length: 48, width: 40, height: 48, packageType: 'PLT', freightClass: '70', description: 'Freight' }];
   const shipData = {
     originZip: originZip, destZip: destZip, destinationZip: destZip,
+    // Real city/state off the saved BOL — this shipment's own, never the last quote's.
+    originCity: (s.shipper && (s.shipper.city || s.shipper.cityName)) || s.originCity || '',
+    originState: (s.shipper && s.shipper.state) || s.originState || '',
+    destinationCity: (s.consignee && (s.consignee.city || s.consignee.cityName)) || s.destinationCity || '',
+    destinationState: (s.consignee && s.consignee.state) || s.destinationState || '',
     weight: lineItems.reduce((a,i)=>a+(i.weight||0)*(i.pieces||1),0),
     pieces: lineItems.reduce((a,i)=>a+(i.pieces||1),0),
     accessorials: accCodes.map(cd=>(ACC_LABEL[cd]||cd)),
@@ -9497,6 +9502,8 @@ function handleBook(rate) {
   const shipData = {
     originZip:    s.originZip || '',
     destZip:      s.destinationZip || '',
+    originCity:   s.originCity || '', originState: s.originState || '',
+    destinationCity: s.destinationCity || '', destinationState: s.destinationState || '',
     weight:       s.items ? s.items.reduce((a,i)=>a+(i.weight||0)*(i.pieces||1),0) : 0,
     pieces:       s.items ? s.items.reduce((a,i)=>a+(i.pieces||1),0) : 1,
     accessorials: [],
@@ -9904,6 +9911,118 @@ async function bookShipment(payload, opts) {
   return { BOLId, BOLNumber, docs, result };
 }
 
+// ── THE ONE BOOKING-FORM HARVESTER ────────────────────────────────────────────
+// Every submit path reads its party/pickup/freight fields from here; nothing else reads booking
+// DOM. Previously four separate harvesters existed (the panel Save button, the panel Book button,
+// the SmartPaste mirror, and an inline read in _execBookShipment) and the two payload builders
+// read NONE of them — they read the `bookingData` global, which showBookingPanel resets to six
+// keys on every open. An agent-filled panel therefore serialized empty addresses.
+//
+// Precedence per field: live DOM → bookingData → _quotedContacts → the rates shipment → ''.
+// That ordering is what makes it correct from every entry point — the panel wins while it is open
+// and filled, bookingData covers a closed or rebuilt panel, _quotedContacts covers quote-time
+// capture, and the shipment supplies city/state/zip the customer never types.
+//
+// Pure read: no DOM writes, no _bookingLock / bookingRate writes, no carrier resolution.
+function collectBookingForm(opts) {
+  opts = opts || {};
+  const d  = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const bd = (typeof bookingData !== 'undefined' && bookingData) ? bookingData : {};
+  const qc = window._quotedContacts || {};
+  const s  = opts.shipment || (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) || window._lastRatesShipment || {};
+  const pick = function () {
+    for (let i = 0; i < arguments.length; i++) {
+      const v = arguments[i];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  const qsp = qc.shipper || {}, qcn = qc.consignee || {};
+  const shipper = {
+    name:    pick(d('bk-pu-name'),    bd.shipperName,    qsp.name),
+    street:  pick(d('bk-pu-street'),  bd.shipperStreet,  bd.shipperAddr, qsp.address, qsp.street),
+    suite:   pick(d('bk-pu-suite'),   bd.shipperSuite,   qsp.suite),
+    city:    pick(d('bk-pu-city'),    bd.shipperCity,    qsp.city,  s.originCity),
+    state:   pick(d('bk-pu-state'),   bd.shipperState,   qsp.state, s.originState),
+    zip:     pick(d('bk-pu-zip'),     bd.shipperZip,     qsp.zip,   s.originZip),
+    contact: pick(d('bk-pu-contact'), bd.shipperContact, qsp.contact),
+    phone:   pick(d('bk-pu-phone'),   bd.shipperPhone,   qsp.phone)
+  };
+  const consignee = {
+    name:    pick(d('bk-dl-name'),    bd.consigneeName,    qcn.name),
+    street:  pick(d('bk-dl-street'),  bd.consigneeStreet,  bd.consigneeAddr, qcn.address, qcn.street),
+    suite:   pick(d('bk-dl-suite'),   bd.consigneeSuite,   qcn.suite),
+    city:    pick(d('bk-dl-city'),    bd.consigneeCity,    qcn.city,  s.destinationCity),
+    state:   pick(d('bk-dl-state'),   bd.consigneeState,   qcn.state, s.destinationState),
+    zip:     pick(d('bk-dl-zip'),     bd.consigneeZip,     qcn.zip,   s.destinationZip || s.destZip),
+    contact: pick(d('bk-dl-contact'), bd.consigneeContact, qcn.contact),
+    phone:   pick(d('bk-dl-phone'),   bd.consigneePhone,   qcn.phone)
+  };
+  // Composed one-line address, same shape the old buildAddr() produced, for the consumers that use it.
+  const compose = p => [p.street, p.suite, (p.city && p.state) ? (p.city + ', ' + p.state) : (p.city || p.state), p.zip].filter(Boolean).join(', ');
+  shipper.addr = compose(shipper);
+  consignee.addr = compose(consignee);
+  const hazUnEl = document.getElementById('bk-haz-un');
+  return {
+    panelOpen: !!document.getElementById('bk-pu-name'),
+    shipper: shipper,
+    consignee: consignee,
+    pickup: {
+      date:  pick(d('bk-pu-date'),  bd.pickupDate),
+      open:  pick(d('bk-pu-open'),  bd.pickupOpen),
+      close: pick(d('bk-pu-close'), bd.pickupClose)
+    },
+    referenceNumber:     pick(d('bk-pu-ref'), bd.shipperRef, qc.referenceNumber),
+    specialInstructions: pick(d('bk-special-instructions'), bd.specialInstructions, qc.specialInstructions),
+    freight: { commodity: d('bk-commodity'), nmfc: d('bk-nmfc') },
+    hazmat: {
+      isHazmat:     !!(hazUnEl || bd.isHazmat),
+      unNumber:     pick(d('bk-haz-un'),      bd.hazUnNumber),
+      packingGroup: pick(hazUnEl && hazUnEl.dataset ? hazUnEl.dataset.unPg : '', bd.hazPkgGroup),
+      contact:      pick(d('bk-haz-contact'), bd.hazContact),
+      phone:        pick(d('bk-haz-phone'),   bd.hazPhone)
+    }
+  };
+}
+
+// Mirror a harvested form back into the bookingData global, so a panel that is later closed and
+// rebuilt (showBookingPanel wipes bookingData on every open) still has the customer's values.
+function _syncBookingDataFromForm(f) {
+  try {
+    if (!f || typeof bookingData === 'undefined' || !bookingData) return;
+    const set = (k, v) => { if (v !== undefined && v !== null && String(v) !== '') bookingData[k] = v; };
+    set('shipperName', f.shipper.name);       set('shipperStreet', f.shipper.street);
+    set('shipperSuite', f.shipper.suite);     set('shipperCity', f.shipper.city);
+    set('shipperState', f.shipper.state);     set('shipperZip', f.shipper.zip);
+    set('shipperContact', f.shipper.contact); set('shipperPhone', f.shipper.phone);
+    set('shipperAddr', f.shipper.addr);
+    set('consigneeName', f.consignee.name);       set('consigneeStreet', f.consignee.street);
+    set('consigneeSuite', f.consignee.suite);     set('consigneeCity', f.consignee.city);
+    set('consigneeState', f.consignee.state);     set('consigneeZip', f.consignee.zip);
+    set('consigneeContact', f.consignee.contact); set('consigneePhone', f.consignee.phone);
+    set('consigneeAddr', f.consignee.addr);
+    set('pickupDate', f.pickup.date); set('pickupOpen', f.pickup.open); set('pickupClose', f.pickup.close);
+    set('shipperRef', f.referenceNumber); set('specialInstructions', f.specialInstructions);
+    if (f.hazmat.isHazmat) {
+      bookingData.isHazmat = true;
+      set('hazUnNumber', f.hazmat.unNumber); set('hazPkgGroup', f.hazmat.packingGroup);
+      set('hazContact', f.hazmat.contact);   set('hazPhone', f.hazmat.phone);
+    }
+  } catch (e) { console.warn('[FP] bookingData sync failed', e); }
+}
+
+// The rate the payload must serialize. READ-ONLY view of B's state: it never writes _bookingLock or
+// bookingRate and never re-resolves a carrier name — selectRate decides, this only reports.
+// Returns { rate, rateId } with rateId null when the rate carries no backend id (the synthetic rate
+// editSavedShipment builds for a saved BOL). Callers omit the key entirely rather than send null.
+function _selectedRateForPayload() {
+  const rate = (typeof bookingRate !== 'undefined' && bookingRate)
+    || (window._bookingLock && window._bookingLock.rate)
+    || null;
+  const id = rate && (rate.id || rate.rateId);
+  return { rate: rate, rateId: (id === undefined || id === null || id === '') ? null : String(id) };
+}
+
 // Returns a TYPED result — { ok:true, bolId, bolNumber } or { ok:false, error:{code,message} }.
 // Callers must decide success from this return value, never from window._lastBooked: that global
 // survives from an earlier successful booking, so reading it after a failed save reported the
@@ -9927,22 +10046,15 @@ async function submitBookingOnly(opts) {
       // Prefer rateFreight dims but use shipItem for contact/commodity
       _rateFreight.commodity = _rateFreight.commodity || _shipItem.description || _shipItem.commodity || 'Freight';
     }
-    const rate = bookingRate || {};
+    // ONE harvester for every field the payload needs, then mirror back so a later panel rebuild
+    // does not lose what the customer (or the agent) put in.
+    const _f = collectBookingForm({ shipment: s });
+    _syncBookingDataFromForm(_f);
+    const _sel = _selectedRateForPayload();
+    const rate = _sel.rate || {};
     const qNum = rate._quoteNumber || rate.quoteNumber || null;
-    const shipperParts = {
-      address1: bookingData.shipperStreet || bookingData.shipperAddr || '',
-      address2: bookingData.shipperSuite  || '',
-      city:     bookingData.shipperCity   || s.originCity       || '',
-      state:    bookingData.shipperState  || s.originState      || '',
-      zipCode:  bookingData.shipperZip    || s.originZip        || '',
-    };
-    const consParts = {
-      address1: bookingData.consigneeStreet || bookingData.consigneeAddr || '',
-      address2: bookingData.consigneeSuite  || '',
-      city:     bookingData.consigneeCity   || s.destinationCity || '',
-      state:    bookingData.consigneeState  || s.destinationState|| '',
-      zipCode:  bookingData.consigneeZip    || s.destinationZip  || '',
-    };
+    const shipperParts = { address1: _f.shipper.street, address2: _f.shipper.suite, city: _f.shipper.city, state: _f.shipper.state, zipCode: _f.shipper.zip };
+    const consParts    = { address1: _f.consignee.street, address2: _f.consignee.suite, city: _f.consignee.city, state: _f.consignee.state, zipCode: _f.consignee.zip };
     const accMap = {
       'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD',
       'Inside Delivery':'IND','Inside Pickup':'INO',
@@ -9957,7 +10069,16 @@ async function submitBookingOnly(opts) {
     }).filter(Boolean);
     const hasResPU = (s.accessorials || []).includes('Residential Pickup');
     const hasResDL = (s.accessorials || []).includes('Residential Delivery');
-    const rateId = rate.id || rate.rateId || null;
+    const rateId = _sel.rateId;
+    // rateId RULING: required to CREATE (POST) — a create with no priced rate would ask the TMS for
+    // an unpriced BOL. Optional on an EDIT (PUT), where the BOL already carries its rate; there the
+    // rateId/quoteNumber keys are OMITTED from the payload rather than sent as null.
+    if (!rateId && !window._editingBOLId) {
+      removeTyping();
+      if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
+      appendMessage('bot', 'No carrier rate is selected for this shipment — pick a carrier before saving.');
+      return { ok: false, error: { code: 'NO_RATE_SELECTED', message: 'No carrier rate is selected for this shipment. Pick a carrier first, then save.' } };
+    }
     // Always re-call saveRate fresh — this registers the current dims with Primus
     // so the subsequent book call matches exactly. Never reuse a stale quoteNumber.
     let bookQuoteNumber = null;
@@ -9976,21 +10097,23 @@ async function submitBookingOnly(opts) {
     // Fall back to s.items only if the rate has no freightInfo.
     const _rateFI = (bookingRate && bookingRate.freightInfo && bookingRate.freightInfo.length) ? bookingRate.freightInfo : null;
     const _allItems = _rateFI || (s.items && s.items.length ? s.items : [item]);
-    const _hi = await _resolveHazInfo(bookingData.hazUnNumber, bookingData.hazClass, bookingData.hazPkgGroup);
-    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
-    const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
+    const _hi = await _resolveHazInfo(_f.hazmat.unNumber, bookingData.hazClass, _f.hazmat.packingGroup);
+    const _haz = { isHazmat: _f.hazmat.isHazmat, un: _f.hazmat.unNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: _f.hazmat.contact, phone: _f.hazmat.phone };
+    const _hazShip = _hazmatShipmentFields(_haz, _f.specialInstructions);
     const payload = {
-      quoteNumber: bookQuoteNumber, rateId,
-      thirdPartyReferenceNumber: bookingData.shipperRef || '',
-      shipper: { name:bookingData.shipperName, address1:shipperParts.address1, city:shipperParts.city||s.originCity||'', state:shipperParts.state||s.originState||'', zipCode:s.originZip||'', country:s.originCountry||'US', contact:bookingData.shipperContact, contactPhone:bookingData.shipperPhone, phone:bookingData.shipperPhone, referenceNumber:bookingData.shipperRef||'', residentialPickup:hasResPU },
-      consignee: { name:bookingData.consigneeName, address1:consParts.address1, city:consParts.city||s.destinationCity||'', state:consParts.state||s.destinationState||'', zipCode:s.destinationZip||'', country:s.destinationCountry||'US', contact:bookingData.consigneeContact, contactPhone:bookingData.consigneePhone, phone:bookingData.consigneePhone, residentialDelivery:hasResDL },
-      lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, ..._hazmatLineFields(it, _haz), stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:(document.getElementById('bk-commodity')&&document.getElementById('bk-commodity').value.trim())||it.commodity||it.description||'Freight', nmfc:(document.getElementById('bk-nmfc')&&document.getElementById('bk-nmfc').value.trim())||it.nmfc||undefined })),
+      // Omit rather than null: an explicit null can read as "clear this field" on an edit.
+      ...(rateId ? { rateId: rateId } : {}),
+      ...(bookQuoteNumber ? { quoteNumber: bookQuoteNumber } : {}),
+      thirdPartyReferenceNumber: _f.referenceNumber,
+      shipper: { name:_f.shipper.name, address1:shipperParts.address1, city:shipperParts.city, state:shipperParts.state, zipCode:_f.shipper.zip||s.originZip||'', country:s.originCountry||'US', contact:_f.shipper.contact||_f.shipper.name, contactPhone:_f.shipper.phone, phone:_f.shipper.phone, referenceNumber:_f.referenceNumber, residentialPickup:hasResPU },
+      consignee: { name:_f.consignee.name, address1:consParts.address1, city:consParts.city, state:consParts.state, zipCode:_f.consignee.zip||s.destinationZip||'', country:s.destinationCountry||'US', contact:_f.consignee.contact||_f.consignee.name, contactPhone:_f.consignee.phone, phone:_f.consignee.phone, residentialDelivery:hasResDL },
+      lineItems: _allItems.map(it => ({ qty:Number(it.qty||it.pieces||1), weight:Number(it.weight||0), weightType:it.weightType||'each', length:Number(it.length||48), width:Number(it.width||40), height:Number(it.height||48), dimType:it.dimType||it.packageType||'PLT', class:String(it.class||it.freightClass||70), hazmat:it.hazmat||false, ..._hazmatLineFields(it, _haz), stackAmount:it.stackAmount||((it.stack===true||it.stack==='Y')?2:1), commodity:_f.freight.commodity||it.commodity||it.description||'Freight', nmfc:_f.freight.nmfc||it.nmfc||undefined })),
       UOM:'US',
       emergencyContact: _hazShip.emergencyContact,
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(bookingData.pickupDate || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
+      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
       deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
     };
     const _editBolId = window._editingBOLId || null;
@@ -10010,7 +10133,7 @@ async function submitBookingOnly(opts) {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
     // Show save-confirmed modal
-    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:bookingData.pickupDate||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
+    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
     return _editAck
@@ -10044,23 +10167,14 @@ async function submitBooking() {
     const _rateFreight = bookingRate && bookingRate.freightInfo && bookingRate.freightInfo[0];
     const item = _rateFreight || (s.items && s.items[0]) || {};
 
-    const rate  = bookingRate || {};
+    const _f = collectBookingForm({ shipment: s });
+    _syncBookingDataFromForm(_f);
+    const _sel  = _selectedRateForPayload();
+    const rate  = _sel.rate || {};
     const qNum  = rate._quoteNumber || rate.quoteNumber || null;
 
-    const shipperParts = {
-      address1: bookingData.shipperStreet || bookingData.shipperAddr || '',
-      address2: bookingData.shipperSuite  || '',
-      city:     bookingData.shipperCity   || s.originCity       || '',
-      state:    bookingData.shipperState  || s.originState      || '',
-      zipCode:  bookingData.shipperZip    || s.originZip        || '',
-    };
-    const consParts = {
-      address1: bookingData.consigneeStreet || bookingData.consigneeAddr || '',
-      address2: bookingData.consigneeSuite  || '',
-      city:     bookingData.consigneeCity   || s.destinationCity || '',
-      state:    bookingData.consigneeState  || s.destinationState|| '',
-      zipCode:  bookingData.consigneeZip    || s.destinationZip  || '',
-    };
+    const shipperParts = { address1: _f.shipper.street, address2: _f.shipper.suite, city: _f.shipper.city, state: _f.shipper.state, zipCode: _f.shipper.zip };
+    const consParts    = { address1: _f.consignee.street, address2: _f.consignee.suite, city: _f.consignee.city, state: _f.consignee.state, zipCode: _f.consignee.zip };
 
     const accMap = {
       'Liftgate Delivery':'LFD', 'Liftgate Pickup':'LFO',
@@ -10080,7 +10194,14 @@ async function submitBooking() {
     const hasResPU = (s.accessorials || []).includes('Residential Pickup');
     const hasResDL = (s.accessorials || []).includes('Residential Delivery');
 
-    const rateId = rate.id || rate.rateId || null;
+    const rateId = _sel.rateId;
+    // This path always CREATES (POST) — a create with no priced rate is refused outright.
+    if (!rateId) {
+      removeTyping();
+      if (_bkBtn) { _bkBtn.textContent = 'Book & Dispatch'; _bkBtn.disabled = false; }
+      appendMessage('bot', 'No carrier rate is selected for this shipment — pick a carrier before booking.');
+      return;
+    }
 
     // Residential guard — must fire before saveRate or Primus POST.
     // consParts.address1 is the delivery street filled in the booking form.
@@ -10111,36 +10232,36 @@ async function submitBooking() {
       bookQuoteNumber = qNum;
     }
 
-    const _hi = await _resolveHazInfo(bookingData.hazUnNumber, bookingData.hazClass, bookingData.hazPkgGroup);
-    const _haz = { isHazmat: bookingData.isHazmat, un: bookingData.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: bookingData.hazContact, phone: bookingData.hazPhone };
-    const _hazShip = _hazmatShipmentFields(_haz, bookingData.specialInstructions);
+    const _hi = await _resolveHazInfo(_f.hazmat.unNumber, bookingData.hazClass, _f.hazmat.packingGroup);
+    const _haz = { isHazmat: _f.hazmat.isHazmat, un: _f.hazmat.unNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: _f.hazmat.contact, phone: _f.hazmat.phone };
+    const _hazShip = _hazmatShipmentFields(_haz, _f.specialInstructions);
     const payload = {
-      quoteNumber:              bookQuoteNumber,
+      ...(bookQuoteNumber ? { quoteNumber: bookQuoteNumber } : {}),
       rateId:                   rateId,
-      thirdPartyReferenceNumber: bookingData.shipperRef || '',
+      thirdPartyReferenceNumber: _f.referenceNumber,
       shipper: {
-        name:              bookingData.shipperName,
+        name:              _f.shipper.name,
         address1:          shipperParts.address1,
-        city:              shipperParts.city || s.originCity || '',
-        state:             shipperParts.state || s.originState || '',
-        zipCode:           s.originZip || '',
+        city:              shipperParts.city,
+        state:             shipperParts.state,
+        zipCode:           _f.shipper.zip || s.originZip || '',
         country:           s.originCountry || 'US',
-        contact:           bookingData.shipperContact,
-        contactPhone:      bookingData.shipperPhone,
-        phone:             bookingData.shipperPhone,
-        referenceNumber:   bookingData.shipperRef || '',
+        contact:           _f.shipper.contact || _f.shipper.name,
+        contactPhone:      _f.shipper.phone,
+        phone:             _f.shipper.phone,
+        referenceNumber:   _f.referenceNumber,
         residentialPickup: hasResPU
       },
       consignee: {
-        name:                bookingData.consigneeName,
+        name:                _f.consignee.name,
         address1:            consParts.address1,
-        city:                consParts.city || s.destinationCity || '',
-        state:               consParts.state || s.destinationState || '',
-        zipCode:             s.destinationZip || '',
+        city:                consParts.city,
+        state:               consParts.state,
+        zipCode:             _f.consignee.zip || s.destinationZip || '',
         country:             s.destinationCountry || 'US',
-        contact:             bookingData.consigneeContact,
-        contactPhone:        bookingData.consigneePhone,
-        phone:               bookingData.consigneePhone,
+        contact:             _f.consignee.contact || _f.consignee.name,
+        contactPhone:        _f.consignee.phone,
+        phone:               _f.consignee.phone,
         residentialDelivery: hasResDL
       },
       lineItems: [{
@@ -10156,8 +10277,8 @@ async function submitBooking() {
         hazmat:     item.hazmat || false,
         ..._hazmatLineFields(item, _haz),
         stackAmount: item.stackAmount || ((item.stack === true || item.stack === 'Y') ? 2 : 1),
-        commodity:  (document.getElementById('bk-commodity') && document.getElementById('bk-commodity').value.trim()) || item.commodity || item.description || 'Freight',
-        nmfc:       (document.getElementById('bk-nmfc') && document.getElementById('bk-nmfc').value.trim()) || item.nmfc || undefined,
+        commodity:  _f.freight.commodity || item.commodity || item.description || 'Freight',
+        nmfc:       _f.freight.nmfc || item.nmfc || undefined,
       }],
       UOM: 'US',
       emergencyContact: _hazShip.emergencyContact,
@@ -10165,10 +10286,10 @@ async function submitBooking() {
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,  // flat array of strings e.g. ["LFD","RSD"]
       pickupInformation: {
-        date:               bookingData.pickupDate,
+        date:               _f.pickup.date,
         type:               'PO',
-        timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupOpen)) || '09:00',
-        timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(bookingData.pickupClose)) || '17:00',
+        timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00',
+        timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00',
         appointmentNeeded:  (bookingData.accessorials || []).includes('LAD')
       },
       deliveryInformation: {
@@ -12051,6 +12172,10 @@ function _applyBookingFields(input) {
     const si = document.getElementById('bk-special-instructions');
     if (si) { si.value = String(siText); si.dispatchEvent(new Event('input',{bubbles:true})); if (typeof flashField==='function') flashField(si); }
   }
+  // WRITE THROUGH — mirror the panel back into bookingData, exactly the way the SmartPaste prefill
+  // already does. Without this the agent path wrote only the DOM, and a payload built after the
+  // panel was rebuilt (showBookingPanel resets bookingData) serialized empty addresses.
+  _syncBookingDataFromForm(collectBookingForm());
 }
 
 function _describeBookingInput(input) {
@@ -12084,27 +12209,32 @@ async function _execBookShipment(input) {
     // path (this function + _execDispatchShipment) is the one that tendered correctly.
     if (window._bookingPanelOpen && document.getElementById('bk-pu-name')) {
       _applyBookingFields(input); // ensure details from this call are in the panel first
-      const _g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+      // ONE harvester, same as the two form paths — no inline DOM reads here any more.
+      const _hf = collectBookingForm();
+      _syncBookingDataFromForm(_hf);
       input.shipper = Object.assign({}, input.shipper, {
-        name:    _g('bk-pu-name')    || (input.shipper&&input.shipper.name),
-        address: _g('bk-pu-street')  || (input.shipper&&input.shipper.address),
-        suite:   _g('bk-pu-suite')   || (input.shipper&&input.shipper.suite),
-        contact: _g('bk-pu-contact') || (input.shipper&&input.shipper.contact),
-        phone:   _g('bk-pu-phone')   || (input.shipper&&input.shipper.phone)
+        name:    _hf.shipper.name    || (input.shipper&&input.shipper.name),
+        address: _hf.shipper.street  || (input.shipper&&input.shipper.address),
+        suite:   _hf.shipper.suite   || (input.shipper&&input.shipper.suite),
+        city:    _hf.shipper.city    || (input.shipper&&input.shipper.city),
+        state:   _hf.shipper.state   || (input.shipper&&input.shipper.state),
+        contact: _hf.shipper.contact || (input.shipper&&input.shipper.contact),
+        phone:   _hf.shipper.phone   || (input.shipper&&input.shipper.phone)
       });
       input.consignee = Object.assign({}, input.consignee, {
-        name:    _g('bk-dl-name')    || (input.consignee&&input.consignee.name),
-        address: _g('bk-dl-street')  || (input.consignee&&input.consignee.address),
-        suite:   _g('bk-dl-suite')   || (input.consignee&&input.consignee.suite),
-        contact: _g('bk-dl-contact') || (input.consignee&&input.consignee.contact),
-        phone:   _g('bk-dl-phone')   || (input.consignee&&input.consignee.phone)
+        name:    _hf.consignee.name    || (input.consignee&&input.consignee.name),
+        address: _hf.consignee.street  || (input.consignee&&input.consignee.address),
+        suite:   _hf.consignee.suite   || (input.consignee&&input.consignee.suite),
+        city:    _hf.consignee.city    || (input.consignee&&input.consignee.city),
+        state:   _hf.consignee.state   || (input.consignee&&input.consignee.state),
+        contact: _hf.consignee.contact || (input.consignee&&input.consignee.contact),
+        phone:   _hf.consignee.phone   || (input.consignee&&input.consignee.phone)
       });
-      input.referenceNumber = input.referenceNumber || _g('bk-pu-ref');
-      input.pickupDate = input.pickupDate || _g('bk-pu-date');
-      input.pickupOpen = input.pickupOpen || _g('bk-pu-open');
-      input.pickupClose = input.pickupClose || _g('bk-pu-close');
-      const _si = document.getElementById('bk-special-instructions');
-      input.specialInstructions = input.specialInstructions || (_si ? _si.value.trim() : '');
+      input.referenceNumber = input.referenceNumber || _hf.referenceNumber;
+      input.pickupDate = input.pickupDate || _hf.pickup.date;
+      input.pickupOpen = input.pickupOpen || _hf.pickup.open;
+      input.pickupClose = input.pickupClose || _hf.pickup.close;
+      input.specialInstructions = input.specialInstructions || _hf.specialInstructions;
       window._bookingPanelOpen = false; // values harvested — proceed via proven chat path below
       // fall through to the proven booking path
     }
@@ -12112,13 +12242,8 @@ async function _execBookShipment(input) {
     // args (covers both the panel-harvest path and a direct book_shipment call). Never reads or
     // writes Special Instructions for hazmat data.
     {
-      const _huEl = document.getElementById('bk-haz-un');
-      const _hcEl = document.getElementById('bk-haz-contact');
-      const _hpEl = document.getElementById('bk-haz-phone');
-      const _hu = _huEl ? String(_huEl.value||'').trim() : '';
-      const _hpg = (_huEl && _huEl.dataset && _huEl.dataset.unPg) ? String(_huEl.dataset.unPg) : '';
-      const _hc = _hcEl ? String(_hcEl.value||'').trim() : '';
-      const _hp = _hpEl ? String(_hpEl.value||'').trim() : '';
+      const _hz = collectBookingForm().hazmat; // one harvester here too — no inline DOM reads
+      const _hu = _hz.unNumber, _hpg = _hz.packingGroup, _hc = _hz.contact, _hp = _hz.phone;
       input.hazUnNumber = _hu || input.unNumber || input.hazUnNumber || '';
       input.hazPkgGroup = _hpg || input.packingGroup || input.hazPkgGroup || '';
       input.emergencyContact = _hc || input.emergencyContactName || input.emergencyContact || input.hazContact || '';
@@ -12179,7 +12304,12 @@ async function _execBookShipment(input) {
     // If we entered via the _bookingLock reuse path at the top of this function, skip (already frozen).
     if (!window._bookingLock || !window._bookingLock.rate) selectRate(rate, { shipment: s, open: false, source: 'agent-book' });
 
-    const rateId = rate.id || rate.rateId;
+    // Read (never re-resolve) the selected rate's id. This path always CREATES (POST), so a
+    // missing rateId is refused outright rather than sent as undefined.
+    const rateId = (rate && (rate.id || rate.rateId)) ? String(rate.id || rate.rateId) : null;
+    if (!rateId) {
+      return { ok:false, code:'NO_RATE_SELECTED', error:'No carrier rate is selected for this shipment. Ask the customer which carrier they want, then book. Do NOT tell them anything was booked.' };
+    }
     const token = await getToken();
 
     // Reserve the rate to get a quoteNumber (fresh, so it matches what we book)
@@ -12190,7 +12320,7 @@ async function _execBookShipment(input) {
     const _haz = { isHazmat: input.isHazmat, un: input.hazUnNumber, hazClass: _hi.hazClass, pkgGroup: _hi.pkgGroup, contact: input.emergencyContact || input.hazContact, phone: input.emergencyPhone || input.hazPhone };
     const _hazShip = _hazmatShipmentFields(_haz, input.specialInstructions);
     const payload = {
-      quoteNumber: quoteNumber, rateId: rateId,
+      ...(quoteNumber ? { quoteNumber: quoteNumber } : {}), rateId: rateId,
       thirdPartyReferenceNumber: input.referenceNumber || '',
       shipper: {
         name: sp.name || '', address1: sp.address || '', city: sp.city || s.originCity || '', state: sp.state || s.originState || '',
@@ -15481,8 +15611,20 @@ function showBookingPanel(rate, shipmentData) {
 
   // Always reset lastQuotedShipment when opening booking panel from a specific rate
   // This ensures dims match what was actually quoted/saved
+  // City/state must SURVIVE the panel open. Rebuilding lastQuotedShipment without them is what left
+  // shipper/consignee city+state empty in the save payload (only zips populated) — fetchRates
+  // resolves them and _publishRatesForAI copies them on, and this rebuild used to drop them.
+  // The _lastRatesShipment fallback is lane-gated: it may only supply a city for the SAME zip, so an
+  // edit of a different shipment can never inherit the last quote's city.
+  const _lrs = window._lastRatesShipment || {};
+  const _sameOrigin = !!(originZip && _lrs.originZip && String(_lrs.originZip) === String(originZip));
+  const _sameDest   = !!(destZip   && (_lrs.destinationZip || _lrs.destZip) && String(_lrs.destinationZip || _lrs.destZip) === String(destZip));
   lastQuotedShipment = {
     originZip, destinationZip: destZip,
+    originCity:       shipmentData.originCity       || (_sameOrigin ? _lrs.originCity       : '') || '',
+    originState:      shipmentData.originState      || (_sameOrigin ? _lrs.originState      : '') || '',
+    destinationCity:  shipmentData.destinationCity  || (_sameDest   ? _lrs.destinationCity  : '') || '',
+    destinationState: shipmentData.destinationState || (_sameDest   ? _lrs.destinationState : '') || '',
     originCountry: (window._lastRatesShipment && window._lastRatesShipment.originCountry) || 'US',
     destinationCountry: (window._lastRatesShipment && window._lastRatesShipment.destinationCountry) || 'US',
     accessorials: accList.map(c=>(ACC_LABEL[c]||c)),
@@ -15867,40 +16009,9 @@ function showBookingPanel(rate, shipmentData) {
   }, 200);
 
   saveBtn.onclick = async () => {
-    const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-    const buildAddr = (pre) => {
-      const street = g(pre+'-street'), suite = g(pre+'-suite');
-      const city = g(pre+'-city'), state = g(pre+'-state'), zip = g(pre+'-zip');
-      return [street, suite, city && state ? city+', '+state : (city||state), zip].filter(Boolean).join(', ');
-    };
-    bookingData.shipperName    = g('bk-pu-name');
-    bookingData.shipperStreet  = g('bk-pu-street');
-    bookingData.shipperSuite   = g('bk-pu-suite');
-    bookingData.shipperCity    = g('bk-pu-city');
-    bookingData.shipperState   = g('bk-pu-state');
-    bookingData.shipperZip     = g('bk-pu-zip') || originZip;
-    bookingData.shipperAddr    = buildAddr('bk-pu');
-    bookingData.shipperContact = g('bk-pu-contact');
-    bookingData.shipperPhone   = g('bk-pu-phone');
-    bookingData.shipperRef     = g('bk-pu-ref');
-    bookingData.pickupDate     = g('bk-pu-date');
-    bookingData.pickupOpen     = g('bk-pu-open');
-    bookingData.pickupClose    = g('bk-pu-close');
-    bookingData.consigneeName    = g('bk-dl-name');
-    bookingData.consigneeStreet  = g('bk-dl-street');
-    bookingData.consigneeSuite   = g('bk-dl-suite');
-    bookingData.consigneeCity    = g('bk-dl-city');
-    bookingData.consigneeState   = g('bk-dl-state');
-    bookingData.consigneeZip     = g('bk-dl-zip') || destZip;
-    bookingData.consigneeAddr    = buildAddr('bk-dl');
-    bookingData.consigneeContact = g('bk-dl-contact');
-    bookingData.consigneePhone   = g('bk-dl-phone');
-    const siEl2 = document.getElementById('bk-special-instructions');
-    bookingData.specialInstructions = siEl2 ? siEl2.value.trim() : '';
-    const _hazUn2 = document.getElementById('bk-haz-un');
-    const _hazContact2 = document.getElementById('bk-haz-contact');
-    const _hazPhone2 = document.getElementById('bk-haz-phone');
-    if (_hazUn2) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn2.value.trim(); bookingData.hazPkgGroup = _hazUn2.dataset.unPg || ''; bookingData.hazContact = (_hazContact2&&_hazContact2.value.trim())||''; bookingData.hazPhone = (_hazPhone2&&_hazPhone2.value.trim())||''; }
+    // ONE harvester (collectBookingForm) replaces the inline DOM read that used to live here, so the
+    // button path and the agent path serialize byte-identical payloads from the same source.
+    _syncBookingDataFromForm(collectBookingForm());
     errEl.style.display = 'none';
 
     // Residential guard for the Save path — same canonical check as btn.onclick and _execBookShipment.
@@ -15976,50 +16087,10 @@ function showBookingPanel(rate, shipmentData) {
   btn.onclick = async () => {
     if (btn.disabled) return;
     btn.disabled = true;
-    const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-    const buildAddr = (pre) => {
-      const street = g(pre+'-street'), suite = g(pre+'-suite');
-      const city = g(pre+'-city'), state = g(pre+'-state'), zip = g(pre+'-zip');
-      return [street, suite, city && state ? city+', '+state : (city||state), zip].filter(Boolean).join(', ');
-    };
-    bookingData.shipperName    = g('bk-pu-name');
-    bookingData.shipperStreet  = g('bk-pu-street');
-    bookingData.shipperSuite   = g('bk-pu-suite');
-    bookingData.shipperCity    = g('bk-pu-city');
-    bookingData.shipperState   = g('bk-pu-state');
-    bookingData.shipperZip     = g('bk-pu-zip') || originZip;
-    bookingData.shipperAddr    = buildAddr('bk-pu');
-    bookingData.shipperContact = g('bk-pu-contact');
-    bookingData.shipperPhone   = g('bk-pu-phone');
-    bookingData.shipperRef     = g('bk-pu-ref');
-    bookingData.pickupDate     = g('bk-pu-date');
-    bookingData.pickupOpen     = g('bk-pu-open');
-    bookingData.pickupClose    = g('bk-pu-close');
-    bookingData.consigneeName    = g('bk-dl-name');
-    bookingData.consigneeStreet  = g('bk-dl-street');
-    bookingData.consigneeSuite   = g('bk-dl-suite');
-    bookingData.consigneeCity    = g('bk-dl-city');
-    bookingData.consigneeState   = g('bk-dl-state');
-    bookingData.consigneeZip     = g('bk-dl-zip') || destZip;
-    bookingData.consigneeAddr    = buildAddr('bk-dl');
-    bookingData.consigneeContact = g('bk-dl-contact');
-    bookingData.consigneePhone   = g('bk-dl-phone');
-    const siEl = document.getElementById('bk-special-instructions');
-    bookingData.specialInstructions = siEl ? siEl.value.trim() : '';
-    const _hazUn = document.getElementById('bk-haz-un');
-    const _hazContact = document.getElementById('bk-haz-contact');
-    const _hazPhone = document.getElementById('bk-haz-phone');
-    if (_hazUn) { bookingData.isHazmat = true; bookingData.hazUnNumber = _hazUn.value.trim(); bookingData.hazPkgGroup = _hazUn.dataset.unPg || ''; bookingData.hazContact = (_hazContact&&_hazContact.value.trim())||''; bookingData.hazPhone = (_hazPhone&&_hazPhone.value.trim())||''; }
-
-    const missing = [];
-    if (!bookingData.shipperName)   missing.push('Pickup business name');
-    if (!bookingData.shipperStreet) missing.push('Pickup street address');
-    if (!bookingData.shipperPhone)  missing.push('Pickup phone');
-    if (!bookingData.pickupDate)    missing.push('Pickup date');
-    if (!bookingData.consigneeName) missing.push('Delivery business name');
-    if (!bookingData.consigneeStreet) missing.push('Delivery street address');
-
+    _syncBookingDataFromForm(collectBookingForm());
     // Partial saves allowed — Primus stores incomplete shipments; never block Save on missing fields.
+    // (A required-field list used to be computed here and deliberately never acted on; dropped as
+    // dead code, but the rule it documented still holds.)
     errEl.style.display = 'none';
 
     // ── Geocodio RDI check on full delivery address ───────────────────────────
