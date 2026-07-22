@@ -12444,6 +12444,78 @@ function _restoreBookingFromQuoted() {
   } catch (e) { console.warn('[FP] _restoreBookingFromQuoted failed', e); }
 }
 
+// ── CANONICAL PARTY DATA ──────────────────────────────────────────────────────
+// ONE writer for shipper/consignee. It writes the real form fields, mirrors into bookingData AND
+// _quotedContacts in the same call, and REPORTS WHAT IT ACTUALLY WROTE.
+//
+// The bug it exists to kill: a pasted shipment was written to one surface while the agent read
+// another, so it announced "already filled in" over a visibly empty form. Two separate causes fed
+// that — the agent path wrote _quotedContacts only (invisible to the panel), and
+// fillBookingPanelFromChat targeted 'bk-pu-addr', an element that does not exist (the field is
+// 'bk-pu-street'), so its writes silently went nowhere while it still claimed success.
+//
+// Returns { written: [...], shipper: {...}, consignee: {...} }. Callers must gate any success
+// wording on `written.length` — never claim a fill that did not happen.
+function applyPartyData(parsed, opts) {
+  opts = opts || {};
+  parsed = parsed || {};
+  const written = [];
+  const FIELDS = {
+    shipper:   { name: 'bk-pu-name', address: 'bk-pu-street', suite: 'bk-pu-suite', city: 'bk-pu-city', state: 'bk-pu-state', zip: 'bk-pu-zip', contact: 'bk-pu-contact', phone: 'bk-pu-phone' },
+    consignee: { name: 'bk-dl-name', address: 'bk-dl-street', suite: 'bk-dl-suite', city: 'bk-dl-city', state: 'bk-dl-state', zip: 'bk-dl-zip', contact: 'bk-dl-contact', phone: 'bk-dl-phone' },
+  };
+  const put = (id, val) => {
+    if (val === undefined || val === null || String(val).trim() === '') return false;
+    const el = document.getElementById(id);
+    if (!el) return false;                       // never count a write to an element that isn't there
+    if (opts.fillEmptyOnly && String(el.value || '').trim() !== '') return false;
+    el.value = String(val).trim();
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+    if (typeof flashField === 'function') flashField(el);
+    return true;
+  };
+  ['shipper', 'consignee'].forEach(side => {
+    const src = parsed[side] || {};
+    Object.keys(FIELDS[side]).forEach(key => {
+      const v = src[key] !== undefined ? src[key] : (key === 'address' ? src.street : undefined);
+      if (put(FIELDS[side][key], v)) written.push(side + '.' + key);
+    });
+  });
+  if (parsed.referenceNumber && put('bk-pu-ref', parsed.referenceNumber)) written.push('referenceNumber');
+  if (parsed.pickup) {
+    if (put('bk-pu-date', parsed.pickup.date)) written.push('pickup.date');
+    if (put('bk-pu-open', parsed.pickup.open)) written.push('pickup.open');
+    if (put('bk-pu-close', parsed.pickup.close)) written.push('pickup.close');
+  }
+  if (parsed.specialInstructions) {
+    const si = document.getElementById('bk-special-instructions');
+    if (si && (!opts.fillEmptyOnly || !si.value)) {
+      si.value = String(parsed.specialInstructions);
+      try { si.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+      written.push('specialInstructions');
+    }
+  }
+  // Mirror BOTH ways in one call: bookingData (survives a panel rebuild) and _quotedContacts (what
+  // the agent reads via _quoteFormState). Writing one without the other is the split-brain itself.
+  const form = (typeof collectBookingForm === 'function') ? collectBookingForm() : null;
+  if (form) {
+    if (typeof _syncBookingDataFromForm === 'function') _syncBookingDataFromForm(form);
+    if (!window._quotedContacts) window._quotedContacts = {};
+    ['shipper', 'consignee'].forEach(side => {
+      const f = form[side] || {};
+      const prev = window._quotedContacts[side] || {};
+      const merged = { name: f.name || prev.name || '', address: f.street || prev.address || '', suite: f.suite || prev.suite || '',
+                       city: f.city || prev.city || '', state: f.state || prev.state || '', zip: f.zip || prev.zip || '',
+                       contact: f.contact || prev.contact || '', phone: f.phone || prev.phone || '' };
+      if (Object.values(merged).some(Boolean)) window._quotedContacts[side] = merged;
+    });
+    if (form.referenceNumber) window._quotedContacts.referenceNumber = form.referenceNumber;
+    if (form.specialInstructions) window._quotedContacts.specialInstructions = form.specialInstructions;
+  }
+  console.log('[FP] applyPartyData — wrote', written.length, 'field(s):', JSON.stringify(written), '| source:', opts.source || 'unknown');
+  return { written: written, shipper: (form && form.shipper) || {}, consignee: (form && form.consignee) || {} };
+}
+
 function _applyBookingFields(input) {
   input = input || {};
   _restoreBookingFromQuoted(); // card 5: fill-if-empty baseline from _quotedContacts (shared with the form path)
@@ -12453,20 +12525,12 @@ function _applyBookingFields(input) {
   const _qc = window._quotedContacts || {};
   const sp = Object.assign({}, _qc.shipper || {}, input.shipper || {});
   const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
-  _setBkField('bk-pu-name', sp.name);
-  _setBkField('bk-pu-street', sp.address || sp.street);
-  _setBkField('bk-pu-suite', sp.suite);
-  _setBkField('bk-pu-contact', sp.contact);
-  _setBkField('bk-pu-phone', sp.phone);
-  _setBkField('bk-pu-ref', input.referenceNumber || _qc.referenceNumber || sp.referenceNumber);
+  // Party fields go through the ONE writer, which also mirrors to bookingData and _quotedContacts —
+  // that mirror is what stops the agent reading a different shipper than the panel shows.
+  applyPartyData({ shipper: sp, consignee: cn, referenceNumber: input.referenceNumber || _qc.referenceNumber || sp.referenceNumber }, { source: 'agent-update_booking' });
   if (input.pickupDate) _setBkField('bk-pu-date', input.pickupDate, 'change');
   if (input.pickupOpen) _setBkField('bk-pu-open', input.pickupOpen, 'change');
   if (input.pickupClose) _setBkField('bk-pu-close', input.pickupClose, 'change');
-  _setBkField('bk-dl-name', cn.name);
-  _setBkField('bk-dl-street', cn.address || cn.street);
-  _setBkField('bk-dl-suite', cn.suite);
-  _setBkField('bk-dl-contact', cn.contact);
-  _setBkField('bk-dl-phone', cn.phone);
   // Hazmat: write the structured values into the dedicated panel fields (never Special Instructions).
   const _hazUnEl = document.getElementById('bk-haz-un');
   if (_hazUnEl) {
@@ -15347,12 +15411,20 @@ async function handleInput(text) {
   // If booking panel is open and chat has booking-like content, fill the panel
   if (window._bookingPanelContainer && _turn.kind === 'data' && _turn.intent === 'party-field') {
     const bd = parseBookingBlock(t, '');
-    const hasUseful = bd.name || bd.address || bd.phone || bd.date;
-    if (hasUseful) {
-      fillBookingPanelFromChat(bd);
-      const filled = [bd.name, bd.address, bd.phone, bd.ref, bd.date, bd.timeFrom].filter(Boolean).length;
-      appendMessage('bot', 'Got it — I\'ve filled ' + filled + ' field' + (filled!==1?'s':'') + ' in the booking form. Review and hit Book Shipment when ready!');
-      return;
+    if (bd.name || bd.address || bd.phone || bd.date) {
+      // Through the ONE writer, and the confirmation reports what it ACTUALLY wrote. The old count
+      // was of fields PARSED, not fields written — which is how the customer was told "I've filled
+      // 3 fields" over a form where nothing had changed.
+      const _w = applyPartyData({
+        shipper: { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone },
+        referenceNumber: bd.ref,
+        pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo },
+      }, { source: 'chat-party-block' });
+      if (_w.written.length) {
+        appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form. Review and hit Book Shipment when ready!');
+        return;
+      }
+      // Nothing landed: say nothing and let the agent handle it rather than claim a fill.
     }
   }
 
@@ -16783,39 +16855,18 @@ function showBookingPanel(rate, shipmentData) {
   }
 
   // SmartPaste: pre-fill booking form from extracted shipment data
+  // SmartPaste prefill — through the ONE party writer, which mirrors to bookingData and
+  // _quotedContacts in the same call. This block used to hand-roll both the DOM writes and the
+  // bookingData mirror; _smartPasteBookingData was a holding pen that only showBookingPanel read,
+  // so a paste whose panel never opened simply evaporated.
   if (window._smartPasteBookingData) {
     const _sp = window._smartPasteBookingData;
-    const _spset = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
-    _spset('bk-pu-name',    _sp.shipperName);
-    _spset('bk-pu-street',  _sp.shipperStreet);
-    _spset('bk-pu-city',    _sp.shipperCity);
-    _spset('bk-pu-state',   _sp.shipperState);
-    _spset('bk-pu-phone',   _sp.shipperPhone);
-    _spset('bk-dl-name',    _sp.consigneeName);
-    _spset('bk-dl-street',  _sp.consigneeStreet);
-    _spset('bk-dl-city',    _sp.consigneeCity);
-    _spset('bk-dl-state',   _sp.consigneeState);
-    _spset('bk-dl-phone',   _sp.consigneePhone);
-    _spset('bk-pu-ref',     _sp.poNumber);
-    const _spsi = document.getElementById('bk-special-instructions');
-    if (_spsi && _sp.specialInstructions) _spsi.value = _sp.specialInstructions;
-    // Also persist to bookingData so re-opens and the AI state snapshot both have phones/addresses
-    if (_sp.shipperName)   bookingData.shipperName   = _sp.shipperName;
-    if (_sp.shipperStreet) bookingData.shipperStreet = _sp.shipperStreet;
-    if (_sp.shipperCity)   bookingData.shipperCity   = _sp.shipperCity;
-    if (_sp.shipperState)  bookingData.shipperState  = _sp.shipperState;
-    if (_sp.shipperPhone)  bookingData.shipperPhone  = _sp.shipperPhone;
-    if (_sp.shipperStreet || _sp.shipperCity || _sp.shipperState)
-      bookingData.shipperAddr = [_sp.shipperStreet, _sp.shipperCity && _sp.shipperState ? _sp.shipperCity+', '+_sp.shipperState : (_sp.shipperCity||_sp.shipperState)].filter(Boolean).join(', ');
-    if (_sp.consigneeName)   bookingData.consigneeName   = _sp.consigneeName;
-    if (_sp.consigneeStreet) bookingData.consigneeStreet = _sp.consigneeStreet;
-    if (_sp.consigneeCity)   bookingData.consigneeCity   = _sp.consigneeCity;
-    if (_sp.consigneeState)  bookingData.consigneeState  = _sp.consigneeState;
-    if (_sp.consigneePhone)  bookingData.consigneePhone  = _sp.consigneePhone;
-    if (_sp.consigneeStreet || _sp.consigneeCity || _sp.consigneeState)
-      bookingData.consigneeAddr = [_sp.consigneeStreet, _sp.consigneeCity && _sp.consigneeState ? _sp.consigneeCity+', '+_sp.consigneeState : (_sp.consigneeCity||_sp.consigneeState)].filter(Boolean).join(', ');
-    if (_sp.poNumber)            bookingData.shipperRef          = _sp.poNumber;
-    if (_sp.specialInstructions) bookingData.specialInstructions = _sp.specialInstructions;
+    applyPartyData({
+      shipper:   { name: _sp.shipperName,   address: _sp.shipperStreet,   city: _sp.shipperCity,   state: _sp.shipperState,   phone: _sp.shipperPhone },
+      consignee: { name: _sp.consigneeName, address: _sp.consigneeStreet, city: _sp.consigneeCity, state: _sp.consigneeState, phone: _sp.consigneePhone },
+      referenceNumber: _sp.poNumber,
+      specialInstructions: _sp.specialInstructions,
+    }, { source: 'smartpaste' });
     window._smartPasteBookingData = null;
   }
 

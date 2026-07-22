@@ -22,17 +22,36 @@ const invariants = [
   // ── 1 ───────────────────────────────────────────────────────────────────────
   {
     id: 1, name: 'chat party state === form party state',
-    property: 'collectBookingForm().shipper equals _quoteFormState().shipper (and consignee)',
+    property: 'after a party write, collectBookingForm() and _quoteFormState() report the same shipper and consignee',
     catches: 'bug (a) — smart-paste "already filled in" while the form is empty',
-    expectFail: true, fixedBy: 'S6 applyPartyData (routing alone is not enough)',
     run(ctx) {
       const w = ctx.win;
+      openQuote(w); // the agent-facing snapshot only reports with a quote form open
       w.showBookingPanel({ _name: 'JTS Express', _price: 388.1 }, { originZip: '90660', destZip: '33511', lineItems: fx.SHIPMENT.items });
-      // The agent path writes the panel DOM only.
-      w._applyBookingFields({ shipper: { name: 'Michaels Furniture', address: '7240 Crider Ave' } });
-      const form = w.collectBookingForm().shipper.name;
-      const chat = (w._quoteFormState().shipper || {}).name || '';
-      A.ok(form === chat, 'panel has "' + form + '" but the agent-facing snapshot has "' + chat + '" — the two paths disagree');
+
+      // The agent path: update_booking writes the panel.
+      w._applyBookingFields({
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', contact: 'Dana', phone: '5625551234' },
+        consignee: { name: 'Haynes Brothers',    address: '1250 Main St',    contact: 'Rick', phone: '8135559876' },
+      });
+      const cmp = side => {
+        const form = w.collectBookingForm()[side] || {};
+        const chat = (w._quoteFormState()[side]) || {};
+        ['name', 'contact', 'phone'].forEach(k => {
+          const a = String(form[k] || ''), b = String(chat[k] || '');
+          A.ok(a === b, side + '.' + k + ': panel has "' + a + '" but the agent-facing snapshot has "' + b + '" — the two paths disagree');
+        });
+        const fa = String(form.street || ''), ca = String(chat.address || '');
+        A.ok(fa === ca, side + '.address: panel has "' + fa + '" but the snapshot has "' + ca + '"');
+        A.ok(fa !== '', side + '.address was never actually written — a claim with no write');
+      };
+      cmp('shipper'); cmp('consignee');
+
+      // applyPartyData must report only what it really wrote: a bad element id counts as nothing.
+      const r = w.applyPartyData({ shipper: { name: 'Second Co' } }, { source: 'test' });
+      A.ok(r.written.includes('shipper.name'), 'a real write was not reported');
+      const r2 = w.applyPartyData({ shipper: { nosuchfield: 'x' } }, { source: 'test' });
+      A.ok(r2.written.length === 0, 'reported a write that did not happen: ' + JSON.stringify(r2.written));
     },
   },
   // ── 2 ───────────────────────────────────────────────────────────────────────
