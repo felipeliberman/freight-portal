@@ -2194,6 +2194,48 @@ const ACC_LABEL = {
   NAD:'Limited Access Delivery',
 };
 
+// ── CANONICAL ACCESSORIAL SET ─────────────────────────────────────────────────
+// ONE normalizer for accessorials. Accepts a mixed array of CODES and/or human LABELS (the app
+// carries labels on shipment.accessorials and codes on the form chips) and returns de-duplicated
+// CODES. It replaces four near-identical local maps that each dropped a different code, which is
+// why a captured save payload carried only ["RSD","LFD"] while the chat had confirmed residential,
+// liftgate, appointment and cargo insurance.
+//
+// Deliberately a NORMALIZER rather than a format change: a dozen consumers key off the label form
+// (e.g. the residential Save safeguard tests /residential/i against the array), and carrying codes
+// everywhere would make those tests silently false. Normalizing at the point of consumption fixes
+// the drops without disarming a safeguard.
+const ACC_CODE_OF = {
+  'LIFTGATE DELIVERY':'LFD','LIFTGATE PICKUP':'LFO',
+  'RESIDENTIAL DELIVERY':'RSD','RESIDENTIAL PICKUP':'RSO',
+  'INSIDE DELIVERY':'IND','INSIDE PICKUP':'INO',
+  'LIMITED ACCESS DELIVERY':'LAD','LIMITED ACCESS PICKUP':'NAO','LIMITED ACCESS':'LAD',
+  'APPOINTMENT DELIVERY':'APT','APPOINTMENT REQUIRED':'APT','APPOINTMENT':'APT',
+  'CARGO INSURANCE':'INS','INSURANCE':'INS',
+  'HAZMAT':'HZM','OVERLENGTH':'OVL','SORT & SEGREGATE':'SOR',
+  'TWO-MAN DELIVERY':'TWO','NOTIFY BEFORE DELIVERY':'NBD',
+  'NAD':'LAD','RSP':'RSO',
+};
+const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// Codes that may ride in the BOL accessorialsList. RSO is deliberately excluded: residential PICKUP
+// is a shipper flag (payload.shipper.residentialPickup), not an accessorial code.
+const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// Codes the RATE api accepts. APT is deliberately absent — appointment is a booking flag, not a
+// rateable accessorial. This is the ONE legitimate place an accessorial is dropped.
+const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','IND','INO','NAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+function accessorialSet(list) {
+  const out = [];
+  (list || []).forEach(function (a) {
+    if (a == null) return;
+    const raw = String(a).trim();
+    if (!raw) return;
+    const up = raw.toUpperCase();
+    const code = ACC_VALID_CODES.has(up) ? up : ACC_CODE_OF[up];
+    if (code && ACC_VALID_CODES.has(code) && out.indexOf(code) < 0) out.push(code);
+  });
+  return out;
+}
+
 const BOX_VENDOR_IDS       = [1722353822,275896084,514597722,178611714,1981463586,1747236260,2083014725,1011981016,1892709332,1918549515];
 const THRESHOLD_VENDOR_IDS = [1918549515,1981463586,1747236260];
 
@@ -2651,8 +2693,8 @@ async function fetchRates(shipment) {
     };
   });
 
-  const accCodes = [];
-  (shipment.accessorials || []).forEach(a => { if (ACC_MAP[a]) accCodes.push(ACC_MAP[a]); });
+  // Normalize, then keep only what the RATE api accepts. APT is dropped HERE and only here.
+  const accCodes = accessorialSet(shipment.accessorials).filter(c => ACC_RATEABLE_CODES.has(c));
   const isBox          = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
   const isThreshold    = (shipment.accessorials || []).includes('Threshold');
   const vendorIds      = isThreshold ? THRESHOLD_VENDOR_IDS : null;
@@ -10055,20 +10097,12 @@ async function submitBookingOnly(opts) {
     const qNum = rate._quoteNumber || rate.quoteNumber || null;
     const shipperParts = { address1: _f.shipper.street, address2: _f.shipper.suite, city: _f.shipper.city, state: _f.shipper.state, zipCode: _f.shipper.zip };
     const consParts    = { address1: _f.consignee.street, address2: _f.consignee.suite, city: _f.consignee.city, state: _f.consignee.state, zipCode: _f.consignee.zip };
-    const accMap = {
-      'Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Delivery':'RSD',
-      'Inside Delivery':'IND','Inside Pickup':'INO',
-      'Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Limited Access':'LAD',
-      'Appointment Required':'APT','Appointment':'APT',
-      'NAD':'LAD',
-    };
-    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
-    const accCodes = (s.accessorials || []).map(a => {
-      if (VALID_CODES.has(a)) return a;
-      return accMap[a] || null;
-    }).filter(Boolean);
-    const hasResPU = (s.accessorials || []).includes('Residential Pickup');
-    const hasResDL = (s.accessorials || []).includes('Residential Delivery');
+    // ONE source: the normalized code set. The local map this replaces had no 'Cargo Insurance'
+    // entry, so INS was silently dropped from every save.
+    const _accAll  = accessorialSet(s.accessorials);
+    const accCodes = _accAll.filter(c => ACC_BOL_CODES.has(c));
+    const hasResPU = _accAll.includes('RSO');
+    const hasResDL = _accAll.includes('RSD');
     const rateId = _sel.rateId;
     // rateId RULING: required to CREATE (POST) — a create with no priced rate would ask the TMS for
     // an unpriced BOL. Optional on an EDIT (PUT), where the BOL already carries its rate; there the
@@ -10113,8 +10147,8 @@ async function submitBookingOnly(opts) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:(bookingData.accessorials||[]).includes('LAD') }
+      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:accCodes.includes('APT') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
     };
     const _editBolId = window._editingBOLId || null;
     const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
@@ -10176,23 +10210,10 @@ async function submitBooking() {
     const shipperParts = { address1: _f.shipper.street, address2: _f.shipper.suite, city: _f.shipper.city, state: _f.shipper.state, zipCode: _f.shipper.zip };
     const consParts    = { address1: _f.consignee.street, address2: _f.consignee.suite, city: _f.consignee.city, state: _f.consignee.state, zipCode: _f.consignee.zip };
 
-    const accMap = {
-      'Liftgate Delivery':'LFD', 'Liftgate Pickup':'LFO',
-      'Residential Delivery':'RSD',
-      'Inside Delivery':'IND', 'Inside Pickup':'INO',
-      'Limited Access Delivery':'LAD', 'Limited Access Pickup':'NAO',
-      'Limited Access':'LAD',
-      'Appointment Required':'APT', 'Appointment':'APT',
-      'NAD':'LAD',
-    };
-    const VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','NAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
-    const accCodes = (s.accessorials || []).map(a => {
-      if (VALID_CODES.has(a)) return a; // already a raw code string
-      return accMap[a] || null;
-    }).filter(Boolean);
-
-    const hasResPU = (s.accessorials || []).includes('Residential Pickup');
-    const hasResDL = (s.accessorials || []).includes('Residential Delivery');
+    const _accAll  = accessorialSet(s.accessorials);
+    const accCodes = _accAll.filter(c => ACC_BOL_CODES.has(c));
+    const hasResPU = _accAll.includes('RSO');
+    const hasResDL = _accAll.includes('RSD');
 
     const rateId = _sel.rateId;
     // This path always CREATES (POST) — a create with no priced rate is refused outright.
@@ -10290,11 +10311,11 @@ async function submitBooking() {
         type:               'PO',
         timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00',
         timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00',
-        appointmentNeeded:  (bookingData.accessorials || []).includes('LAD')
+        appointmentNeeded:  accCodes.includes('APT')
       },
       deliveryInformation: {
         type: 'DO',
-        appointmentNeeded: (bookingData.accessorials || []).includes('LAD')
+        appointmentNeeded: accCodes.includes('APT')
       }
     };
 
@@ -12275,11 +12296,12 @@ async function _execBookShipment(input) {
       // never freeze a pre-RSD rate. Lock is only applied when proceeding to actually book.
     }
 
-    // Accessorial codes from the shipment
-    const accCodes = [];
-    (s.accessorials || []).forEach(a => { if (typeof ACC_MAP !== 'undefined' && ACC_MAP[a]) accCodes.push(ACC_MAP[a]); else accCodes.push(a); });
-    const hasResPU = accCodes.includes('RSO');
-    const hasResDL = accCodes.includes('RSD');
+    // Accessorial codes from the shipment, through the one normalizer. The old inline mapping
+    // pushed unmapped values through verbatim, so a label could reach the wire as a label.
+    const _accAll  = accessorialSet(s.accessorials);
+    const accCodes = _accAll.filter(c => ACC_BOL_CODES.has(c));
+    const hasResPU = _accAll.includes('RSO');
+    const hasResDL = _accAll.includes('RSD');
 
     // Merge quote-time captured party details as baseline — _quotedContacts is populated when
     // the agent calls update_quote with shipper/consignee (e.g. from a pasted shipment).
@@ -12344,8 +12366,8 @@ async function _execBookShipment(input) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,
-      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:(s.accessorials||[]).includes('Appointment')||accCodes.includes('LAD') }
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:accCodes.includes('APT') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
     };
 
     let _booked;
@@ -18158,8 +18180,10 @@ function showQuoteForm(prefill, silent) {
     if (getBtn) { getBtn.textContent = 'Getting rates...'; getBtn.disabled = true; }
 
     try {
-      const CODE_TO_LABEL = { LFD:'Liftgate Delivery', LFO:'Liftgate Pickup', RSD:'Residential Delivery', RSO:'Residential Pickup', IND:'Inside Delivery', NAD:'Limited Access', NAO:'Limited Access', INS:'Cargo Insurance' }; // LAD(Appointment) omitted — not a rateable accessorial in ShipPrimus
-      const accLabels = accessorials.map(c=>CODE_TO_LABEL[c]).filter(Boolean);
+      // Carry EVERY selected code forward as its canonical label. The old local map omitted LAD and
+      // APT, so limited-access and appointment vanished here and could never reach the BOL. The
+      // rate call still drops APT — but that filter belongs in fetchRates, not upstream of booking.
+      const accLabels = accessorials.map(c=>ACC_LABEL[c]||c);
       const shipment = {
         originZip, destinationZip: destZip,
         originCountry: quoteData.originCountry || 'US',
