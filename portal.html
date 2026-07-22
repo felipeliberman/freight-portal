@@ -11557,13 +11557,19 @@ function _quoteFormState() {
     const g = sel => { const el = panel.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
     const rgv = (row, sel) => { const el = row && row.querySelector(sel); return el ? String(el.value||'').trim() : ''; };
     const rows = [...panel.querySelectorAll('.qt-line')];
+    const rhz = row => { const el = row && row.querySelector('.li-haz'); return el ? !!el.checked : false; };
     const items = rows.map(row => ({
       pieces: rgv(row,'.li-qty'),
       type: rgv(row,'.li-type'),
       stc: rgv(row,'.li-stc'),
       weight: rgv(row,'.li-weight'),
       length: rgv(row,'.li-len'), width: rgv(row,'.li-wid'), height: rgv(row,'.li-hgt'),
-      commodity: rgv(row,'.li-commodity')
+      commodity: rgv(row,'.li-commodity'),
+      // Surfaced so the agent can SEE them. Their absence is why it re-asked the hazmat question on
+      // every quote: the snapshot simply never carried the checkbox.
+      freightClass: rgv(row,'.li-class'),
+      nmfc: rgv(row,'.li-nmfc'),
+      hazmat: rhz(row)
     }));
     const first = items[0] || {};
     const accs = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code);
@@ -11593,6 +11599,8 @@ function _quoteFormState() {
       stc: first.stc,
       items: items,
       accessorials: accs.map(c => ACC_LABEL[c] || c),
+      accessorialCodes: (typeof accessorialSet === 'function') ? accessorialSet(accs) : accs,
+      hazmat: items.some(i => i.hazmat),
       insurance: _ins,
       ratesPulled: _rateAvailability().state === 'settled_with_rates',
       // ZIP resolution from the last rate pull (Fix C). Only surfaced when it still matches the
@@ -11688,6 +11696,22 @@ function _liveStateBlock() {
       lines.push('ratesOnScreen: a rate pull finished and no carriers came back for this lane. You MAY tell the customer no carriers came back — state that fact and point them to support; never invent a reason.');
     } else {
       lines.push('ratesOnScreen: no rate result has settled yet — a pull may still be running or none has run. Do NOT tell the customer whether carriers are available. Do not say rates came back and do not say none came back. If they just asked for a price, tell them you are pulling it and will have it in a moment.');
+    }
+    // Settings defaults are applied to the chips silently; without saying so, the agent treated a lit
+    // chip as its own guess and asked the residential / liftgate / appointment questions anyway.
+    try {
+      const _dflt = (typeof getSettings === 'function' && (getSettings().defaultAccessorials || [])) || [];
+      if (q && q.quoteFormOpen && _dflt.length) {
+        const _on = (q.accessorialCodes || []).filter(c => _dflt.indexOf(c) >= 0);
+        if (_on.length) {
+          lines.push('accessorialsFromCustomerDefaults: ' + _on.map(c => ACC_LABEL[c] || c).join(', ') +
+            ' — these are already ON because this customer set them as their saved defaults. They are the customer\'s standing answer: do NOT ask whether the delivery is residential, whether a liftgate is needed, or whether an appointment is required for any of them. Only ask about an accessorial that is NOT already on.');
+        }
+      }
+    } catch (e) {}
+    // Hazmat is a form field the agent can now see; only ask when it is genuinely unanswered.
+    if (q && q.quoteFormOpen && q.hazmat === true) {
+      lines.push('hazmat: the freight is already flagged hazardous on the form — do not ask whether it is hazmat. Collect the UN number and 24-hour emergency contact at BOOKING.');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
     if (window._lockDropped && window._lockDropped.carrier) {
