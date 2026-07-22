@@ -146,11 +146,52 @@ const invariants = [
     id: 7, name: 'no silent mutate-and-return',
     property: 'a turn that mutates state without reaching the agent must be typed a command by classifyChatTurn',
     catches: 'bugs (c) "remove liftgate" became shipper:name, (f) the insurance question was deflected',
-    expectFail: true, fixedBy: 'S8 classifyChatTurn',
     run(ctx) {
       const w = ctx.win;
-      A.ok(typeof w.classifyChatTurn === 'function',
-        'classifyChatTurn does not exist — interceptors at handleInput (SmartPaste, insurance intent, booking panel, wizard) mutate state and return with no gate');
+      A.ok(typeof w.classifyChatTurn === 'function', 'classifyChatTurn does not exist — interceptors mutate and return with no gate');
+
+      // R1 is absolute: every interrogative reaches the agent untouched.
+      ['how does insurance work if the carrier damages our product?',
+       'can you remove the liftgate?',
+       'what happens if it arrives damaged',
+       'do you cover cargo insurance'].forEach(q => {
+        const v = w.classifyChatTurn(q, { ratesOnScreen: true, bookingPanelOpen: true, quoteFormOpen: true });
+        A.ok(v.kind === 'question', '"' + q + '" typed ' + v.kind + '/' + v.intent + ' — must be question');
+      });
+
+      // An edit phrase is a command, never party data — even with the booking panel open.
+      ['remove liftgate', 'take off the residential', 'remove insurance'].forEach(e => {
+        const v = w.classifyChatTurn(e, { bookingPanelOpen: true, quoteFormOpen: true });
+        A.ok(v.kind === 'command', '"' + e + '" typed ' + v.kind + ' — must be command');
+        A.ok(v.intent !== 'party-field', '"' + e + '" would still be written as party data');
+      });
+
+      // Free text with no licence is never party data.
+      const v2 = w.classifyChatTurn('sounds good', { bookingPanelOpen: true });
+      A.ok(v2.kind === 'freetext', '"sounds good" typed ' + v2.kind + ' — must fall through to the agent');
+
+      // parseBookingBlock no longer turns a one-word phrase into a name.
+      A.ok(!w.parseBookingBlock('remove liftgate', '').name, 'parseBookingBlock still yields a name for an edit phrase');
+
+      // The live property: drive handleInput and require that anything which mutated without
+      // reaching the agent was typed a command.
+      const snap = () => JSON.stringify({
+        lock: !!w._bookingLock, ins: w._insCollecting || null, editing: w._editingBOLId || null,
+        pu: (w.document.getElementById('bk-pu-name') || {}).value || null,
+      });
+      let sawAgent = false;
+      w.aiConverse = async () => { sawAgent = true; };
+      w.waybAgent = async () => { sawAgent = true; };
+      w.showBookingPanel({ _name: 'JTS Express', _price: 388.1 }, { originZip: '90660', destZip: '33511', lineItems: fx.SHIPMENT.items });
+      w._bookingPanelContainer = w.document.getElementById('right-panel');
+      const probes = ['remove liftgate', 'how does insurance work if the carrier damages our product?', 'sounds good'];
+      return probes.reduce((chain, msg) => chain.then(async () => {
+        sawAgent = false; const before = snap();
+        const verdict = w.classifyChatTurn(msg, { bookingPanelOpen: true, quoteFormOpen: !!w._quoteFormOpen, ratesOnScreen: false });
+        try { await w.handleInput(msg); } catch (e) { /* downstream network stubs are not the subject */ }
+        const mutated = snap() !== before;
+        if (mutated && !sawAgent) A.ok(verdict.kind === 'command', '"' + msg + '" mutated state without reaching the agent, typed ' + verdict.kind + '/' + verdict.intent);
+      }), Promise.resolve());
     },
   },
   // ── 8 ───────────────────────────────────────────────────────────────────────

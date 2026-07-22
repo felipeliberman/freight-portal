@@ -9659,10 +9659,15 @@ function parseBookingBlock(text, fallbackZip) {
     if (/\d/.test(seg)) continue;
     // Skip known keyword segments
     if (/^(?:po|ref|reference|tomorrow|today|pickup|delivery|consignee|shipper)$/i.test(seg)) continue;
+    // An EDIT phrase is never a name. Word count alone cannot separate them — "remove liftgate" is
+    // two words — so the verb itself is the discriminator, matching classifyChatTurn's R2.
+    if (/\b(remove|removing|take off|drop|delete|cancel|change|update|switch|swap|no more|without|add|include)\b/i.test(segLow)) continue;
     // Skip if it looks like a time
     if (/\b(?:am|pm|morning|afternoon|evening)\b/.test(segLow)) continue;
-    // Use as name if it has 2+ words or looks like a company name
-    if (seg.split(/\s+/).length >= 1 && seg.length > 2) {
+    // Use as name if it has 2+ words or looks like a company name.
+    // The code said >= 1 while the comment said 2+, so ANY digit-free segment over two characters
+    // became a name — which is how "remove liftgate" ended up as shipper:name.
+    if (seg.split(/\s+/).length >= 2 && seg.length > 2) {
       data.name = seg;
       break;
     }
@@ -14925,9 +14930,86 @@ How to talk:
 
 Company: Freight and Logistics, Inc. Est. 2013. (800) 687-3713. M-F 6:30 AM-4 PM PST. All US and Canada.`;
 
+// ── THE SOLE PRE-AGENT GATE ───────────────────────────────────────────────────
+// Four of six bugs in the July batch had one shape: an interceptor in handleInput matched a regex,
+// wrote state, told the customer it had done something, and returned — so the agent never saw the
+// turn and the claim was often untrue. "remove liftgate" became a shipper name; "how does insurance
+// work if the carrier damages our product?" became "what is the total value of the cargo?".
+//
+// classifyChatTurn is the one place that decides what a turn IS. No interceptor may write state or
+// return early unless this typed the turn as that command.
+//
+// PRECEDENCE: question > command > data > freetext.
+//
+// R1 IS ABSOLUTE: any interrogative goes to the agent, untouched — including "can you remove the
+// liftgate?". The agent calls the tool itself. That costs one turn of latency and buys a rule with
+// no ambiguous edge: a question can never be swallowed by a collection flow.
+//
+// It ROUTES ONLY. It writes no booking, carrier, line-item, accessorial or insurance state, and
+// calls no canonical writer.
+function classifyChatTurn(text, ctx) {
+  ctx = ctx || {};
+  const t = String(text == null ? '' : text).trim();
+  const lc = t.toLowerCase();
+  const verdict = (kind, intent, slots, reason) => ({ kind: kind, intent: intent || null, slots: slots || {}, reason: reason });
+  if (!t) return verdict('freetext', null, {}, 'empty');
+
+  // ── R1 — question, absolute ────────────────────────────────────────────────
+  if (/\?\s*$/.test(t)) return verdict('question', null, {}, 'trailing ?');
+  if (/^\s*(how|what|what's|whats|why|when|where|which|who|whose|does|do|did|is|are|was|were|can|could|should|would|will|am|any|anyone|explain|tell me|help me understand)\b/i.test(t))
+    return verdict('question', null, {}, 'leading interrogative');
+  if (/\b(how does .* work|what happens if|what if|is it possible|do you (offer|cover|handle)|difference between)\b/i.test(lc))
+    return verdict('question', null, {}, 'explanatory frame');
+
+  // ── R4 — a pasted document is DATA ─────────────────────────────────────────
+  const _docMarkers = [/total\s+weight/i, /freight\s+class/i, /dimensions:/i, /pallet\s*#/i, /nmfc/i,
+    /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i,
+    /\bship\s+from\b/i, /\bship\s+to\b/i, /\bpo\s*#/i, /no\s+liftgate/i, /limited\s+access/i, /\b\d+\s*lbs\b/i];
+  const _hits = _docMarkers.filter(rx => rx.test(t)).length;
+  if (t.length > 100 && (_hits >= 3 || (_hits >= 2 && t.length > 400)))
+    return verdict('data', 'paste-block', { hits: _hits }, 'document markers');
+
+  // ── R2 — an edit phrase is a command, never party data ─────────────────────
+  const _edit = /\b(remove|removing|take off|drop|delete|cancel|change|update|switch|swap|no more|without)\b/i.test(lc);
+  if (_edit) {
+    if (/\b(liftgate|lift gate|residential|inside delivery|limited access|appointment|insurance|coverage)\b/i.test(lc))
+      return verdict('command', 'accessorial-remove', {}, 'edit verb + accessorial target');
+    return verdict('command', 'edit-other', {}, 'edit verb');
+  }
+
+  // ── insurance: only an explicit ADD is a command; anything else is not ──────
+  if (/\b(add|include|want|need|get|put|i'?ll take|yes to)\b.{0,24}\b(insurance|coverage|insured|cargo insurance)\b/i.test(lc)
+      || /^\s*(insure it|insurance please|add insurance)\s*$/i.test(lc))
+    return verdict('command', 'insurance-add', {}, 'explicit insurance add');
+
+  // ── carrier selection ──────────────────────────────────────────────────────
+  if (ctx.ratesOnScreen && t.split(/\s+/).length <= 4 && /^[a-z0-9&+.\-' ]{2,28}$/i.test(t))
+    return verdict('command', 'carrier-select', { name: t }, 'short token with rates on screen');
+
+  // ── R3 — free text becomes party data only when licensed ───────────────────
+  const _nameMarker = /\b(shipper|consignee|pickup at|pick up at|deliver to|delivery to|ship from|ship to|company|attn|contact)\b/i.test(lc);
+  const _hasAddrOrPhone = /\d{3}[\s.\-]?\d{4}\b/.test(t) || /\b\d+\s+[A-Za-z]/.test(t);
+  if (ctx.collectingField || _nameMarker || _hasAddrOrPhone)
+    return verdict('data', 'party-field', {}, ctx.collectingField ? 'a field is being collected' : (_nameMarker ? 'name marker' : 'address or phone present'));
+
+  // ── R5 — everything else reaches the agent untouched ───────────────────────
+  return verdict('freetext', null, {}, 'no rule matched');
+}
+
 async function handleInput(text) {
   const t = text.trim();
   const lower = t.toLowerCase();
+  // One verdict per turn, computed before any interceptor can act on it. Every gate below reads
+  // _turn; nothing may mutate state and return unless _turn says this turn is that command.
+  const _turn = classifyChatTurn(t, {
+    bookingPanelOpen: !!window._bookingPanelContainer,
+    quoteFormOpen: !!window._quoteFormOpen,
+    bookingStep: bookingStep || null,
+    collectingField: (typeof bookingStep === 'string' && /name/i.test(bookingStep)) ? bookingStep : null,
+    ratesOnScreen: !!(window._lastRatesRaw && window._lastRatesRaw.length),
+    insuranceStatus: (window._insCollecting || (window._insDecided ? 'declined' : 'not-addressed')),
+  });
+  window._lastTurnVerdict = _turn; // read by the state harness (invariant 7)
   if (t) { if (!currentSession) ensureSession(t); else updateSessionTitle(t.slice(0, 60)); }
 
   // ── Packing slip / BOL copy — auto-route to SmartPaste extraction ───────────────
@@ -14945,8 +15027,8 @@ async function handleInput(text) {
     const _spHits = _spMarkers.filter(rx => rx.test(t)).length;
     // Lower threshold to 2 hits for longer messages — a 400+ char message with 2 freight
     // markers is almost certainly a doc, not a short conversational phrase.
-    if ((_spHits >= 3 || (_spHits >= 2 && t.length > 400)) && t.length > 100) {
-      console.log('[FP] SmartPaste detected — hits:', _spHits, '| len:', t.length);
+    if (_turn.kind === 'data' && _turn.intent === 'paste-block') {
+      console.log('[FP] SmartPaste detected — hits:', _spHits, '| len:', t.length, '| verdict:', _turn.reason);
       removeTyping();
       showTyping();
       _spAutoExtractAndRate(t);
@@ -14956,12 +15038,19 @@ async function handleInput(text) {
 
   // ── Redkik cargo insurance — conversational intent + collection (pre-AI) ────────
   // 6a: intent detection — only when a quote exists and insurance isn't already on.
-  if (window._insCollecting !== 'value' && window._insCollecting !== 'commodity' &&
-      /\b(insurance|insure|cargo insurance|redkik|cover|coverage|insured|protect my)\b/i.test(t) &&
+  // Gated: only an explicit ADD arms the collection flow. A question about how insurance works —
+  // "how does insurance work if the carrier damages our product?" — is typed 'question' by R1 and
+  // reaches the agent, which answers it from the knowledge base instead of asking for a value.
+  if (_turn.kind === 'command' && _turn.intent === 'insurance-add' &&
+      window._insCollecting !== 'value' && window._insCollecting !== 'commodity' &&
       lastQuotedShipment && !lastQuotedShipment.insuranceEnabled) {
     window._insCollecting = 'value'; window._insReaskCount = 0;
     appendMessage('bot', 'To add cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
     return;
+  }
+  // A question mid-collection is never an answer: release the flow and let the agent take it.
+  if (_turn.kind === 'question' && (window._insCollecting === 'value' || window._insCollecting === 'commodity')) {
+    window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null; window._insReaskCount = 0;
   }
   // 6b: collect the cargo value (or a decline).
   if (window._insCollecting === 'value') {
@@ -15108,7 +15197,7 @@ async function handleInput(text) {
   // churning the form and losing the customer's pick. Resolve it deterministically against the
   // rates already in state, through B's canonical selectRate, before any of that can happen.
   // Deliberately NOT a rate pull: with no rates in state this reports NO_RATES and stops.
-  if (typeof _resolveRateRef === 'function' && /^[a-z0-9&+.\-' ]{2,28}$/i.test(t.trim()) && t.trim().split(/\s+/).length <= 4) {
+  if (_turn.kind === 'command' && _turn.intent === 'carrier-select' && typeof _resolveRateRef === 'function') {
     const _bare = t.trim().replace(/^(?:go with|book|use|pick|choose|select|lets? (?:go|do)|i'?ll take|take)\s+/i, '')
                          .replace(/\s+(?:please|thanks?|then)\.?$/i, '').trim();
     const _looksCarrier = _bare && !/^(yes|no|ok|okay|sure|yeah|yep|nope|thanks?|hi|hello|hey|help|save|dispatch|book|quote|rates?|cheapest|fastest|next|more|both|either|it|that|this)$/i.test(_bare);
@@ -15158,8 +15247,35 @@ async function handleInput(text) {
     /^\s*(my shipment was|my freight was|my package was|2 boxes|boxes are missing|item.*missing|missing.*item)/i.test(t.trim())
   );
 
+  // ── Accessorial removal from chat ────────────────────────────────────────────
+  // MOVED ABOVE the booking-panel interceptor. It used to sit below it, so with a booking panel
+  // open "remove liftgate" was swallowed by that interceptor and written in as a shipper name —
+  // this handler was unreachable exactly when it was needed.
+  if (_turn.kind === 'command' && _turn.intent === 'accessorial-remove' && window._quoteFormOpen
+      && /\b(liftgate|lift gate)\b/i.test(t)) {
+    const panel = document.getElementById('right-panel');
+    if (panel) {
+      [...panel.querySelectorAll('.qt-acc')].forEach(btn => {
+        if ((btn.dataset.code === 'LFD' || btn.dataset.code === 'LFO') && btn.classList.contains('acc-active')) btn.click();
+      });
+    }
+    appendMessage('bot', 'Liftgate removed.');
+    return;
+  }
+  if (_turn.kind === 'command' && _turn.intent === 'accessorial-remove' && window._quoteFormOpen
+      && /\bresidential\b/i.test(t)) {
+    const panel = document.getElementById('right-panel');
+    if (panel) {
+      [...panel.querySelectorAll('.qt-acc')].forEach(btn => {
+        if ((btn.dataset.code === 'RSD' || btn.dataset.code === 'RSO') && btn.classList.contains('acc-active')) btn.click();
+      });
+    }
+    appendMessage('bot', 'Residential delivery removed.');
+    return;
+  }
+
   // If booking panel is open and chat has booking-like content, fill the panel
-  if (window._bookingPanelContainer) {
+  if (window._bookingPanelContainer && _turn.kind === 'data' && _turn.intent === 'party-field') {
     const bd = parseBookingBlock(t, '');
     const hasUseful = bd.name || bd.address || bd.phone || bd.date;
     if (hasUseful) {
@@ -15204,28 +15320,6 @@ async function handleInput(text) {
 
   if (bookingStep) { await handleBookingInput(t); return; }
   if (wizardStep && wizardStep !== 'fetching' && pendingPicker === null) { handleWizardInput(t); return; }
-
-  // ── Accessorial removal from chat ────────────────────────────────────────────
-  if (window._quoteFormOpen && /\b(remove|take off|cancel|without|no )\b.{0,25}\b(liftgate|lift gate)\b/i.test(t)) {
-    const panel = document.getElementById('right-panel');
-    if (panel) {
-      [...panel.querySelectorAll('.qt-acc')].forEach(btn => {
-        if ((btn.dataset.code === 'LFD' || btn.dataset.code === 'LFO') && btn.classList.contains('acc-active')) btn.click();
-      });
-    }
-    appendMessage('bot', 'Liftgate removed.');
-    return;
-  }
-  if (window._quoteFormOpen && /\b(remove|take off|cancel|without|no )\b.{0,25}\b(residential)\b/i.test(t)) {
-    const panel = document.getElementById('right-panel');
-    if (panel) {
-      [...panel.querySelectorAll('.qt-acc')].forEach(btn => {
-        if ((btn.dataset.code === 'RSD' || btn.dataset.code === 'RSO') && btn.classList.contains('acc-active')) btn.click();
-      });
-    }
-    appendMessage('bot', 'Residential delivery removed.');
-    return;
-  }
 
   // Continue / widen the previous list
   const moreMatch = lower.match(/^(?:show\s+|give\s+me\s+|see\s+|can\s+i\s+see\s+)?(?:me\s+)?(?:the\s+)?(?:(\d+)\s+)?(more|rest|next|additional)\b/);
