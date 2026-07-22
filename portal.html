@@ -11684,6 +11684,31 @@ function _liveStateBlock() {
 }
 
 // ── Publish the current quoted rates in a clean shape the AI can read ──────────
+// Raise the "Get a Quote" tab in the right panel. doGetRates only switched the quote form's INNER
+// tab (switchTab('rates')), so when anything else had opened a right-panel tab — My Shipments, an
+// export — a completed pull painted the Select Rate table into a BACKGROUND tab and the customer
+// never saw it. Same two lines _showRequoteToast already uses.
+function _raiseQuoteTab() {
+  try {
+    if (typeof rpState === 'undefined' || !rpState.tabs) return;
+    const t = rpState.tabs.find(x => String(x.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Get a Quote');
+    if (t && rpState.activeId !== t.id) { rpState.activeId = t.id; if (typeof renderPanel === 'function') renderPanel(); }
+  } catch (e) {}
+}
+
+// THE canonical publish. One call writes the agent-facing rate state, paints the form's Select Rate
+// cards, and raises the tab — so the list the agent talks about and the list the customer can click
+// are always the same list. Callers that paint themselves (doGetRates) pass {paint:false}.
+function publishRates(rates, shipment, opts) {
+  opts = opts || {};
+  _publishRatesForAI(rates, shipment);
+  if (!rates || !rates.length) return;
+  if (opts.paint !== false && typeof window._showRatesInPanel === 'function') {
+    try { window._showRatesInPanel(rates); } catch (e) { console.warn('[FP] paint rates failed', e); }
+  }
+  _raiseQuoteTab();
+}
+
 function _publishRatesForAI(rates, shipment) {
   try {
     if (!rates || !rates.length) { window._lastRates = null; window._lastRatesRaw = null; return; }
@@ -18271,7 +18296,7 @@ function showQuoteForm(prefill, silent) {
       const rates = await fetchRates(shipment);
       currentRates = rates;
       console.log('[FP] doGetRates complete —', rates.length, 'rates | top:', rates[0] && (rates[0].name||rates[0].carrierName) + ' $' + ((rates[0].billTo&&rates[0].billTo.total)||rates[0].total));
-      _publishRatesForAI(rates, shipment);
+      publishRates(rates, shipment, { paint: false }); // paints below via renderRates(); this raises the tab
       window._ratePullInFlight = false; // pull complete — read_rates may now report accurately
       // Fire SmartPaste narration callback if registered
       if (typeof window._onRatesReady === 'function') {
@@ -18317,6 +18342,7 @@ function showQuoteForm(prefill, silent) {
   window._showRatesInPanel = function(rates) {
     currentRates = rates;
     _publishRatesForAI(rates, null);
+    _raiseQuoteTab();
     switchTab('rates');
     container.querySelector('#qt-rates-loading').style.display = 'none';
     container.querySelector('#qt-rates-empty').style.display = 'none';
