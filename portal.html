@@ -11441,6 +11441,76 @@ function _filterLiftgateCodes(codes) {
   return codes;
 }
 
+// THE sole writer of quote line-item rows. Both the agent path (update_quote items) and the parsed
+// path (fillQuoteForm) go through it.
+//
+// The bug it exists to kill: both writers used `items.forEach((it, idx) => rows[idx])`, treating the
+// index in the INCOMING array as a ROW index. An agent sending one item to ADD a third line got
+// idx 0 and overwrote line 1. Incoming items carried no row identity, so nothing distinguished
+// "edit row 0" from "append a row".
+//
+// Targeting, in order:
+//   1. mode 'replace' -> positional (whole-quote prefill); mode 'append' -> always a new row
+//   2. explicit `row` (0-based) on the item -> that row
+//   3. exactly one existing row and exactly one incoming item -> edit row 0 (the common
+//      "fix the weight" correction, unambiguous)
+//   4. a content match on commodity or on all three dims -> that row (an edit, restated)
+//   5. otherwise APPEND a new row — never touch an unrelated one
+function applyLineItems(items, opts) {
+  opts = opts || {};
+  const panel = opts.panel || (typeof _quoteRoot === 'function' ? _quoteRoot() : document.getElementById('right-panel'));
+  if (!panel || !items || !items.length) return { applied: 0, rows: [] };
+  const mode = opts.mode || 'auto';
+  const rowsNow = () => [...panel.querySelectorAll('.qt-line')];
+  const rv = (row, sel) => { const el = row && row.querySelector(sel); return el ? String(el.value || '').trim() : ''; };
+  const contentMatch = (it) => {
+    const c = String(it.commodity || '').trim().toLowerCase();
+    const L = String(it.length || ''), W = String(it.width || ''), H = String(it.height || '');
+    if (!c && !(L && W && H)) return -1;
+    return rowsNow().findIndex(r =>
+      (c && rv(r, '.li-commodity').toLowerCase() === c) ||
+      (L && W && H && rv(r, '.li-len') === L && rv(r, '.li-wid') === W && rv(r, '.li-hgt') === H));
+  };
+  const touched = [];
+  items.forEach((it, i) => {
+    if (!it) return;
+    let idx;
+    const explicit = (it.row !== undefined && it.row !== null && it.row !== '') ? Number(it.row) : null;
+    if (mode === 'replace') idx = i;
+    else if (explicit !== null && explicit >= 0) idx = explicit;
+    else if (mode === 'append') idx = -1;
+    else if (rowsNow().length === 1 && items.length === 1) idx = 0;
+    else { const m = contentMatch(it); idx = (m >= 0) ? m : -1; }
+    let row = idx >= 0 ? rowsNow()[idx] : null;
+    if (!row) {
+      const addBtn = panel.querySelector('#qt-add-line');
+      if (addBtn) addBtn.click();
+      idx = rowsNow().length - 1;
+      row = rowsNow()[idx];
+    }
+    if (!row) return;
+    const setF = (sel, val, ev) => { if (val === undefined || val === null || val === '') return; const el = row.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event(ev || 'input')); if (typeof flashField === 'function') flashField(el); } };
+    setF('.li-qty', it.pieces !== undefined ? it.pieces : it.qty);
+    setF('.li-weight', it.weight);
+    setF('.li-len', it.length);
+    setF('.li-wid', it.width);
+    setF('.li-hgt', it.height);
+    setF('.li-class', it.freightClass, 'change');
+    if (it.freightClass) { const _c = row.querySelector('.li-class'); if (_c) _c.dataset.prefilled = '1'; }
+    setF('.li-commodity', it.commodity);
+    if (it.type) setF('.li-type', it.type, 'change');
+    if (it.stc)  setF('.li-stc',  it.stc);
+    if (it.nmfc) setF('.li-nmfc', it.nmfc);
+    if (typeof it.hazmat === 'boolean') {
+      const hz = row.querySelector('.li-haz');
+      if (hz && hz.checked !== it.hazmat) { hz.checked = it.hazmat; hz.dispatchEvent(new Event('change', { bubbles: true })); if (typeof flashField === 'function') flashField(hz); }
+    }
+    touched.push(idx);
+  });
+  console.log('[FP] applyLineItems — mode:', mode, '| in:', items.length, '| rows touched:', JSON.stringify(touched), '| total rows:', rowsNow().length);
+  return { applied: touched.length, rows: touched };
+}
+
 function _applyQuoteFields(input) {
   const panel = _quoteRoot() || document;
 
@@ -11450,29 +11520,9 @@ function _applyQuoteFields(input) {
   if (input.pickupDate){ const _pd=(d=>{const _m=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(String(d||'').trim());return _m?(((_m[3].length===2?'20':'')+_m[3])+'-'+String(_m[1]).padStart(2,'0')+'-'+String(_m[2]).padStart(2,'0')):d;})(input.pickupDate); const el = panel.querySelector('#qt-date'); if (el) { el.value = _pd; el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
   if (input.name)      { const el = panel.querySelector('#qt-name');   if (el) { el.value = String(input.name); el.dispatchEvent(new Event('input')); if (typeof flashField === 'function') flashField(el); } }
 
-  // Line items — surgical per-row, per-field
+  // Line items — through the sole writer (targeting rules live in applyLineItems).
   if (input.items && input.items.length) {
-    input.items.forEach((it, idx) => {
-      let row = panel.querySelectorAll('.qt-line')[idx];
-      if (!row) { const addBtn = panel.querySelector('#qt-add-line'); if (addBtn) { addBtn.click(); row = panel.querySelectorAll('.qt-line')[idx]; } }
-      if (!row) return;
-      const setF = (sel, val, ev) => { if (val === undefined || val === null || val === '') return; const el = row.querySelector(sel); if (el) { el.value = val; el.dispatchEvent(new Event(ev||'input')); if (typeof flashField === 'function') flashField(el); } };
-      setF('.li-qty', it.pieces);
-      setF('.li-weight', it.weight);
-      setF('.li-len', it.length);
-      setF('.li-wid', it.width);
-      setF('.li-hgt', it.height);
-      setF('.li-class', it.freightClass, 'change');
-      if (it.freightClass) { const _clsEl = row.querySelector('.li-class'); if (_clsEl) _clsEl.dataset.prefilled = '1'; }
-      setF('.li-commodity', it.commodity);
-      if (it.type) setF('.li-type', it.type, 'change');
-      if (it.stc)  setF('.li-stc',  it.stc);
-      if (it.nmfc) setF('.li-nmfc', it.nmfc);
-      if (typeof it.hazmat === 'boolean') {
-        const hazEl = row.querySelector('.li-haz');
-        if (hazEl && hazEl.checked !== it.hazmat) { hazEl.checked = it.hazmat; hazEl.dispatchEvent(new Event('change', { bubbles:true })); if (typeof flashField === 'function') flashField(hazEl); }
-      }
-    });
+    applyLineItems(input.items, { panel: panel, mode: input.itemsMode || 'auto' });
   }
 
   // Accessorials — toggle by data-code, respecting current state
@@ -12931,6 +12981,7 @@ async function aiConverse(userText) {
                     items: {
                       type: 'object',
                       properties: {
+                        row: { type: 'number', description: 'Which existing line to EDIT, 0-based (0 = the first line). OMIT to ADD a new line. Only pass this when changing a line already on the form.' },
                         pieces: { type: 'number' },
                         weight: { type: 'number', description: 'Weight in lbs' },
                         length: { type: 'number', description: 'Length in inches' },
@@ -12945,6 +12996,7 @@ async function aiConverse(userText) {
                       }
                     }
                   },
+                  itemsMode: { type: 'string', enum: ['auto','append','replace'], description: "How to apply items. 'append' ADDS each item as a NEW line — use this whenever the customer is adding freight to a quote that already has lines. 'replace' rewrites lines positionally from the first. Omit for 'auto': edits the only line when exactly one exists, otherwise adds." },
                   addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APT appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, NAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
                   removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' },
@@ -14800,28 +14852,9 @@ function fillQuoteForm(parsed) {
     (parsed.weight || parsed.pieces || parsed.length) ? [{ weight:parsed.weight, pieces:parsed.pieces, length:parsed.length, width:parsed.width, height:parsed.height, freightClass:parsed.freightClass }] : []
   );
   if (_parsedItems.length && panel) {
-    const tbody = panel.querySelector('#qt-tbody');
-    if (tbody) {
-      _parsedItems.forEach((it, idx) => {
-        let row = panel.querySelectorAll('.qt-line')[idx];
-        if (!row && typeof buildRow !== 'undefined') {
-          // Add a new row if needed
-          const rowCount = panel.querySelectorAll('.qt-line').length;
-          const addBtn = panel.querySelector('#qt-add-line');
-          if (addBtn) addBtn.click();
-          row = panel.querySelectorAll('.qt-line')[idx];
-        }
-        if (!row) return;
-        if (it.pieces) { const el = row.querySelector('.li-qty'); if (el) { el.value = it.pieces; el.dispatchEvent(new Event('input')); flashField(el); } }
-        if (it.weight) { const el = row.querySelector('.li-weight'); if (el) { el.value = it.weight; el.dispatchEvent(new Event('input')); flashField(el); } }
-        if (it.length) {
-          const l = row.querySelector('.li-len'); if (l) { l.value = it.length; l.dispatchEvent(new Event('input')); flashField(l); }
-          const w = row.querySelector('.li-wid'); if (w) { w.value = it.width||''; w.dispatchEvent(new Event('input')); flashField(w); }
-          const h = row.querySelector('.li-hgt'); if (h) { h.value = it.height||''; h.dispatchEvent(new Event('input')); flashField(h); }
-        }
-        if (it.freightClass) { const el = row.querySelector('.li-class'); if (el) { el.value = it.freightClass; el.dispatchEvent(new Event('change')); flashField(el); } }
-      });
-    }
+    // Through the sole writer. This path prefills a whole parsed quote, so it stays positional by
+    // design — mode 'replace' preserves exactly that; only the agent path defaults to 'auto'.
+    applyLineItems(_parsedItems, { panel: panel, mode: 'replace' });
   }
   if (parsed.accessorials && parsed.accessorials.length) {
     panel.querySelectorAll('.qt-acc').forEach(btn => {
