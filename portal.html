@@ -2218,6 +2218,7 @@ function resetShipmentState(wipeConversation) {
     window._lastRatePullError = null;
     window._accMismatch = {}; // card 3 Stage 1: fresh quote = fresh accessorial-retry history (no stale strikes)
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
+    window._relockCarrier = null; window._lockDropped = null; // carrier-selection state travels with the lock
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
@@ -11106,13 +11107,13 @@ function _execUpdateQuote(input) {
 
   const changed = [];
 
-  // If the shipment is materially changing (location, weight, dims, accessorials, or a re-pull),
-  // release any frozen booking rate so a fresh rate is locked against the new shipment.
-  const _materialChange = input.originZip || input.destZip || input.getRates ||
-    (input.items && input.items.some(it => it && (it.weight || it.length || it.width || it.height || it.pieces))) ||
-    (input.addAccessorials && input.addAccessorials.length) ||
-    (input.removeAccessorials && input.removeAccessorials.length);
-  if (_materialChange && window._bookingLock) window._bookingLock = null;
+  // NOTE: the frozen booking rate is NOT released here any more. This used to clear _bookingLock
+  // synchronously on mere INTENT to re-pull, which also fired when the pull was then deduped by the
+  // signature guard, held by the insurance gate, or failed outright — silently throwing away the
+  // customer's chosen carrier for nothing, and opening the window in which any carrier argument
+  // could take its place. Release now happens in the pull callback (only when a pull really runs)
+  // and the identity is carried onto the fresh rate at publish. See _releaseLockForRepull /
+  // _rekeyLockOnPublish.
 
   // Open the quote form if it's not already open
   if (!window._quoteFormOpen) {
@@ -11298,6 +11299,9 @@ function _applyQuoteFields(input) {
         }
         window._lastPulledSig = sig;
       } catch(e) {}
+      // A pull is genuinely happening now (past the dedupe guard above) — THIS is where the frozen
+      // rate is released, parking the carrier's identity for the re-key at publish.
+      _releaseLockForRepull();
       // Mark a pull as in-flight so read_rates will WAIT for it instead of reporting "no rates"
       // while it's still loading. Primus takes ~5s; the flag clears when rates publish (or on timeout).
       window._ratePullInFlight = true;
@@ -11492,6 +11496,9 @@ function _liveStateBlock() {
       lines.push('ratesOnScreen: no rate result has settled yet — a pull may still be running or none has run. Do NOT tell the customer whether carriers are available. Do not say rates came back and do not say none came back. If they just asked for a price, tell them you are pulling it and will have it in a moment.');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
+    if (window._lockDropped && window._lockDropped.carrier) {
+      lines.push('carrierNoLongerAvailable: ' + window._lockDropped.carrier + ' was the selected carrier but did not come back on the refreshed rates. Tell the customer that plainly and ask which of the current options they want. Do NOT pick one for them.');
+    }
     const _rs = window._residentialStatus;
     if (_rs) lines.push('residentialStatus: ' + JSON.stringify(_rs));
     // Cargo insurance — plain broker language, no internal field names or codes. Surfacing this here
@@ -11573,6 +11580,10 @@ function _publishRatesForAI(rates, shipment) {
         note: rateRemarkText(r) || r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
       }))
     };
+    // Carry the selected carrier's identity onto this fresh list, or drop it if that carrier did not
+    // come back. Enforces the invariant: after any publish, _bookingLock.rate is either an object in
+    // the current _lastRatesRaw or null — so a lock can never outlive the list it was chosen from.
+    if (typeof _rekeyLockOnPublish === 'function') _rekeyLockOnPublish(rates, shipment);
   } catch (e) { console.error('publishRatesForAI error', e); window._lastRates = null; window._lastRatesRaw = null; }
 }
 
@@ -11615,6 +11626,218 @@ function _releaseInsuranceCollection(text) {
 // The quote form's RDI check sets these so the chat can ask "just like the pop-up."
 window._residentialStatus = null; // { residential:bool, liftgateRecommended:bool, weight:n }
 
+// ── CANONICAL CARRIER SELECTION ───────────────────────────────────────────────
+// selectRate() is the ONE writer of window._bookingLock and bookingRate, and the ONE caller of
+// showBookingPanel on any carrier-selection path. Routing every selection through it is what
+// makes lock / bookingRate / the visible panel agree by construction — they used to be written
+// independently by three different code paths and regularly disagreed.
+//
+// PRECEDENCE: an explicit selection (rate object, rank, or carrier name) is resolved BEFORE any
+// existing lock is read, so a fresh choice always beats a stale one. The lock only ever "wins" as
+// carried-forward IDENTITY across a same-shipment re-quote — see _releaseLockForRepull and
+// _rekeyLockOnPublish below — never against a fresh explicit choice.
+//
+// SCOPE: this sets carrier/rate ONLY. It never reads or writes _lastBooked, never produces a BOL
+// number, and never reports a save or dispatch outcome — those belong to the save contract.
+
+// Alias groups: names that denote the same carrier. Matched as whole normalized keys, so a group
+// membership can never widen into a fuzzy match.
+const _CARRIER_ALIAS_GROUPS = [
+  ['metro','metrowd','metropolitan','metropolitanwarehousedelivery','metropolitanwarehousedeliverycorp'],
+  ['rl','rlcarriers','rplusl','rpluslcarriers'],
+  ['abf','abffreight','arcbest'],
+  ['tforce','tforcefreight','upsfreight'],
+  ['odfl','olddominion','olddominionfreightline'],
+  ['sefl','southeastern','southeasternfreightlines'],
+];
+function _normCarrier(v) { return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function _aliasGroup(k) { for (var i = 0; i < _CARRIER_ALIAS_GROUPS.length; i++) if (_CARRIER_ALIAS_GROUPS[i].indexOf(k) >= 0) return _CARRIER_ALIAS_GROUPS[i]; return null; }
+function _rateDisplayName(r) {
+  if (!r) return 'Carrier';
+  return String(r._name || r.name || r.carrierName || r.carrier || r.SCAC || 'Carrier').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D');
+}
+function _ratePrice(r) { return r ? (Number((r.billTo && r.billTo.total) || r.total || r.cost || r._price || 0) || 0) : 0; }
+function _rateNameKeys(r) {
+  return [r && r._name, r && r.name, r && r.carrierName, r && r.carrier, _rateDisplayName(r)]
+    .map(_normCarrier).filter(function (k, i, a) { return k && a.indexOf(k) === i; });
+}
+// One line per option, with service level AND price, so an ambiguity question is one tap to answer.
+function _rateChoiceLine(r, rank) {
+  var sv = (r && (r.serviceLevel || r.service)) || '';
+  var pr = _ratePrice(r);
+  return (rank ? rank + ') ' : '') + _rateDisplayName(r) + (sv ? ' — ' + sv : '') + (pr ? ' — $' + pr.toFixed(2) : '');
+}
+function _rateChoiceList(list) { return (list || []).slice(0, 5).map(function (r, i) { return _rateChoiceLine(r, i + 1); }).join('; '); }
+
+// Resolve a reference to exactly ONE rate in `list`. Never falls back to cheapest, to rates[0], or
+// to an existing lock — a reference either resolves uniquely or fails with a typed code. Tiers are
+// tried in order and the FIRST non-empty tier decides; more than one hit in that tier is ambiguous
+// and is asked about, never broken by price (a guaranteed product must never be picked silently).
+// opts.maxTier caps fuzziness — the publish-time re-key passes 2 so identity carry-forward can only
+// ever match the same carrier exactly or by alias.
+function _resolveRateRef(ref, list, opts) {
+  opts = opts || {};
+  var raw = Array.isArray(list) ? list : (window._lastRatesRaw || []);
+  if (!raw.length) return { ok: false, code: 'NO_RATES', message: 'No rates are pulled for this shipment yet. Pull rates first, then pick a carrier.' };
+
+  // A rate object handed straight in (form Select, Saved Quotes, edit) needs no resolution.
+  // Discriminated on rate-shaped fields, NOT on the absence of `carrier` — a Primus rate object can
+  // itself carry a `.carrier` string, which would otherwise be re-resolved by name and could come
+  // back AMBIGUOUS against its own service-level siblings.
+  if (ref && typeof ref === 'object' &&
+      (ref.id !== undefined || ref.rateId !== undefined || ref._name !== undefined ||
+       ref.billTo !== undefined || ref.total !== undefined || ref.serviceLevel !== undefined ||
+       ref.name !== undefined || ref.carrierName !== undefined)) {
+    return { ok: true, rate: ref, rank: (raw.indexOf(ref) >= 0 ? raw.indexOf(ref) + 1 : null) };
+  }
+
+  var rank = ref && ref.rank;
+  if (rank !== undefined && rank !== null && rank !== '') {
+    var n = Number(rank);
+    if (!(n >= 1) || n > raw.length || !raw[n - 1]) {
+      return { ok: false, code: 'BAD_RANK', message: 'There is no option #' + rank + ' — there are ' + raw.length + '. Tell the customer how many options came back and ask which one.', candidates: _rateChoiceList(raw) };
+    }
+    return { ok: true, rate: raw[n - 1], rank: n };
+  }
+
+  var want = _normCarrier(typeof ref === 'string' ? ref : (ref && ref.carrier));
+  if (!want) return { ok: false, code: 'NO_MATCH', message: 'No carrier name or rank was given. Ask the customer which carrier they want.', candidates: _rateChoiceList(raw) };
+
+  var wantGroup = _aliasGroup(want);
+  var maxTier = opts.maxTier === undefined ? 4 : opts.maxTier;
+  var tiers = [[], [], [], [], []];
+  raw.forEach(function (r, i) {
+    var keys = _rateNameKeys(r);
+    var entry = { rate: r, rank: i + 1 };
+    if (_normCarrier(r.SCAC) && _normCarrier(r.SCAC) === want) { tiers[0].push(entry); return; }
+    if (keys.indexOf(want) >= 0) { tiers[1].push(entry); return; }
+    if (wantGroup && keys.some(function (k) { return wantGroup.indexOf(k) >= 0; })) { tiers[2].push(entry); return; }
+    if (want.length >= 3 && keys.some(function (k) { return k.indexOf(want) === 0 || want.indexOf(k) === 0; })) { tiers[3].push(entry); return; }
+    if (want.length >= 4 && keys.some(function (k) { return k.indexOf(want) >= 0; })) { tiers[4].push(entry); return; }
+  });
+
+  var hit = null;
+  for (var t = 0; t <= maxTier && t < tiers.length; t++) { if (tiers[t].length) { hit = tiers[t]; break; } }
+  var shown = (typeof ref === 'string' ? ref : (ref && ref.carrier)) || '';
+  if (!hit) {
+    return { ok: false, code: 'NO_MATCH', carrier: shown, candidates: _rateChoiceList(raw),
+      message: '"' + shown + '" is not one of the carriers that came back on this quote. The options are: ' + _rateChoiceList(raw) + '. Tell the customer that carrier is not on this quote, name what is, and ask which they want. Do NOT pick one for them and do NOT re-pull rates.' };
+  }
+  if (hit.length > 1) {
+    var cands = hit.map(function (e) { return _rateChoiceLine(e.rate, e.rank); }).join('; ');
+    return { ok: false, code: 'AMBIGUOUS', carrier: shown, candidates: cands,
+      message: '"' + shown + '" matches more than one option on this quote: ' + cands + '. Ask the customer which one, naming each service level and its price. Do NOT choose for them — never assume the cheaper one and never assume the guaranteed one.' };
+  }
+  return { ok: true, rate: hit[0].rate, rank: hit[0].rank };
+}
+
+// Build the shipment shape showBookingPanel expects from a rates-shipment. Kept identical to what
+// _execUpdateBooking built inline, so the panel renders exactly as before.
+function _panelShipDataFrom(s) {
+  s = s || {};
+  var its = (s.items && s.items.length) ? s.items : [{}];
+  return {
+    originZip: s.originZip || '', destZip: s.destinationZip || s.destZip || '',
+    weight: (its[0] && its[0].weight) || 0, pieces: (its[0] && its[0].pieces) || 1,
+    accessorials: (s.accessorials || []).map(function (a) { return { 'Residential Delivery':'RSD','Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Pickup':'RSO','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT' }[a] || a; }),
+    pickupDate: s.pickupDate || (typeof getTomorrow === 'function' ? getTomorrow() : ''),
+    lineItems: its.map(function (it) { return { qty: Number(it.pieces) || 1, weight: Number(it.weight) || 0, length: Number(it.length) || 48, width: Number(it.width) || 40, height: Number(it.height) || 48, dimType: it.packageType || 'PLT', freightClass: it.freightClass || '70', commodity: it.description || it.commodity || 'Freight', nmfc: it.nmfc || '', hazmat: it.hazmat || false }; }),
+    length: Number(its[0] && its[0].length) || 48, width: Number(its[0] && its[0].width) || 40, height: Number(its[0] && its[0].height) || 48
+  };
+}
+
+// THE canonical selection. opts.shipment is stored verbatim on the lock (each caller keeps its own
+// established shape, so the booking payload builders read exactly what they read before);
+// opts.panelShipment is what showBookingPanel renders, defaulting to opts.shipment.
+// opts.open:false re-binds the lock WITHOUT rebuilding the panel — used by the publish-time re-key
+// so a customer's half-filled booking form is never wiped by a re-rate.
+function selectRate(rateOrRef, opts) {
+  opts = opts || {};
+  try {
+    var res = _resolveRateRef(rateOrRef, opts.list);
+    if (!res.ok) return res; // every failure path leaves the lock, bookingRate and the panel untouched
+
+    var rate = res.rate;
+    var shipment = opts.shipment !== undefined ? opts.shipment
+      : (window._lastRatesShipment || (typeof lastQuotedShipment !== 'undefined' ? lastQuotedShipment : null));
+    var name = _rateDisplayName(rate);
+    var price = _ratePrice(rate);
+    var withMeta = Object.assign({}, rate, { _name: name, _price: price });
+
+    if (opts.open !== false && typeof showBookingPanel === 'function') {
+      var panelData = opts.panelShipment !== undefined ? opts.panelShipment : _panelShipDataFrom(shipment);
+      showBookingPanel(withMeta, panelData); // assigns bookingRate + rebuilds the panel
+      window._bookingPanelOpen = true;
+    } else {
+      // No panel rebuild: keep bookingRate in step by hand, so the rate the save path serializes
+      // is the one that is actually selected.
+      bookingRate = withMeta;
+    }
+
+    window._bookingLock = { rate: withMeta, shipment: shipment };
+    window._lockDropped = null;
+    window._relockCarrier = null;
+    console.log('[FP] selectRate — carrier:', name, '| $' + price, '| rank:', res.rank, '| source:', opts.source || 'unknown', '| panel:', opts.open !== false);
+    return { ok: true, rate: withMeta, carrier: name, price: price, rank: res.rank || null, source: opts.source || null };
+  } catch (e) {
+    console.error('selectRate error:', e);
+    return { ok: false, code: 'SELECT_FAILED', message: 'Could not open the booking panel for that carrier. Ask the customer to try again.' };
+  }
+}
+
+// ── Lock lifecycle across a re-quote — two halves of ONE mechanism ────────────
+// Half 1 (release): fired from the pull callback, i.e. only when a pull is genuinely about to run.
+// It parks the selected carrier's IDENTITY and drops the rate object, so no stale rate object can
+// be booked while a new list is inbound. It replaces a blanket clear that fired on mere INTENT to
+// re-pull — that clear also ran when the pull was then deduped, held by the insurance gate, or
+// failed, each of which silently discarded the customer's carrier for nothing.
+// Half 2 (re-key, below): fired when a new list is actually published.
+// Neither half is correct alone: release without re-key strands a null lock; re-key without the
+// release move leaves a window in which a stale rate object is still bookable.
+function _releaseLockForRepull() {
+  try {
+    var lock = window._bookingLock;
+    if (!lock || !lock.rate) return; // idempotent — never overwrite an already-parked identity
+    window._relockCarrier = { name: _rateDisplayName(lock.rate) };
+    window._bookingLock = null;
+    console.log('[FP] lock released for re-pull — parked carrier:', window._relockCarrier.name);
+  } catch (e) {}
+}
+
+// Half 2. Also the INVARIANT enforcer: after any publish, window._bookingLock.rate is either an
+// object present in the current window._lastRatesRaw, or null. That is what makes a stale lock from
+// a prior turn structurally unable to hijack a later selection.
+function _rekeyLockOnPublish(rates, shipment) {
+  try {
+    if (!rates || !rates.length) return;
+    var parked = window._relockCarrier;
+    var lock = window._bookingLock;
+    var wantName = (parked && parked.name) || (lock && lock.rate ? _rateDisplayName(lock.rate) : '');
+    window._relockCarrier = null;
+    if (!wantName) return; // nothing was selected — nothing to carry forward
+
+    // Already bound into THIS list: keep the rate, refresh the shipment it was rated against.
+    if (lock && lock.rate && rates.indexOf(lock.rate) >= 0) {
+      lock.shipment = shipment || lock.shipment;
+      return;
+    }
+    // Carry the carrier's identity forward onto the fresh rate object (new price, new rateId).
+    // maxTier 2 = exact or alias only: identity carry-forward may never drift to a different carrier.
+    var res = _resolveRateRef({ carrier: wantName }, rates, { maxTier: 2 });
+    if (res.ok) {
+      selectRate(res.rate, { shipment: shipment, list: rates, open: false, source: 'rekey' });
+      console.log('[FP] lock re-keyed on publish —', wantName, '-> $' + _ratePrice(res.rate));
+    } else {
+      window._bookingLock = null;
+      window._lockDropped = { carrier: wantName, reason: res.code };
+      console.log('[FP] lock dropped on publish — ' + wantName + ' not in refreshed rates (' + res.code + ')');
+    }
+  } catch (e) {
+    console.warn('[FP] rekey failed — clearing lock to preserve the invariant', e);
+    window._bookingLock = null;
+  }
+}
+
 // ── TOOL: update_booking — open the REAL booking panel and fill fields visibly ──
 // Mirrors update_quote: opens showBookingPanel for the frozen rate so the customer
 // watches the Pickup/Delivery sections populate live, then book_shipment clicks the
@@ -11622,50 +11845,46 @@ window._residentialStatus = null; // { residential:bool, liftgateRecommended:boo
 function _execUpdateBooking(input) {
   input = input || {};
   try {
-    let rate = (window._bookingLock && window._bookingLock.rate) || null;
-    let s = (window._bookingLock && window._bookingLock.shipment) || window._lastRatesShipment || lastQuotedShipment;
+    // PRECEDENCE: resolve an explicit reference BEFORE reading the lock. Previously the lock was
+    // read first and input.rank / input.carrier were only reachable when no lock existed — so
+    // "book JTS" opened whatever carrier a prior turn had frozen, and "change it to Estes" was a
+    // silent no-op that still returned ok. An explicit selection now always wins.
+    if (input.rank || input.carrier) {
+      const sel = selectRate({ rank: input.rank, carrier: input.carrier },
+        { shipment: window._lastRatesShipment || lastQuotedShipment, source: 'agent-select' });
+      if (!sel.ok) return { ok: false, code: sel.code, error: sel.message, candidates: sel.candidates };
+      setTimeout(() => _applyBookingFields(input), 400);
+      return { ok:true, carrier: sel.carrier, price: sel.price,
+        summary:'Booking panel is now open for ' + sel.carrier + ' at $' + sel.price.toFixed(2) + '. The Pickup and Delivery sections are visible.',
+        bookingState: _bookingPanelState() };
+    }
 
-    if (!rate) {
-      const raw = window._lastRatesRaw;
-      if (!raw || !raw.length) return { ok:false, error:'No rates pulled yet — pull rates and pick a carrier first.' };
-      if (input.rank && raw[input.rank - 1]) rate = raw[input.rank - 1];
-      else if (input.carrier) {
-        const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
-        rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
-            || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
+    // No reference given — this is a continuation of the booking already in flight, which is the
+    // only case where the lock decides the carrier.
+    const lock = window._bookingLock;
+    if (!lock || !lock.rate) {
+      if (!window._lastRatesRaw || !window._lastRatesRaw.length) {
+        return { ok:false, code:'NO_RATES', error:'No rates are pulled yet — pull rates and pick a carrier first.' };
       }
-      if (!rate) return { ok:false, error:'Could not match that carrier. Ask which carrier by name or rank.' };
-      window._bookingLock = { rate: rate, shipment: s };
-      console.log('[FP] _execUpdateBooking set _bookingLock — carrier:', rate._name||rate.name||rate.carrier);
+      return { ok:false, code:'NO_CARRIER', error:'No carrier is selected yet. Ask the customer which carrier they want, by name or rank, then call update_booking again with it.', candidates: _rateChoiceList(window._lastRatesRaw) };
     }
 
     // Reality-based open check: look at the actual DOM, not just a flag that can desync.
     const panelActuallyOpen = !!document.getElementById('bk-pu-name');
-    console.log('[FP] _execUpdateBooking — panelActuallyOpen:', panelActuallyOpen, '| _bookingLock carrier:', window._bookingLock&&(window._bookingLock.rate._name||window._bookingLock.rate.name));
+    console.log('[FP] _execUpdateBooking — panelActuallyOpen:', panelActuallyOpen, '| _bookingLock carrier:', _rateDisplayName(lock.rate));
     if (!panelActuallyOpen) {
-      const name = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
-      const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
-      const _its = (s && s.items && s.items.length) ? s.items : [{}];
-      const shipData = {
-        originZip: s.originZip || '', destZip: s.destinationZip || s.destZip || '',
-        weight: (_its[0]&&_its[0].weight) || 0, pieces: (_its[0]&&_its[0].pieces) || 1,
-        accessorials: (s.accessorials||[]).map(a=>({'Residential Delivery':'RSD','Liftgate Delivery':'LFD','Liftgate Pickup':'LFO','Residential Pickup':'RSO','Inside Delivery':'IND','Limited Access Delivery':'LAD','Limited Access Pickup':'NAO','Appointment Required':'APT'}[a]||a)),
-        pickupDate: s.pickupDate || (typeof getTomorrow==='function'?getTomorrow():''),
-        lineItems: _its.map(it=>({ qty:Number(it.pieces)||1, weight:Number(it.weight)||0, length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.packageType||'PLT', freightClass:it.freightClass||'70', commodity:it.description||it.commodity||'Freight', nmfc:it.nmfc||'', hazmat:it.hazmat||false })),
-        length:Number(_its[0]&&_its[0].length)||48, width:Number(_its[0]&&_its[0].width)||40, height:Number(_its[0]&&_its[0].height)||48,
-      };
-      const rateWithMeta = Object.assign({}, rate, { _name: name, _price: Number(price) });
-      if (typeof showBookingPanel === 'function') showBookingPanel(rateWithMeta, shipData);
-      window._bookingPanelOpen = true;
-      // Fill provided fields after the panel renders, then report real state
+      const re = selectRate(lock.rate, { shipment: lock.shipment, source: 'reopen' });
+      if (!re.ok) return { ok: false, code: re.code, error: re.message, candidates: re.candidates };
       setTimeout(() => _applyBookingFields(input), 400);
-      return { ok:true, summary:'Booking panel is now open for ' + name + '. The Pickup and Delivery sections are visible.', bookingState: _bookingPanelState() };
+      return { ok:true, carrier: re.carrier,
+        summary:'Booking panel is now open for ' + re.carrier + '. The Pickup and Delivery sections are visible.',
+        bookingState: _bookingPanelState() };
     }
 
     // Panel is genuinely open — fill provided fields and report the real current state
     window._bookingPanelOpen = true;
     _applyBookingFields(input);
-    return { ok:true, summary:'Booking panel updated: ' + _describeBookingInput(input), bookingState: _bookingPanelState() };
+    return { ok:true, carrier: _rateDisplayName(lock.rate), summary:'Booking panel updated: ' + _describeBookingInput(input), bookingState: _bookingPanelState() };
   } catch(e) {
     console.error('update_booking error:', e);
     return { ok:false, error:'Could not update the booking panel: ' + (e.message||'unknown') };
@@ -11922,15 +12141,11 @@ async function _execBookShipment(input) {
       if (!raw || !raw.length) return { ok:false, error:'No rates are pulled yet. Pull rates first, then pick a carrier to book.' };
       if (!s) return { ok:false, error:'No shipment on file. Build the quote and pull rates first.' };
 
-      // Identify the chosen rate — by rank (1-based) or by carrier name match
-      if (input.rank && raw[input.rank - 1]) {
-        rate = raw[input.rank - 1];
-      } else if (input.carrier) {
-        const want = input.carrier.toLowerCase().replace(/[^a-z0-9]/g,'');
-        rate = raw.find(r => ((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'')).includes(want))
-            || raw.find(r => want.includes((r.name||r.carrier||r.SCAC||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)));
-      }
-      if (!rate) return { ok:false, error:'Could not match that carrier to the pulled rates. Ask the customer which carrier by name or rank.' };
+      // Identify the chosen rate through the ONE shared resolver (alias-aware, and it asks rather
+      // than guessing when a name matches several service levels).
+      const _selB = _resolveRateRef({ rank: input.rank, carrier: input.carrier }, raw);
+      if (!_selB.ok) return { ok:false, code:_selB.code, error:_selB.message, candidates:_selB.candidates };
+      rate = _selB.rate;
       // NOTE: _bookingLock is set AFTER the residential guard below — a warning return must
       // never freeze a pre-RSD rate. Lock is only applied when proceeding to actually book.
     }
@@ -11962,7 +12177,7 @@ async function _execBookShipment(input) {
 
     // Freeze rate+shipment AFTER the residential guard — only when we are actually proceeding to book.
     // If we entered via the _bookingLock reuse path at the top of this function, skip (already frozen).
-    if (!window._bookingLock || !window._bookingLock.rate) window._bookingLock = { rate: rate, shipment: s };
+    if (!window._bookingLock || !window._bookingLock.rate) selectRate(rate, { shipment: s, open: false, source: 'agent-book' });
 
     const rateId = rate.id || rate.rateId;
     const token = await getToken();
@@ -17676,10 +17891,9 @@ function showQuoteForm(prefill, silent) {
           packageType: _its[0]&&_its[0].type||'PLT',
           freightClass: _its[0]&&_its[0].freightClass||'70',
         };
-        const rateWithMeta = Object.assign({}, rate, { _name: name, _price: Number(price) });
-        showBookingPanel(rateWithMeta, shipData);
-        window._bookingLock = { rate: rateWithMeta, shipment: shipData };
-        window._bookingPanelOpen = true;
+        // Canonical selection — one call sets the lock, bookingRate and the panel together.
+        selectRate(Object.assign({}, rate, { _name: name, _price: Number(price) }),
+          { shipment: shipData, panelShipment: shipData, source: 'form-select' });
       };
 
       const _termsBtn = tr.querySelector('.qt-terms-toggle');
@@ -17734,10 +17948,8 @@ function showQuoteForm(prefill, silent) {
         cbox.querySelector('#qt-conf-book').onclick = () => {
           conf.remove();
           const shipData2 = { originZip:originZip2, destZip:destZip2, weight:items2.reduce((s,it)=>s+(it.weight||0)*(it.qty||1),0), pieces:items2.reduce((s,it)=>s+(it.qty||1),0), accessorials:[...container.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code), pickupDate:container.querySelector('#qt-date').value, lineItems:items2.map(it=>({ length:Number(it.length)||48, width:Number(it.width)||40, height:Number(it.height)||48, dimType:it.type||'PLT', freightClass:it.freightClass||'70', commodity:it.commodity||'Freight', hazmat:it.hazmat||false })), length:Number(items2[0]&&items2[0].length)||48, width:Number(items2[0]&&items2[0].width)||40, height:Number(items2[0]&&items2[0].height)||48, packageType:items2[0]&&items2[0].type||'PLT', freightClass:items2[0]&&items2[0].freightClass||'70' };
-          const rateWithMeta2 = Object.assign({}, rate, { _name:name, _price:Number(price) });
-          showBookingPanel(rateWithMeta2, shipData2);
-          window._bookingLock = { rate: rateWithMeta2, shipment: shipData2 };
-          window._bookingPanelOpen = true;
+          selectRate(Object.assign({}, rate, { _name:name, _price:Number(price) }),
+            { shipment: shipData2, panelShipment: shipData2, source: 'form-select' });
           appendMessage('bot', 'Booking with ' + name + ' at $' + price + '. I need pickup info — business name, address, contact name, phone, reference or PO number, pickup hours, and pickup date.');
         };
         cbox.querySelector('#qt-conf-saved').onclick = () => { conf.remove(); showSavedQuotes(); };
@@ -17833,6 +18045,11 @@ function showQuoteForm(prefill, silent) {
     // re-pull that fails transiently would leave the PREVIOUS pull's carriers in window._lastRates,
     // so the agent would read back stale rates instead of seeing the failure. Success republishes below.
     if (typeof _publishRatesForAI === 'function') _publishRatesForAI(null, null);
+    // Release here too, so EVERY pull path is covered — the form Get Rates button, a requote, the
+    // accessorial re-pull and the insurance re-pull all land here without going through
+    // _applyQuoteFields. Idempotent: a second call with the lock already released is a no-op and
+    // never overwrites the parked identity.
+    if (typeof _releaseLockForRepull === 'function') _releaseLockForRepull();
     // Arm the in-flight flag for EVERY doGetRates trigger (card 2 Stage 1) — previously only the
     // agent update_quote path set it, so form-button / requote / insurance / SmartPaste / accessorial
     // re-pulls ran unguarded and an overlapping agent read did not wait for settlement. Cleared on
