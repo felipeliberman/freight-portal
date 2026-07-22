@@ -2989,6 +2989,32 @@ async function fetchShipments() {
 }
 
 
+// Resolve a customer-supplied BOL reference (a BOLNumber, or already a BOLId) to the canonical
+// BOLId the PUT path needs. FAILS LOUDLY — there is deliberately NO fallback to the raw input.
+// That fallback was the routing half of the save 404: the agent passes a BOL *Number*, the lookup
+// missed, the raw number was used as a path segment, and PUT /applet/v1/book/<BOLNumber> came back
+// 404 "Booking not found" — which the app then reported as a successful save.
+// Distinguishes a genuine miss from a lookup that timed out, so the caller can say which happened.
+async function resolveBOLId(ref) {
+  const want = String(ref == null ? '' : ref).trim().replace(/^#/, '');
+  if (!want) return { ok: false, code: 'NO_REFERENCE', message: 'No shipment reference was given.' };
+  let found = null, threw = null;
+  const t0 = Date.now();
+  try { found = await fetchBookingByBOL(want); } catch (e) { threw = e; }
+  const bolId = found && (found.BOLId || found.bolId);
+  if (bolId) return { ok: true, bolId: String(bolId), bolNumber: String(found.BOLNumber || found.bolNumber || want), shipment: found };
+  // fetchBookingByBOL bounds its scan at ~12s and returns null on expiry, so a null that arrives
+  // near that bound is far more likely a timeout than a real miss. Report them differently: a
+  // timeout is worth retrying, a miss is not.
+  const elapsed = Date.now() - t0;
+  if (threw || elapsed >= 11500) {
+    return { ok: false, code: 'LOOKUP_TIMEOUT',
+      message: 'Could not look up shipment ' + want + ' just now — the lookup did not come back in time. Tell the customer you could not reach it and offer to try again in a moment. Do NOT say it was saved and do NOT state a BOL number.' };
+  }
+  return { ok: false, code: 'BOL_NOT_FOUND',
+    message: 'No shipment matching ' + want + ' is on this account. Tell the customer you could not find that shipment and ask them to double-check the BOL number. Do NOT say anything was saved and do NOT state a BOL number.' };
+}
+
 async function fetchBookingByBOL(bol, anchorISO) {
   const token = await getToken();
   const want = String(bol).trim().replace(/^#/, '');
@@ -12481,15 +12507,13 @@ async function _execSaveShipment(input) {
     const bolRef = input.bol_id || input.BOLId;
     // If a specific BOL is given, wire the PUT; otherwise falls through to a fresh POST
     if (bolRef) {
-      const want = String(bolRef).trim();
-      // Accept raw BOLId or BOLNumber — if it looks numeric and short it may be a BOLId;
-      // try a direct fetch first so we get the canonical BOLId for the PUT.
-      let resolvedBOLId = want;
-      try {
-        const s = await fetchBookingByBOL(want);
-        if (s && (s.BOLId || s.bolId)) resolvedBOLId = s.BOLId || s.bolId;
-      } catch(e) {}
-      window._editingBOLId = resolvedBOLId;
+      // Resolve to a canonical BOLId or refuse. Never PUT against a guessed id.
+      const _res = await resolveBOLId(bolRef);
+      if (!_res.ok) {
+        return { ok: false, saveFailed: true, code: _res.code, error: _res.message,
+          note: 'THE SHIPMENT WAS NOT SAVED — the shipment reference could not be resolved, so nothing was sent. Do NOT state any BOL number, do NOT say it is in My Shipments, and do NOT use any success wording.' };
+      }
+      window._editingBOLId = _res.bolId;
     }
     // Success is decided ONLY by this call's typed result. Reading window._lastBooked here was the
     // false-confirmation bug: it holds the last SUCCESSFUL booking, so a 404'd PUT still returned
