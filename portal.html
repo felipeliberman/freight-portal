@@ -14937,6 +14937,36 @@ async function handleInput(text) {
         && t.trim().split(/\s+/).length <= 8
         && /\b(what about|how about|both of them|those ones?|list them|name them|the two|why (only|just)|their (bols?|consignees?|carriers?|costs?))\b/i.test(lower));
 
+  // ── BARE CARRIER NAME = A SELECTION, NOT A NEW QUOTE ─────────────────────────
+  // A short message that is just a carrier name ("JTS", "go with Estes") used to fall through to
+  // the agent, which had no rule for a verb-less name and could answer it with a fresh rate pull —
+  // churning the form and losing the customer's pick. Resolve it deterministically against the
+  // rates already in state, through B's canonical selectRate, before any of that can happen.
+  // Deliberately NOT a rate pull: with no rates in state this reports NO_RATES and stops.
+  if (typeof _resolveRateRef === 'function' && /^[a-z0-9&+.\-' ]{2,28}$/i.test(t.trim()) && t.trim().split(/\s+/).length <= 4) {
+    const _bare = t.trim().replace(/^(?:go with|book|use|pick|choose|select|lets? (?:go|do)|i'?ll take|take)\s+/i, '')
+                         .replace(/\s+(?:please|thanks?|then)\.?$/i, '').trim();
+    const _looksCarrier = _bare && !/^(yes|no|ok|okay|sure|yeah|yep|nope|thanks?|hi|hello|hey|help|save|dispatch|book|quote|rates?|cheapest|fastest|next|more|both|either|it|that|this)$/i.test(_bare);
+    if (_looksCarrier && window._lastRatesRaw && window._lastRatesRaw.length) {
+      const _probe = _resolveRateRef({ carrier: _bare }, window._lastRatesRaw);
+      // Only claim the message when it unambiguously names a carrier on THIS quote. A miss falls
+      // through untouched so ordinary conversation is never swallowed.
+      if (_probe.ok) {
+        const _sel = selectRate(_probe.rate, { shipment: window._lastRatesShipment || lastQuotedShipment, source: 'chat-carrier-name' });
+        removeTyping();
+        if (_sel.ok) {
+          window._inQuoteConvo = true;
+          appendMessage('bot', 'Booking ' + _sel.carrier + ' at $' + _sel.price.toFixed(2) + '. The booking panel is open on the right — I need the pickup and delivery details.');
+          return;
+        }
+      } else if (_probe.code === 'AMBIGUOUS') {
+        removeTyping();
+        appendMessage('bot', _bare + ' came back as more than one option: ' + _probe.candidates + '. Which one do you want?');
+        return;
+      }
+    }
+  }
+
   if ((window._quoteFormOpen || window._inQuoteConvo) && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)
       && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t) && !_dataQuestion) {
     // Full-history analytics / existence / comparison questions and explicit BOL numbers
