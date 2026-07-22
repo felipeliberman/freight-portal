@@ -2987,7 +2987,12 @@ async function fetchShipments() {
 // missed, the raw number was used as a path segment, and PUT /applet/v1/book/<BOLNumber> came back
 // 404 "Booking not found" — which the app then reported as a successful save.
 // Distinguishes a genuine miss from a lookup that timed out, so the caller can say which happened.
-async function resolveBOLId(ref) {
+async function resolveBOLId(ref, opts) {
+  opts = opts || {};
+  // Fast path, no network: when the caller already holds the backend record, its BOLId IS the
+  // canonical id — it came from /applet/v1/book. Only a reference we cannot vouch for is looked up.
+  const _known = opts.shipment && (opts.shipment.BOLId || opts.shipment.bolId);
+  if (_known) return { ok: true, bolId: String(_known), bolNumber: String(opts.shipment.BOLNumber || opts.shipment.bolNumber || ref || ''), shipment: opts.shipment, fromRecord: true };
   const want = String(ref == null ? '' : ref).trim().replace(/^#/, '');
   if (!want) return { ok: false, code: 'NO_REFERENCE', message: 'No shipment reference was given.' };
   let found = null, threw = null;
@@ -3005,6 +3010,17 @@ async function resolveBOLId(ref) {
   }
   return { ok: false, code: 'BOL_NOT_FOUND',
     message: 'No shipment matching ' + want + ' is on this account. Tell the customer you could not find that shipment and ask them to double-check the BOL number. Do NOT say anything was saved and do NOT state a BOL number.' };
+}
+
+// THE only writer of a non-null window._editingBOLId. Every edit/requote path assigns through here,
+// so a BOL *Number* can never reach the PUT URL as a path segment — the routing half of the
+// "Booking not found" 404. Returns the resolve result so callers can fail loudly instead of
+// silently falling back to a POST (which would create a duplicate shipment).
+async function setEditingBOLId(ref, opts) {
+  const res = await resolveBOLId(ref, opts);
+  if (!res.ok) { window._editingBOLId = null; return res; }
+  window._editingBOLId = res.bolId;
+  return res;
 }
 
 async function fetchBookingByBOL(bol, anchorISO) {
@@ -6551,7 +6567,7 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
 
 // Reopen the FULL booking form pre-filled from a saved shipment so the customer can complete/edit
 // it and Save. While _editingBOLId is set, Save updates that existing BOL (PUT) instead of POSTing a new one.
-function editSavedShipment(s, BOLId, BOLNumber) {
+async function editSavedShipment(s, BOLId, BOLNumber) {
   s = s || {};
   // Close any open shipment pop-up (detail or dispatch) so the edit page isn't left under one.
   const _closeShipOverlays = () => { try { document.querySelectorAll('#ship-modal-overlay, #row-dispatch-overlay').forEach(o => o.remove()); } catch(e){} };
@@ -6595,7 +6611,13 @@ function editSavedShipment(s, BOLId, BOLNumber) {
   const rate = { _name: carrierName, name: carrierName, carrierName: carrierName, _price: price, total: price };
   lastQuotedShipment = shipData;
   // Mark edit mode BEFORE opening the panel so the panel's Back button returns to the shipment.
-  window._editingBOLId = BOLId;
+  // Resolved, never trusted raw: an unresolvable reference must not open an edit panel whose Save
+  // would PUT against a guessed id and 404.
+  const _eb = await setEditingBOLId(BOLId, { shipment: s });
+  if (!_eb.ok) {
+    if (typeof appendMessage === 'function') appendMessage('bot', 'I could not open that shipment for editing — ' + (_eb.code === 'LOOKUP_TIMEOUT' ? 'the lookup did not come back in time. Try again in a moment.' : 'I could not find it on your account. Double-check the BOL number.'));
+    return;
+  }
   window._editingShipment = s;
   if (typeof showBookingPanel === 'function') showBookingPanel(rate, shipData);
   // Pre-fill shipper / consignee / pickup from the saved shipment once the panel has rendered.
@@ -12621,12 +12643,11 @@ async function _execSaveShipment(input) {
     // If a specific BOL is given, wire the PUT; otherwise falls through to a fresh POST
     if (bolRef) {
       // Resolve to a canonical BOLId or refuse. Never PUT against a guessed id.
-      const _res = await resolveBOLId(bolRef);
+      const _res = await setEditingBOLId(bolRef);
       if (!_res.ok) {
         return { ok: false, saveFailed: true, code: _res.code, error: _res.message,
           note: 'THE SHIPMENT WAS NOT SAVED — the shipment reference could not be resolved, so nothing was sent. Do NOT state any BOL number, do NOT say it is in My Shipments, and do NOT use any success wording.' };
       }
-      window._editingBOLId = _res.bolId;
     }
     // Success is decided ONLY by this call's typed result. Reading window._lastBooked here was the
     // false-confirmation bug: it holds the last SUCCESSFUL booking, so a 404'd PUT still returned
@@ -16100,8 +16121,12 @@ function showBookingPanel(rate, shipmentData) {
     applyDefaultShipper();
     const _rqCtx = window._requoteContext;
     if (_rqCtx && _rqCtx.bolId) {
-      // Requote flow: update the original BOL (PUT) instead of creating a new one.
-      window._editingBOLId = _rqCtx.bolId;
+      // Requote flow: update the original BOL (PUT) instead of creating a new one. Through the
+      // chokepoint — _requoteContext.bolId can be '' (see its `|| ''` construction), and an empty
+      // _editingBOLId silently degrades the save to a POST, creating a duplicate shipment.
+      setEditingBOLId(_rqCtx.bolId, { shipment: _rqCtx.shipment }).then(r => {
+        if (!r.ok) console.warn('[FP] requote: could not resolve BOL for PUT —', r.code);
+      });
       const _rs = _rqCtx.shipment || {};
       const _rshp = _rs.shipper   || {};
       const _rcon = _rs.consignee || {};
@@ -16367,7 +16392,13 @@ function showBookingPanel(rate, shipmentData) {
               // showBookingPanel sets it via a 200ms setTimeout; re-apply from _requoteContext as
               // a fallback in case that timer raced or bolId was falsy at the time.
               if (!window._editingBOLId && window._requoteContext && window._requoteContext.bolId) {
-                window._editingBOLId = window._requoteContext.bolId;
+                const _rb = await setEditingBOLId(window._requoteContext.bolId, { shipment: window._requoteContext.shipment });
+                if (!_rb.ok) {
+                  if (formBody2) { formBody2.style.opacity = ''; formBody2.style.pointerEvents = ''; }
+                  btn.textContent = 'Save Shipment'; btn.disabled = false; bookingStep = null;
+                  appendMessage('bot', 'I could not save that update — the original shipment could not be located, so nothing was sent.');
+                  return;
+                }
               }
               const _snapBR = bookingRate ? Object.assign({}, bookingRate) : {};
               const _snapBD = Object.assign({}, bookingData);
