@@ -2220,6 +2220,23 @@ const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','APT','INS','
 // appointmentNeeded), not a rateable accessorial; that omission is legitimate and must NOT trip the
 // guard. INO is absent because it is genuinely invalid here (undeliverable everywhere -> guard rejects).
 const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+// SINGLE SOURCE OF TRUTH for accessorials that reach the carrier by a DEDICATED payload field
+// instead of (or in addition to) the pipe-joined accessorialsList. Such codes are legitimately
+// deliverable even when absent from the rateable/BOL sets, so the outbound guard must NOT reject
+// them. The guard derives its exemption AND its undeliverable set from this table + the two list
+// sets, never a hand-written literal — so adding an off-list accessorial later cannot silently
+// reintroduce the residential-pickup false-reject. Value = the payload field, for documentation.
+const ACC_OFFLIST_TRANSPORT = {
+  RSO: 'shipper.residentialPickup',                     // residential pickup — shipper flag, never in accessorialsList (the one currently off-list-only)
+  RSD: 'consignee.residentialDelivery',                 // residential delivery — consignee flag (also in the list)
+  APT: 'pickup/deliveryInformation.appointmentNeeded',  // appointment — booking boolean (also in the BOL list today; keeps it safe when APT leaves the list)
+  INS: 'commodityInsurance / insuranceAmount',          // cargo insurance — dedicated rate/premium params (also in the list)
+};
+// A code is DELIVERABLE if it can reach the carrier by any mechanism: the rate list, the BOL list,
+// or a dedicated off-list field. Undeliverable = a valid code with none of these -> guard rejects.
+function _accDeliverable(code) {
+  return ACC_RATEABLE_CODES.has(code) || ACC_BOL_CODES.has(code) || !!ACC_OFFLIST_TRANSPORT[code];
+}
 function accessorialSet(list) {
   const out = [];
   (list || []).forEach(function (a) {
@@ -2857,7 +2874,7 @@ async function fetchRates(shipment) {
   // are merely not rate-sent (APT — carried to the BOL via appointmentNeeded) are book-eligible and
   // pass through untouched; only undeliverable-everywhere codes trip this.
   const _allAccCodes = accessorialSet(shipment.accessorials);
-  const _undeliverable = _allAccCodes.filter(c => !ACC_RATEABLE_CODES.has(c) && !ACC_BOL_CODES.has(c));
+  const _undeliverable = _allAccCodes.filter(c => !_accDeliverable(c));
   if (_undeliverable.length) {
     console.warn('[accessorial-guard] undeliverable code(s), rejecting quote:', _undeliverable.join(', '));
     window._lastRatePullError = { kind: 'rejected', codes: _undeliverable.slice(), distinct: [], counts: {}, accessorialReject: true, guard: true };
