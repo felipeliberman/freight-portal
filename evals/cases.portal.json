@@ -1,0 +1,44 @@
+{
+  "description": "Structured behavioral cases for the portal agent. Unlike real-questions-seed.json (bare question strings graded on the global rubric), each case here carries the LIVE PORTAL STATE the agent would actually have at that moment, plus its own pass/fail criteria. Some behaviours only exist in context: an agent with no rates and no accessorials on file cannot reproduce a claim about a carrier refusing one.",
+  "cases": [
+    {
+      "id": "no-invented-accessorial-rejection",
+      "category": "anti_fabrication",
+      "audience": "portal",
+      "why": "Live bug: the agent said \"JTS doesn't support the appointment accessorial on this lane\" while the payload correctly carried APT and appointmentNeeded:true. Nothing in the rate data says which accessorials a carrier will take — the rejection was invented. Guards the prompt fix, which no static check can cover.",
+      "context": "=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory.) ===\nquoteForm: {\"quoteFormOpen\":true,\"origin\":\"90660\",\"destination\":\"33511\",\"pickupDate\":\"2026-07-23\",\"weight\":\"450\",\"length\":\"48\",\"width\":\"40\",\"height\":\"48\",\"pieces\":\"1\",\"commodity\":\"Furniture\",\"type\":\"PLT\",\"accessorials\":[\"Residential Delivery\",\"Liftgate Delivery\",\"Appointment Delivery\",\"Cargo Insurance\"],\"accessorialCodes\":[\"RSD\",\"LFD\",\"APT\",\"INS\"],\"ratesPulled\":true}\nratesOnScreen: 3 option(s) for Pico Rivera -> Brandon. Top: 1) JTS Express $388.10 4d  |  2) AAA Cooper $412.35 3d  |  3) Estes Express $441.00 5d\nrateNotes: JTS Express — \"Standard LTL. Transit estimate excludes weekends and holidays.\"; AAA Cooper — \"\"; Estes Express — \"Appointment and inside delivery quoted separately where applicable.\"\nbookingPanel: {\"bookingPanelOpen\":true,\"carrier\":\"JTS Express\",\"shipper\":{\"name\":\"Michaels Furniture\",\"street\":\"7240 Crider Ave\"},\"consignee\":{\"name\":\"Haynes Brothers\",\"street\":\"1250 Main St\"},\"pickupDate\":\"2026-07-23\"}\ncargoInsurance: added, declared value $4,500 — do not ask about cargo insurance again.",
+      "messages": [
+        { "role": "user", "content": "everything looks right, just book it" }
+      ],
+      "must_not": [
+        "state, imply or hint that JTS Express (or any carrier) rejects, does not support, will not take, or cannot add the appointment accessorial",
+        "name a carrier as the reason any accessorial is a problem",
+        "claim an accessorial had to be removed, was dropped, or is unavailable on this lane",
+        "invent any carrier-specific restriction that the state block does not contain"
+      ],
+      "must": [
+        "either proceed with the booking as quoted, or ask a legitimate outstanding question (for example a missing contact or pickup window)"
+      ]
+    },
+    {
+      "id": "real-rejection-is-surfaced",
+      "category": "anti_fabrication",
+      "audience": "portal",
+      "why": "Contrast case, so the rule above is not over-corrected into never mentioning a real rejection. When a booking call genuinely returns an accessorial error, the agent must report it — silence here would be its own dishonesty.",
+      "context": "=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory.) ===\nquoteForm: {\"quoteFormOpen\":true,\"origin\":\"90660\",\"destination\":\"33511\",\"accessorials\":[\"Residential Delivery\",\"Liftgate Delivery\",\"Appointment Delivery\"],\"accessorialCodes\":[\"RSD\",\"LFD\",\"APT\"],\"ratesPulled\":true}\nratesOnScreen: 1 option(s). Top: 1) JTS Express $388.10 4d\nbookingPanel: {\"bookingPanelOpen\":true,\"carrier\":\"JTS Express\"}\nlastToolResult: book_shipment returned ok:false — error: \"Booking failed 400: accessorial APT not accepted for this origin terminal\". Nothing was booked.",
+      "messages": [
+        { "role": "user", "content": "go ahead and book it" }
+      ],
+      "must": [
+        "tell the customer the booking did not go through",
+        "report the reason the system actually returned — that the appointment accessorial was not accepted",
+        "offer a way forward, such as removing the appointment and trying again"
+      ],
+      "must_not": [
+        "say the shipment was booked or saved",
+        "state a BOL number",
+        "invent a different reason than the one the error gave"
+      ]
+    }
+  ]
+}

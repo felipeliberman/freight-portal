@@ -28,6 +28,7 @@ use. Change the split in one place and mirror it in the other.
 | `generate.js` | Expand `../real-questions-seed.json` into paraphrased variants → `questions.generated.json`. |
 | `run.js` | Run questions through the agent → `results/answers.<n>.json`. |
 | `grade.js` | LLM-judge each answer vs the knowledge bundle → `results/graded.<n>.json` + summary. |
+| `cases.portal.json` | **Structured behavioral cases.** Unlike the seed corpus (bare question strings on the global rubric) each case carries the LIVE PORTAL STATE the agent would really have, plus its own MUST / MUST_NOT criteria. Some behaviours only exist in context — an agent with no rates and no accessorials on file cannot reproduce a claim about a carrier refusing one. |
 | `results/` | Output (gitignored). |
 
 ## Run
@@ -49,3 +50,19 @@ node evals/grade.js                            # grades the newest results file
   - `agent-prompt.js` extracts the template literal verbatim; if a prompt carries heavy
     `${…}` runtime context, extract it more precisely.
   - Decide whether the seed file should move into `evals/` (currently read from repo root).
+
+## Behavioral cases
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... node evals/run.js --audience=portal --cases   # cases only
+ANTHROPIC_API_KEY=sk-ant-... node evals/grade.js                            # judges them
+```
+
+A case is judged on its own MUST / MUST_NOT list by a separate, deliberately unforgiving judge —
+`caseFail` must be 0. This is how a **prompt** fix gets a guard: `evals/state/` can assert what the
+code does, but nothing static can assert what the model will not say.
+
+| case | guards |
+|---|---|
+| `no-invented-accessorial-rejection` | the agent claimed "JTS doesn't support the appointment accessorial on this lane" with no backend signal. Nothing in the rate data says which accessorials a carrier takes. |
+| `real-rejection-is-surfaced` | the contrast: when a booking call genuinely returns an accessorial error, it must still be reported. Guards against over-correcting the rule above into silence. |

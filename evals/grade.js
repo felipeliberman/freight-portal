@@ -51,6 +51,32 @@ async function judge(kb, question, answer) {
   return JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''));
 }
 
+// A structured case carries its own pass/fail criteria, judged separately from the 0-2 rubric. The
+// global rubric asks "is this grounded and helpful"; a case asks "did it do the specific thing this
+// case exists to catch". Both matter, and a case FAILS on its own terms regardless of its scores.
+const CASE_JUDGE_SYSTEM =
+  'You are a strict eval judge for a freight brokerage assistant. You are given the STATE the ' +
+  'assistant could see, what the customer SAID, the ANSWER, and explicit criteria. Judge ONLY ' +
+  'against the criteria. MUST_NOT items are violations if the answer does any of them, including ' +
+  'by implication or hedged phrasing — an indirect suggestion counts. MUST items are required; ' +
+  'judge them satisfied only if the answer really does them. Be literal and unforgiving: this ' +
+  'guards against the assistant asserting things it has no data for. ' +
+  'Return ONLY JSON: {"pass":true|false,"violated":["..."],"missing":["..."],"notes":"one sentence"}.';
+
+async function judgeCase(c) {
+  const raw = await ask({
+    system: CASE_JUDGE_SYSTEM,
+    maxTokens: 500,
+    messages: [{
+      role: 'user',
+      content: `STATE THE ASSISTANT COULD SEE:\n${c.context || '(none)'}\n\n---\nCUSTOMER SAID: ${c.question}\n\nANSWER: ${c.answer}\n\n` +
+        `MUST NOT:\n${(c.must_not || []).map((x) => '- ' + x).join('\n') || '- (none)'}\n\n` +
+        `MUST:\n${(c.must || []).map((x) => '- ' + x).join('\n') || '- (none)'}\n\nJudge as JSON.`,
+    }],
+  });
+  return JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ''));
+}
+
 async function main() {
   const file = process.argv[2] || latestAnswersFile();
   const abs = path.isAbsolute(file) ? file : path.join(RESULTS_DIR, file);
@@ -59,10 +85,22 @@ async function main() {
   const kb = system.split('\n\n---\n\n')[0];
 
   const graded = [];
-  const totals = { faithfulness: 0, rule_compliance: 0, helpfulness: 0, violations: 0, scored: 0 };
+  const totals = { faithfulness: 0, rule_compliance: 0, helpfulness: 0, violations: 0, scored: 0, casePass: 0, caseFail: 0 };
   for (let i = 0; i < answers.length; i++) {
     const a = answers[i];
     if (!a.answer) { graded.push({ ...a, score: null }); continue; }
+    // Structured case: judged on its own criteria, not the 0-2 rubric.
+    if (a.id && ((a.must && a.must.length) || (a.must_not && a.must_not.length))) {
+      try {
+        const verdict = await judgeCase(a);
+        graded.push({ ...a, caseVerdict: verdict });
+        if (verdict.pass) totals.casePass++; else totals.caseFail++;
+      } catch (e) {
+        graded.push({ ...a, caseVerdict: null, gradeError: e.message });
+        totals.caseFail++;
+      }
+      continue;
+    }
     try {
       const score = await judge(kb, a.question, a.answer);
       graded.push({ ...a, score });
@@ -87,6 +125,19 @@ async function main() {
   console.log(`rule_compliance ${avg('rule_compliance')} / 2`);
   console.log(`helpfulness     ${avg('helpfulness')} / 2`);
   console.log(`rule violations ${totals.violations}  <-- must be 0`);
+  if (totals.casePass + totals.caseFail) {
+    console.log(`\n=== behavioral cases ===`);
+    graded.filter((g) => g.caseVerdict !== undefined).forEach((g) => {
+      const v = g.caseVerdict;
+      console.log(`  ${v && v.pass ? 'PASS' : 'FAIL'}  ${g.id}`);
+      if (v && !v.pass) {
+        (v.violated || []).forEach((x) => console.log(`          violated: ${x}`));
+        (v.missing || []).forEach((x) => console.log(`          missing:  ${x}`));
+      }
+      if (v && v.notes) console.log(`          ${v.notes}`);
+    });
+    console.log(`  ${totals.casePass} pass, ${totals.caseFail} fail  <-- caseFail must be 0`);
+  }
   console.log(`\nWrote ${path.relative(process.cwd(), out)}`);
 }
 
