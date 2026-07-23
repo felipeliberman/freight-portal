@@ -2711,6 +2711,79 @@ function _insGateBeforeRates(shipment, summary) {
   return true;
 }
 
+// ─── RATE-ERROR CLASSIFICATION ────────────────────────────────────────────────
+// ONE canonical path from a failed rate pull to customer-facing copy. fetchRates throws a
+// STRUCTURED error (never a pre-formatted display string); every human call site AND every
+// agent-facing surface runs the thrown error — or the parked window._lastRatePullError payload —
+// through _classifyRateError and renders ONLY its message. This is the split-brain guard:
+// identical failure => identical copy on the form panel and in chat, with no raw Primus text,
+// no internal field name (e.g. "shippingLocation"), no accessorial code, and no invented cause
+// ever reaching a customer.
+const RATE_SUPPORT = 'call (800) 687-3713 or email support@freightandlogistics.ai';
+
+// Distill Primus's per-carrier noRates array into a customer-safe signal WITHOUT keeping any of
+// its raw text for display. Returns: distinct (deduped) error strings, how many carriers returned
+// each, any accessorial codes named in them, whether they indicate a validation reject (an invalid
+// / not-enabled accessorial — Primus refuses BEFORE rating, so this is NOT an empty lane), and the
+// raw array/text for logging only. Dedupe here is what collapses ~14 repetitions to one cause.
+function _parseNoRates(noRates, rawText) {
+  const arr = Array.isArray(noRates) ? noRates : [];
+  const counts = {};
+  arr.forEach(function (n) {
+    const e = (n && n.error != null) ? String(n.error) : '';
+    if (!e) return;
+    counts[e] = (counts[e] || 0) + 1;
+  });
+  const distinct = Object.keys(counts);
+  const codes = [];
+  let accessorialReject = false;
+  distinct.forEach(function (e) {
+    if (/accessorial/i.test(e) && /(invalid|not[\s-]*enabled|not[\s-]*allowed|disabled)/i.test(e)) {
+      accessorialReject = true;
+      const m = e.match(/accessorials?\s*[:\-]?\s*([A-Z]{2,4}(?:\s*,\s*[A-Z]{2,4})*)/);
+      if (m) m[1].split(/[,\s]+/).forEach(function (c) {
+        c = c.trim().toUpperCase();
+        if (c && codes.indexOf(c) < 0) codes.push(c);
+      });
+    }
+  });
+  return { distinct: distinct, counts: counts, codes: codes, accessorialReject: accessorialReject, raw: arr, rawText: String(rawText || '').slice(0, 300) };
+}
+
+// Canonical classifier. Input: the Error thrown by fetchRates (carrying ._rate), OR any object with
+// a ._rate payload (the agent surfaces pass { _rate: window._lastRatePullError }). Output: a
+// customer-safe { kind, message }. It NEVER returns err.message, always states one cause exactly
+// once, and never invents or guesses a reason.
+function _classifyRateError(err) {
+  const p = (err && err._rate) || null;
+  if (p && p.kind === 'zip') {
+    // The ONE failure the customer can fix themselves. Name the bad ZIP(s) and say what to correct;
+    // do NOT send them to the phone for a typo (no support line here).
+    const bad = (p.bad || []).filter(Boolean);
+    const message = bad.length
+      ? ("We couldn't find a city for your " + bad.join(' or your ') + ". Please double-check " + (bad.length > 1 ? 'them' : 'it') + " and try again.")
+      : "We couldn't match one of your ZIP codes to a city. Please double-check the origin and destination ZIP and try again.";
+    return { kind: 'ZIP', message: message };
+  }
+  if (p && p.kind === 'transport') {
+    return { kind: 'TRANSPORT', message: "We couldn't reach our rating system just now. Please try again in a moment, or " + RATE_SUPPORT + '.' };
+  }
+  if (p && p.kind === 'rejected') {
+    // ACCESSORIAL_REJECTED — friendly labels only, never the code, never any internal vocabulary.
+    const labels = (p.codes || []).map(function (c) { return ACC_LABEL[c]; }).filter(Boolean);
+    let svc = 'one of the services you asked for';
+    if (labels.length === 1) svc = labels[0];
+    else if (labels.length > 1) svc = labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1];
+    const svcTail = labels.length > 1 ? "those services are what's holding it up" : "that one service is what's holding it up";
+    const support = RATE_SUPPORT.charAt(0).toUpperCase() + RATE_SUPPORT.slice(1);
+    return { kind: 'ACCESSORIAL_REJECTED', message: "We couldn't price this quote with " + svc + " on your account. Your shipment details are fine — " + svcTail + ". " + support + " and we'll get it priced manually." };
+  }
+  if (p && p.kind === 'empty') {
+    return { kind: 'NO_CARRIERS', message: "No carriers returned a rate for this lane right now. Please " + RATE_SUPPORT + " and we'll help get it covered." };
+  }
+  return { kind: 'UNKNOWN', message: "We couldn't complete your quote just now. Please try again, or " + RATE_SUPPORT + '.' };
+}
+
 async function fetchRates(shipment) {
   // Clear any prior pull's outcome marker up front so an early throw (e.g. the ZIP gate below)
   // leaves it null and the ZIP/outage branches own the messaging. It is set again further down
@@ -2727,10 +2800,17 @@ async function fetchRates(shipment) {
   if (_o.reason === 'notfound') _bad.push('origin ZIP ' + shipment.originZip);
   if (_d.reason === 'notfound') _bad.push('destination ZIP ' + shipment.destinationZip);
   if (_bad.length) {
-    throw new Error("We couldn't match your " + _bad.join(' or your ') + " to a city, so we can't pull rates. Please double-check " + (_bad.length > 1 ? 'them' : 'it') + " and try again.");
+    // Unresolvable ZIP is the ONE failure the customer can fix themselves — carry which ZIP(s) so
+    // the classifier can name them and give actionable correction copy (kind 'zip', never UNKNOWN).
+    const _e = new Error("We couldn't match your " + _bad.join(' or your ') + " to a city, so we can't pull rates. Please double-check " + (_bad.length > 1 ? 'them' : 'it') + " and try again.");
+    _e._rate = { kind: 'zip', bad: _bad.slice() };
+    throw _e;
   }
   if (_o.reason === 'outage' || _d.reason === 'outage') {
-    throw new Error("We couldn't verify one of your ZIP codes right now — please try again in a moment.");
+    // A ZIP-lookup outage is transient, not a bad ZIP — classify as transport ("try again"), not zip.
+    const _e = new Error("We couldn't verify one of your ZIP codes right now — please try again in a moment.");
+    _e._rate = { kind: 'transport' };
+    throw _e;
   }
   // Apply resolved city/state (preserve any already set on the shipment).
   if (!shipment.originCity)       shipment.originCity  = _o.city;
@@ -2834,17 +2914,25 @@ async function fetchRates(shipment) {
   // empty lane — mark it 'transport' so the agent tells the customer the service hiccuped.
   if (!r) {
     window._lastRatePullError = { kind: 'transport' };
-    throw new Error("We couldn't reach the rate service just now — please try again in a moment.");
+    const _e = new Error("We couldn't reach the rate service just now — please try again in a moment.");
+    _e._rate = window._lastRatePullError;
+    throw _e;
   }
 
   if (!r.ok) {
     console.error('Rate fetch failed', r.status, text.slice(0, 300));
     if (r.status === 400 && /originCity|destinationCity|Missing required parameter/i.test(text)) {
-      throw new Error("We couldn't match one of your ZIP codes to a city, so we can't pull rates. Please double-check the origin and destination ZIP and try again.");
+      // Primus rejected the resolved city for a ZIP — same customer-fixable class as the pre-flight
+      // gate (kind 'zip'); no specific ZIP is known here, so the classifier uses generic ZIP copy.
+      const _e = new Error("We couldn't match one of your ZIP codes to a city, so we can't pull rates. Please double-check the origin and destination ZIP and try again.");
+      _e._rate = { kind: 'zip', bad: [] };
+      throw _e;
     }
     // Non-retryable client-side failure — still a failed call, NOT an empty lane.
     window._lastRatePullError = { kind: 'transport' };
-    throw new Error("We couldn't retrieve rates just now. Please try again in a moment.");
+    const _e = new Error("We couldn't retrieve rates just now. Please try again in a moment.");
+    _e._rate = window._lastRatePullError;
+    throw _e;
   }
 
   let d;
@@ -2853,18 +2941,29 @@ async function fetchRates(shipment) {
     // A 200 whose body isn't valid JSON is a transport-level problem (proxy / error page), not an empty lane.
     console.error('Rate response not JSON:', text.slice(0, 200));
     window._lastRatePullError = { kind: 'transport' };
-    throw new Error("We couldn't read the rate service response — please try again in a moment.");
+    const _e = new Error("We couldn't read the rate service response — please try again in a moment.");
+    _e._rate = window._lastRatePullError;
+    throw _e;
   }
   let   rates = (d.data && d.data.results && d.data.results.rates) ||
                 (d.data && d.data.results) ||
                 (Array.isArray(d) ? d : null);
 
   if (!rates || !rates.length) {
-    // Successful call, zero carriers — a GENUINELY empty lane, distinct from a transport failure.
+    // Successful call, zero rates. Two DISTINCT states hide here: a validation reject (Primus
+    // refused the request BEFORE rating — e.g. an accessorial not enabled on the account) and a
+    // genuinely empty lane. Diagnostics stay verbatim in the console; only customer-facing text is
+    // sanitized downstream. Throw a STRUCTURED error (no display string) and park the same payload
+    // on window._lastRatePullError so every agent surface classifies it identically.
     const noRates = d.data && d.data.results && d.data.results.noRates;
     console.log('No rates. noRates:', JSON.stringify(noRates));
-    window._lastRatePullError = { kind: 'empty' };
-    throw new Error('No rates returned. ' + (noRates ? noRates.map(n => n.error).join('; ') : text.slice(0, 200)));
+    const _p = _parseNoRates(noRates, text);
+    // kind 'rejected' (not 'empty') is what stops _rateAvailability from ever telling the agent
+    // "no carriers came back" on a reject. Only a true zero-rate result gets kind 'empty'.
+    window._lastRatePullError = Object.assign({ kind: _p.accessorialReject ? 'rejected' : 'empty' }, _p);
+    const _err = new Error(_p.accessorialReject ? 'RATE_REJECTED' : 'RATE_EMPTY');
+    _err._rate = window._lastRatePullError;
+    throw _err;
   }
 
   window._lastRatePullError = null; // success — clear the marker
@@ -9649,7 +9748,7 @@ async function handleWizardInput(text) {
       appendMessage('bot', 'Here are your live rates:', { quotes: rates, isBox: _isBoxW });
     } catch(e) {
       removeTyping();
-      appendMessage('bot', 'Could not retrieve rates: ' + e.message + '. Please try again or contact support@freightandlogistics.ai.');
+      appendMessage('bot', _classifyRateError(e).message);
     }
     wizardStep = null;
     quoteData  = {};
@@ -11852,6 +11951,8 @@ function _rateAvailability() {
     if (r && r.count) return { state: 'settled_with_rates', count: r.count };
     var err = window._lastRatePullError;
     if (err && err.kind === 'empty')     return { state: 'settled_empty', count: 0 };
+    // A validation reject is NOT an empty lane — its own state so no surface says "no carriers".
+    if (err && err.kind === 'rejected')  return { state: 'settled_rejected', count: 0 };
     if (err && err.kind === 'transport') return { state: 'not_settled', reason: 'transport', count: null };
     return { state: 'not_settled', reason: 'none', count: null };
   } catch (e) { return { state: 'not_settled', reason: 'none', count: null }; }
@@ -11878,6 +11979,9 @@ function _liveStateBlock() {
     var _avail = _rateAvailability();
     if (_avail.state === 'settled_with_rates') {
       lines.push('ratesOnScreen: ' + r.count + ' option(s)' + (r.lane ? (' for ' + r.lane) : '') + '. Top: ' + (r.options||[]).slice(0,3).map(function(o){ return o.rank + ') ' + o.carrier + ' $' + o.price + (o.transitDays ? (' ' + o.transitDays + 'd') : ''); }).join('  |  '));
+    } else if (_avail.state === 'settled_rejected') {
+      var _clsLS = _classifyRateError({ _rate: window._lastRatePullError });
+      lines.push('ratesOnScreen: the last rate request was REJECTED before pricing — a service the customer requested cannot be priced on this account. This is NOT an empty lane and NOT a carrier-availability problem. Do NOT say no carriers came back, do NOT blame the lane, the carriers, the freight, or an accessorial combination, and do NOT name any code. Tell the customer only this: "' + _clsLS.message + '"');
     } else if (_avail.state === 'settled_empty') {
       lines.push('ratesOnScreen: a rate pull finished and no carriers came back for this lane. You MAY tell the customer no carriers came back — state that fact and point them to support; never invent a reason.');
     } else {
@@ -12925,6 +13029,7 @@ HOW TO TALK:
 - Never use internal field or state names in anything the customer sees — not "residentialStatus," not "live form state," not "form state," not "LIVE PORTAL STATE," not "quoteForm," nor any other system or plumbing term. Those live in the state block for your use only and are never customer-facing words. When a customer asks how you knew a detail (for example "how do you know the address?"), answer in plain broker language that points to the shipment's real details — e.g. "based on the delivery address on your shipment" — never the internal fields or state that hold them.
 - ZIP RESOLUTION — when the LIVE PORTAL STATE shows originCityResolved:false or destCityResolved:false, that ZIP did not resolve to a city and rates cannot be pulled for it. Tell the customer plainly that you could not find a city for that ZIP (name the ZIP) and ask them to double-check it. If a pull already came back empty on an unresolved ZIP, NEVER attribute it to a guessed cause — not "no carriers," not a "local" or "same-metro" lane, not carrier coverage. The unresolved ZIP is the reason: state that and ask for a corrected ZIP.
 - EMPTY RATE RESULT — STATE THE FACT, POINT TO SUPPORT, NEVER INVENT A CAUSE: when a rate pull returns zero carriers on a lane whose ZIPs resolved (rateCount:0 with no ZIP-resolution problem), tell the customer only that no carriers came back for this lane and that it's best to email support@freightandlogistics.ai so the team can help get it covered. You CANNOT see why nothing returned, so never theorize a reason — do not say the item is oversize or too large, do not say it falls outside standard LTL rate tables, do not say it needs a volume or custom quote, and do not blame the lane, the carriers, or the dimensions. State the fact, point to the support email, and stop.
+- RATE FAILURE — SAY ONLY THE CLASSIFIED MESSAGE: on ANY rate failure, the LIVE PORTAL STATE and the tool result give you the exact customer-safe wording. State only that. Never invent a cause, never attribute the failure to the lane, the carrier mix, the freight, or an accessorial combination, and never speculate about why. A validation reject (a service the customer requested cannot be priced on this account) is NOT the same as no carriers returning — when the state says a request was rejected, do NOT describe it as no carriers being available, do NOT name any accessorial code, and tell the customer only that the rest of the quote is fine and that support can price that service manually.
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then point them to email support@freightandlogistics.ai and the team will follow up. Hazmat is self-serve regardless of hazard class — quote and book it normally. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
@@ -13326,6 +13431,9 @@ async function aiConverse(userText) {
                   _note = 'Rates NOT pulled — the address lookup service was momentarily unavailable. Ask the customer to try again in a moment. Do NOT blame carriers or the lane.';
                 } else if (_avail.reason === 'transport') {
                   _note = 'Rates NOT pulled — the rate service hiccuped after retries. This was a connection problem, NOT an empty lane. Ask the customer to try again in a moment; do NOT say no carriers came back and do NOT blame the lane, the carriers, or the freight.';
+                } else if (_avail.state === 'settled_rejected') {
+                  _note = 'Rates NOT priced — a service the customer requested was REJECTED on this account before pricing. This is NOT an empty lane. Do NOT say no carriers came back and do NOT blame the lane, the carriers, the freight, or an accessorial combination. Say only this and point them to support, never naming a code: "' + _classifyRateError({ _rate: window._lastRatePullError }).message + '"';
+                  _rc = null; _ready = false;
                 } else if (_avail.state === 'settled_empty') {
                   _note = 'Pull complete — no carriers returned for this lane.'; _rc = 0;
                 } else {
@@ -13395,6 +13503,8 @@ async function aiConverse(userText) {
               _rr = Object.assign({}, window._lastRates);
             } else if (_avail.state === 'settled_empty') {
               _rr = { count: 0, settledEmpty: true, options: [], note: 'A rate pull finished and zero carriers came back for this lane. You may tell the customer no carriers came back — state the fact and point them to support; do not invent a cause.' };
+            } else if (_avail.state === 'settled_rejected') {
+              _rr = { count: null, settled: false, rejected: true, options: [], note: 'The last rate request was REJECTED before pricing — a service the customer requested cannot be priced on this account. This is NOT an empty lane. Do NOT say no carriers came back and do NOT blame the lane, carriers, freight, or accessorial combinations. Say only this, never naming a code: "' + _classifyRateError({ _rate: window._lastRatePullError }).message + '"' };
             } else if (_avail.reason === 'transport') {
               _rr = { count: null, settled: false, options: [], note: 'The last rate pull did not complete — the rate service hiccuped after retries. This was a connection problem, not an empty lane. Ask the customer to try again in a moment. Do NOT say no carriers came back.' };
             } else {
@@ -15667,7 +15777,7 @@ async function handleInput(text) {
         appendMessage('bot', 'Here are your updated rates:', { quotes: rates, isBox: _isBox4 });
       } catch(e) {
         removeTyping();
-        appendMessage('bot', 'Could not retrieve rates: ' + e.message + '. Please try again or contact support@freightandlogistics.ai.');
+        appendMessage('bot', _classifyRateError(e).message);
       }
       return;
     }
@@ -15726,7 +15836,7 @@ async function handleInput(text) {
     } catch(e) {
       removeTyping();
       console.error('Rate error:', e);
-      appendMessage('bot', 'Could not retrieve rates: ' + e.message + '. Please try again or contact support@freightandlogistics.ai.');
+      appendMessage('bot', _classifyRateError(e).message);
     }
     return;
   }
@@ -15781,7 +15891,7 @@ async function handleInput(text) {
       } catch(e) {
         removeTyping();
         console.error('Rate error:', e);
-        appendMessage('bot', 'Could not retrieve rates: ' + e.message + '. Please try again or contact support@freightandlogistics.ai.');
+        appendMessage('bot', _classifyRateError(e).message);
       }
       return;
     }
@@ -18691,7 +18801,7 @@ function showQuoteForm(prefill, silent) {
       window._ratePullInFlight = false; // pull failed — clear so read_rates doesn't hang
       container.querySelector('#qt-rates-loading').style.display='none';
       const errEl = container.querySelector('#qt-rates-error');
-      errEl.textContent = 'Could not retrieve rates — ' + (e.message||'please try again') + '. Call (800) 687-3713.';
+      errEl.textContent = _classifyRateError(e).message;
       errEl.style.display='block';
       // Fire SmartPaste narration callback even on error — agent will see no rates in state
       // and tell the customer something went wrong.
