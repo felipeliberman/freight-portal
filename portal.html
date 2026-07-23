@@ -2212,31 +2212,16 @@ const ACC_CODE_OF = {
 // and reaches the outbound guard as a LOUD reject (see below) rather than being silently dropped;
 // it is absent from both the rateable and BOL sets because Primus rejects it on this account.
 const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
-// Codes that may ride in the BOL accessorialsList. RSO is deliberately excluded: residential PICKUP
-// is a shipper flag (payload.shipper.residentialPickup), not an accessorial code. INO is excluded:
-// inside pickup is not enabled on this account (Primus rejects it), so it is undeliverable.
-const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
-// Codes the RATE api accepts. APT is deliberately absent — appointment is a booking flag (carried via
-// appointmentNeeded), not a rateable accessorial; that omission is legitimate and must NOT trip the
-// guard. INO is absent because it is genuinely invalid here (undeliverable everywhere -> guard rejects).
-const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
-// SINGLE SOURCE OF TRUTH for accessorials that reach the carrier by a DEDICATED payload field
-// instead of (or in addition to) the pipe-joined accessorialsList. Such codes are legitimately
-// deliverable even when absent from the rateable/BOL sets, so the outbound guard must NOT reject
-// them. The guard derives its exemption AND its undeliverable set from this table + the two list
-// sets, never a hand-written literal — so adding an off-list accessorial later cannot silently
-// reintroduce the residential-pickup false-reject. Value = the payload field, for documentation.
-const ACC_OFFLIST_TRANSPORT = {
-  RSO: 'shipper.residentialPickup',                     // residential pickup — shipper flag, never in accessorialsList (the one currently off-list-only)
-  RSD: 'consignee.residentialDelivery',                 // residential delivery — consignee flag (also in the list)
-  APT: 'pickup/deliveryInformation.appointmentNeeded',  // appointment — booking boolean (also in the BOL list today; keeps it safe when APT leaves the list)
-  INS: 'commodityInsurance / insuranceAmount',          // cargo insurance — dedicated rate/premium params (also in the list)
-};
-// A code is DELIVERABLE if it can reach the carrier by any mechanism: the rate list, the BOL list,
-// or a dedicated off-list field. Undeliverable = a valid code with none of these -> guard rejects.
-function _accDeliverable(code) {
-  return ACC_RATEABLE_CODES.has(code) || ACC_BOL_CODES.has(code) || !!ACC_OFFLIST_TRANSPORT[code];
-}
+// Codes that may ride in the BOL accessorialsList. RSO IS included: residential pickup is a real
+// accessorialsList code Primus prices (live-verified). It ALSO sets shipper.residentialPickup at
+// book (hasResPU) — belt-and-suspenders; verify Primus doesn't double-count before relying on both.
+// INO is excluded: inside pickup is not enabled on this account (Primus rejects it), so it is undeliverable.
+const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// Codes the RATE api accepts (sent in the pipe-joined accessorialsList GET param). RSO IS rateable —
+// residential pickup is priced by Primus (live-verified: it changes carrier prices ~$40-130 on the
+// same lane). APT is deliberately absent — appointment is a booking flag (appointmentNeeded), not
+// rate-priced; that omission is legitimate. INO is absent because Primus rejects it (undeliverable).
+const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
 function accessorialSet(list) {
   const out = [];
   (list || []).forEach(function (a) {
@@ -2874,7 +2859,7 @@ async function fetchRates(shipment) {
   // are merely not rate-sent (APT — carried to the BOL via appointmentNeeded) are book-eligible and
   // pass through untouched; only undeliverable-everywhere codes trip this.
   const _allAccCodes = accessorialSet(shipment.accessorials);
-  const _undeliverable = _allAccCodes.filter(c => !_accDeliverable(c));
+  const _undeliverable = _allAccCodes.filter(c => !ACC_RATEABLE_CODES.has(c) && !ACC_BOL_CODES.has(c));
   if (_undeliverable.length) {
     console.warn('[accessorial-guard] undeliverable code(s), rejecting quote:', _undeliverable.join(', '));
     window._lastRatePullError = { kind: 'rejected', codes: _undeliverable.slice(), distinct: [], counts: {}, accessorialReject: true, guard: true };
