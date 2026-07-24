@@ -2212,11 +2212,16 @@ const ACC_CODE_OF = {
 // and reaches the outbound guard as a LOUD reject (see below) rather than being silently dropped;
 // it is absent from both the rateable and BOL sets because Primus rejects it on this account.
 const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
-// Codes that may ride in the BOL accessorialsList. RSO IS included: residential pickup is a real
-// accessorialsList code Primus prices (live-verified). It ALSO sets shipper.residentialPickup at
-// book (hasResPU) — belt-and-suspenders; verify Primus doesn't double-count before relying on both.
+// Codes that may ride in the BOL accessorialsList. RSO is deliberately EXCLUDED: residential pickup
+// is carried at book by the shipper.residentialPickup flag (hasResPU), which has delivered it
+// correctly since booking existed. RSO is rateable (priced on the rate) but must NOT also ride the
+// BOL accessorialsList — sending both signals risks a double-count, and the flag alone is proven.
 // INO is excluded: inside pickup is not enabled on this account (Primus rejects it), so it is undeliverable.
-const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// APT is EXCLUDED: appointment travels via the appointmentNeeded booking flag, NOT the accessorialsList.
+// The APT code hard-rejects at rate on this account and is unproven at book, so it must not ride the list.
+// appointmentNeeded keys off the FULL normalized set (_accAll), independent of this list, so dropping APT
+// here does not disarm the appointment signal.
+const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
 // Codes the RATE api accepts (sent in the pipe-joined accessorialsList GET param). RSO IS rateable —
 // residential pickup is priced by Primus (live-verified: it changes carrier prices ~$40-130 on the
 // same lane). APT is deliberately absent — appointment is a booking flag (appointmentNeeded), not
@@ -10412,8 +10417,8 @@ async function submitBookingOnly(opts) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:accCodes.includes('APT') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
+      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:_accAll.includes('APT') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APT') }
     };
     // Validate BEFORE _editingBOLId is consumed: a rejected save must leave the edit target intact,
     // otherwise a retry would POST a new BOL instead of PUT-ing the one being edited.
@@ -10586,11 +10591,11 @@ async function submitBooking() {
         type:               'PO',
         timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00',
         timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00',
-        appointmentNeeded:  accCodes.includes('APT')
+        appointmentNeeded:  _accAll.includes('APT')
       },
       deliveryInformation: {
         type: 'DO',
-        appointmentNeeded: accCodes.includes('APT')
+        appointmentNeeded: _accAll.includes('APT')
       }
     };
 
@@ -12843,8 +12848,8 @@ async function _execBookShipment(input) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,
-      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:accCodes.includes('APT') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:accCodes.includes('APT') }
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:_accAll.includes('APT') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APT') }
     };
 
     const _v = validateBookingPayload(payload);
