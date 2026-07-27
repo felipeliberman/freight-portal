@@ -2217,26 +2217,28 @@ const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','LAO','LAD'
 // correctly since booking existed. RSO is rateable (priced on the rate) but must NOT also ride the
 // BOL accessorialsList — sending both signals risks a double-count, and the flag alone is proven.
 // INO is excluded: inside pickup is not enabled on this account (Primus rejects it), so it is undeliverable.
-// APT is EXCLUDED: appointment travels via the appointmentNeeded booking flag, NOT the accessorialsList.
-// The APT code hard-rejects at rate on this account and is unproven at book, so it must not ride the list.
-// appointmentNeeded keys off the FULL normalized set (_accAll), independent of this list, so dropping APT
-// here does not disarm the appointment signal.
+// APT is EXCLUDED from the BOOK list on purpose: putting APT in the book/save/update payload's
+// accessorialsList causes Primus "Invalid accessorials: APT" 400s and blocks booking — the original
+// reason APT was pulled off the wire. Appointment reaches the BOL ONLY via the appointmentNeeded flag
+// (set on pickup+delivery info). appointmentNeeded keys off the FULL normalized set (_accAll), independent
+// of this list. NOTE: APT IS rateable (see ACC_RATEABLE_CODES below) — it rides the RATE list to be priced;
+// it just must never ride THIS, the book, list. The two requests diverge here by design.
 const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
 // Codes the RATE api accepts (sent in the pipe-joined accessorialsList GET param). RSO IS rateable —
 // residential pickup is priced by Primus (live-verified: it changes carrier prices ~$40-130 on the
-// same lane). APT is deliberately absent — appointment is a booking flag (appointmentNeeded), not
-// rate-priced; that omission is legitimate. INO is absent because Primus rejects it (undeliverable).
-const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
-// Accessorials carried by a DEDICATED off-list field, not the pipe-joined accessorialsList.
-// A code belongs here ONLY if BOTH hold, or it reintroduces the RSO-masking bug (commit 529290a):
-//   (a) it is NOT price-relevant at RATE — so omitting it from the rate call loses nothing, and
-//   (b) its field is genuinely WRITTEN on the book payload.
-// APT is the only such code: appointment does not affect price, and appointmentNeeded is written on
-// every book path (pickup + delivery info). Price-relevant codes (RSO, RSD, INS) must live in the
-// rateable/BOL sets instead — putting them here would hide an unpriced quote, which is what the old
-// table did with RSO (declared a book-only shipper flag as its transport; the RATE GET has no shipper).
+// same lane). APT IS rateable — appointment IS priced by Primus for this account (admin-confirmed: the
+// customer charges breakdown shows an "APPOINTMENT AT DESTINATION" line and the pricing profile carries
+// an appointment fee). APT MUST ride the RATE accessorialsList to be priced, but MUST NOT ride the book
+// list (see ACC_BOL_CODES above — that triggers a 400). INO is absent because Primus rejects it (undeliverable).
+const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// Guard-only exemption table for codes deliverable by a DEDICATED field (not the accessorialsList) that
+// are ALSO absent from both the rateable and BOL sets. A code belongs here ONLY if it is NOT price-relevant
+// at RATE (so omitting it from the rate call loses nothing) AND its field is genuinely WRITTEN at book.
+// Currently EMPTY: APT used to live here, but the admin confirmed appointment IS rate-priced for this
+// account, so APT graduated into ACC_RATEABLE_CODES (it now rides the RATE list) while still being kept
+// off the BOOK list and carried to the BOL by appointmentNeeded. The mechanism stays for any future code
+// that is genuinely off the rate wire — do NOT re-add a price-relevant code here (that masks an unpriced quote).
 const ACC_OFFLIST_TRANSPORT = {
-  APT: 'pickup/deliveryInformation.appointmentNeeded',  // appointment — booking boolean, never in accessorialsList, not rate-priced
 };
 // Deliverable via ANY real mechanism: the rate list, the BOL list, OR a dedicated off-list field.
 // Undeliverable = a valid code with none of these -> the guard rejects (only INO today).
