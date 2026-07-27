@@ -13294,6 +13294,120 @@ RE-RATING AFTER AN ACCESSORIAL CHANGE (in-flight requote): when the customer is 
 
 COMPANY: Freight and Logistics, Inc. Est. 2013. (800) 687-3713. support@freightandlogistics.ai. Mon-Fri 6:30 AM - 4:00 PM PST. Serving all of US and Canada.`;
 
+// ─── POST-GENERATION TURN GATE ────────────────────────────────────────────────
+// The single hard constraint on customer-facing agent prose. _liveStateBlock biases the model's
+// INPUT (belt); this gates its OUTPUT (suspenders) — the two coexist, this does NOT replace the
+// state-block biasing. Every terminal aiConverse turn passes finalText through here before
+// _showBot. It reads ONLY structural state — it never trusts the prose to decide truth — and
+// enforces three rules that prompt lines kept regressing on:
+//   1. RE-ASK: a question about a field the state shows is already answered is caught. First catch
+//      → regenerate ONCE with the answered value flagged (bounded and unbypassable via ctx.regenDone,
+//      set by the caller's own one-shot latch). On the post-regen pass a still-present re-ask is
+//      STRIPPED, never regenerated again — an ungated regeneration fight is a worse bug than the
+//      occasional re-ask.
+//   2. PROMISE-WITHOUT-ACTION: keyed on _ratePullInFlight / _rateAvailability / _onRatesReady, not
+//      on the prose. A pull genuinely in flight arms _onRatesReady so it WILL deliver; already-
+//      settled rates are delivered now; a forward promise with nothing pending is stripped (silent
+//      beats promise-and-vanish). Prose is touched only to remove a clause the flags prove unbacked.
+//   3. FABRICATION BACKSTOP: when no rate result has settled (not_settled) or the quote was rejected
+//      (settled_rejected), invented lane/carrier/availability language is rewritten to the canonical
+//      _classifyRateError message — the same copy shipped pre-generation, now enforced at the output.
+// Returns { text, regenerate, note, deliver }. Side effects (arming _onRatesReady) happen here; the
+// caller injects `note` and re-loops on regenerate, and calls _summarizeRatesToChat on deliver.
+function _gateFinalText(finalText, ctx) {
+  ctx = ctx || {};
+  var text = String(finalText == null ? '' : finalText);
+  var out = { text: text, regenerate: false, note: null, deliver: false };
+  // Split keeping terminators so a single offending sentence can be removed without mangling the rest.
+  var _sentences = function (t) { return String(t).match(/[^.!?]+[.!?]*/g) || [String(t)]; };
+  var _clean = function (arr) { return arr.join('').replace(/\s+/g, ' ').trim(); };
+  try {
+    // ── 1. RE-ASK ──────────────────────────────────────────────────────────────
+    // Each entry pairs an ANSWERED-state flag with a concept regex (lexemes, not fixed phrasings, so
+    // it survives rephrasing). A sentence is a re-ask only when it is a question AND matches a concept
+    // whose state says answered — so a legitimate first-time question can never trip it.
+    var answered = [];
+    try {
+      var _q  = (typeof _quoteFormState === 'function')   ? _quoteFormState()   : {};
+      var _bk = (typeof _bookingPanelState === 'function') ? _bookingPanelState() : {};
+      var _insS = ''; try { _insS = (typeof insuranceState === 'function') ? (insuranceState().status || '') : ''; } catch (e) {}
+      // When insurance is already added or being collected there is NO legitimate insurance question
+      // (offer or value), so no exclude — any insurance question is a re-ask. (A generic exclude like
+      // "should i" wrongly swallowed a value re-ask: "what declared value should I insure it for?".)
+      if (_insS === 'added' || _insS === 'collecting')
+        answered.push({ field: 'cargo insurance', re: /(insur|coverage|premium|declared value|value of (the )?(cargo|goods|shipment|freight))/i, exclude: null });
+      if (_q && _q.hazmat === true)
+        answered.push({ field: 'hazmat', re: /(hazmat|hazardous|dangerous goods)/i, exclude: null });
+      var _puDate = (_bk && _bk.pickupDate) || (_q && _q.pickupDate) || '';
+      if (_puDate)
+        answered.push({ field: 'pickup date', re: /(pickup date|pickup day|what day|which day|when .{0,20}pick|date .{0,12}pickup)/i, exclude: null });
+      var _resKnown = false; try { _resKnown = !!(window._residentialStatus && window._residentialStatus.residential === true); } catch (e) {}
+      if (_resKnown)
+        answered.push({ field: 'residential status', re: /(residential|residence|\bhome\b|\bhouse\b)/i, exclude: /(add|adding|include|want me to|should i|liftgate)/i });
+    } catch (e) {}
+
+    if (answered.length) {
+      var hitFields = [], keep = [];
+      _sentences(text).forEach(function (s) {
+        var offending = null;
+        if (/\?/.test(s)) {
+          for (var i = 0; i < answered.length; i++) {
+            var a = answered[i];
+            if (a.re.test(s) && !(a.exclude && a.exclude.test(s))) { offending = a.field; break; }
+          }
+        }
+        if (offending) { if (hitFields.indexOf(offending) < 0) hitFields.push(offending); }
+        else keep.push(s);
+      });
+      if (hitFields.length) {
+        if (!ctx.regenDone) {
+          // FIRST catch → regenerate exactly once, flagging the answered field(s) and their values.
+          var vals = hitFields.map(function (f) {
+            if (f === 'cargo insurance') { try { var ai = insuranceState(); return 'cargo insurance is already on this quote' + (ai && ai.amount ? ' (declared value $' + Number(ai.amount).toLocaleString('en-US') + ')' : ''); } catch (e) {} return 'cargo insurance is already on this quote'; }
+            if (f === 'hazmat') return 'the freight is already marked hazmat on the quote';
+            if (f === 'pickup date') { var d = ((_bk && _bk.pickupDate) || (_q && _q.pickupDate) || ''); return 'the pickup date is already set' + (d ? ' (' + d + ')' : ''); }
+            if (f === 'residential status') return 'the delivery residential status is already known';
+            return f + ' is already answered';
+          });
+          out.regenerate = true;
+          out.note = 'INTERNAL CORRECTION (not from the customer): your reply re-asked for ' + hitFields.join(' and ') + ', but ' + vals.join('; ') + '. Do NOT ask for it — rewrite your reply without that question, keep everything else, and move the conversation forward. Never mention this note.';
+          return out;
+        }
+        // POST-REGEN fallthrough → strip the offending question(s), let the rest through. Never regen again.
+        text = _clean(keep);
+      }
+    }
+
+    // ── 2. PROMISE-WITHOUT-ACTION (flag-keyed) ──────────────────────────────────
+    var _inFlight = false, _avail = { state: 'not_settled' };
+    try { _inFlight = !!window._ratePullInFlight; } catch (e) {}
+    try { _avail = (typeof _rateAvailability === 'function') ? _rateAvailability() : _avail; } catch (e) {}
+    var _deferral = /(give me (a|one) (moment|sec|second|minute)|just a (moment|sec|second)|one (moment|sec|second)|hang on|hold on|bear with me|coming (right )?up|i'?ll have (it|them|that|those|your|the)|i will have|let me (pull|grab|get|run|fetch)|pulling (it|them|those|that|your|the)?\s*(rates?)?\s*(now|up)?|getting (you )?(the |those |your )?rates?|working on (it|that|those)|moment while|be right (back|with))/i;
+    if (_inFlight) {
+      // A pull IS running, but this terminal turn armed nothing to announce it (the agent getRates
+      // path never sets _onRatesReady). Arm it so doGetRates delivers the summary on completion —
+      // structurally backing the promise. Do not stomp an existing arm.
+      try { if (!window._onRatesReady && typeof _summarizeRatesToChat === 'function') window._onRatesReady = _summarizeRatesToChat; } catch (e) {}
+    } else if (_avail.state === 'settled_with_rates') {
+      // Rates already here. If the turn deferred delivery, deliver the summary now and drop the promise.
+      if (_deferral.test(text)) { text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); })); out.deliver = true; }
+    } else {
+      // Nothing pending and no rates. A forward promise here vanishes — strip it; silence beats it.
+      if (_deferral.test(text)) text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); }));
+    }
+
+    // ── 3. FABRICATION BACKSTOP (state-gated) ───────────────────────────────────
+    if (_avail.state === 'not_settled' || _avail.state === 'settled_rejected') {
+      var _fab = /(no carriers?|no rates?|didn'?t come back|did not come back|nothing came back|couldn'?t find (a |any )?(carrier|rate)|not serviceable|don'?t service|doesn'?t service|no coverage|too (large|big|heavy|oversize)|outside .{0,20}(area|lane|route|network)|carriers? (don'?t|won'?t|can'?t|do not))/i;
+      if (_fab.test(text)) {
+        try { var msg = _classifyRateError({ _rate: window._lastRatePullError }).message; if (msg) text = msg; } catch (e) {}
+      }
+    }
+  } catch (e) { out.text = String(finalText == null ? '' : finalText); return out; } // never let the gate break a turn
+  out.text = text;
+  return out;
+}
+
 async function aiConverse(userText) {
   showTyping();
   let _lastBotShown = '';
@@ -13313,6 +13427,9 @@ async function aiConverse(userText) {
   try {
     let loops = 0;
     let convo = msgs.slice();
+    // One-shot latch for the post-generation gate's re-ask regeneration: the gate may force ONE
+    // regenerate; after that it strips and never regenerates again (bounded, unbypassable).
+    let _reaskRegen = false;
 
     // Retry wrapper: transient API errors (overloaded / rate-limited / 5xx / Cloudflare
     // edge timeouts / proxy hiccups) get a short backoff and retry instead of surfacing
@@ -13730,6 +13847,23 @@ async function aiConverse(userText) {
           window._insPreRate = true;
         }
       }
+      // ── POST-GENERATION GATE: re-ask / promise-without-action / fabrication backstop ──
+      const _g = _gateFinalText(finalText, { regenDone: _reaskRegen });
+      if (_g.regenerate && !_reaskRegen) {
+        // Re-ask caught on the first pass — regenerate ONCE, flagging the answered field. The latch
+        // makes this unbypassable: the next terminal pass runs the gate with regenDone true, which
+        // strips instead of regenerating. Feed the discarded reply + the correction back as convo
+        // (never into chatHistory) and loop for a clean rewrite.
+        _reaskRegen = true;
+        convo.push({ role: 'assistant', content: finalText });
+        convo.push({ role: 'user', content: _g.note });
+        showTyping();
+        continue;
+      }
+      finalText = _g.text;
+      // A gate that stripped the whole turn (a bare re-ask or a bare false promise) → nothing safe to
+      // say; suppress rather than render an empty bubble. Silence beats a re-ask or a vanished promise.
+      if (!finalText) { window._lastTurnFailed = false; return; }
       window._lastTurnFailed = false; // recovered — stop re-orienting on the next turn
       chatHistory.push({ role: 'assistant', content: finalText });
       // Mirror into waybHistory so waybAgent has full conversational context
@@ -13739,6 +13873,9 @@ async function aiConverse(userText) {
         waybHistory = _waybTrim(waybHistory);
       }
       _showBot(finalText);
+      // Rates already on screen but the turn deferred delivery → deliver the summary now (flag-gated
+      // in the gate; _summarizeRatesToChat self-guards on settled_with_rates).
+      if (_g.deliver && typeof _summarizeRatesToChat === 'function') { try { _summarizeRatesToChat(); } catch (e) {} }
       return;
     }
     // Ran out of loops — show whatever we have
