@@ -16469,6 +16469,15 @@ function showSavedQuotes() {
 
 // ── BOOKING PANEL ─────────────────────────────────────────────────────────────
 function showBookingPanel(rate, shipmentData) {
+  // Twin of the quote-form guard: the "Booking form is open" chat line (near the end of this
+  // function) is emitted per CALL and is NOT deduped by openRightPanel — that dedupes the TAB, not
+  // the chat message. So two triggers on the same already-open booking panel rendered two identical
+  // bubbles. Capture the authoritative panel state BEFORE openRightPanel adds/reuses the tab, then
+  // greet only on a genuine closed→open transition. resetShipmentState always closes the Book
+  // Shipment tab, so a genuinely new booking still greets; a re-render of an open panel does not.
+  const _bookingTabAlreadyOpen = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
+    ? rpState.tabs.some(t => String(t.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Book Shipment')
+    : false;
   const name      = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
   const logo      = rate._iconUrl || rate.iconUrl || rate.carrierLogo || '';
   const price     = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
@@ -17326,8 +17335,8 @@ function showBookingPanel(rate, shipmentData) {
     }, 150);
   };
 
-  // Prompt the user in chat to paste their booking info
-  setTimeout(() => {
+  // Prompt the user in chat to paste their booking info — once per genuine open (see guard above).
+  if (!_bookingTabAlreadyOpen) setTimeout(() => {
     appendMessage('bot', 'Booking form is open on the right. Fill it in there, or just tell me the shipper name, address, contact, phone, reference number, and pickup date and time and I will fill it for you.');
   }, 200);
 }
@@ -18152,6 +18161,16 @@ function refreshGetRatesEnabled() {
 function showQuoteForm(prefill, silent) {
   const _pf = prefill || {};
   console.log('[FP] showQuoteForm — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| weight:', _pf.weight, '| lineItems:', !!(_pf.lineItems&&_pf.lineItems.length), '| silent:', !!silent);
+  // The "quote form is open" chat line (below) is emitted per CALL and is NOT deduped by
+  // openRightPanel — that dedupes the TAB, not the chat message. So two non-silent triggers for the
+  // same already-open form (e.g. restoreTabState's 2s timer landing on top of a nav/user open, or a
+  // re-entrant open during the DOMContentLoaded restore) rendered two identical bubbles. Capture the
+  // authoritative panel state BEFORE openRightPanel adds/reuses the tab, then greet only on a genuine
+  // closed→open transition. A new chat closes this tab via resetShipmentState(true), so a genuinely
+  // new quote still greets; a re-render of an already-open form does not.
+  const _quoteTabAlreadyOpen = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
+    ? rpState.tabs.some(t => String(t.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Get a Quote')
+    : false;
   window._quoteFormOpen = true;
   window._quoteFormSilent = silent;
   showChatArea();
@@ -18387,7 +18406,7 @@ function showQuoteForm(prefill, silent) {
   openRightPanel(container, 'Get a Quote');
 
   // ── Chat message ─────────────────────────────────────────────────────────
-  if (!window._quoteFormSilent) appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
+  if (!window._quoteFormSilent && !_quoteTabAlreadyOpen) appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
 
   // ── Tab switching ────────────────────────────────────────────────────────
   function switchTab(tab) {
