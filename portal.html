@@ -2820,6 +2820,117 @@ function _classifyRateError(err) {
   return { kind: 'UNKNOWN', message: "We couldn't complete your quote just now. Please try again, or " + RATE_SUPPORT + '.' };
 }
 
+// ─── WRITE-ERROR CLASSIFICATION ───────────────────────────────────────────────
+// The book/save/update/dispatch mirror of _classifyRateError. Where fetchRates throws a STRUCTURED
+// error, the write backends (bookShipment, submitBookingOnly, _canonicalDispatch) throw RAW strings
+// that embed Primus JSON, an HTTP status, internal field names and accessorial codes — e.g.
+//   Save failed 400: {"error":{"code":400,"message":"Invalid accessorials: APT"}}
+// Two tester bugs came straight out of those strings reaching chat: the raw JSON leaked verbatim,
+// and the agent invented a per-carrier cause ("JTS Express isn't accepting the appointment
+// accessorial") for a failure that is identical on EVERY carrier. This ONE classifier is the only
+// thing that turns a write failure into customer copy. Every write path — form panel AND chat —
+// renders ONLY its { kind, message }. It NEVER emits err.message, raw JSON, an HTTP status, an
+// internal field name, or an accessorial code, and it NEVER attributes a failure to a carrier or
+// invents a cause. The failure FACT is always kept: the message always states the shipment did not
+// save / was not booked, so a sanitized failure can never read like a success or a soft warning.
+// `op` is 'book' | 'save' | 'update' | 'dispatch' | 'requote' and only tunes the fact wording.
+function _writeMissingField(low, err) {
+  // Prefer the already-plain field names our own validateBookingPayload produced.
+  if (err && Array.isArray(err.fields) && err.fields.length) {
+    const f = err.fields;
+    return f.length === 1 ? f[0] : (f.slice(0, -1).join(', ') + ' and ' + f[f.length - 1]);
+  }
+  // Otherwise map Primus internal field tokens to plain customer terms — the raw token never escapes.
+  const map = [
+    [/shipper.*(name|company)|pickup.*(name|company)/, 'a pickup business name'],
+    [/consignee.*(name|company)|delivery.*(name|company)/, 'a delivery business name'],
+    [/shipper.*contact|pickup.*contact/, 'a pickup contact name'],
+    [/consignee.*contact|delivery.*contact/, 'a delivery contact name'],
+    [/phone/, 'a valid phone number'],
+    [/shipper.*(zip|postal)|pickup.*(zip|postal)|origin.*(zip|postal)/, 'a pickup ZIP'],
+    [/consignee.*(zip|postal)|delivery.*(zip|postal)|destination.*(zip|postal)/, 'a delivery ZIP'],
+    [/address|street/, 'a complete address'],
+    [/\bcity\b/, 'a city'],
+    [/\bstate\b/, 'a state'],
+    [/pickup.*date|\bdate\b/, 'a valid pickup date'],
+  ];
+  for (let i = 0; i < map.length; i++) if (map[i][0].test(low)) return map[i][1];
+  return '';
+}
+
+function _classifyWriteError(err, op) {
+  op = op || 'save';
+  // Normalize whatever a call site hands us (an Error, a bare string, or a {code,message,error}
+  // object) into a raw string + any structured code — WITHOUT ever letting the raw text out.
+  let raw = '', code = '';
+  if (err && typeof err === 'object') {
+    raw = String(err.message || err.error || (err.error && err.error.message) || '');
+    code = String(err.code || (err.error && err.error.code) || '');
+  } else if (typeof err === 'string') {
+    raw = err;
+  }
+  // Peel any embedded JSON body so the Primus message text can be pattern-matched (never shown).
+  let detail = raw;
+  const _j = raw.match(/\{[\s\S]*\}/);
+  if (_j) { try { const o = JSON.parse(_j[0]); const m = o && (o.message || (o.error && (o.error.message || o.error))); if (m) detail = String(m); } catch (_) {} }
+  const low = detail.toLowerCase();
+
+  // The failure FACT, phrased per operation. Always present so a failure never reads as success.
+  const notDone = op === 'book'     ? 'Nothing was booked'
+                : op === 'update'   ? 'Your changes were not saved'
+                : op === 'dispatch' ? 'Your shipment was not dispatched'
+                : op === 'requote'  ? 'We could not reopen that shipment'
+                : /* save */          'Your shipment was not saved';
+  const support = RATE_SUPPORT.charAt(0).toUpperCase() + RATE_SUPPORT.slice(1);
+
+  // TRANSPORT — network / timeout / 5xx / could-not-reach. No cause to name; tell them to retry.
+  if (/network|timeout|timed out|failed to fetch|networkerror|load failed|could ?n['’]?t reach|could not reach|econn|gateway|temporarily unavailable/i.test(low) ||
+      /\b5\d\d\b/.test(low)) {
+    return { kind: 'TRANSPORT', message: notDone + " — we couldn't reach our system just now. Please try again in a moment, or " + RATE_SUPPORT + '.' };
+  }
+
+  // DISPATCH_FIELD — dispatch only. The shipment is ALREADY saved from the earlier step; a field
+  // Primus needs to tender is missing. This folds in the old formatDispatchError mapping so no raw
+  // dispatch reason ever leaks: state plainly it did not dispatch, name the field in customer terms,
+  // and give the My Shipments fix path. Distinct kind because its wording ("saved but can't dispatch
+  // yet") and fix path differ from a book/save VALIDATION, where nothing was saved at all.
+  if (op === 'dispatch') {
+    let fix = '';
+    if (/consignee.*contact|delivery.*contact/.test(low))  fix = "it's missing a delivery contact name. Open it in My Shipments, add a Contact Name under Delivery, then dispatch again.";
+    else if (/shipper.*contact|pickup.*contact/.test(low)) fix = "it's missing a pickup contact name. Open it in My Shipments, add a Contact Name under Pickup, then dispatch again.";
+    else if (/phone/.test(low))                            fix = "a phone number is missing or invalid. Open it in My Shipments, add a valid pickup and delivery phone, then dispatch again.";
+    else if (/address|street|zip|postal/.test(low))        fix = "the pickup or delivery address is incomplete. Open it in My Shipments, complete the address, then dispatch again.";
+    if (fix) return { kind: 'DISPATCH_FIELD', message: "This shipment is saved but can't dispatch yet — " + fix };
+  }
+
+  // ACCESSORIAL_REJECTED — a requested service is not enabled on the account. Name the FRIENDLY
+  // service (never the code), and make clear the freight itself is fine. Extracted codes are run
+  // through ACC_CODE_OF first so a legacy/fake token (e.g. APT) resolves to its real label.
+  if (/accessorial/i.test(low)) {
+    const codes = [];
+    const m = detail.match(/accessorials?\s*[:\-]?\s*([A-Za-z]{2,4}(?:\s*,\s*[A-Za-z]{2,4})*)/i);
+    if (m) m[1].split(/[,\s]+/).forEach(function (t) { t = t.trim().toUpperCase(); if (t) { const c = ACC_CODE_OF[t] || t; if (codes.indexOf(c) < 0) codes.push(c); } });
+    const labels = codes.map(function (c) { return ACC_LABEL[c]; }).filter(Boolean);
+    let svc = 'one of the services you asked for';
+    if (labels.length === 1) svc = labels[0];
+    else if (labels.length > 1) svc = labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1];
+    const tail = labels.length > 1 ? "those services are what's holding it up" : "that service is what's holding it up";
+    return { kind: 'ACCESSORIAL_REJECTED', message: notDone + " — we couldn't set up this shipment with " + svc + " on your account. Your shipment details are fine; " + tail + '. ' + support + " and we'll take care of it manually." };
+  }
+
+  // VALIDATION — a required field is missing or bad. Say which in plain terms, never the raw field.
+  // Triggers on our own MISSING_REQUIRED_FIELD, on Primus "required/missing/not submitted", or when
+  // a field can be positively mapped from the text; anything else stays UNKNOWN rather than guess.
+  const need = _writeMissingField(low, err);
+  if (code === 'MISSING_REQUIRED_FIELD' || /required|missing|not submitted|incomplete/i.test(low) || need) {
+    const what = need ? (' — ' + need + ' ' + (/\band\b/.test(need) ? 'are' : 'is') + ' needed') : ' — a required detail is missing';
+    return { kind: 'VALIDATION', message: notDone + what + '. Please add it and try again, or ' + RATE_SUPPORT + '.' };
+  }
+
+  // UNKNOWN — no cause we can safely name. Generic, honest, never invented.
+  return { kind: 'UNKNOWN', message: notDone + " — we couldn't complete it just now. Please try again, or " + RATE_SUPPORT + '.' };
+}
+
 async function fetchRates(shipment) {
   // Clear any prior pull's outcome marker up front so an early throw (e.g. the ZIP gate below)
   // leaves it null and the ZIP/outage branches own the messaging. It is set again further down
@@ -6375,21 +6486,9 @@ function showBookingConfirmedModal(bc) {
 // Single chokepoint for every dispatch-fail surface. Turns a raw Primus error
 // into customer-facing, actionable text: name what's missing + how to fix it.
 // Saving an incomplete BOL as a draft is fine — this only speaks to dispatch.
-function formatDispatchError(raw) {
-  const e = (raw || '').toString();
-  const low = e.toLowerCase();
-  // Map known Primus validation failures to a clear fix.
-  if (/consignee.*contact|delivery.*contact/.test(low))
-    return "This shipment is saved but can't dispatch yet — it's missing a delivery contact name. Open it in My Shipments, add a Contact Name under Delivery, then dispatch again.";
-  if (/shipper.*contact|pickup.*contact/.test(low))
-    return "This shipment is saved but can't dispatch yet — it's missing a pickup contact name. Open it in My Shipments, add a Contact Name under Pickup, then dispatch again.";
-  if (/phone/.test(low))
-    return "This shipment is saved but can't dispatch yet — a phone number is missing or invalid. Open it in My Shipments, add a valid pickup/delivery phone, then dispatch again.";
-  if (/address|zip/.test(low))
-    return "This shipment is saved but can't dispatch yet — the pickup or delivery address is incomplete. Open it in My Shipments, complete the address, then dispatch again.";
-  // Fallback: still name the raw reason (it's usually specific) and give the fix path.
-  return "This shipment is saved but couldn't dispatch — " + e + ". Open it in My Shipments to complete the missing info and dispatch again, or call (800) 687-3713 if you're stuck.";
-}
+// Dispatch failures are classified by the canonical _classifyWriteError(err, 'dispatch') — its
+// DISPATCH_FIELD branch carries the field-specific "saved but can't dispatch yet" fix-path copy
+// that formatDispatchError used to own, with no raw-reason fallback that could leak Primus text.
 
 // ── CANONICAL DISPATCH ENGINE ──────────────────────────────────────────────────
 // Single source of truth for all dispatch calls. Every UI/agent path calls this.
@@ -6424,8 +6523,8 @@ async function _chargeAtDispatch(BOLId, token) {
   // card charged and the tender rejected (the charge-before-validate bug). Contact names are
   // the confirmed Primus requirements; anything else Primus rejects still hits the D5 idempotent
   // hold-and-retry net. Reaching here means the BOL fetch succeeded (otherwise: no_amount above).
-  if (!consigneeContact) return { ok: false, code: 'missing_field', error: formatDispatchError('consignee contact required') };
-  if (!shipperContact) return { ok: false, code: 'missing_field', error: formatDispatchError('shipper contact required') };
+  if (!consigneeContact) return { ok: false, code: 'missing_field', error: _classifyWriteError({ message: 'consignee contact required' }, 'dispatch').message };
+  if (!shipperContact) return { ok: false, code: 'missing_field', error: _classifyWriteError({ message: 'shipper contact required' }, 'dispatch').message };
   try {
     const cr = await fetch(STRIPE_WORKER + '/charge-saved-card', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6447,7 +6546,7 @@ function _dispatchChargeMessage(cd, bolNumber) {
   const code = cd && cd.code;
   if (code === 'missing_field') {
     // Not a payment problem — a required field is missing, so we blocked BEFORE charging.
-    // cd.error is the formatDispatchError text naming the field + the fix path.
+    // cd.error is the _classifyWriteError('dispatch') text naming the field + the fix path.
     return (cd && cd.error) || 'This shipment is missing a required field and was not dispatched. Open it in My Shipments, complete it, then dispatch again.';
   }
   if (code === 'no_card' || code === 'no_customer') {
@@ -6695,7 +6794,7 @@ function showShipmentSavedModal(bc) {
     if (!dr.ok) {
       overlay.remove();
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-      appendMessage('bot', formatDispatchError(dr.error));
+      appendMessage('bot', _classifyWriteError({ message: dr.error }, 'dispatch').message);
       return;
     }
     overlay.remove();
@@ -7157,7 +7256,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     }
     if (!dr.ok) {
       if (activeBtn) { activeBtn.innerHTML = 'Dispatch Shipment'; activeBtn.disabled = false; }
-      appendMessage('bot', formatDispatchError(dr.error));
+      appendMessage('bot', _classifyWriteError({ message: dr.error }, 'dispatch').message);
       return;
     }
     const validDocs = (dr.docs || []).filter(d => d && d.url);
@@ -10447,8 +10546,9 @@ async function submitBookingOnly(opts) {
     if (!_v.ok) {
       removeTyping();
       if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
-      appendMessage('bot', 'I could not save this yet — ' + _v.fields.join(' and ') + ' ' + (_v.fields.length > 1 ? 'are' : 'is') + ' still needed. Nothing was sent.');
-      return { ok: false, error: { code: _v.code, message: _v.message } };
+      const _c = _classifyWriteError(_v, 'save');
+      appendMessage('bot', _c.message);
+      return { ok: false, error: { code: _v.code, kind: _c.kind, message: _c.message } };
     }
     const _editBolId = window._editingBOLId || null;
     const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
@@ -10480,8 +10580,9 @@ async function submitBookingOnly(opts) {
   } catch(e) {
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
-    appendMessage('bot', 'Save error: ' + e.message);
-    return { ok: false, error: { code: (e && e.code) || 'SAVE_FAILED', message: (e && e.message) || 'unknown error' } };
+    const _c = _classifyWriteError(e, 'save');
+    appendMessage('bot', _c.message);
+    return { ok: false, error: { code: (e && e.code) || 'SAVE_FAILED', kind: _c.kind, message: _c.message } };
   }
 }
 
@@ -10624,7 +10725,7 @@ async function submitBooking() {
     if (!_v.ok) {
       removeTyping();
       if (_bkBtn) { _bkBtn.textContent = 'Book & Dispatch'; _bkBtn.disabled = false; }
-      appendMessage('bot', 'I could not book this yet — ' + _v.fields.join(' and ') + ' ' + (_v.fields.length > 1 ? 'are' : 'is') + ' still needed. Nothing was sent.');
+      appendMessage('bot', _classifyWriteError(_v, 'book').message);
       return;
     }
     const { BOLId, BOLNumber, docs } = await bookShipment(payload, { token });
@@ -10713,7 +10814,7 @@ async function submitBooking() {
     removeTyping();
     if (_bkBtn) { _bkBtn.textContent = 'Book Shipment'; _bkBtn.disabled = false; }
     console.error('Booking error:', e);
-    appendMessage('bot', 'Booking error: ' + e.message + '. Please contact support@freightandlogistics.ai or call (800) 687-3713.');
+    appendMessage('bot', _classifyWriteError(e, 'book').message);
     bookingStep = null; bookingRate = null; bookingData = {};
   }
 }
@@ -12468,7 +12569,8 @@ function _execUpdateBooking(input) {
     return { ok:true, carrier: _rateDisplayName(lock.rate), summary:'Booking panel updated: ' + _describeBookingInput(input), bookingState: _bookingPanelState() };
   } catch(e) {
     console.error('update_booking error:', e);
-    return { ok:false, error:'Could not update the booking panel: ' + (e.message||'unknown') };
+    const _c = _classifyWriteError(e, 'update');
+    return { ok:false, kind:_c.kind, message:_c.message };
   }
 }
 
@@ -12874,13 +12976,14 @@ async function _execBookShipment(input) {
     };
 
     const _v = validateBookingPayload(payload);
-    if (!_v.ok) return { ok:false, code:_v.code, fields:_v.fields, error:_v.message };
+    if (!_v.ok) { const _c = _classifyWriteError(_v, 'book'); return { ok:false, kind:_c.kind, message:_c.message }; }
     let _booked;
     try {
       _booked = await bookShipment(payload, { token });
     } catch (e) {
       try { console.error('[BOOK 400]', e.message, '\npayload:', JSON.stringify(payload)); } catch(_) {}
-      return { ok:false, error: (e.message || 'Booking error') + '. Please try again or call (800) 687-3713.' };
+      const _c = _classifyWriteError(e, 'book');
+      return { ok:false, kind:_c.kind, message:_c.message };
     }
     const BOLId = _booked.BOLId;
     const BOLNumber = _booked.BOLNumber;
@@ -12897,7 +13000,8 @@ async function _execBookShipment(input) {
     return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked and set up in our system, ready to dispatch.' };
   } catch (e) {
     console.error('book_shipment error:', e);
-    return { ok:false, error: 'Booking error: ' + (e.message||'unknown') + '. Please try again or call (800) 687-3713.' };
+    const _c = _classifyWriteError(e, 'book');
+    return { ok:false, kind:_c.kind, message:_c.message };
   }
 }
 
@@ -12949,7 +13053,8 @@ async function _execDispatchShipment(input) {
     }
     if (!dr.ok) {
       console.error('dispatch_shipment error:', dr.error);
-      return { ok: false, error: formatDispatchError(dr.error) };
+      const _c = _classifyWriteError({ message: dr.error }, 'dispatch');
+      return { ok: false, kind: _c.kind, message: _c.message };
     }
 
     const validDocs = (dr.docs || []).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
@@ -12976,7 +13081,8 @@ async function _execDispatchShipment(input) {
   } catch (e) {
     window._dispatchingBOLId = null;
     console.error('dispatch_shipment error:', e);
-    return { ok: false, error: 'Dispatch error: ' + (e.message || 'unknown') + '. The shipment may be booked — call (800) 687-3713 to confirm.' };
+    const _c = _classifyWriteError(e, 'dispatch');
+    return { ok: false, kind: _c.kind, message: _c.message };
   }
 }
 
@@ -12990,8 +13096,8 @@ async function _execSaveShipment(input) {
       // Resolve to a canonical BOLId or refuse. Never PUT against a guessed id.
       const _res = await setEditingBOLId(bolRef);
       if (!_res.ok) {
-        return { ok: false, saveFailed: true, code: _res.code, error: _res.message,
-          note: 'THE SHIPMENT WAS NOT SAVED — the shipment reference could not be resolved, so nothing was sent. Do NOT state any BOL number, do NOT say it is in My Shipments, and do NOT use any success wording.' };
+        const _c = _classifyWriteError({ code: _res.code, message: _res.message }, 'save');
+        return { ok: false, kind: _c.kind, message: _c.message };
       }
     }
     // Success is decided ONLY by this call's typed result. Reading window._lastBooked here was the
@@ -13002,9 +13108,11 @@ async function _execSaveShipment(input) {
     // Saved = this call said ok AND either returned an id, or acknowledged an edit (a successful
     // Primus edit PUT answers 2xx with an empty body, which is real success carrying no id).
     if (!_res || _res.ok !== true || !(_res.bolId || _res.editAcknowledged)) {
-      const _why = (_res && _res.error && _res.error.message) || 'the save did not go through';
-      return { ok: false, saveFailed: true, error: _why,
-        note: 'THE SHIPMENT WAS NOT SAVED. Tell the customer plainly that it did not save and give the reason in one short plain sentence. Do NOT state any BOL number, do NOT say it is in My Shipments, and do NOT use any success wording ("saved", "all set", "you\'re booked"). Offer to try again, or to email support@freightandlogistics.ai if it keeps failing. Do not invent a cause and do not blame the carrier or the lane.' };
+      // submitBookingOnly already classified this failure and carried { kind, message } on _res.error.
+      // Reuse it verbatim (never re-classify a friendly string) so chat matches the form panel exactly.
+      const _e = (_res && _res.error) || {};
+      const _c = _e.kind ? { kind: _e.kind, message: _e.message } : _classifyWriteError(_e, 'save');
+      return { ok: false, kind: _c.kind, message: _c.message };
     }
     if (!_res.bolId) {
       return { ok: true, editAcknowledged: true, BOLId: null, BOLNumber: null,
@@ -13015,7 +13123,8 @@ async function _execSaveShipment(input) {
     return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
       message: 'Saved as BOL ' + _bolShown + ' — it is in My Shipments, dispatch when ready.' };
   } catch(e) {
-    return { ok: false, error: 'Save error: ' + (e.message || 'unknown') };
+    const _c = _classifyWriteError(e, 'save');
+    return { ok: false, kind: _c.kind, message: _c.message };
   }
 }
 
@@ -13038,7 +13147,8 @@ async function _execRequoteShipment(input) {
     const bolNum = s.BOLNumber || s.bolNumber || s.BOLId || bolRef;
     return { ok: true, message: 'Requote form opened for BOL ' + bolNum + '. The original freight details are pre-filled. If the customer already confirmed a pickup date and window earlier in this conversation, you do not need to re-ask — carry them forward and mention them in the read-back. Only ask if pickup was never confirmed.' };
   } catch(e) {
-    return { ok: false, error: 'Requote error: ' + (e.message || 'unknown') };
+    const _c = _classifyWriteError(e, 'requote');
+    return { ok: false, kind: _c.kind, message: _c.message };
   }
 }
 
@@ -13074,6 +13184,7 @@ HOW TO TALK:
 - ZIP RESOLUTION — when the LIVE PORTAL STATE shows originCityResolved:false or destCityResolved:false, that ZIP did not resolve to a city and rates cannot be pulled for it. Tell the customer plainly that you could not find a city for that ZIP (name the ZIP) and ask them to double-check it. If a pull already came back empty on an unresolved ZIP, NEVER attribute it to a guessed cause — not "no carriers," not a "local" or "same-metro" lane, not carrier coverage. The unresolved ZIP is the reason: state that and ask for a corrected ZIP.
 - EMPTY RATE RESULT — STATE THE FACT, POINT TO SUPPORT, NEVER INVENT A CAUSE: when a rate pull returns zero carriers on a lane whose ZIPs resolved (rateCount:0 with no ZIP-resolution problem), tell the customer only that no carriers came back for this lane and that it's best to email support@freightandlogistics.ai so the team can help get it covered. You CANNOT see why nothing returned, so never theorize a reason — do not say the item is oversize or too large, do not say it falls outside standard LTL rate tables, do not say it needs a volume or custom quote, and do not blame the lane, the carriers, or the dimensions. State the fact, point to the support email, and stop.
 - RATE FAILURE — SAY ONLY THE CLASSIFIED MESSAGE: on ANY rate failure, the LIVE PORTAL STATE and the tool result give you the exact customer-safe wording. State only that. Never invent a cause, never attribute the failure to the lane, the carrier mix, the freight, or an accessorial combination, and never speculate about why. A validation reject (a service the customer requested cannot be priced on this account) is NOT the same as no carriers returning — when the state says a request was rejected, do NOT describe it as no carriers being available, do NOT name any accessorial code, and tell the customer only that the rest of the quote is fine and that support can price that service manually.
+- BOOKING, SAVE, UPDATE, AND DISPATCH FAILURES — SAY ONLY THE CLASSIFIED MESSAGE, NEVER A CARRIER, NEVER AN INVENTED CAUSE: when a book_shipment, save_shipment, update_booking, requote_shipment, or dispatch_shipment result comes back with ok:false, it carries a customer-safe "message" field — relay ONLY what that message says. A failed action did not succeed: never claim the attempted step went through — do not say it was booked on a book failure, saved on a save failure, or dispatched on a dispatch failure — and never state or imply a BOL number for a failed write. (A dispatch failure's message may note the shipment is already saved from the earlier step and give a My Shipments fix path — relay that exactly; that is not a success claim.) NEVER attribute a booking, save, or dispatch failure to a carrier — these failures are identical on every carrier, so saying a named carrier "isn't accepting," "is rejecting," or "won't take" a service or accessorial is ALWAYS wrong and forbidden. Do NOT name any accessorial, service, or code as the cause unless the classified message itself names the friendly service, do NOT invent a reason, and do NOT theorize about the freight, the lane, or the account. If the message says a service could not be set up on the account, relay exactly that and that support can handle it manually — nothing more.
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then point them to email support@freightandlogistics.ai and the team will follow up. Hazmat is self-serve regardless of hazard class — quote and book it normally. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
