@@ -2167,7 +2167,7 @@ const CUSTOMERS = {};
 let appletToken = null;
 let appletExpiry = 0;
 
-// ACC_MAP (label -> code) is retired. It was the second, staler of two mappings: it lacked APT
+// ACC_MAP (label -> code) is retired. It was the second, staler of two mappings: it lacked appointment
 // entirely and mapped 'Limited Access Pickup' to LAD (the DELIVERY code). accessorialSet() in the
 // canonical block below is now the only label/code normalizer in the app.
 
@@ -2176,7 +2176,7 @@ const ACC_LABEL = {
   LFD:'Liftgate Delivery',     LFO:'Liftgate Pickup',
   IND:'Inside Delivery',       INO:'Inside Pickup',
   LAD:'Limited Access Delivery', LAO:'Limited Access Pickup',
-  APT:'Appointment Delivery',  APD:'Appointment Delivery',
+  APD:'Appointment Delivery',
   INS:'Cargo Insurance',       HZM:'Hazmat',
   OVL:'Overlength',            SOR:'Sort & Segregate',
   TWO:'Two-Man Delivery',      NBD:'Notify Before Delivery',
@@ -2199,45 +2199,48 @@ const ACC_CODE_OF = {
   'RESIDENTIAL DELIVERY':'RSD','RESIDENTIAL PICKUP':'RSO',
   'INSIDE DELIVERY':'IND','INSIDE PICKUP':'INO',
   'LIMITED ACCESS DELIVERY':'LAD','LIMITED ACCESS PICKUP':'LAO','LIMITED ACCESS':'LAD',
-  'APPOINTMENT DELIVERY':'APT','APPOINTMENT REQUIRED':'APT','APPOINTMENT':'APT',
+  'APPOINTMENT DELIVERY':'APD','APPOINTMENT REQUIRED':'APD','APPOINTMENT':'APD','APPOINTMENT AT DESTINATION':'APD',
   'CARGO INSURANCE':'INS','INSURANCE':'INS',
   'HAZMAT':'HZM','OVERLENGTH':'OVL','SORT & SEGREGATE':'SOR',
   'TWO-MAN DELIVERY':'TWO','NOTIFY BEFORE DELIVERY':'NBD',
-  // Legacy code migration: a shipment saved before the fix may carry the raw retired code 'NAO'.
-  // Normalize it to the canonical 'LAO' so a re-quote sends the real code instead of silently
-  // dropping the customer's limited-access-pickup requirement.
-  'NAD':'LAD','NAO':'LAO','RSP':'RSO',
+  // Legacy code migration: a shipment saved before the fix may carry a raw retired/fake code.
+  // 'NAO'->'LAO' (retired), 'APT'->'APD' (APT was NEVER a real Primus code — appointment is APD
+  // "Appointment at Destination"; same class as NAO). Normalize so a re-quote sends the real code
+  // instead of a code the shipping location rejects.
+  'NAD':'LAD','NAO':'LAO','RSP':'RSO','APT':'APD',
 };
 // Codes accessorialSet may normalize TO. INO is kept here so "inside pickup" survives the normalizer
 // and reaches the outbound guard as a LOUD reject (see below) rather than being silently dropped;
 // it is absent from both the rateable and BOL sets because Primus rejects it on this account.
-const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+const ACC_VALID_CODES = new Set(['LFD','LFO','RSD','RSO','IND','INO','LAO','LAD','APD','INS','HZM','OVL','SOR','TWO','NBD']);
 // Codes that may ride in the BOL accessorialsList. RSO is deliberately EXCLUDED: residential pickup
 // is carried at book by the shipper.residentialPickup flag (hasResPU), which has delivered it
 // correctly since booking existed. RSO is rateable (priced on the rate) but must NOT also ride the
 // BOL accessorialsList — sending both signals risks a double-count, and the flag alone is proven.
 // INO is excluded: inside pickup is not enabled on this account (Primus rejects it), so it is undeliverable.
-// APT is EXCLUDED from the BOOK list on purpose: putting APT in the book/save/update payload's
-// accessorialsList causes Primus "Invalid accessorials: APT" 400s and blocks booking — the original
-// reason APT was pulled off the wire. Appointment reaches the BOL ONLY via the appointmentNeeded flag
-// (set on pickup+delivery info). appointmentNeeded keys off the FULL normalized set (_accAll), independent
-// of this list. NOTE: APT IS rateable (see ACC_RATEABLE_CODES below) — it rides the RATE list to be priced;
-// it just must never ride THIS, the book, list. The two requests diverge here by design.
-const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+// APD (Appointment at Destination) rides the BOOK list like any other accessorial. The old "Invalid
+// accessorials: APT" 400 that made us pull appointment off the book wire was NOT a book-side rejection
+// of appointment — it was that 'APT' is a FAKE code (never in Primus systemAccessorials). APD is a real
+// code (Visible=Yes), so it is accepted here exactly like LFD/RSD. appointmentNeeded is ALSO still set on
+// pickup+delivery info (keyed off _accAll) as the operational "schedule an appointment" flag — proven to
+// persist on the BOL. PENDING live book+void verification: confirm APD here does not 400, AND does not
+// double-bill alongside appointmentNeeded (cf. the RSO/residentialPickup double-count precedent, 529290a).
+const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','APD','INS','HZM','OVL','SOR','TWO','NBD']);
 // Codes the RATE api accepts (sent in the pipe-joined accessorialsList GET param). RSO IS rateable —
 // residential pickup is priced by Primus (live-verified: it changes carrier prices ~$40-130 on the
-// same lane). APT IS rateable — appointment IS priced by Primus for this account (admin-confirmed: the
-// customer charges breakdown shows an "APPOINTMENT AT DESTINATION" line and the pricing profile carries
-// an appointment fee). APT MUST ride the RATE accessorialsList to be priced, but MUST NOT ride the book
-// list (see ACC_BOL_CODES above — that triggers a 400). INO is absent because Primus rejects it (undeliverable).
-const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','APT','INS','HZM','OVL','SOR','TWO','NBD']);
+// same lane). APD (Appointment at Destination) is an ORDINARY rateable accessorial — appointment IS priced
+// by Primus for this account (admin-confirmed: the charges breakdown shows an "APPOINTMENT AT DESTINATION"
+// line and the pricing profile carries an appointment fee). It had been coded as the FAKE 'APT', which the
+// shipping location rejected (same class as NAO); the real code APD prices normally. INO is absent because
+// Primus rejects it (undeliverable).
+const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','APD','INS','HZM','OVL','SOR','TWO','NBD']);
 // Guard-only exemption table for codes deliverable by a DEDICATED field (not the accessorialsList) that
 // are ALSO absent from both the rateable and BOL sets. A code belongs here ONLY if it is NOT price-relevant
 // at RATE (so omitting it from the rate call loses nothing) AND its field is genuinely WRITTEN at book.
-// Currently EMPTY: APT used to live here, but the admin confirmed appointment IS rate-priced for this
-// account, so APT graduated into ACC_RATEABLE_CODES (it now rides the RATE list) while still being kept
-// off the BOOK list and carried to the BOL by appointmentNeeded. The mechanism stays for any future code
-// that is genuinely off the rate wire — do NOT re-add a price-relevant code here (that masks an unpriced quote).
+// Currently EMPTY: appointment used to live here (as the fake 'APT') on the theory it was off the rate
+// wire, but appointment is an ORDINARY accessorial under its real code APD — it rides both the rate and
+// book accessorialsList. The mechanism stays for any future code that is genuinely off the rate wire —
+// do NOT re-add a price-relevant code here (that masks an unpriced quote, the RSO-masking bug 529290a).
 const ACC_OFFLIST_TRANSPORT = {
 };
 // Deliverable via ANY real mechanism: the rate list, the BOL list, OR a dedicated off-list field.
@@ -2727,7 +2730,7 @@ function _insGateBeforeRates(shipment, summary) {
   if (!_quoteFormIsOpen()) {
     window._suppressQuoteAutoRun = true;
     try { showQuoteForm(_lqsToPrefill(shipment), true); } catch(e) { console.warn('[FP] ins gate: showQuoteForm failed', e); }
-    // One normalizer. The map this replaces had no APT entry, so 'Appointment Delivery' fell through
+    // One normalizer. The map this replaces had no appointment entry, so 'Appointment Delivery' fell through
     // as a 22-character label and was then killed by the 2-4 length filter — appointment silently
     // lost whenever insurance was added with the quote form CLOSED. It also mapped limited-access
     // PICKUP to the delivery code, lighting the wrong chip.
@@ -2878,9 +2881,9 @@ async function fetchRates(shipment) {
   // neither be priced nor tendered: sending it would hard-reject every carrier (accessorialsList is
   // pipe-joined into one param), and dropping it would ship the freight without a service the
   // customer needs. So REJECT the whole quote here with the same structured ACCESSORIAL_REJECTED
-  // payload a Primus reject produces — identical customer copy, no partial-success path. Codes that
-  // are carried by an off-list field (APT — appointmentNeeded, via ACC_OFFLIST_TRANSPORT) are
-  // deliverable and pass through untouched; only codes deliverable by NO mechanism trip this.
+  // payload a Primus reject produces — identical customer copy, no partial-success path. A code that
+  // is deliverable by ANY mechanism (rate list, book list, or a dedicated off-list field) passes
+  // through untouched; only codes deliverable by NO mechanism trip this (INO today).
   const _allAccCodes = accessorialSet(shipment.accessorials);
   const _undeliverable = _allAccCodes.filter(c => !_accDeliverable(c));
   if (_undeliverable.length) {
@@ -2890,7 +2893,7 @@ async function fetchRates(shipment) {
     _gErr._rate = window._lastRatePullError;
     throw _gErr;
   }
-  // Normalize, then keep only what the RATE api accepts. APT is dropped HERE and only here.
+  // Normalize, then keep only what the RATE api accepts (ACC_RATEABLE_CODES) — APD included.
   const accCodes = _allAccCodes.filter(c => ACC_RATEABLE_CODES.has(c));
   const isBox          = shipment.items.every(i => i.packageType === 'BOX' || i.packageType === 'CRT');
   const isThreshold    = (shipment.accessorials || []).includes('Threshold');
@@ -7899,7 +7902,7 @@ const ACC_LABELS = {
   'LFD': 'Liftgate Delivery',    'LFO': 'Liftgate Pickup',     'LFP': 'Liftgate Pickup',
   'RSD': 'Residential Delivery', 'RSO': 'Residential Pickup',  'RSP': 'Residential Pickup',
   'IND': 'Inside Delivery',      'INO': 'Inside Pickup',       'INP': 'Inside Pickup',
-  'LAD': 'Limited Access Delivery','APT': 'Appointment Required','APP': 'Appointment Required',
+  'LAD': 'Limited Access Delivery','APD': 'Appointment at Destination','APP': 'Appointment Required',
   'NAS': 'No-Freeze Service',    'HZM': 'Hazmat',              'OVL': 'Overlength',
   'SOR': 'Sort & Segregate',     'COD': 'COD',                 'SIG': 'Signature Required',
   'TWO': 'Two-Man Delivery',     'HVY': 'Heavyweight',         'EXP': 'Expedited',
@@ -9339,7 +9342,7 @@ function showSettings() {
     { code:'LFO', label:'Liftgate Pickup',         hint:'No dock at origin' },
     { code:'IND', label:'Inside Delivery',         hint:'Move freight past the threshold' },
     { code:'LAD', label:'Limited Access Delivery',  hint:'School, church, farm, hotel, strip mall' },
-    { code:'APT', label:'Appointment Required',    hint:'Scheduled delivery window required' },
+    { code:'APD', label:'Appointment Required',    hint:'Scheduled delivery window required' },
   ];
   accOpts.forEach((opt, idx) => {
     const toggle = document.createElement('label');
@@ -10435,8 +10438,8 @@ async function submitBookingOnly(opts) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList:accCodes,
-      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:_accAll.includes('APT') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APT') }
+      pickupInformation:{ date:bumpToBusinessDay(_f.pickup.date || getTomorrow()), type:'PO', timeFrom:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00', timeTo:((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00', appointmentNeeded:_accAll.includes('APD') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APD') }
     };
     // Validate BEFORE _editingBOLId is consumed: a rejected save must leave the edit target intact,
     // otherwise a retry would POST a new BOL instead of PUT-ing the one being edited.
@@ -10609,11 +10612,11 @@ async function submitBooking() {
         type:               'PO',
         timeFrom:           ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.open)) || '09:00',
         timeTo:             ((t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(_f.pickup.close)) || '17:00',
-        appointmentNeeded:  _accAll.includes('APT')
+        appointmentNeeded:  _accAll.includes('APD')
       },
       deliveryInformation: {
         type: 'DO',
-        appointmentNeeded: _accAll.includes('APT')
+        appointmentNeeded: _accAll.includes('APD')
       }
     };
 
@@ -12866,8 +12869,8 @@ async function _execBookShipment(input) {
       emergencyPhone:   _hazShip.emergencyPhone,
       BOLInstructions:  _hazShip.BOLInstructions,
       accessorialsList: accCodes,
-      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:_accAll.includes('APT') },
-      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APT') }
+      pickupInformation:{ date: bumpToBusinessDay(input.pickupDate || s.pickupDate || getTomorrow()), type:'PO', timeFrom: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupOpen) || '09:00', timeTo: (t=>{ if(!t)return undefined; const m=/^(\d+):(\d{2})$/.exec(t); return m?((m[1].length===1?'0':'')+m[1]+':'+m[2]):undefined; })(input.pickupClose) || '16:00', appointmentNeeded:_accAll.includes('APD') },
+      deliveryInformation:{ type:'DO', appointmentNeeded:_accAll.includes('APD') }
     };
 
     const _v = validateBookingPayload(payload);
@@ -13117,7 +13120,7 @@ Examples:
 - "It's about 200 lbs, 80 by 36 by 38" → update_quote items:[{weight:200, length:80, width:36, height:38}]. (Class auto-calculates.)
 - "Make the length 96" → update_quote items:[{length:96}].
 - "Add limited access at pickup" → update_quote addAccessorials:["LAO"]. At delivery it's "LAD".
-Accessorial codes — pickup: RSO residential, LFO liftgate, LAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, LAD limited access, APT appointment. Other: INS insurance.
+Accessorial codes — pickup: RSO residential, LFO liftgate, LAO limited access. Delivery: RSD residential, LFD liftgate, IND inside, LAD limited access, APD appointment. Other: INS insurance.
 ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or "liftgate" without specifying which end, it almost always means the DELIVERY (destination) — use RSD and LFD. Residential pickup (RSO) and liftgate pickup (LFO) are rarely the right call, especially when the pickup is a business. Only add RSO/LFO if the customer explicitly says the PICKUP/origin is residential or needs a liftgate. Watch for phrasing traps: "residential with liftgate, pickup on Tuesday" means residential+liftgate DELIVERY with a pickup DATE of Tuesday — not residential pickup. When the origin is clearly a business (a store, warehouse, company name), never put residential pickup on it. NEVER CLAIM A CARRIER REJECTED AN ACCESSORIAL. You have no carrier-by-carrier accessorial data — nothing in the rate results tells you which services a carrier will or will not take on a lane. Do not say, imply, or hint that a carrier "doesn't support", "won't do", "can't add", or "rejected" an accessorial, and never name a carrier as the reason an accessorial is a problem. If the accessorials are on the quote, book them as quoted. The ONLY time you may mention a rejection is when a booking call actually comes back with one: then say what the error said, in plain words, and offer to remove that accessorial and try again — don't bail to the phone. Absent a real error, there is nothing to report. Inventing a carrier restriction is the same failure as inventing a reason rates came back empty: do not guess, and do not blame the carrier, the system or the lane. NEGATION RULE: if the document or message says "no liftgate," "no liftgate required," "liftgate not required," "liftgate only if requested," "unless specifically requested," or any negated or conditional liftgate phrase — do NOT add LFD or LFO. The written instruction overrides any inference you might make from address type or shipment weight. DOCK RULE: if the origin is described as "commercial with loading dock," "has dock," "loading dock available," "forklift on site," or similar — do NOT add LFO. A dock or forklift at the pickup means the carrier can load without a liftgate.
 
 PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
@@ -13154,7 +13157,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 3b. HAZMAT AT BOOKING — if formState shows the line item is hazmat, you MUST proactively ask the customer for the UN number and a 24-hour emergency contact name and phone BEFORE you read the booking back — do not wait for the customer to volunteer it. Pass these to update_booking as unNumber, emergencyContactName, and emergencyPhone. The hazmat class and packing group are looked up automatically from the UN number — never ask the customer for them. NEVER put the UN number or emergency contact in specialInstructions — they have dedicated fields. Include the UN number and emergency contact in the booking read-back.
-4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, report it and ask whether to add RSD (and liftgate for heavier LTL freight). State the fact, ask the question — let the customer decide; do NOT push them toward a choice. Word it like: "That delivery address comes back residential — want me to add residential delivery and a liftgate, or are you good handling the unload?" Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still inform the customer about RSD if the address is residential. If after adding RSD the parcel rate does not change, say: "Residential was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APT, INS) in a customer-facing message. Codes are only for tool calls.
+4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, report it and ask whether to add RSD (and liftgate for heavier LTL freight). State the fact, ask the question — let the customer decide; do NOT push them toward a choice. Word it like: "That delivery address comes back residential — want me to add residential delivery and a liftgate, or are you good handling the unload?" Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still inform the customer about RSD if the address is residential. If after adding RSD the parcel rate does not change, say: "Residential was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). NEVER call book_shipment more than once for the same shipment.
@@ -13290,7 +13293,7 @@ async function aiConverse(userText) {
                     }
                   },
                   itemsMode: { type: 'string', enum: ['auto','append','replace'], description: "How to apply items. 'append' ADDS each item as a NEW line — use this whenever the customer is adding freight to a quote that already has lines. 'replace' rewrites lines positionally from the first. Omit for 'auto': edits the only line when exactly one exists, otherwise adds." },
-                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APT appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, LAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
+                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APD appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, LAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
                   removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' },
                   shipper: { type: 'object', description: 'Pickup/origin party. Set whenever the customer provides the shipper name, address, or contact — especially when they paste a complete shipment in one message. These are stored and carried through to booking automatically so you never re-ask.', properties: {
@@ -15069,7 +15072,7 @@ function parseQuoteChat(text) {
   else if (/(liftgate pickup|lift gate pickup|\blfo\b)/i.test(t)) { if(!acc.includes('LFO')) acc.push('LFO'); }
   else if (/(liftgate|lift gate)/i.test(t)) { if (hasPickup && !hasDeliv) acc.push('LFO'); else acc.push('LFD'); }
   if (/\binside\b|\bind\b/i.test(t)) acc.push('IND');
-  if (/\bappointment\b|\bappt\b/i.test(t)) acc.push('APT');
+  if (/\bappointment\b|\bappt\b/i.test(t)) acc.push('APD');
   if (/limited access/i.test(t)) acc.push('LAD');
   if (/\binsurance\b|cargo ins/i.test(t)) acc.push('INS');
   if (acc.length) result.accessorials = acc;
@@ -17928,7 +17931,7 @@ function showQuoteForm(prefill, silent) {
     'RSO': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
     'IND': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>',
     'LAD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    'APT': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    'APD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
     'NAD': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     'LAO': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     'INS': '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
@@ -17941,7 +17944,7 @@ function showQuoteForm(prefill, silent) {
     { code:'LFD', label:'Liftgate',    group:'del' },
     { code:'IND', label:'Inside',      group:'del' },
     { code:'LAD', label:'Limited Access', group:'del' },
-    { code:'APT', label:'Appointment', group:'del' },
+    { code:'APD', label:'Appointment', group:'del' },
     { code:'INS', label:'Cargo Insurance', group:'other' },
   ];
 
@@ -18780,8 +18783,9 @@ function showQuoteForm(prefill, silent) {
 
     try {
       // Carry EVERY selected code forward as its canonical label. The old local map omitted LAD and
-      // APT, so limited-access and appointment vanished here and could never reach the BOL. The
-      // rate call still drops APT — but that filter belongs in fetchRates, not upstream of booking.
+      // appointment, so limited-access and appointment vanished here and could never reach the BOL.
+      // Appointment now rides both wires under its real code APD; the rate/book filters live in
+      // fetchRates and the book builders, not upstream of booking.
       const accLabels = accessorials.map(c=>ACC_LABEL[c]||c);
       const shipment = {
         originZip, destinationZip: destZip,
@@ -22967,7 +22971,7 @@ async function _spToBase64(file) {
 async function _spAutoExtractAndRate(text) {
   if (window._spAutoExtractRunning) return;
   window._spAutoExtractRunning = true;
-  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5-digit US ZIP or 6-char Canadian postal code (e.g. V5X3A6 — preserve all letters)\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, LAO limited access pickup, IND inside delivery, APT appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
+  const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5-digit US ZIP or 6-char Canadian postal code (e.g. V5X3A6 — preserve all letters)\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, LAO limited access pickup, IND inside delivery, APD appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
     var flCall = window.parent && window.parent.flAnthropic ? window.parent.flAnthropic : window.flAnthropic;
     var resp = await flCall('https://anthropic-proxy.felipe-b80.workers.dev', {
