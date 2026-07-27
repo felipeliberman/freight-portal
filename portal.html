@@ -2227,6 +2227,22 @@ const ACC_BOL_CODES = new Set(['LFD','LFO','RSD','IND','LAO','LAD','INS','HZM','
 // same lane). APT is deliberately absent — appointment is a booking flag (appointmentNeeded), not
 // rate-priced; that omission is legitimate. INO is absent because Primus rejects it (undeliverable).
 const ACC_RATEABLE_CODES = new Set(['LFD','LFO','RSD','RSO','IND','LAO','LAD','INS','HZM','OVL','SOR','TWO','NBD']);
+// Accessorials carried by a DEDICATED off-list field, not the pipe-joined accessorialsList.
+// A code belongs here ONLY if BOTH hold, or it reintroduces the RSO-masking bug (commit 529290a):
+//   (a) it is NOT price-relevant at RATE — so omitting it from the rate call loses nothing, and
+//   (b) its field is genuinely WRITTEN on the book payload.
+// APT is the only such code: appointment does not affect price, and appointmentNeeded is written on
+// every book path (pickup + delivery info). Price-relevant codes (RSO, RSD, INS) must live in the
+// rateable/BOL sets instead — putting them here would hide an unpriced quote, which is what the old
+// table did with RSO (declared a book-only shipper flag as its transport; the RATE GET has no shipper).
+const ACC_OFFLIST_TRANSPORT = {
+  APT: 'pickup/deliveryInformation.appointmentNeeded',  // appointment — booking boolean, never in accessorialsList, not rate-priced
+};
+// Deliverable via ANY real mechanism: the rate list, the BOL list, OR a dedicated off-list field.
+// Undeliverable = a valid code with none of these -> the guard rejects (only INO today).
+function _accDeliverable(code){
+  return ACC_RATEABLE_CODES.has(code) || ACC_BOL_CODES.has(code) || !!ACC_OFFLIST_TRANSPORT[code];
+}
 function accessorialSet(list) {
   const out = [];
   (list || []).forEach(function (a) {
@@ -2861,10 +2877,10 @@ async function fetchRates(shipment) {
   // pipe-joined into one param), and dropping it would ship the freight without a service the
   // customer needs. So REJECT the whole quote here with the same structured ACCESSORIAL_REJECTED
   // payload a Primus reject produces — identical customer copy, no partial-success path. Codes that
-  // are merely not rate-sent (APT — carried to the BOL via appointmentNeeded) are book-eligible and
-  // pass through untouched; only undeliverable-everywhere codes trip this.
+  // are carried by an off-list field (APT — appointmentNeeded, via ACC_OFFLIST_TRANSPORT) are
+  // deliverable and pass through untouched; only codes deliverable by NO mechanism trip this.
   const _allAccCodes = accessorialSet(shipment.accessorials);
-  const _undeliverable = _allAccCodes.filter(c => !ACC_RATEABLE_CODES.has(c) && !ACC_BOL_CODES.has(c));
+  const _undeliverable = _allAccCodes.filter(c => !_accDeliverable(c));
   if (_undeliverable.length) {
     console.warn('[accessorial-guard] undeliverable code(s), rejecting quote:', _undeliverable.join(', '));
     window._lastRatePullError = { kind: 'rejected', codes: _undeliverable.slice(), distinct: [], counts: {}, accessorialReject: true, guard: true };
