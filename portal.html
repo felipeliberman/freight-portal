@@ -7589,6 +7589,80 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   }, 500);
 }
 
+// ── CANONICAL SHIPMENT-PROGRESS RESOLVER — the ONE owner of stage + display status ──
+// The header status and the timeline used to read DIFFERENT sources: the header read the carrier
+// STATUS STRING (lastStatus / lastStatusExternal), the timeline read DATE FIELDS (pickupDateActual
+// / actualPickupDate / deliveryDateActual). When Primus never wrote back a pickup DATE for a
+// shipment the carrier had clearly picked up (status "IN TRANSIT"), the header said in transit while
+// the timeline showed Picked Up / In Transit / Delivered all dark — a split-brain. This is now the
+// single reader for both surfaces. Three rules:
+//   1. Evidence precedence: carrier EVENTS win over the status STRING which wins over DATE fields
+//      (events are the carrier's own scan record; a pickup event lights Picked Up even with no date).
+//   2. Monotonic: a later stage is NEVER lit while an earlier one is dark — light every stage up to
+//      the furthest reached.
+//   3. Header status string and timeline both derive from THIS one call.
+function _extractTrackEvents(trackResp) {
+  // trackBOL()/Primus track responses vary; pull an events array from any of the known shapes.
+  try {
+    const r = (trackResp && trackResp.data && trackResp.data.results) || (trackResp && trackResp.data) || trackResp || {};
+    const cand = r.events || r.trackingHistory || r.trackingEvents || r.scans || r.movementHistory
+      || r.statusHistory || r.history || r.checkpoints || (Array.isArray(r) ? r : null);
+    if (Array.isArray(cand)) return cand.filter(Boolean);
+    return [];
+  } catch (e) { return []; }
+}
+function resolveShipmentProgress(shipment, events) {
+  const s = shipment || {};
+  const ti = s.trackingInformation || {};
+  events = Array.isArray(events) ? events : [];
+  const statusStr = String(s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '').replace(/_/g, ' ').toUpperCase();
+
+  // DATE-field signals (weakest — Primus writeback, often missing while the carrier is moving).
+  const pickupDate   = ti.pickupDateActual   || s.actualPickupDate   || null;
+  const deliveryDate = ti.deliveryDateActual || s.actualDeliveryDate || null;
+  const dispatchDate = ti.dispatchDate || s.estimatedPickupDate || null;
+
+  // EVENT signals (strongest — the carrier's own scans). Also harvest actual pickup/delivery dates.
+  const evTxt = events.map(e => String((e && (e.status || '')) + ' ' + (e && (e.remarks || '')) + ' ' + (e && (e.activityType || '')) + ' ' + (e && (e.type || ''))).toUpperCase());
+  let evPickupDate = null, evDeliveryDate = null;
+  let evPicked = false, evMovement = false, evDelivered = false;
+  evTxt.forEach((t, i) => {
+    if (/DELIVER|POD|SIGNED FOR|RECEIVED BY|CONSIGNEE/.test(t)) { evDelivered = true; if (!evDeliveryDate) evDeliveryDate = (events[i] && events[i].date) || null; }
+    if (/TRANSIT|DEPART|ARRIV|EN ?ROUTE|LINEHAUL|OUT FOR/.test(t)) evMovement = true;
+    if (/PICK(?:ED)? ?UP|ORIGIN (?:SCAN|TERMINAL)|DEPART/.test(t)) { evPicked = true; if (!evPickupDate) evPickupDate = (events[i] && events[i].date) || null; }
+  });
+
+  // STATUS-STRING signals (middle — always present, coarse).
+  const stDelivered  = /DELIVER|POD/.test(statusStr);
+  const stMovement   = /IN TRANSIT|OUT FOR|EN ?ROUTE|ARRIV|DEPART/.test(statusStr);
+  const stPicked     = /PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/.test(statusStr);
+  const stDispatched = /DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/.test(statusStr);
+
+  // Union the evidence per stage (events OR status OR dates).
+  const disp    = s.dispatched === true || !!dispatchDate || stDispatched;
+  const picked  = !!pickupDate   || evPicked    || stPicked;
+  const transit = evMovement || stMovement || (!!pickupDate && !deliveryDate && !evDelivered && !stDelivered);
+  const deliv   = !!deliveryDate || evDelivered || stDelivered;
+
+  // Furthest reached stage → monotonic light-up (rule 2).
+  let reached = 0; // booked always
+  if (disp)    reached = Math.max(reached, 1);
+  if (picked)  reached = Math.max(reached, 2);
+  if (transit) reached = Math.max(reached, 3);
+  if (deliv)   reached = Math.max(reached, 4);
+
+  const stages = { booked: true, dispatched: reached >= 1, pickedUp: reached >= 2, inTransit: reached >= 3, delivered: reached >= 4 };
+  const dates = {
+    booked:     ti.bookDate || s.bookDate || s.createdDate || null,
+    dispatched: dispatchDate || null,
+    pickedUp:   pickupDate || evPickupDate || null,
+    inTransit:  null,
+    delivered:  deliveryDate || evDeliveryDate || null,
+  };
+  const label = ['Booked', 'Dispatched', 'Picked Up', 'In Transit', 'Delivered'][reached];
+  return { stages, dates, reachedIndex: reached, statusLabel: label, displayStatus: statusStr || label.toUpperCase() };
+}
+
 async function showShipmentDetail(s) {
   const bolId = s.BOLId || s.bolId || '';
 
@@ -7596,17 +7670,27 @@ async function showShipmentDetail(s) {
   const old = document.getElementById('ship-modal-overlay');
   if (old) old.remove();
 
-  // Fetch full detail from API
-  let detail = s;
+  // Fetch full detail AND carrier tracking events in parallel. The events feed the ONE progress
+  // resolver so a shipment the carrier has picked up (status "IN TRANSIT") lights Picked Up even
+  // when Primus never wrote back a pickup DATE — the split-brain root cause. Events are best-effort:
+  // if the track call fails or the schema doesn't match, the resolver falls back to status + dates.
+  let detail = s, _trackEvents = [];
+  const _bolNumForTrack = s.BOLNumber || s.bolNumber || bolId;
   try {
     const token = await getToken();
-    const r = await fetch(PRIMUS_BASE + '/applet/v1/book/' + bolId, { headers: { 'Authorization': 'Bearer ' + token } });
-    if (r.ok) {
-      const d = await r.json();
+    const [dRes, tRes] = await Promise.allSettled([
+      fetch(PRIMUS_BASE + '/applet/v1/book/' + bolId, { headers: { 'Authorization': 'Bearer ' + token } }),
+      (typeof trackBOL === 'function' && _bolNumForTrack) ? trackBOL(_bolNumForTrack) : Promise.resolve(null),
+    ]);
+    if (dRes.status === 'fulfilled' && dRes.value && dRes.value.ok) {
+      const d = await dRes.value.json();
       if (d.data && d.data.results) detail = Object.assign({}, s, d.data.results);
       else if (d.data) detail = Object.assign({}, s, d.data);
     }
-  } catch(e) { console.warn('Detail fetch failed', e); }
+    if (tRes.status === 'fulfilled') _trackEvents = _extractTrackEvents(tRes.value);
+  } catch(e) { console.warn('Detail/track fetch failed', e); }
+  // THE single progress read — header status and timeline both render from this.
+  const _progress = resolveShipmentProgress(detail, _trackEvents);
 
   const ti  = detail.trackingInformation || {};
   const ven = detail.vendor    || {};
@@ -7656,8 +7740,8 @@ async function showShipmentDetail(s) {
     : 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;';
   overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
 
-  // Build status info
-  const rawSt = (detail.lastStatus||ti.lastStatusExternal||ti.lastStatusInternal||ti.statusName||s.status||'').replace(/_/g,' ').toUpperCase();
+  // Build status info — from the ONE resolver (same source the timeline uses; no second reader).
+  const rawSt = _progress.displayStatus;
   const stColor = getStatusColor(rawSt);
   const originCity = shp.city||detail.originCity||'';
   const originState = shp.state||detail.originState||'';
@@ -7866,12 +7950,19 @@ async function showShipmentDetail(s) {
     const matchedScac = Object.keys(nameToScac).find(k => nameLower.includes(k));
     if (matchedScac) trackUrl = getCarrierTrackingUrl(nameToScac[matchedScac], proNum);
   }
+  // GUARD (Finding 2d): a carrier with no known-good tracking URL must NEVER hand the customer a
+  // broken page. When trackUrl is null (unknown/dead carrier URL), fully DISABLE the Track button —
+  // grey it, block the click, and give a truthful tooltip — rather than leave it looking clickable.
   if (trackUrl) {
     trackBtn.onclick = () => window.open(trackUrl, '_blank');
   } else {
-    trackBtn.style.opacity = '.4';
+    trackBtn.onclick = null;
+    trackBtn.disabled = true;
+    trackBtn.style.background = '#f3f1ec';
+    trackBtn.style.color = '#b0aaa0';
+    trackBtn.style.opacity = '.6';
     trackBtn.style.cursor = 'default';
-    trackBtn.title = 'No public tracking URL for this carrier';
+    trackBtn.title = "Online tracking isn't available for this carrier yet — use the PRO number on the carrier's site, or email support@freightandlogistics.ai.";
   }
 
   // Wire PRO track link — uses same trackUrl computed above
@@ -7880,8 +7971,10 @@ async function showShipmentDetail(s) {
     if (trackUrl) {
       proTrackLink.onclick = () => window.open(trackUrl, '_blank');
     } else {
+      proTrackLink.onclick = null;
       proTrackLink.style.textDecoration = 'none';
       proTrackLink.style.cursor = 'default';
+      proTrackLink.title = "Online tracking isn't available for this carrier yet.";
     }
   }
 
@@ -7937,14 +8030,15 @@ async function showShipmentDetail(s) {
   // Status Timeline
   const timelineDiv = overlay.querySelector('#ship-modal-timeline');
   if (timelineDiv) {
-    const ti2 = detail.trackingInformation || {};
-    const statusNow = (detail.lastStatus || ti2.lastStatusExternal || '').toUpperCase();
+    // Timeline stages come from the SAME _progress resolver as the header status — no second reader,
+    // so the header and timeline can never disagree, and no stage is lit while an earlier one is dark.
+    const _st = _progress.stages, _dt = _progress.dates;
     const steps = [
-      { label: 'Booked',     date: detail.bookDate || ti2.bookDate,                done: true },
-      { label: 'Dispatched', date: ti2.dispatchDate || detail.estimatedPickupDate, done: detail.dispatched || !!ti2.dispatchDate },
-      { label: 'Picked Up',  date: ti2.pickupDateActual || detail.actualPickupDate, done: !!(ti2.pickupDateActual || detail.actualPickupDate) },
-      { label: 'In Transit', date: null,                                            done: !!(ti2.pickupDateActual || detail.actualPickupDate) && !(ti2.deliveryDateActual || detail.actualDeliveryDate) },
-      { label: 'Delivered',  date: ti2.deliveryDateActual || detail.actualDeliveryDate, done: !!(ti2.deliveryDateActual || detail.actualDeliveryDate) || statusNow.includes('POD') || statusNow.includes('DELIVER') },
+      { label: 'Booked',     date: _dt.booked,     done: _st.booked },
+      { label: 'Dispatched', date: _dt.dispatched, done: _st.dispatched },
+      { label: 'Picked Up',  date: _dt.pickedUp,   done: _st.pickedUp },
+      { label: 'In Transit', date: _dt.inTransit,  done: _st.inTransit },
+      { label: 'Delivered',  date: _dt.delivered,  done: _st.delivered },
     ];
     if (steps.some(s => s.done)) {
       timelineDiv.style.cssText = 'margin-bottom:52px;';
@@ -11040,36 +11134,43 @@ function updateDownloadBtn() {
 }
 
 
+// Carrier public tracking URLs. A `null` entry = no known-good public URL → getCarrierTrackingUrl
+// returns null and the Track button is DISABLED with a truthful tooltip (never a silent 404).
+// A repointed entry that IGNORES `pro` (e.g. XPO, AAA Cooper) is a STATIC page link by design:
+// the carrier's tracking form is a POST with no PRO deep-link, so we open the live page and the
+// customer pastes the PRO with the modal's copy button (same pattern as AAA Cooper / Metro W&D).
+// Verified 2026-07-28: URLs marked "hand-verified incognito" were tested in a logged-out browser
+// (customer's-eye view); the disabled (null) set is genuinely unreachable or has no active account.
 const CARRIER_TRACKING_URLS = {
-  'MWDP': pro => 'https://main.gomwd.com/Client/TrackOrder', // Metro W&D — opens tracking page, enter PRO manually
-  'PAAF': pro => 'https://www.pilotdelivers.com/pilot/shipment-tracking/?pro=' + pro,
-  'EXLA': pro => 'https://www.estes-express.com/myestes/shipment-tracking?search=' + pro,
-  'ABFS': pro => 'https://view.arcb.com/nlo/tools/tracking/' + pro,
-  'CNWY': pro => 'https://www.xpo.com/en-us/tracking?trackingNumbers=' + pro,
-  'TFIN': pro => 'https://www.tforcefreight.com/ltl/apps/Tracking?PRONumber=' + pro,
+  'MWDP': pro => 'https://main.gomwd.com/Client/TrackOrder', // Metro W&D — opens tracking page, enter PRO manually (verified 200)
+  'PAAF': pro => 'https://delivers.maersk.com/track/#/forms', // Pilot — acquired by Maersk; tracking moved to the Maersk portal. Static page, manual PRO entry. Hand-verified incognito.
+  'EXLA': pro => 'https://www.estes-express.com/myestes/shipment-tracking?search=' + pro, // verified 200
+  'ABFS': pro => 'https://view.arcb.com/nlo/tools/tracking/' + pro, // verified 200
+  'CNWY': pro => 'https://www.xpo.com/track/', // XPO — old /en-us/tracking 404; this page verified. Static page, manual PRO entry (POST form, no deep-link). Hand-verified incognito.
+  'TFIN': pro => 'https://www.tforcefreight.com/ltl/apps/Tracking?PRONumber=' + pro, // verified 200
   'UPGF': pro => 'https://www.tforcefreight.com/ltl/apps/Tracking?PRONumber=' + pro,
-  'AACT': pro => 'https://www.aaacooper.com/FreightTracking/Track.aspx?ProNumbers=' + pro,
-  'UPSN': pro => 'https://www.ups.com/track?tracknum=' + pro,
-  'RLCA': pro => 'https://www.rlcarriers.com/freight/shipping/shipment-tracing?pro=' + pro,
-  'RDFS': pro => 'https://www.roadrunner.com/en/shipment-tracking?proNumbers=' + pro,
-  'FCSY': pro => 'https://www.stgdelivers.com/tracking?pro=' + pro,
-  'WTCH': pro => 'https://bookwarp.com/tracking?pro=' + pro,
-  'FWDN': pro => 'https://www.forwardair.com/tracking?pro=' + pro,
+  'AACT': pro => 'https://www.aaacooper.com/track/shipment-tracking', // AAA Cooper — old Track.aspx 404; this page verified 200. POST form, no PRO deep-link → opens the live page for manual PRO entry (PRO copy button provided). QA-reported fix.
+  'UPSN': pro => 'https://www.ups.com/track?tracknum=' + pro, // hand-verified working in-browser (real tracking details rendered); left as-is
+  'RLCA': pro => 'https://www.rlcarriers.com/freight/shipping/shipment-tracing?pro=' + pro, // verified 200
+  'RDFS': pro => 'https://freight.rrts.com/Tools/Tracking/Pages/default.aspx', // Roadrunner — moved to rrts.com (old roadrunner.com threw ERR_CERT_COMMON_NAME_INVALID). PRO search is public (BOL/PO needs login; we pass the PRO). Static page, manual PRO entry. Hand-verified incognito.
+  'FCSY': pro => 'https://frontlinefreightinc-tracking.com/facts.htm?seskey=&language=ENGLISH&nav=top', // STG — now operates as Frontline Freight; stgdelivers.com no longer resolves (NXDOMAIN). Public tracking, manual PRO entry (POST form, no deep-link). Hand-verified incognito.
+  'WTCH': null, // WARP — bookwarp.com returns ERR_CONNECTION_CLOSED in a real browser (genuinely unreachable, not bot-blocking). Disabled.
+  'FWDN': pro => 'https://www.forwardair.com/tracking?pro=' + pro, // verified 200
   'FWDA': pro => 'https://www.forwardair.com/tracking?pro=' + pro,
-  'FDSQ': pro => 'https://www.fedex.com/fedextrack/?trknbr=' + pro,
+  'FDSQ': pro => 'https://www.fedex.com/fedextrack/?trknbr=' + pro, // 301→fedextrack app; known-good — left as-is
   'FXFE': pro => 'https://www.fedex.com/fedextrack/?trknbr=' + pro,
   'FXNL': pro => 'https://www.fedex.com/fedextrack/?trknbr=' + pro,
   'FDXG': pro => 'https://www.fedex.com/fedextrack/?trknbr=' + pro,
-  'SAIA': pro => 'https://www.saia.com/track/details;pro=' + pro,
-  'SEFL': pro => 'https://www.sefl.com/frontEnd/shipTracking.php?pro_nbr=' + pro,
-  'CTII': pro => 'https://www.centraltransportint.com/ctrack?pro=' + pro,
-  'CTBV': pro => 'https://www.customcompanies.com/tracking?pro=' + pro,
-  'PITD': pro => 'https://www.pittohio.com/myPittOhio/Tracking/ShipmentTracking?ProNumber=' + pro,
-  'AVRT': pro => 'https://www.averittexpress.com/go/tracking?pro=' + pro,
-  'DYLT': pro => 'https://www.daylight.com/tracking?pro=' + pro,
-  'DHRN': pro => 'https://www.dohrn.com/tracking/?pro=' + pro,
-  'WARD': pro => 'https://wardtrucking.com/tracking/?pro=' + pro,
-  'OAKH': pro => 'https://www.oakh.com/tracking?pro=' + pro,
+  'SAIA': pro => 'https://www.saia.com/track/details;pro=' + pro, // verified 200
+  'SEFL': pro => 'https://www.sefl.com/Tracing/index.jsp', // Southeastern — old shipTracking.php 404; this page verified. Static page, manual PRO entry. Hand-verified incognito.
+  'CTII': pro => 'https://www.centraltransportint.com/ctrack?pro=' + pro, // curl no-connect (likely bot-block); left as-is
+  'CTBV': pro => 'https://www.customcompanies.com/tracking?pro=' + pro, // verified 200
+  'PITD': null, // Pitt Ohio — no active carrier account — disabled, not removed
+  'AVRT': pro => 'https://www.averittexpress.com/go/tracking?pro=' + pro, // 502 at sweep (transient?); URL shape plausible — left as-is, flag for recheck
+  'DYLT': null, // Daylight — no active carrier account — disabled, not removed
+  'DHRN': null, // Dohrn — no active carrier account — disabled, not removed
+  'WARD': pro => 'https://wardtrucking.com/tracking/?pro=' + pro, // curl no-connect (likely bot-block); left as-is
+  'OAKH': null, // Oak Harbor — no active carrier account — disabled, not removed
 };
 
 function getCarrierTrackingUrl(scac, pro) {
@@ -11608,18 +11709,23 @@ function buildTrackInlineCard(s) {
   };
   const [badgeInit, badgeBg] = BADGES[carrier] || [carrier.substring(0,2).toUpperCase(), '#bd27bc'];
 
-  // Status color — only two: purple (active) or a muted tag (delivered)
-  const isDelivered = rawStatus.includes('DELIVER') || rawStatus.includes('POD');
+  // Status + timeline both from the ONE canonical resolver (same as the detail modal) so the
+  // header badge and the timeline can never disagree. Honors any events already on `s`; falls back
+  // to the status string + date fields otherwise. isDelivered kept for the (currently uniform) tag bg.
+  const _prog = resolveShipmentProgress(s, Array.isArray(s.events) ? s.events : (Array.isArray(s.trackEvents) ? s.trackEvents : []));
+  const displayStatus = _prog.displayStatus;
+  const isDelivered = _prog.stages.delivered;
   const statusBg    = isDelivered ? '#ede9fe' : '#ede9fe';
   const statusColor = '#6d28d9';
 
-  // Timeline
+  // Timeline — resolver-owned stages/dates (no second date-field reader).
+  const _st = _prog.stages, _dt = _prog.dates;
   const steps = [
-    { label:'Booked',     done: true,                                                                                          date: fmtDate(ti.bookDate||s.bookDate||s.createdDate||'') },
-    { label:'Dispatched', done: !!(s.dispatched || ti.dispatchDate),                                                           date: fmtDate(ti.dispatchDate||s.dispatched||'') },
-    { label:'Picked Up',  done: !!(ti.pickupDateActual || s.actualPickupDate),                                                 date: fmtDate(ti.pickupDateActual||s.actualPickupDate||s.estimatedPickupDate||'') },
-    { label:'In Transit', done: !!(ti.pickupDateActual || s.actualPickupDate) && !(ti.deliveryDateActual || s.actualDeliveryDate), date: fmtDate(ti.pickupDateActual||s.actualPickupDate||'') },
-    { label:'Delivered',  done: !!(ti.deliveryDateActual || s.actualDeliveryDate) || isDelivered,                              date: fmtDate(ti.deliveryDateActual||s.actualDeliveryDate||s.estimatedDeliveryDate||'') },
+    { label:'Booked',     done: _st.booked,     date: fmtDate(_dt.booked||'') },
+    { label:'Dispatched', done: _st.dispatched, date: fmtDate(_dt.dispatched||'') },
+    { label:'Picked Up',  done: _st.pickedUp,   date: fmtDate(_dt.pickedUp||'') },
+    { label:'In Transit', done: _st.inTransit,  date: fmtDate(_dt.inTransit||'') },
+    { label:'Delivered',  done: _st.delivered,  date: fmtDate(_dt.delivered||'') },
   ];
   const lastDoneIdx = steps.reduce((acc, st, i) => st.done ? i : acc, -1);
 
@@ -11644,7 +11750,7 @@ function buildTrackInlineCard(s) {
     '<div style="flex:1;min-width:0;">' +
       (logoUrl ? '<div style="font-size:11px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+(carrier||'Carrier')+'</div>' : '') +
     '</div>' +
-    '<div style="background:#ede9fe;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;color:#6d28d9;white-space:nowrap;">'+(rawStatus||'PENDING')+'</div>';
+    '<div style="background:#ede9fe;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;color:#6d28d9;white-space:nowrap;">'+(displayStatus||'PENDING')+'</div>';
   hdr.appendChild(carrierRow);
   // Route
   const route = [originCity,originState].filter(Boolean).join(', ') + (destCity ? ' → ' + [destCity,destState].filter(Boolean).join(', ') : '');

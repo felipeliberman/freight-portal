@@ -845,6 +845,97 @@ const invariants = [
       A.ok(Number(lqs.insuranceAmount) === 2500, 'the value drifted through the list correction: ' + lqs.insuranceAmount);
     },
   },
+  // ── 32 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 32, name: 'shipment-progress resolver: events win, monotonic stages',
+    property: 'a pickup EVENT with no pickup-date field still lights Picked Up; the status string lights the right stages; a later stage is NEVER lit while an earlier one is dark',
+    catches: 'BOL 160135234 — header "IN TRANSIT" while the timeline showed Picked Up / In Transit / Delivered all dark (status string vs date fields)',
+    run(ctx) {
+      const w = ctx.win;
+      const mono = st => {
+        const order = ['booked', 'dispatched', 'pickedUp', 'inTransit', 'delivered'];
+        let seenDark = false;
+        for (const k of order) { if (!st[k]) seenDark = true; else if (seenDark) return false; }
+        return true;
+      };
+      // A pickup EVENT but NO pickup date field → Picked Up lights anyway (events win over dates).
+      let p = w.resolveShipmentProgress({ status: 'BOOKED' }, [{ status: 'Picked up', remarks: 'Origin scan', date: '2026-07-24' }]);
+      A.ok(p.stages.pickedUp === true, 'a pickup event with no pickup-date field did not light Picked Up');
+      A.ok(p.stages.booked && p.stages.dispatched, 'earlier stages not backfilled under a pickup event');
+      A.ok(mono(p.stages), 'non-monotonic stages: ' + JSON.stringify(p.stages));
+      A.ok(p.dates.pickedUp === '2026-07-24', 'the actual pickup date was not harvested from the event');
+      // The exact reported case: status IN TRANSIT, no pickup date, no events → pickedUp + inTransit lit.
+      p = w.resolveShipmentProgress({ lastStatus: 'IN_TRANSIT', trackingInformation: {} }, []);
+      A.ok(p.stages.pickedUp && p.stages.inTransit, 'status IN TRANSIT did not light Picked Up + In Transit');
+      A.ok(!p.stages.delivered, 'In Transit wrongly lit Delivered');
+      A.ok(mono(p.stages), 'non-monotonic on the reported case: ' + JSON.stringify(p.stages));
+      // A delivery event backfills everything, monotonic.
+      p = w.resolveShipmentProgress({ status: 'BOOKED' }, [{ status: 'Delivered', remarks: 'Signed for' }]);
+      A.ok(p.stages.delivered && p.stages.inTransit && p.stages.pickedUp && p.stages.dispatched, 'delivered did not backfill all prior stages');
+      A.ok(mono(p.stages), 'non-monotonic under delivery: ' + JSON.stringify(p.stages));
+      // A brand-new saved shipment (no status, no events) → only Booked.
+      p = w.resolveShipmentProgress({}, []);
+      A.ok(p.stages.booked && !p.stages.dispatched && !p.stages.pickedUp, 'a fresh shipment lit more than Booked: ' + JSON.stringify(p.stages));
+    },
+  },
+  // ── 33 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 33, name: 'header status and timeline read the SAME resolver (single source)',
+    property: 'the detail modal resolves progress ONCE and both the header status and the timeline render from that one call — no second reader',
+    catches: 'the split-brain class: header read the status string, timeline read date fields',
+    run(ctx) {
+      const src = require('./harness').appScript();
+      const modal = src.slice(src.indexOf('async function showShipmentDetail'), src.indexOf('async function openDocsModal'));
+      A.ok((modal.match(/resolveShipmentProgress\(/g) || []).length === 1, 'the modal does not resolve progress exactly once');
+      A.ok(/const rawSt = _progress\.displayStatus/.test(modal), 'the header status no longer derives from the resolver');
+      A.ok(/_progress\.stages/.test(modal) && /_progress\.dates/.test(modal), 'the timeline no longer derives from the resolver');
+      // The old independent readers must be gone from the modal.
+      A.ok(!/detail\.lastStatus\s*\|\|\s*ti\.lastStatusExternal/.test(modal), 'the old header status reader survives');
+      A.ok(!/done:\s*!!\(ti2?\.pickupDateActual/.test(modal), 'the old date-field timeline reader survives');
+    },
+  },
+  // ── 34 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 34, name: 'tracking URLs: verified carriers enabled (static links carry no PRO), disabled set exact',
+    property: 'the five hand-verified carriers resolve to non-null static page links (no PRO interpolated); the disabled set is exactly {WARP, Pitt Ohio, Daylight, Dohrn, Oak Harbor}; the guard disables the button rather than opening a broken page',
+    catches: 'AAA Cooper Track opened a 404; carrier URLs rot silently; a repoint must not fake a PRO deep-link',
+    run(ctx) {
+      const w = ctx.win;
+      const SENTINEL = 'ZZPRO999';
+      // The DISABLED set is EXACTLY these five (WARP unreachable + four with no active carrier account).
+      const disabled = ['WTCH', 'PITD', 'DYLT', 'DHRN', 'OAKH'];
+      disabled.forEach(scac => A.ok(w.getCarrierTrackingUrl(scac, SENTINEL) === null, scac + ' should be disabled (null)'));
+      // Nothing ELSE is null: the five repointed carriers now resolve to a URL.
+      ['CNWY', 'SEFL', 'RDFS', 'PAAF', 'FCSY'].forEach(scac => {
+        A.ok(!!w.getCarrierTrackingUrl(scac, SENTINEL), scac + ' was repointed but still returns null');
+      });
+      // Repointed URLs match the hand-verified targets…
+      const want = {
+        CNWY: /xpo\.com\/track\//,
+        SEFL: /sefl\.com\/Tracing\/index\.jsp/,
+        RDFS: /freight\.rrts\.com\/Tools\/Tracking/,
+        PAAF: /delivers\.maersk\.com\/track/,
+        FCSY: /frontlinefreightinc-tracking\.com\/facts\.htm/,
+      };
+      Object.keys(want).forEach(scac => {
+        const u = w.getCarrierTrackingUrl(scac, SENTINEL) || '';
+        A.ok(want[scac].test(u), scac + ' points at the wrong URL: ' + u);
+        // …and are STATIC page links by design — the PRO is NEVER interpolated (form POST, no deep-link).
+        A.ok(u.indexOf(SENTINEL) < 0, scac + ' interpolated the PRO into a static-link URL: ' + u);
+      });
+      // AAA Cooper (prior commit) stays repointed and static, not the dead Track.aspx.
+      const aaa = w.getCarrierTrackingUrl('AACT', SENTINEL) || '';
+      A.ok(/aaacooper\.com\/track\/shipment-tracking/.test(aaa) && !/Track\.aspx/i.test(aaa) && aaa.indexOf(SENTINEL) < 0, 'AAA Cooper URL regressed: ' + aaa);
+      // A PRO-deep-link carrier still interpolates the PRO (proves the static-link check is meaningful).
+      A.ok((w.getCarrierTrackingUrl('EXLA', SENTINEL) || '').indexOf(SENTINEL) >= 0, 'a deep-link carrier stopped interpolating the PRO');
+      // No PRO → no URL regardless of carrier.
+      A.ok(w.getCarrierTrackingUrl('EXLA', '') === null, 'a missing PRO still produced a URL');
+      // The guard disables (not just no-ops) the button when there is no URL.
+      const src = require('./harness').appScript();
+      const modal = src.slice(src.indexOf('async function showShipmentDetail'), src.indexOf('async function openDocsModal'));
+      A.ok(/else\s*\{[\s\S]*?trackBtn\.disabled = true;[\s\S]*?trackBtn\.title/.test(modal), 'the no-URL Track button is not fully disabled with a truthful tooltip');
+    },
+  },
 ];
 
 module.exports = { invariants, A };
