@@ -270,10 +270,11 @@ const invariants = [
       // deterministic intercept and never reaches the agent — exactly the class that used to vanish.
       w.appendMessage('user', 'jts');
       await w.handleInput('jts');
+      await new Promise(r => setTimeout(r, 350)); // the state-aware panel greeting lands ~250ms after open
       const hist = ctx.g('chatHistory');
       A.ok(hist.some(m => m.role === 'user' && m.content === 'jts'), "the user's carrier selection is missing from chatHistory");
       const lastBot = hist.slice().reverse().find(m => m.role === 'assistant');
-      A.ok(lastBot && /JTS/i.test(String(lastBot.content)), 'the intercept reply is missing from chatHistory: ' + JSON.stringify(lastBot || null));
+      A.ok(lastBot && /JTS/i.test(String(lastBot.content)), 'the selection outcome is missing from chatHistory: ' + JSON.stringify(lastBot || null));
       // skipHistory renders a bubble WITHOUT recording (transient error copy).
       const n = ctx.g('chatHistory').length;
       w.appendMessage('bot', 'transient error line', { skipHistory: true });
@@ -570,6 +571,149 @@ const invariants = [
       w._turnToolCalls = { save: false, book: true, dispatch: false };
       const g2 = w._gateFinalText('Booking it now with JTS Express.', { regenDone: true });
       A.ok(!/haven'?t sent anything/i.test(g2.text), 'a genuinely-backed book promise was corrected: ' + g2.text);
+    },
+  },
+  // ── 22 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 22, name: 'the insurance ask fires for every quote — once, after hazmat, before the first pull',
+    property: 'a getRates with insurance undecided renders the ask exactly once and pulls NOTHING; decline fires the single pull; the gate-enforced path obeys the same contract',
+    catches: "tonight's repro — hazmat answered, pull fired immediately, the mandatory ask never rendered (born d9ff59d)",
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      let pulls = 0; w._doGetRates = () => { pulls++; w._ratePullInFlight = true; };
+      const asks = () => ctx.messages.filter(m => m.role === 'bot' && /cargo insurance/i.test(m.text)).length;
+      w._applyQuoteFields({ getRates: true });        // the agent tries to pull, insurance undecided
+      await new Promise(r => setTimeout(r, 600));      // past the 450ms pull timer — nothing may fire
+      A.ok(pulls === 0, 'the pull fired before the mandatory insurance ask: ' + pulls);
+      A.ok(asks() === 1, 'expected exactly one insurance ask, got ' + asks());
+      A.ok(w._insCollecting === 'value' && w._insAskRendered === true, 'the collector armed without its rendered ask');
+      w._applyQuoteFields({ getRates: true });        // second attempt mid-collection: held, no second ask
+      await new Promise(r => setTimeout(r, 600));
+      A.ok(pulls === 0 && asks() === 1, 'a mid-collection getRates pulled or re-asked: pulls=' + pulls + ' asks=' + asks());
+      await w.handleInput('no');                       // only the customer can decline → the single pull fires
+      await new Promise(r => setTimeout(r, 30));
+      A.ok(pulls === 1, 'the decline did not fire the single pull: ' + pulls);
+      A.ok(asks() === 1, 'the ask re-rendered after the decline');
+      A.ok(w._insDecided === true, 'the decline was not recorded as permanent');
+      // The gate-ENFORCED path on a fresh quote respects the same contract.
+      w.resetShipmentState(false);
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      let pulls2 = 0; w._doGetRates = () => { pulls2++; w._ratePullInFlight = true; };
+      ctx.reset();
+      const g = w._gateFinalText('Pulling your rates now.', { regenDone: true });
+      A.ok(pulls2 === 0, 'the enforcer pulled past an undecided insurance ask: ' + pulls2);
+      A.ok(ctx.messages.filter(m => /cargo insurance/i.test(m.text)).length === 1, 'the enforcer did not fire the standard ask exactly once');
+      A.ok(g.enforced === true, 'the enforcer hold was not flagged');
+    },
+  },
+  // ── 23 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 23, name: 'a ghost-armed value capture releases instead of eating the message',
+    property: 'the collector may only hold a turn when its ask actually rendered; otherwise the message routes normally',
+    catches: 'tonight\'s repro — armed with no ask ever rendered; "jts" became "I did not catch a dollar amount"',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = false; // the ghost
+      w.appendMessage('user', 'jts');
+      await w.handleInput('jts');
+      A.ok(!ctx.messages.some(m => /did not catch a dollar amount/i.test(m.text)), 'the ghost collector ate the carrier selection');
+      A.ok(w._insCollecting === null, 'the ghost collection did not release: ' + w._insCollecting);
+      A.ok(!!w.document.getElementById('bk-pu-name'), 'the released "jts" did not select the carrier');
+    },
+  },
+  // ── 24 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 24, name: 'while armed WITH a rendered ask, a carrier name still releases and selects',
+    property: 'command-shaped input (a carrier pick) routes as the command, never into value capture',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      w.appendMessage('user', 'add insurance');
+      await w.handleInput('add insurance');            // real intent ask: renders + arms in one turn
+      A.ok(w._insCollecting === 'value' && w._insAskRendered === true, 'setup: the intent ask did not arm-with-render');
+      ctx.reset();
+      w.appendMessage('user', 'jts');
+      await w.handleInput('jts');
+      A.ok(!ctx.messages.some(m => /did not catch a dollar amount/i.test(m.text)), '"jts" was eaten by the value collector');
+      A.ok(!!w.document.getElementById('bk-pu-name'), '"jts" did not select the carrier');
+    },
+  },
+  // ── 25 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 25, name: 'an insurance decline with no INS on the completed pull fires zero pulls',
+    property: 'no pull may fire that cannot change the result — decline over an uninsured settled pull acknowledges and presents the existing rates',
+    catches: "tonight's repro — \"no\" re-pulled the identical 51 carriers",
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);      // settled_with_rates, insurance NOT on the pull
+      let pulls = 0; w._doGetRates = () => { pulls++; };
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true; w._insPreRate = true; // tonight's exact state
+      ctx.reset();
+      await w.handleInput('no');
+      A.ok(pulls === 0, 'a redundant pull fired on the decline: ' + pulls);
+      A.ok(ctx.messages.some(m => /unchanged/i.test(m.text)), 'no acknowledge-with-existing-rates message: ' + JSON.stringify(ctx.messages.map(m => m.text)));
+      A.ok(w._insDecided === true, 'the decline was not recorded as final');
+    },
+  },
+  // ── 26 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 26, name: 'prices render with two decimals on every surface',
+    property: 'fmtMoney is canonical ($287.5 → $287.50, thousands separators) and the chat summary/greeting/choice-line surfaces use it',
+    catches: 'the "$287.5" chat rate summary',
+    run(ctx) {
+      const w = ctx.win;
+      A.ok(w.fmtMoney(287.5) === '$287.50', 'fmtMoney(287.5) => ' + w.fmtMoney(287.5));
+      A.ok(w.fmtMoney(1234.5) === '$1,234.50', 'fmtMoney(1234.5) => ' + w.fmtMoney(1234.5));
+      A.ok(w.fmtMoney('$287.5') === '$287.50', 'string input => ' + w.fmtMoney('$287.5'));
+      w._lastRates = { lane: 'x', count: 1, options: [{ rank: 1, carrier: 'JTS Express', price: 287.5, transitDays: 4 }] };
+      ctx.reset();
+      w._summarizeRatesToChat();
+      const msg = ctx.messages.map(m => m.text).join(' ');
+      A.ok(/\$287\.50/.test(msg), 'the chat rate summary rendered: ' + msg);
+      A.ok(!/\$287\.5(?!0)/.test(msg), 'a one-decimal price survives in the summary: ' + msg);
+      A.ok(/\$287\.50/.test(w._bookingGreeting('JTS Express', 287.5)), 'greeting price not two-decimal');
+      A.ok(/\$1,234\.50/.test(w._rateChoiceLine({ name: 'X', total: 1234.5 }, 1)), 'choice-line price not two-decimal');
+    },
+  },
+  // ── 27 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 27, name: 'one booking greeting per open, and it tells the truth about the form',
+    property: 'panel open emits exactly one greeting whose content matches the DOM fill state; a filled panel is never asked for its own details',
+    catches: "tonight's repro — two messages on open, the second demanding details over a fully filled panel",
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      w._quotedContacts = {
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', phone: '5625551234' },
+        consignee: { name: 'Haynes Brothers',    address: '1250 Main St',    phone: '8135559876' },
+      };
+      w._pendingContactRestore = { lane: fx.SHIPMENT.originZip + '->' + fx.SHIPMENT.destinationZip };
+      const sel = w.selectRate({ carrier: 'JTS' }, { shipment: fx.SHIPMENT, source: 'test' });
+      A.ok(sel.ok, 'setup: could not select JTS');
+      await new Promise(r => setTimeout(r, 350));
+      const greets = ctx.messages.filter(m => m.role === 'bot' && /^Booking .* at \$/.test(m.text));
+      A.ok(greets.length === 1, 'expected exactly one greeting, got ' + greets.length + ': ' + JSON.stringify(ctx.messages.map(m => m.text)));
+      A.ok(/carried over/i.test(greets[0].text), 'a filled panel was not acknowledged: ' + greets[0].text);
+      A.ok(!/tell me the shipper name/i.test(greets[0].text), 'a filled panel was asked for its own details');
+      A.ok(ctx.messages.every(m => m.text.indexOf('I need the pickup and delivery details') < 0), 'the deleted hardcoded line resurfaced');
+      // Empty panel on a fresh quote → the full ask, exactly once.
+      w.resetShipmentState(false);
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      ctx.reset();
+      const sel2 = w.selectRate({ carrier: 'AAA Cooper' }, { shipment: fx.SHIPMENT, source: 'test' });
+      A.ok(sel2.ok, 'setup: could not select AAA Cooper');
+      await new Promise(r => setTimeout(r, 350));
+      const greets2 = ctx.messages.filter(m => m.role === 'bot' && /^Booking .* at \$/.test(m.text));
+      A.ok(greets2.length === 1, 'expected one greeting on the empty open, got ' + greets2.length);
+      A.ok(/tell me the shipper name/i.test(greets2[0].text), 'the empty-panel greeting lost its ask: ' + greets2[0].text);
     },
   },
 ];

@@ -2338,7 +2338,7 @@ function resetShipmentState(wipeConversation) {
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
-    window._insValueArmed = false;
+    window._insValueArmed = false; window._insAskRendered = false; window._insHeldPull = false;
     window._insPreRate = false; window._insDecided = false;
     window._gateSaveInFlight = false; window._turnToolCalls = null;
     window._lastTurnFailed = false;
@@ -2449,6 +2449,16 @@ function parseMoney(v) {
 }
 function _isCanadianPostal(zip) {
   return /^[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i.test((zip || '').trim());
+}
+// ── THE canonical money formatter ─────────────────────────────────────────────
+// Number (or money-ish string) → "$1,234.56": ALWAYS two decimals, thousands separators. Every
+// customer-facing price surface routes through here — "$287.5" shipped to a customer because a
+// bare toLocaleString drops trailing zeros. EXCEPTION: prepaid-charge disclosures stay VERBATIM
+// from the tool/worker (never reformat a figure the charging code produced).
+function fmtMoney(n) {
+  var v = (typeof n === 'string') ? parseMoney(n) : Number(n);
+  if (!isFinite(v)) v = 0;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
@@ -2787,6 +2797,7 @@ function _insGateBeforeRates(shipment, summary) {
   window._insPreRate = true;
   window._insCollecting = 'value'; window._insReaskCount = 0;
   window._insValueArmed = true; // just asked — the next bare number is the declared value
+  window._insAskRendered = true; // arming is WELDED to this render — the ask below is the same turn
   appendMessage('bot', (summary ? summary + ' ' : '') + 'One last thing — would you like to add cargo insurance? If so, what is the total value of the cargo? Or say "no" to skip.');
   return true;
 }
@@ -6283,7 +6294,7 @@ function renderQuotes(rates, isBox) {
     right.style.cssText = 'text-align:right;flex-shrink:0;';
     const priceDiv = document.createElement('div');
     priceDiv.style.cssText = 'font-size:20px;font-weight:800;color:' + (i === 0 ? 'var(--ac)' : 'var(--tx)') + ';margin-bottom:6px;';
-    priceDiv.textContent = '$' + price.toFixed(2);
+    priceDiv.textContent = fmtMoney(price);
     right.appendChild(priceDiv);
 
     if (lastQuotedShipment && lastQuotedShipment.insuranceEnabled) {
@@ -6414,7 +6425,7 @@ function showBookingConfirmedModal(bc) {
     if (_cc) { const _li = document.createElement('img'); _li.src=bc.iconUrl; _li.alt=''; _li.style.cssText='height:18px;max-width:72px;object-fit:contain;display:block;margin-bottom:4px;'; _li.onerror=function(){this.style.display='none';}; const _vd=_cc.querySelector('div:last-child'); if(_vd) _cc.insertBefore(_li,_vd); else _cc.appendChild(_li); }
   }
   if (bc.PRO) stat('PRO Number', bc.PRO, '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>', true);
-  if (bc.carrierPrice) stat('Quoted Rate', '$' + Number(bc.carrierPrice).toFixed(2), '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>');
+  if (bc.carrierPrice) stat('Quoted Rate', fmtMoney(bc.carrierPrice), '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>');
   if (bc.pickupDate) stat('Pickup Date', dateCountdown(bc.pickupDate), '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>');
   if (bc.confirmation) stat('Pickup Confirmation', bc.confirmation, '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>');
 
@@ -10105,7 +10116,7 @@ function bookingSummary() {
   const bd      = bookingData;
 
   return 'Please confirm:\n\n' +
-    'Carrier: ' + carrier + ' - $' + price.toFixed(2) + '\n\n' +
+    'Carrier: ' + carrier + ' - ' + fmtMoney(price) + '\n\n' +
     'PICKUP\n' +
     (bd.shipperName   ? bd.shipperName + '\n' : '') +
     (bd.shipperAddr   ? bd.shipperAddr + '\n' : '') +
@@ -12017,7 +12028,22 @@ function _applyQuoteFields(input) {
   if (input.getRates) {
     // Hold the pull while cargo insurance is being collected — the insurance flow sets the
     // DOM and pulls once it's resolved, so the premium is always in the rate.
-    if (window._insCollecting === 'value' || window._insCollecting === 'commodity') return;
+    if (window._insCollecting === 'value' || window._insCollecting === 'commodity') { window._insHeldPull = true; return; }
+    // MANDATORY INSURANCE ASK (product contract): residence/liftgate → hazmat → INSURANCE → pull.
+    // The system may NEVER skip the ask — if the agent tries to pull with insurance undecided,
+    // the standard question fires now (the same _insGateBeforeRates wrapper every programmatic
+    // pull uses; its collectors fire the single pull after the answer) and this pull HOLDS.
+    // Only the customer can decline; their answer is permanent for the shipment (_insDecided).
+    if (!window._insDecided
+        && !(typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.insuranceEnabled)
+        && typeof _insGateBeforeRates === 'function') {
+      const _shpIns = (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) ? lastQuotedShipment : {};
+      if (_insGateBeforeRates(_shpIns, '')) {
+        console.log('[FP] getRates HELD — mandatory cargo-insurance question asked first');
+        window._insHeldPull = true;
+        return;
+      }
+    }
     setTimeout(() => {
       try {
         const sig = _quoteSignature();
@@ -12407,10 +12433,30 @@ function _summarizeRatesToChat() {
     var top = r.options[0];
     var carriers = r.count + ' carrier' + (r.count === 1 ? '' : 's') + ' came back';
     if (!top || !top.carrier || !top.price) { appendMessage('bot', carriers + '. The options are on the right — tell me which to book.'); return; }
-    var price = '$' + Number(top.price).toLocaleString('en-US');
+    var price = fmtMoney(top.price);
     var transit = top.transitDays ? (', ' + top.transitDays + ' day' + (top.transitDays == 1 ? '' : 's')) : '';
     appendMessage('bot', carriers + '. Cheapest is ' + top.carrier + ' at ' + price + transit + '. Tell me which to book, or ask me to compare them.');
   } catch (e) { console.warn('[FP] rate summary failed', e); }
+}
+
+// ── Insurance-decline settlement: NO pull may fire that cannot change the result ──
+// On a decline, re-pull ONLY when a pull could produce something different: none has completed
+// yet, or the completed one actually included insurance. A completed uninsured pull + decline =
+// nothing to remove — acknowledge and present the existing rates (the redundant identical
+// 51-carrier re-pull class).
+function _insDeclineSettle() {
+  try {
+    var _avail = (typeof _rateAvailability === 'function') ? _rateAvailability() : { state: 'not_settled' };
+    var _shp = window._lastRatesShipment;
+    if (_avail.state === 'settled_with_rates' && !(_shp && _shp.insuranceEnabled)) {
+      appendMessage('bot', 'No problem — cargo insurance is off. Your rates are on the right, unchanged.');
+      try { _summarizeRatesToChat(); } catch (e) {}
+      return;
+    }
+  } catch (e) {}
+  appendMessage('bot', 'No problem — pulling your rates now without insurance.');
+  window._onRatesReady = _summarizeRatesToChat;
+  if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch (e) { console.warn('[FP] no-insurance pull failed', e); } }
 }
 
 function _insMsgMovedOn(t) {
@@ -12425,12 +12471,9 @@ function _releaseInsuranceCollection(text) {
   window._insReaskCount = 0; window._insPreRate = false; window._insDecided = true;
   if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
   if (wasPreRate) {
-    appendMessage('bot', 'No problem — pulling your rates now without insurance.');
-    window._onRatesReady = _summarizeRatesToChat;
-    if (typeof window._doGetRates === 'function' && !window._ratePullInFlight) {
-      try { window._doGetRates(); } catch(e) { console.warn('[FP] release pull failed', e); }
-    }
-    return true;   // handled: rates pulling, do NOT re-dispatch
+    if (window._ratePullInFlight) return true; // a pull is already running — nothing more to do
+    _insDeclineSettle(); // re-pull only if a pull could change the result; else present existing rates
+    return true;   // handled: do NOT re-dispatch
   }
   return false;    // rates already on screen -> caller re-dispatches
 }
@@ -12478,7 +12521,7 @@ function _rateNameKeys(r) {
 function _rateChoiceLine(r, rank) {
   var sv = (r && (r.serviceLevel || r.service)) || '';
   var pr = _ratePrice(r);
-  return (rank ? rank + ') ' : '') + _rateDisplayName(r) + (sv ? ' — ' + sv : '') + (pr ? ' — $' + pr.toFixed(2) : '');
+  return (rank ? rank + ') ' : '') + _rateDisplayName(r) + (sv ? ' — ' + sv : '') + (pr ? ' — ' + fmtMoney(pr) : '');
 }
 function _rateChoiceList(list) { return (list || []).slice(0, 5).map(function (r, i) { return _rateChoiceLine(r, i + 1); }).join('; '); }
 
@@ -12679,7 +12722,7 @@ async function _execUpdateBooking(input) {
       await _settle();
       _applyBookingFields(input);
       return { ok:true, carrier: sel.carrier, price: sel.price,
-        summary:'Booking panel is now open for ' + sel.carrier + ' at $' + sel.price.toFixed(2) + '. The Pickup and Delivery sections are visible.',
+        summary:'Booking panel is now open for ' + sel.carrier + ' at ' + fmtMoney(sel.price) + '. The Pickup and Delivery sections are visible.',
         bookingState: _bookingPanelState() };
     }
 
@@ -13377,7 +13420,7 @@ ACCESSORIALS DEFAULT TO THE DELIVERY SIDE. When a customer says "residential" or
 
 PACKAGING TYPE — ALWAYS SET IT, NEVER ASSUME. Every line item needs a packaging type and you must never default it silently. As you gather weight and dimensions, ask how it is packaged — "And how is it packaged, pallet or box?" — and pass it as the item type using these codes: pallet PLT, box BOX, carton BOX, crate CRT, skid SKD, bag BAG, bundle BND, roll RLL, tube TBE, anything else OTH. Do not pull rates while the packaging type is still unknown.
 
-STC (SAID TO CONTAIN) — PALLETS ONLY. When the packaging is a pallet or skid, ask how many boxes or pieces are on it and pass that number as the item stc. If it is a single box or one piece, leave stc blank — do not ask and do not set it. For ONE pallet with several boxes, set pieces to 1 and stc to the box count. For SEVERAL IDENTICAL pallets (same weight and same dimensions), keep them on ONE line: set pieces to the number of pallets and stc to the TOTAL boxes across all of them — for example 3 pallets with 10 boxes each is pieces 3, stc 30. If the pallets DIFFER in weight or dimensions, do not combine them: pass a SEPARATE item per pallet in the items array, each with its own weight, dimensions and its own stc, and confirm the box count on each. For a plain box or crate shipped as the unit itself, never set stc.
+STC (SAID TO CONTAIN) — VOLUNTEERED ONLY, NEVER ASKED. STC is an OPTIONAL BOL field; do NOT ask the customer how many boxes or pieces are on a pallet — it is not an intake question and never blocks a quote or a save. Record it ONLY when the customer volunteers a box/piece count (in chat or on a document): for ONE pallet with several boxes, pieces 1 and stc = the box count. For SEVERAL IDENTICAL pallets (same weight and dimensions) on one line, pieces = the pallet count and stc = the TOTAL boxes across them (3 pallets with 10 boxes each is pieces 3, stc 30). Pallets that DIFFER in weight or dimensions get a SEPARATE item each with its own stc. For a plain box or crate shipped as the unit itself, never set stc.
 
 INSURANCE — NEVER QUOTE A RATE, PERCENTAGE, OR COST. Cargo insurance is priced off the declared value by our system, not by you. Never state an insurance cost, percentage, or rule of thumb — no "about 1 to 2 percent," no dollar estimate, nothing. If a customer wants insurance, ask for the declared value, add it, and let the system price it. If they ask what it costs, say it is based on the declared value and gets calculated once you add it. Do not invent a number.
 
@@ -13474,10 +13517,13 @@ function _gateFinalText(finalText, ctx) {
       var _q  = (typeof _quoteFormState === 'function')   ? _quoteFormState()   : {};
       var _bk = (typeof _bookingPanelState === 'function') ? _bookingPanelState() : {};
       var _insS = ''; try { _insS = (typeof insuranceState === 'function') ? (insuranceState().status || '') : ''; } catch (e) {}
-      // When insurance is already added or being collected there is NO legitimate insurance question
-      // (offer or value), so no exclude — any insurance question is a re-ask. (A generic exclude like
-      // "should i" wrongly swallowed a value re-ask: "what declared value should I insure it for?".)
-      if (_insS === 'added' || _insS === 'collecting')
+      // ONLY 'added' counts as answered. 'collecting' was in this list (d9ff59d) and self-poisoned
+      // the MANDATORY intake ask: the [[INSURANCE]] marker armed the collector before this gate ran
+      // on the same reply, so the gate saw 'collecting' and stripped/regenerated the very question
+      // that had just armed — no ask ever rendered, a ghost-armed collector ate the next message,
+      // and the regenerated reply proceeded straight to a pull. While genuinely collecting, the
+      // deterministic collectors own the conversation anyway; the gate has no business here.
+      if (_insS === 'added')
         answered.push({ field: 'cargo insurance', re: /(insur|coverage|premium|declared value|value of (the )?(cargo|goods|shipment|freight))/i, exclude: null });
       if (_q && _q.hazmat === true)
         answered.push({ field: 'hazmat', re: /(hazmat|hazardous|dangerous goods)/i, exclude: null });
@@ -13541,7 +13587,12 @@ function _gateFinalText(finalText, ctx) {
       if (_deferral.test(text)) { text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); })); out.deliver = true; }
     } else if (_avail.state === 'not_settled' && _deferral.test(text)) {
       var _ready = _gateRateReadiness();
-      if (_ready.ok && !window._ratePullInFlight) {
+      if (window._insCollecting === 'value' || window._insCollecting === 'commodity') {
+        // Insurance collection in progress OWNS the pull — its ask is on screen; drop the promise.
+        console.log('[FP] gate-enforced rate pull — held: cargo-insurance collection owns the pull');
+        text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); }));
+        out.enforced = true;
+      } else if (_ready.ok && !window._ratePullInFlight) {
         // The form can pull RIGHT NOW — make the promise true via the canonical chat-pull sequence:
         // the standard pre-rate cargo-insurance question first (the same _insGateBeforeRates wrapper
         // every programmatic chat pull uses — its collectors call _doGetRates themselves), else the
@@ -13941,6 +13992,12 @@ async function aiConverse(userText) {
             // If this call pulled rates, WAIT for the pull to finish before returning the
             // result, so the AI doesn't narrate "no rates" while Primus is still responding.
             if (toolUse.input && toolUse.input.getRates) {
+              if (window._insHeldPull) {
+                // The mandatory cargo-insurance ask (or its in-progress collection) HELD this pull.
+                window._insHeldPull = false;
+                result = Object.assign({}, result, { ratesReady: false, rateCount: null, insuranceHold: true,
+                  note: 'Rates NOT pulled — the standard cargo-insurance question was just asked in chat (or its answer is still being collected). Do NOT promise rates, do NOT call getRates again, and do NOT re-ask about insurance. Wait for the customer to answer; the system pulls automatically right after.' });
+              } else {
               await _awaitRatePull();
               const _avail = _rateAvailability();
               if (_avail.state === 'settled_with_rates') { result = Object.assign({}, result, { ratesReady:true, rateCount: _avail.count }); }
@@ -13971,6 +14028,7 @@ async function aiConverse(userText) {
                 }
                 result = Object.assign({}, result, { ratesReady:_ready, rateCount: _rc, note: _note });
               }
+              } // closes the insurance-hold else
             }
             // ── Accessorial verification (card 3 Stage 1): never confirm a silent drop ──
             // Compare what the agent asked to add/remove against the SETTLED accessorial set (plain
@@ -14099,13 +14157,14 @@ async function aiConverse(userText) {
         window._insDecided = true;
         if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
       }
+      // [[INSURANCE]] — WELDED ARMING. Detect the marker here but arm ONLY after the gate has run
+      // and the ask is genuinely in the text about to render (see below). Arming before the gate is
+      // what created the ghost collector: the flag went live, the gate then removed the question,
+      // and the customer's next message ("jts") was eaten by a value capture nobody had asked for.
+      let _insAskMarker = false;
       if (/\[\[INSURANCE\]\]/.test(finalText)) {
         finalText = finalText.replace(/\[\[INSURANCE\]\]/g, '').trim();
-        if (!window._insDecided) {
-          window._insCollecting = 'value'; window._insReaskCount = 0;
-          window._insValueArmed = true; // the agent just asked for the value — next bare number is it
-          window._insPreRate = true;
-        }
+        _insAskMarker = !window._insDecided;
       }
       // ── POST-GENERATION GATE: re-ask / promise-without-action / fabrication backstop ──
       const _g = _gateFinalText(finalText, { regenDone: _reaskRegen });
@@ -14126,6 +14185,18 @@ async function aiConverse(userText) {
       // rendering an empty bubble if the model's reply itself was empty after markers stripped.
       if (!finalText) { window._lastTurnFailed = false; return; }
       window._lastTurnFailed = false; // recovered — stop re-orienting on the next turn
+      // WELD: arm the value collector ONLY now — the gate has run, finalText is what will render,
+      // and the insurance question is verifiably in it. Marker with no surviving ask = no arming
+      // (logged); the customer can never again be mid-collection on a question they never saw.
+      if (_insAskMarker) {
+        if (finalText && /insur/i.test(finalText)) {
+          window._insCollecting = 'value'; window._insReaskCount = 0;
+          window._insValueArmed = true; window._insAskRendered = true;
+          window._insPreRate = true;
+        } else {
+          console.log('[FP] [[INSURANCE]] marker but no rendered ask — NOT arming (weld)');
+        }
+      }
       // No assistant push here: _showBot → appendMessage records finalText (the ONE writer). If an
       // identical interim bubble already recorded it, _recordTurn's trailing-dedupe absorbs it.
       // Mirror into waybHistory so waybAgent has full conversational context
@@ -15860,6 +15931,7 @@ async function handleInput(text) {
       lastQuotedShipment && !lastQuotedShipment.insuranceEnabled) {
     window._insCollecting = 'value'; window._insReaskCount = 0;
     window._insValueArmed = true; // just asked — the next bare number is the declared value
+    window._insAskRendered = true; // welded to the render below — same turn
     appendMessage('bot', 'To add cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
     return;
   }
@@ -15873,15 +15945,13 @@ async function handleInput(text) {
     // outcome. Only a just-asked turn may treat a bare number as a declared value.
     const _insArmed = !!window._insValueArmed;
     window._insValueArmed = false;
-    // Decline → skip insurance. If we were gating a pre-rate pull, pull the rates now.
+    // Decline → skip insurance. Settle via the ONE helper: re-pull only when it can change the result.
     if (/\b(no|nope|skip|none|no thanks?|not needed|without|don'?t|no insurance|never ?mind)\b/i.test(t) && !/\d/.test(t)) {
       window._insCollecting = null; window._insTempValue = null;
       if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
       if (window._insPreRate) {
         window._insPreRate = false; window._insDecided = true;
-        appendMessage('bot', 'No problem — pulling your rates now without insurance.');
-        window._onRatesReady = _summarizeRatesToChat;
-        if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] no-insurance pull failed', e); } }
+        _insDeclineSettle();
       } else {
         appendMessage('bot', 'No problem — I\'ve left cargo insurance off.');
       }
@@ -15902,9 +15972,18 @@ async function handleInput(text) {
     if (_num > 0) {
       window._insTempValue = _num;
       window._insCollecting = 'commodity';
-      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. What type of commodity is it — for example furniture, electronics, or machinery?');
+      appendMessage('bot', 'Got it — ' + fmtMoney(_num) + '. What type of commodity is it — for example furniture, electronics, or machinery?');
     } else {
+      // Neither money-shaped nor a refusal. RELEASE to normal routing when (a) the ask never
+      // actually rendered — a ghost-armed collector may never eat a message ("jts" became
+      // "I did not catch a dollar amount" with zero prior insurance mention) — or (b) the message
+      // routes somewhere real (a command like a carrier pick, or clear moved-on intent). The
+      // collector may re-ask AT MOST once, and only when its question is truly on screen.
       if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
+      if (!window._insAskRendered || _turn.kind === 'command') {
+        window._insCollecting = null; window._insTempValue = null; window._insValueArmed = false;
+        return handleInput(t); // soft release — no decline recorded; the mandatory ask can still fire
+      }
       window._insReaskCount = (window._insReaskCount || 0) + 1;
       if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
       window._insValueArmed = true; // re-asking right now — the customer's next number is the answer
@@ -15921,13 +16000,17 @@ async function handleInput(text) {
       if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
       if (window._insPreRate) {
         window._insPreRate = false; window._insDecided = true;
-        appendMessage('bot', 'No problem — pulling your rates now without insurance.');
-        window._onRatesReady = _summarizeRatesToChat;
-        if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch(e) { console.warn('[FP] no-insurance pull failed', e); } }
+        _insDeclineSettle();
       } else {
         appendMessage('bot', 'No problem — I\'ve left cargo insurance off. Let me know if you change your mind.');
       }
       return;
+    }
+    // Same release rule as the value stage: a message that routes somewhere real (a command like a
+    // carrier pick) is never fuzzy-matched against commodity names — release it to normal routing.
+    if (_turn.kind === 'command') {
+      window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null; window._insValueArmed = false;
+      return handleInput(t); // soft release — no decline recorded
     }
     let _match = null;
     if (/^\s*\d+\s*$/.test(t)) {
@@ -15976,7 +16059,7 @@ async function handleInput(text) {
     window._insTempValue = null; window._insTempCommodity = null;
     // No inclusion claim yet — whether insurance actually rides the rates is only known when the
     // pull completes (the evidence-gated callback below says which happened).
-    appendMessage('bot', 'Cargo insurance requested — ' + _match.name + ', declared value $' + _val.toLocaleString('en-US') + '. Pulling updated rates now...');
+    appendMessage('bot', 'Cargo insurance requested — ' + _match.name + ', declared value ' + fmtMoney(_val) + '. Pulling updated rates now...');
 
     // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
     // it ourselves, suppress the prefill auto-run so we control the single requote below.
@@ -16012,7 +16095,7 @@ async function handleInput(text) {
       try {
         const _shp = window._lastRatesShipment;
         if (rates && rates.length && _shp && _shp.insuranceEnabled) {
-          appendMessage('bot', 'These rates include cargo insurance on the declared $' + _val.toLocaleString('en-US') + '.');
+          appendMessage('bot', 'These rates include cargo insurance on the declared ' + fmtMoney(_val) + '.');
           _summarizeRatesToChat();
         } else if (rates && rates.length) {
           appendMessage('bot', 'The rates are back, but I could not get cargo insurance applied on my side — the prices on screen do NOT include insurance. Say "add insurance" to try again, or email support@freightandlogistics.ai and the team will price it for you.');
@@ -16091,18 +16174,25 @@ async function handleInput(text) {
           [['bk-pu-name', 'pickup name'], ['bk-pu-street', 'pickup address'], ['bk-pu-phone', 'pickup phone'],
            ['bk-dl-name', 'delivery name'], ['bk-dl-street', 'delivery address'], ['bk-dl-phone', 'delivery phone']]
             .forEach(p => { const el = document.getElementById(p[0]); if (!el || !String(el.value || '').trim()) _missC.push(p[1]); });
-          appendMessage('bot', _rateDisplayName(_lockRate0) + ' is already set at $' + _ratePrice(_lockRate0).toFixed(2) +
+          appendMessage('bot', _rateDisplayName(_lockRate0) + ' is already set at ' + fmtMoney(_ratePrice(_lockRate0)) +
             ' — the booking form is open on the right. ' +
             (_missC.length
               ? 'I still need the ' + _missC.join(', ') + '.'
               : 'Everything required is filled in — review it and hit Save Shipment when ready.'));
           return;
         }
+        // Capture BEFORE selectRate: if the Book Shipment tab already exists, the panel's own
+        // closed→open greeting will NOT fire, so this intercept supplies the ONE state-aware
+        // message for the rebuild. (The old hardcoded "I need the pickup and delivery details"
+        // line is gone — it paired with the panel greeting into a double, and it was blind to
+        // a form that was already filled.)
+        const _bkTabWasOpen = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
+          ? rpState.tabs.some(tb => String(tb.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Book Shipment') : false;
         const _sel = selectRate(_probe.rate, { shipment: window._lastRatesShipment || lastQuotedShipment, source: 'chat-carrier-name' });
         removeTyping();
         if (_sel.ok) {
           window._inQuoteConvo = true;
-          appendMessage('bot', 'Booking ' + _sel.carrier + ' at $' + _sel.price.toFixed(2) + '. The booking panel is open on the right — I need the pickup and delivery details.');
+          if (_bkTabWasOpen) setTimeout(() => { appendMessage('bot', _bookingGreeting(_sel.carrier, _sel.price)); }, 250);
           return;
         }
       } else if (_probe.code === 'AMBIGUOUS') {
@@ -16918,7 +17008,7 @@ function showBookingPanel(rate, shipmentData) {
   const lS = 'font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;display:block;';
   const iS = 'width:100%;border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:13px;font-family:var(--font);background:var(--card);color:var(--tx);box-sizing:border-box;';
   const tS = iS + 'appearance:none;-webkit-appearance:none;color-scheme:light;';
-  const priceStr = '$' + price.toFixed(2);
+  const priceStr = fmtMoney(price);
 
   const c = document.createElement('div');
   c.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;';
@@ -17114,7 +17204,7 @@ function showBookingPanel(rate, shipmentData) {
   if (lastQuotedShipment && lastQuotedShipment.insuranceEnabled) {
     const insSec = document.createElement('div');
     insSec.style.marginBottom = '16px';
-    const _insAmt = Number(lastQuotedShipment.insuranceAmount || 0).toLocaleString('en-US');
+    const _insAmt = fmtMoney(lastQuotedShipment.insuranceAmount || 0).slice(1); // "$" is in the template below
     insSec.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--ac);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--bdr);">Cargo Insurance</div>' +
       '<div style="font-size:12px;color:var(--mu);">Commodity: ' + (lastQuotedShipment.insuranceCommodityName || '') + '</div>' +
       '<div style="font-size:12px;color:var(--mu);">Insured value: $' + _insAmt + '</div>' +
@@ -17725,10 +17815,27 @@ function showBookingPanel(rate, shipmentData) {
     }, 150);
   };
 
-  // Prompt the user in chat to paste their booking info — once per genuine open (see guard above).
+  // ONE greeting per genuine open (see guard above), and it must be TRUE: emitted after the
+  // restores/defaults have landed, reading the actual DOM fill state via _bookingGreeting.
   if (!_bookingTabAlreadyOpen) setTimeout(() => {
-    appendMessage('bot', 'Booking form is open on the right. Fill it in there, or just tell me the shipper name, address, contact, phone, reference number, and pickup date and time and I will fill it for you.');
-  }, 200);
+    appendMessage('bot', _bookingGreeting(name, price));
+  }, 250);
+}
+
+// ── THE booking-panel greeting: ONE message per open, and it must be TRUE ─────
+// Reads the live DOM before speaking: fully carried-over panel → confirm-forward; partial →
+// name exactly what's missing; empty → the full ask. Replaces the pair of a hardcoded
+// intercept line ("I need the pickup and delivery details") plus a blind panel greeting —
+// which tonight demanded details over a form that was already completely filled.
+function _bookingGreeting(carrier, price) {
+  const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const req = [['bk-pu-name', 'pickup name'], ['bk-pu-street', 'pickup address'], ['bk-pu-phone', 'pickup phone'],
+               ['bk-dl-name', 'delivery name'], ['bk-dl-street', 'delivery address'], ['bk-dl-phone', 'delivery phone']];
+  const missing = req.filter(p => !g(p[0])).map(p => p[1]);
+  const head = 'Booking ' + carrier + ' at ' + fmtMoney(price) + ' — ';
+  if (!missing.length) return head + 'your pickup and delivery details are carried over. Confirm the pickup date and give me a PO number if you have one, and I\'ll get it saved.';
+  if (missing.length === req.length) return head + 'the booking form is open on the right. Fill it in there, or just tell me the shipper name, address, contact, phone, reference number, and pickup date and time and I will fill it for you.';
+  return head + 'most of it is carried over. I still need the ' + missing.join(', ') + '.';
 }
 
 function fillBookingPanelFromChat(parsed) {
@@ -19211,7 +19318,7 @@ function showQuoteForm(prefill, silent) {
     });
     sorted.forEach((rate,idx) => {
       const name = (rate.name||rate.carrier||'Carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D');
-      const price = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||0).toFixed(2);
+      const price = fmtMoney(Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||0)).slice(1); // "$" is in the template below
       const transit = rate.transitDays||rate.transitTime||'—';
       const svc = rate.serviceLevel||rate.service||'—';
       const svcMsg = rateRemarkText(rate) || rate.serviceLevelMessage || rate.message || rate.notes || rate.remarks || rate.carrierMessage || rate.notice || rate.disclaimer || '';
