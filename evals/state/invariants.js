@@ -1038,14 +1038,16 @@ const invariants = [
   },
   // ── 39 ──────────────────────────────────────────────────────────────────────
   {
-    id: 39, name: 'invoices fetch at a supported page size and never render a false empty state',
-    property: '/applet/v1/invoice is fetched at limit=10 (limit=100 returns HTTP 200 + empty results while reporting full pagination, so the drain loop grinds ~200 empty pages ≈ 67s to nothing); a zero harvest while the backend total is non-zero — or every page errored / nothing responded — throws INVOICE_FETCH_INCOMPLETE instead of returning [], so the caller shows truthful copy rather than a false "No invoices found."',
-    catches: 'R1: limit=100 → 67s then "No invoices found." on a ~2,050-invoice account',
+    id: 39, name: 'endpoints page at the supported size (100) and invoices never render a false empty state',
+    property: '/applet/v1/invoice is fetched at limit=100 (verified supported: resultsPerPage=100, pages=276) and /book pages at perPage=100, both ~10x fewer round-trips than 10; the /book page count derives from server pages or the ACTUAL returned page size (never the requested limit) so a clamp can never under-page; a zero invoice harvest while the backend total is non-zero — or every page errored / nothing responded — throws INVOICE_FETCH_INCOMPLETE instead of returning [], so the caller shows truthful copy rather than a false "No invoices found."',
+    catches: 'the page-size regression (10 → 49s/67s loads) and a non-empty backend rendering as "No invoices found."',
     async run(ctx) {
       const w = ctx.win;
       const src = require('./harness').appScript();
-      A.ok(/invoice\?limit=10&page=/.test(src), 'invoice fetch is not at limit=10');
-      A.ok(!/invoice\?limit=100/.test(src), 'invoice fetch still uses the unsupported limit=100');
+      A.ok(/invoice\?limit=100&page=/.test(src), 'invoice fetch is not at the supported limit=100');
+      A.ok(/const perPage=100, BATCH=6;/.test(src), '/book fetchNextBatch is not paging at perPage=100');
+      A.ok(/shipCtx\.totalPages = \(pd1&&pd1\.pages!=null\) \? pd1\.pages/.test(src), '/book page count does not prefer the server page count (clamp-safe)');
+      A.ok(/const _effPer = arr1\.length \|\| perPage;/.test(src), '/book page count is not derived from the actual returned page size');
       const route = (body) => { ctx.routes.length = 0; ctx.routes.push({ match: (u) => u.includes('/applet/v1/invoice'), reply: () => ({ status: 200, body }) }); };
       // A non-empty backend response can NEVER render as "No invoices found": empty pages under a
       // non-zero backend total must throw, not return [].
@@ -1092,6 +1094,36 @@ const invariants = [
       const src = require('./harness').appScript();
       A.ok(/window\._invSort = \{ field: table\.sortField, dir: table\.sortDir \}/.test(src), 'invoice sort is not persisted to window._invSort');
       A.ok(/table\.sortField = \(window\._invSort && window\._invSort\.field\)/.test(src), 'invoice table does not seed from the persisted sort');
+    },
+  },
+  // ── 41 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 41, name: 'the space-separated datetime format parses/filters/sorts, and no in-range invoice is dropped',
+    property: 'parseFreightDate handles the exact Primus format "2024-07-17 14:41:38" (engine-independent, unlike new Date()); the invoice date filter keeps in-range invoices and excludes out-of-range ones through that one parser; a row whose date cannot be parsed is KEPT (never silently dropped); and a non-zero fetch that filters to zero renders truthful in-range copy, never a bare "No invoices found."',
+    catches: 'FACT 2: all 2,050 fetched invoices dropped to "Invoices (0)" on a Safari-fragile date path; silently dropping undated rows; a false empty state',
+    run(ctx) {
+      const w = ctx.win;
+      // The exact live format parses to a finite timestamp (and _dateSortVal delegates to it).
+      const ts = w.parseFreightDate('2024-07-17 14:41:38');
+      A.ok(typeof ts === 'number' && isFinite(ts), 'the space-separated datetime did not parse');
+      A.ok(w._dateSortVal('2024-07-17 14:41:38') === ts, '_dateSortVal does not route through parseFreightDate');
+      A.ok(w.parseFreightDate('') === null && w.parseFreightDate('garbage') === null, 'blank/garbage did not yield null');
+      // Build enriched invoices with the live format; filter through renderInvoices.
+      const inv = (n, issue) => ({ invoiceNumber: String(n), bolNum: String(n), issueDate: issue, invoiceDueDate: '', total: 100, status: { paid: false }, _enriched: { bolNum: String(n), shipper: 'Haynes', consignee: 'X', carrier: 'Estes' } });
+      const rowsOf = el => { const b = el.querySelector('tbody'); return b ? b.querySelectorAll('tr').length : 0; };
+      const mixed = [inv(1, '2024-07-17 14:41:38'), inv(2, '2026-07-20 09:00:00'), inv(3, '2026-07-25 10:00:00')];
+      A.ok(rowsOf(w.renderInvoices(mixed, mixed, '2026-06-28', '2026-07-28')) === 2, '30-day window did not keep exactly the two in-range invoices');
+      A.ok(rowsOf(w.renderInvoices(mixed, mixed, '2010-01-01', '2026-07-28')) === 3, 'All Time did not keep every invoice');
+      // An unparseable date is KEPT, not dropped.
+      const withBad = [inv(1, ''), inv(2, '2026-07-25 10:00:00')];
+      A.ok(rowsOf(w.renderInvoices(withBad, withBad, '2026-06-28', '2026-07-28')) === 2, 'an undated row was silently dropped instead of kept');
+      // A non-zero fetch filtered to zero shows truthful in-range copy, NOT a bare "No invoices found."
+      const allOld = [inv(1, '2024-07-17 14:41:38'), inv(2, '2024-08-01 10:00:00')];
+      const el = w.renderInvoices(allOld, allOld, '2026-06-28', '2026-07-28');
+      const txt = el.textContent || '';
+      A.ok(rowsOf(el) === 0, 'the all-out-of-range set should render zero rows');
+      A.ok(/Widen the date range|None of your/.test(txt) && !/^\s*No invoices found\.\s*$/.test(txt),
+        'a non-zero fetch filtered to zero showed a bare "No invoices found." instead of truthful in-range copy');
     },
   },
 ];

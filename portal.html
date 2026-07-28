@@ -3528,22 +3528,26 @@ function scrollBottom() {
 
 function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   const _allFetched = fullInvoicesList || invoices;
-  // /applet/v1/invoice can't filter by date (verified), so filter client-side here on the
-  // INVOICE date (getInvoiceFields().date = issueDate/invoiceDate, NOT the due date). That
-  // field is a 'YYYY-MM-DD HH:MM:SS' datetime, so compare on the YYYY-MM-DD prefix as a
-  // string: TZ-free and cross-browser-safe (Safari rejects space-separated new Date()), and
-  // inclusive on both ends. Bind the filtered rows to allInvoices so EVERY derived value
-  // below (tiles, aging, table, Excel, Pay list, count) reflects the visible window — a
-  // filtered table under unfiltered totals would silently lie.
+  // /applet/v1/invoice can't filter by date (verified), so filter client-side here on the INVOICE date
+  // (getInvoiceFields().date = issueDate, the authoritative range field, NOT the due date). That field
+  // is a 'YYYY-MM-DD HH:MM:SS' datetime; compare it as a TIMESTAMP through the one canonical parser
+  // (parseFreightDate) rather than naive new Date()/string ops, so every engine (incl. Safari) agrees.
+  // Bind the filtered rows to allInvoices so EVERY derived value below (tiles, aging, table, Excel, Pay
+  // list, count) reflects the visible window — a filtered table under unfiltered totals would lie.
   let allInvoices = _allFetched;
+  let _invUnparseableDates = 0;
   if (_invDateFrom || _invDateTo) {
+    const fromTs = parseFreightDate(_invDateFrom);
+    // Bounds are date-only; invoice dates carry a time — make dateTo inclusive of its whole day.
+    const toTs   = _invDateTo ? (parseFreightDate(_invDateTo) + 86400000) : null;
     allInvoices = _allFetched.filter(inv => {
-      const ds = String(getInvoiceFields(inv).date || '').slice(0, 10);   // YYYY-MM-DD
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return false;
-      if (_invDateFrom && ds < _invDateFrom) return false;
-      if (_invDateTo   && ds > _invDateTo)   return false;
+      const invTs = parseFreightDate(getInvoiceFields(inv).date);
+      if (invTs == null) { _invUnparseableDates++; return true; }   // never silently drop an undated row
+      if (fromTs != null && invTs <  fromTs) return false;
+      if (toTs   != null && invTs >= toTs)   return false;
       return true;
     });
+    if (_invUnparseableDates) console.warn('[Invoices] kept ' + _invUnparseableDates + ' row(s) with an unparseable date rather than dropping them silently');
   }
   window._currentInvoiceList = allInvoices;          // Pay button — reflects the visible window
   window._invLastRenderedCount = allInvoices.length; // tab-count source for date-filtered opens
@@ -3580,6 +3584,34 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     '<button id="inv-date-apply" style="background:var(--ac);color:#fff;border:none;border-radius:6px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">Apply</button>' +
     '<button id="inv-date-all" style="background:none;border:1px solid var(--bdr);color:var(--mu);border-radius:6px;padding:5px 14px;font-size:12px;cursor:pointer;font-family:var(--font);">All Time</button>';
   container.appendChild(dateBar);
+
+  // Wire date picker buttons HERE (before any early empty-return) so Apply / All Time work even when
+  // the panel renders in-range-empty. Query the detached dateBar directly (no getElementById — the
+  // container isn't in the document yet, and Apply builds a fresh container reusing these IDs).
+  const applyBtn = dateBar.querySelector('#inv-date-apply');
+  const allBtn   = dateBar.querySelector('#inv-date-all');
+  const fromEl   = dateBar.querySelector('#inv-date-from');
+  const toEl     = dateBar.querySelector('#inv-date-to');
+  if (applyBtn) applyBtn.onclick = async () => {
+    applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
+    try {
+      const _from = fromEl.value, _to = toEl.value;
+      const newInvs = await fetchInvoices(_from, _to);
+      const newEl = renderInvoices(newInvs, newInvs, _from, _to);
+      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
+    } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
+  };
+  if (allBtn) allBtn.onclick = async () => {
+    allBtn.textContent = 'Loading...'; allBtn.disabled = true;
+    const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
+    if (fromEl) fromEl.value = _af;
+    if (toEl)   toEl.value   = _at;
+    try {
+      const newInvs = await fetchInvoices(_af, _at);
+      const newEl = renderInvoices(newInvs, newInvs, _af, _at);
+      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
+    } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
+  };
 
   // Left side: stats
   const statsDiv = document.createElement('div');
@@ -3862,7 +3894,14 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
 
   const wrap = document.createElement('div');
   if (!allInvoices || !allInvoices.length) {
-    wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No invoices found.</div>';
+    // Distinguish a genuine zero from a non-empty fetch filtered to zero by the active range — the
+    // latter must log loudly and tell the truth ("you have N, none in range"), never imply zero total.
+    if (_allFetched && _allFetched.length && (_invDateFrom || _invDateTo)) {
+      console.warn('[Invoices] ' + _allFetched.length + ' invoice(s) fetched but 0 fall in ' + (_invDateFrom || '…') + ' to ' + (_invDateTo || '…') + ' — showing an in-range-empty message, not a false "no invoices"');
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">None of your <strong style="color:var(--tx);">' + _allFetched.length + '</strong> invoices fall in <strong style="color:var(--tx);">' + (_invDateFrom || '—') + '</strong> to <strong style="color:var(--tx);">' + (_invDateTo || '—') + '</strong>. Widen the date range or click <strong style="color:var(--tx);">All Time</strong>.</div>';
+    } else {
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No invoices found.</div>';
+    }
     container.appendChild(wrap);
     return container;
   }
@@ -4084,34 +4123,8 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   if (table.sortField) sortAndRenderInvoices(allInvoices, table.sortField, table.sortDir, tbody, footer, PAGE_SIZE);
   else renderInvoiceRows(allInvoices, tbody, PAGE_SIZE, 0);
 
-  // Wire date picker buttons — query the detached dateBar directly (no timer,
-  // no getElementById). The container isn't in the document yet, and Apply
-  // builds a fresh container reusing these IDs while the old one is still
-  // mounted, so a document lookup would race or match the stale duplicate.
-  const applyBtn = dateBar.querySelector('#inv-date-apply');
-  const allBtn   = dateBar.querySelector('#inv-date-all');
-  const fromEl   = dateBar.querySelector('#inv-date-from');
-  const toEl     = dateBar.querySelector('#inv-date-to');
-  if (applyBtn) applyBtn.onclick = async () => {
-    applyBtn.textContent = 'Loading...'; applyBtn.disabled = true;
-    try {
-      const _from = fromEl.value, _to = toEl.value;
-      const newInvs = await fetchInvoices(_from, _to);
-      const newEl = renderInvoices(newInvs, newInvs, _from, _to);
-      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
-    } catch(e) { applyBtn.textContent = 'Apply'; applyBtn.disabled = false; }
-  };
-  if (allBtn) allBtn.onclick = async () => {
-    allBtn.textContent = 'Loading...'; allBtn.disabled = true;
-    const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
-    if (fromEl) fromEl.value = _af;
-    if (toEl)   toEl.value   = _at;
-    try {
-      const newInvs = await fetchInvoices(_af, _at);
-      const newEl = renderInvoices(newInvs, newInvs, _af, _at);
-      openRightPanel(newEl, 'Invoices (' + window._invLastRenderedCount + ')');
-    } catch(e) { allBtn.textContent = 'All Time'; allBtn.disabled = false; }
-  };
+  // (Date-picker buttons are wired earlier — right after container.appendChild(dateBar) — so they work
+  // even when the panel renders empty / in-range-empty and returns before this point.)
 
   return container;
 }
@@ -5122,7 +5135,25 @@ function _cmpValues(a, b, dir) {
   else r = String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
   return dir === 'asc' ? r : -r;
 }
-function _dateSortVal(v) { if (!v) return null; const t = new Date(v).getTime(); return isNaN(t) ? null : t; }
+// ONE canonical date parser for EVERY freight date (invoice issueDate/dueDate, shipment
+// book/pickup/delivery). Primus returns "YYYY-MM-DD HH:MM:SS" (space-separated) — new Date() on that
+// string is unreliable across engines (Safari/WebKit returns Invalid Date → NaN), which silently broke
+// date sorting. Parse the components explicitly so every engine agrees; return a UTC timestamp or null.
+// Used everywhere invoice/shipment dates are parsed, filtered, or sorted — do not hand-roll a second one.
+function parseFreightDate(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  const s = String(v).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);   // YYYY-MM-DD[ HH:MM[:SS]]
+  if (m) { const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)); return isNaN(t) ? null : t; }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);   // MM/DD/YYYY
+  if (m) { const t = Date.UTC(+m[3], +m[1] - 1, +m[2]); return isNaN(t) ? null : t; }
+  const t = new Date(s).getTime();   // last-resort engine parse
+  return isNaN(t) ? null : t;
+}
+// Sort helper delegates to the one canonical parser (was `new Date(v)` — Safari-fragile on space dates).
+function _dateSortVal(v) { return parseFreightDate(v); }
 function _moneySortVal(v) { if (v === null || v === undefined || v === '') return null; const n = parseMoney(v); return isNaN(n) ? null : n; }
 function _strSortVal(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
 
@@ -11416,7 +11447,7 @@ async function parseShipQuery(text, activeContext){
 }
 async function fetchNextBatch(){
   const token=await getToken();
-  const perPage=10, BATCH=6;
+  const perPage=100, BATCH=6;   // /book paged at 10 made a 649-shipment window ~49s across 65+ round-trips
   const headers={'Authorization':'Bearer '+token};
   // Send the SAME server-side date window the My Shipments panel sends, so the agent and the panel
   // work off one dataset. The agent path used to omit dateFrom/dateTo and re-filter client-side.
@@ -11432,11 +11463,16 @@ async function fetchNextBatch(){
     if(!t1){ shipCtx.done=true; return; }
     let d1; try{ d1=JSON.parse(t1); }catch(e){ shipCtx.done=true; return; }
     const pd1=d1.data&&d1.data.pagingDetails;
-    shipCtx.totalPages = (pd1&&pd1.totalResults!=null) ? (Math.ceil(pd1.totalResults/perPage)||1) : 1;
+    const arr1=(d1.data&&d1.data.results)||[];
+    // Prefer the server's own page count (pd1.pages); else derive from the ACTUAL page size returned
+    // (arr1.length), NOT the requested perPage — so if /book ever clamps limit below 100 we still page
+    // to the end and never drop rows. Falls back to perPage only when page 1 came back empty.
+    const _effPer = arr1.length || perPage;
+    shipCtx.totalPages = (pd1&&pd1.pages!=null) ? pd1.pages
+      : ((pd1&&pd1.totalResults!=null) ? (Math.ceil(pd1.totalResults/_effPer)||1) : 1);
     // The backend's authoritative total for this window — the count any customer-facing surface must
     // show, independent of how many rows we have loaded so far.
     shipCtx.total = (pd1&&pd1.totalResults!=null) ? pd1.totalResults : null;
-    const arr1=(d1.data&&d1.data.results)||[];
     arr1.forEach(function(sh){ shipCtx.loaded.push(sh); });
     if (typeof updateNavBadges === 'function') updateNavBadges();
     shipCtx.page+=1;
@@ -20157,17 +20193,17 @@ async function fetchInvoices(dateFrom, dateTo) {
   // Step 1: Fetch invoice list directly — one paginated call, no per-invoice fetches
   const invoiceList = [];
   let page = 1, totalPages = 1;
-  // limit MUST stay 10: /applet/v1/invoice does not honor a larger perPage — with limit=100 it returns
-  // HTTP 200 + empty results while still reporting pagingDetails for the full set, so the drain loop
-  // grinds through every page harvesting nothing (~67s) and renders a false "No invoices found". 10 is
-  // the known-good value. (If Primus ever confirms a supported larger perPage, raise it here.)
+  // limit=100 is SUPPORTED (verified live against the tenant API: resultsPerPage=100, pages=276 for a
+  // 27,522-invoice account) — 10x fewer round-trips than limit=10. The earlier "limit=100 returns
+  // 200+empty" theory was WRONG; the empty panel was a date-FILTER format bug (see parseFreightDate),
+  // not the page size. pd.pages (server-reported) drives termination, so this is robust either way.
   let backendTotal = null, sawError = false, sawResponse = false;
   while (page <= totalPages && page <= 200) {
     const batches = [];
     for (let p = page; p < page + 6 && p <= totalPages; p++) batches.push(p);
     if (!batches.length) break;
     const results = await Promise.all(batches.map(p =>
-      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=10&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
+      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
         .then(r => r.ok ? r.json() : (sawError = true, null)).catch(() => (sawError = true, null))
     ));
     results.forEach(d => {
