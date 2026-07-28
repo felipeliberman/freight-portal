@@ -299,6 +299,161 @@ const negativeSteps = [
   },
 ];
 
+// ── Resilience & copy (Findings 1–3): each step gets its own fresh session ────
+const PHONE_RE = /\(?800\)?[\s.\-]?687[\s.\-]?3713|8006873713/;
+const resilienceSteps = [
+  {
+    id: 'R1', name: 'transient agent failure retries once and recovers — no error copy shown',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        let calls = 0;
+        ctx.routes.push({ match: u => /anthropic-proxy/.test(u), reply: () => {
+          calls++;
+          return calls === 1
+            ? { status: 503, body: { type: 'error', error: { type: 'overloaded_error', message: 'overloaded' } } }
+            : { status: 200, body: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'All set — anything else I can help with?' }] } };
+        } });
+        w.appendMessage('user', 'thanks');
+        await w.aiConverse('thanks');
+        const msgs = ctx.messages.filter(m => m.role === 'bot').map(m => m.text);
+        A.ok(calls >= 2, 'the transient failure did not trigger a retry: calls=' + calls);
+        A.ok(msgs.some(t => /anything else/i.test(t)), 'the recovered reply was not shown: ' + JSON.stringify(msgs));
+        A.ok(!msgs.some(t => /hit a snag|trouble connecting/i.test(t)), 'error copy leaked despite recovery: ' + JSON.stringify(msgs));
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+  {
+    id: 'R2', name: 'hard failure → email-support copy, never a phone number, state preserved',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 250, pieces: 3, length: 58, width: 30, height: 49 }, true);
+        w._quotedContacts = { _lane: '90660->33511', shipper: { name: 'Michaels Furniture', address: '7240 Crider Ave' }, consignee: { name: 'Mike Smith', address: '1145 S Clark Drive' } };
+        await sleep(50);
+        ctx.routes.push({ match: u => /anthropic-proxy/.test(u), reply: () => ({ status: 400, body: { type: 'error', error: { type: 'invalid_request_error', message: 'invalid request' } } }) });
+        w.appendMessage('user', 'is this thing on');
+        await w.aiConverse('is this thing on');
+        const msgs = ctx.messages.filter(m => m.role === 'bot').map(m => m.text);
+        A.ok(msgs.some(t => /support@freightandlogistics\.ai/.test(t)), 'no email-support copy on hard failure: ' + JSON.stringify(msgs));
+        A.ok(!msgs.some(t => PHONE_RE.test(t)), 'a phone number appeared in failure copy: ' + JSON.stringify(msgs));
+        A.ok(msgs.some(t => /nothing you entered was lost|still here/i.test(t)), 'failure copy does not reassure data is safe: ' + JSON.stringify(msgs));
+        // Quote/booking state must survive the failed turn.
+        const q = w._quoteFormState();
+        A.ok(q.origin === '90660' && q.destination === '33511', 'quote form state was lost on failure');
+        A.ok(w._quotedContacts && w._quotedContacts.shipper && w._quotedContacts.shipper.name === 'Michaels Furniture', 'captured contacts were lost on failure');
+        // A structured diagnostic was emitted (Finding 1b) — verify the stable prefix is reachable.
+        A.ok(typeof w._agentTurnFailed === 'function', 'the structured failure logger is missing');
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+  {
+    id: 'R3', name: 'no customer-facing chat/error/toast string contains a phone number',
+    async run() {
+      const src = require(path.join(__dirname, '..', 'state', 'harness')).appScript();
+      // Every line that RENDERS a bot chat bubble / error toast / chat error panel must not carry
+      // the phone number. Formal document footers and the nav chrome phone link are out of scope.
+      const renderRe = /appendMessage\(\s*['"]bot['"]|appendMsg\(\s*['"]bot['"]|showFormStatus\(\s*['"]error['"]|class="track-msg"|id="qt-rates-empty"|RATE_SUPPORT\s*=/;
+      const offenders = src.split('\n')
+        .map((l, i) => [i + 1, l])
+        .filter(([, l]) => PHONE_RE.test(l) && renderRe.test(l));
+      A.ok(offenders.length === 0, 'phone number in customer-facing chat/error copy: ' + offenders.map(([n, l]) => n + ': ' + l.trim().slice(0, 90)).join(' | '));
+      // The canonical failure copy and rate-support constant carry no phone.
+      const ctx = boot();
+      try {
+        A.ok(!PHONE_RE.test(ctx.g('AGENT_FAIL_MSG')), 'AGENT_FAIL_MSG contains a phone number');
+        A.ok(!PHONE_RE.test(ctx.g('RATE_SUPPORT')), 'RATE_SUPPORT contains a phone number');
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+  {
+    id: 'R4', name: 'save confirmation points to My Shipments for dispatch (no phone, no "just ask")',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 250, pieces: 3, length: 58, width: 30, height: 49 }, true);
+        w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+        w.selectRate({ carrier: 'JTS' }, { shipment: fx.SHIPMENT, open: false, source: 'test' });
+        ctx.routes.push(
+          { match: u => /\/applet\/v1\/rate\/save/.test(u), reply: () => ({ status: 200, body: { data: { results: { quoteNumber: 'Q-R4' } } } }) },
+          { match: u => /\/applet\/v1\/book/.test(u),        reply: () => ({ status: 200, body: { data: { results: [{ BOLId: 'BOLID-R4', BOLNmbr: '160188888', documents: [] }] } } }) },
+        );
+        const r = await w._execSaveShipment({});
+        A.ok(r && r.ok === true && r.BOLNumber === '160188888', 'the save did not return the backend BOL: ' + JSON.stringify(r));
+        A.ok(/My Shipments/.test(r.message), 'save copy does not point to My Shipments: ' + r.message);
+        A.ok(/when you'?re ready to dispatch/i.test(r.message), 'save copy lost the dispatch instruction: ' + r.message);
+        A.ok(!/come back and let me know|just come back/i.test(r.message), 'save copy still implies dispatch-by-asking: ' + r.message);
+        A.ok(!PHONE_RE.test(r.message), 'save copy contains a phone number: ' + r.message);
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+];
+
+// ── Voice lifecycle (Finding 4): two sequential captures each complete cleanly ─
+const voiceSteps = [
+  {
+    id: 'V1', name: 'two sequential voice captures each complete cleanly — no self-interrupt',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        // Mock the Web Speech recognizer: records start/abort, lets the test drive result/end.
+        w.eval([
+          'window.__recs = [];',
+          'window.MockSR = function(){ var self=this; self.aborted=false; self.started=false;',
+          '  self.onresult=null; self.onend=null; self.onerror=null; self.onstart=null;',
+          '  self.continuous=false; self.interimResults=false; self.lang="";',
+          '  self.start=function(){ self.started=true; };',
+          '  self.stop=function(){ if(self.onend) self.onend(); };',
+          '  self.abort=function(){ self.aborted=true; };',
+          '  window.__recs.push(self); };',
+          'window.SpeechRecognition = window.MockSR;'
+        ].join('\n'));
+        const recs = () => w.eval('window.__recs');
+        const live = () => recs().filter(r => r.started && !r.aborted);
+        const fireResult = (rec, txt) => rec.onresult({ resultIndex: 0, results: { 0: { isFinal: true, 0: { transcript: txt } }, length: 1 } });
+        const submits = [];
+        w._submitUserTurn = (t) => { submits.push(t); };
+        w._vm.active = true; w._vm.state = 'listen';
+
+        // Capture 1
+        w._vmStartListen();
+        A.ok(recs().length === 1 && live().length === 1, 'capture 1 did not open exactly one recognizer');
+        const rec0 = recs()[0];
+        fireResult(rec0, 'first message');
+        rec0.onend();
+        A.ok(submits.length === 1 && submits[0] === 'first message', 'capture 1 did not submit its transcript: ' + JSON.stringify(submits));
+        A.ok(rec0.aborted, 'capture 1 recognizer was not released after its turn');
+
+        // Simulate the post-reply relisten (what the speak tail does).
+        w._vm.state = 'listen';
+        w._vmStartListen();
+        const rec1 = live()[0];
+        A.ok(rec1 && rec1 !== rec0, 'capture 2 did not open a fresh recognizer');
+        A.ok(live().length === 1, 'more than one recognizer is live at capture 2: ' + live().length);
+        A.ok(w._vm.restartTimer === null, 'a stale restart timer survived into capture 2 — it can interrupt mid-word');
+
+        // Capture 2 receives speech. A stale restart scheduled mid-capture must NOT tear it down.
+        fireResult(rec1, 'second message');
+        w._vmScheduleRestart(0);        // simulate a stray restart landing during the live capture
+        await sleep(40);
+        A.ok(!rec1.aborted, 'the live second capture was interrupted by a stale restart (self-interrupt)');
+        A.ok(live().length === 1 && live()[0] === rec1, 'capture 2 was swapped for another recognizer mid-word');
+        rec1.onend();
+        A.ok(submits.length === 2 && submits[1] === 'second message', 'capture 2 did not submit cleanly: ' + JSON.stringify(submits));
+
+        // Re-entrancy: a rapid double trigger cannot open two captures.
+        w._vm.state = 'listen';
+        const before = recs().length;
+        w._vm.starting = true;          // pretend a start is mid-flight
+        w._vmStartListen();             // must be ignored
+        w._vm.starting = false;
+        A.ok(recs().length === before, 're-entrancy guard failed — a second start opened another capture');
+        w._vmTeardown();
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+];
+
 async function runFlow() {
   const results = [];
   // The main ten-step flow shares ONE session, exactly like the live acceptance run.
@@ -322,6 +477,11 @@ async function runFlow() {
     catch (e) { results.push({ id: s.id, name: s.name, status: 'FAIL', error: String(e.message || e) }); dead2 = true; }
   }
   ctx2.dom.window.close();
+  // Resilience/copy + voice steps each own their session (they simulate failures / mock APIs).
+  for (const s of resilienceSteps.concat(voiceSteps)) {
+    try { await s.run(); results.push({ id: s.id, name: s.name, status: 'PASS' }); }
+    catch (e) { results.push({ id: s.id, name: s.name, status: 'FAIL', error: String(e.message || e) }); }
+  }
   return results;
 }
 

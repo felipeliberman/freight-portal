@@ -1569,7 +1569,7 @@ function buildTrackCard(num){
 }
 async function fetchTrack(num, body){
   if(!TRACK_API){
-    body.innerHTML='<div class="track-msg">Live status will appear here once the tracker is connected. For now, use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or call <a href="tel:8006873713">(800) 687-3713</a>.</div>';
+    body.innerHTML='<div class="track-msg">Live status will appear here once the tracker is connected. For now, use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a>.</div>';
     return;
   }
   try{
@@ -1577,12 +1577,12 @@ async function fetchTrack(num, body){
     if(!resp.ok) throw 0;
     var d=await resp.json();
     if(!d||d.found===false||!(d.events&&d.events.length)){
-      body.innerHTML='<div class="track-msg">No status found for #'+escapeHtml(num)+' yet. Double-check the number, or reach us at <a href="tel:8006873713">(800) 687-3713</a> / <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a> and we\u2019ll look it up.</div>';
+      body.innerHTML='<div class="track-msg">No status found for #'+escapeHtml(num)+' yet. Double-check the number, or reach us at <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a> and we\u2019ll look it up.</div>';
       return;
     }
     renderTrack(d, body);
   }catch(e){
-    body.innerHTML='<div class="track-msg">Couldn\u2019t reach live tracking right now. Use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or call <a href="tel:8006873713">(800) 687-3713</a>.</div>';
+    body.innerHTML='<div class="track-msg">Couldn\u2019t reach live tracking right now. Use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a>.</div>';
   }
 }
 function renderTrack(d, body){
@@ -1719,9 +1719,9 @@ function answerFromTrack(t){
     return 'This shipment is moving with **'+carrier+'**'+(d.service&&d.service!==d.carrier?' ('+d.service+')':'')+'.'
   if(/deliver|arriv|eta|when/.test(s)){
     if(d.delivered) return 'Good news — BOL '+bol+' has been **delivered**.'+(loc?' '+loc:'');
-    return 'BOL '+bol+' is currently **'+status+'**.'+(loc?' '+loc+'.':'')+' For a delivery ETA, call us at (800)\u2009687-3713 or email support@freightandlogistics.ai — or contact '+carrier+' directly.';
+    return 'BOL '+bol+' is currently **'+status+'**.'+(loc?' '+loc+'.':'')+' For a delivery ETA, email support@freightandlogistics.ai — or contact '+carrier+' directly.';
   }
-  return 'Current status for BOL '+bol+': **'+status+'**.'+(loc?' '+loc+(when?' ('+when+')':'')+'.':'')+' Questions? Call (800)\u2009687-3713 or email support@freightandlogistics.ai.';
+  return 'Current status for BOL '+bol+': **'+status+'**.'+(loc?' '+loc+(when?' ('+when+')':'')+'.':'')+' Questions? Email support@freightandlogistics.ai.';
 }
 
 async function _send(text){
@@ -1812,13 +1812,13 @@ For small and light shipments, UPS Ground and FedEx Ground rates will automatica
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1024,system:_srcdocSysPmt,tools:[{type:'web_search_20250305',name:'web_search'}],messages:history})
     });
     console.log('[AI] stop_reason:', data.stop_reason, '| content types:', (data.content||[]).map(b=>b.type));
-    const reply=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim()||"I'm having trouble right now. Please call us at (800) 687-3713!";
+    const reply=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim()||"I'm having trouble right now. Please try again in a moment, or email support@freightandlogistics.ai!";
     const fullContent=data.content||[];
     history.push({role:'assistant',content:fullContent.length?fullContent:[{type:'text',text:reply}]});
     removeTyping(); appendMsg('bot',reply);
   }catch(e){
     removeTyping();
-    appendMsg('bot',"I'm having trouble connecting. Call us at (800) 687-3713 — we're happy to help!");
+    appendMsg('bot',"I'm having trouble connecting right now. Try again in a moment, or email support@freightandlogistics.ai — we're happy to help!");
   }
 }
 
@@ -1842,9 +1842,9 @@ async function submitForm(){
     window.open('mailto:support@freightandlogistics.ai?subject=New+Account+Request+—+'+encodeURIComponent(company)+'&body='+encodeURIComponent(body));
     showFormStatus('success','✓ Request sent! '+owner.name+' will reach out within 1 business hour.');
     btn.textContent='Sent!';
-    setTimeout(()=>{closeSignup();appendMsg('bot','Thanks '+first+'! '+owner.name+' will reach out within 1 business hour.\n\nCall us anytime at (800) 687-3713.');},2000);
+    setTimeout(()=>{closeSignup();appendMsg('bot','Thanks '+first+'! '+owner.name+' will reach out within 1 business hour.\n\nReach us anytime at support@freightandlogistics.ai.');},2000);
   }catch(e){
-    showFormStatus('error','Something went wrong. Please call (800) 687-3713.');
+    showFormStatus('error','Something went wrong. Please email support@freightandlogistics.ai.');
     btn.disabled=false; btn.textContent='Request Account Setup →';
   }
 }
@@ -2831,7 +2831,9 @@ function _gateMissingList(missing) {
 // identical failure => identical copy on the form panel and in chat, with no raw Primus text,
 // no internal field name (e.g. "shippingLocation"), no accessorial code, and no invented cause
 // ever reaching a customer.
-const RATE_SUPPORT = 'call (800) 687-3713 or email support@freightandlogistics.ai';
+// PRODUCT RULE: customer-facing chat/error copy never directs to a phone number — support is
+// email only. This constant feeds every rate/write error classifier message.
+const RATE_SUPPORT = 'email support@freightandlogistics.ai';
 
 // Distill Primus's per-carrier noRates array into a customer-safe signal WITHOUT keeping any of
 // its raw text for display. Returns: distinct (deduped) error strings, how many carriers returned
@@ -6635,9 +6637,9 @@ function _dispatchChargeMessage(cd, bolNumber) {
     // D4 FOLLOW-UP (TODO): build an on-session re-auth link (SetupIntent/PaymentIntent
     // with 3DS) so a legitimate card whose bank wants a step-up can complete payment and
     // dispatch, instead of falling through to this manual "call us" path. Fail-closed for v1.
-    return 'Your bank wants to verify this charge, which we can’t complete automatically. BOL ' + (bolNumber || '') + ' was not dispatched. Please call (800) 687-3713 or email support@freightandlogistics.ai so we can take payment and release it.';
+    return 'Your bank wants to verify this charge, which we can’t complete automatically. BOL ' + (bolNumber || '') + ' was not dispatched. Please email support@freightandlogistics.ai so we can take payment and release it.';
   }
-  return 'We couldn’t charge your saved card, so BOL ' + (bolNumber || '') + ' was not dispatched. Update your payment method and dispatch again, or call (800) 687-3713.';
+  return 'We couldn’t charge your saved card, so BOL ' + (bolNumber || '') + ' was not dispatched. Update your payment method and dispatch again, or email support@freightandlogistics.ai.';
 }
 
 async function _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed } = {}) {
@@ -7506,7 +7508,7 @@ function showCancelShipmentConfirm({ s, BOLId, BOLNumber }) {
         if (succCloseBtn) succCloseBtn.onclick = () => { succOv.remove(); if(typeof quickAction==='function') quickAction('My Shipments'); };
         appendMessage('bot', 'BOL ' + BOLNumber + ' has been cancelled.');
       } else {
-        appendMessage('bot', 'Could not cancel BOL ' + BOLNumber + ' automatically. Please contact support@freightandlogistics.ai or call (800) 687-3713.');
+        appendMessage('bot', 'Could not cancel BOL ' + BOLNumber + ' automatically. Please email support@freightandlogistics.ai and we\'ll cancel it for you.');
       }
     } catch(e) {
       overlay.remove();
@@ -8564,7 +8566,7 @@ function openAIDisclosurePanel() {
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">Other things it looks up on the web, like a carrier's terminal address, phone number, or hours. Those results can be out of date or wrong, and the assistant is only as good as what it finds. If you're routing a truck somewhere based on an address it gave you, confirm it first.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">General freight guidance — freight class, accessorials, packaging, what a lane usually looks like — is information, not a guarantee. The final class and the final charges are determined by the carrier when they inspect the freight.</div>
     <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">So: before you book, verify the rate, the addresses, the dates, and the delivery details. A wrong address or a missed window costs you more than money, and it's a two-minute check.</div>
-    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, call us at (800) 687-3713 or email support@freightandlogistics.ai. We've been moving freight since 2013 and there is always a human here who can check it for you.</div>
+    <div style="font-size:13px;color:var(--mu);line-height:1.7;margin-bottom:12px;">If something looks off, or you just want a person to confirm it, email support@freightandlogistics.ai. We've been moving freight since 2013 and there is always a human here who can check it for you.</div>
     <div style="font-size:12px;color:var(--fa);line-height:1.6;margin-top:16px;">The AI is here to make this faster. It isn't here to replace the people who make sure your freight actually shows up.</div>`;
   openRightPanel(el, 'AI Disclosure');
 }
@@ -9246,7 +9248,7 @@ async function openCreditApp(onBack) {
   if (await customerHasCredit()) {
     const c = document.createElement('div');
     c.style.cssText = 'padding:24px;max-width:520px;margin:0 auto;font-size:14px;line-height:1.7;color:var(--tx);';
-    c.innerHTML = 'Your account is already set up with credit terms — no application needed. To review your terms or request a higher limit, email <a href="mailto:support@freightandlogistics.ai" style="color:#bd27bc;text-decoration:none;">support@freightandlogistics.ai</a> or call <a href="tel:+18006873713" style="color:#bd27bc;text-decoration:none;">(800) 687-3713</a>.';
+    c.innerHTML = 'Your account is already set up with credit terms — no application needed. To review your terms or request a higher limit, email <a href="mailto:support@freightandlogistics.ai" style="color:#bd27bc;text-decoration:none;">support@freightandlogistics.ai</a>.';
     openRightPanel(c, 'Credit Terms');
     return;
   }
@@ -9791,7 +9793,7 @@ async function _supSendEmail(btn, opts) {
   } catch(e) {
     console.error('Support send error:', e);
     if (btn) { btn.innerHTML = _origBtn; btn.disabled = false; }
-    appendMessage('bot', 'Something went wrong: ' + e.message + '. You can also reach us at support@freightandlogistics.ai or (800) 687-3713.');
+    appendMessage('bot', 'Something went wrong: ' + e.message + '. You can also reach us at support@freightandlogistics.ai.');
   }
 }
 
@@ -10913,10 +10915,10 @@ async function submitBooking() {
     } else if (dispResult && !hasRealConfirmation) {
       // Dispatched but no pickup confirmation — warn user
       showBookingConfirmedModal({ BOLNumber, PRO, confirmation: null, docs: dispatchedDocs, carrierName, carrierPrice, pickupDate: pickupDateStr, dispatchOk: false });
-      appendMessage('bot', 'BOL ' + BOLNumber + ' was booked but pickup confirmation was not received from the carrier. Please call (800) 687-3713 or contact support to confirm pickup before the scheduled date.');
+      appendMessage('bot', 'BOL ' + BOLNumber + ' was booked but pickup confirmation was not received from the carrier. Please email support@freightandlogistics.ai to confirm pickup before the scheduled date.');
     } else {
       // Dispatch failed — show error state, don't show modal or docs
-      appendMessage('bot', 'Shipment booked (BOL ' + BOLNumber + ') but dispatch is pending. The BOL is not yet valid for tendering. Please contact support@freightandlogistics.ai or call (800) 687-3713 to complete dispatch.');
+      appendMessage('bot', 'Shipment booked (BOL ' + BOLNumber + ') but dispatch is pending. The BOL is not yet valid for tendering. Please email support@freightandlogistics.ai to complete dispatch.');
     }
 
     if (dispResult && dispResult.success !== false) appendMessage('bot', 'Shipment dispatched! BOL ' + BOLNumber + (PRO ? ', PRO ' + PRO : '') + '.');
@@ -13401,7 +13403,7 @@ async function _execDispatchShipment(input) {
 
     const validDocs = (dr.docs || []).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
     if (!dr.dispatchOk && !dr.hasClbl) {
-      return { ok: false, error: 'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Call (800) 687-3713.', BOLId: BOLId, documents: validDocs };
+      return { ok: false, error: 'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Email support@freightandlogistics.ai and we\'ll complete it.', BOLId: BOLId, documents: validDocs };
     }
     // Show the confirmation modal
     try {
@@ -13464,7 +13466,7 @@ async function _execSaveShipment(input) {
     }
     const _bolShown = _res.bolNumber || _res.bolId;
     return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
-      message: 'Saved as BOL ' + _bolShown + ' — it is in My Shipments, dispatch when ready.' };
+      message: 'Saved as BOL ' + _bolShown + " — it's saved in My Shipments; open it there when you're ready to dispatch." };
   } catch(e) {
     const _c = _classifyWriteError(e, 'save');
     return { ok: false, kind: _c.kind, message: _c.message };
@@ -13628,7 +13630,7 @@ Never call book_shipment until the panel is filled, the customer has confirmed t
 DO NOT RE-PULL RATES DURING BOOKING. Once the customer has chosen a carrier and you're collecting booking details, the rate is locked. If they ask a question mid-booking ("how much was it again," "how many days," "which accessorials"), answer from read_rates or from what you already know — do NOT call update_quote with getRates:true. Re-pulling regenerates the rate record and will break the booking with a mismatch. Only re-pull if the customer genuinely changes the shipment (different destination, weight, or accessorial) — and if they do, re-confirm the new rate before booking. EXCEPTION — ACCESSORIAL CHANGE: if the customer adds or removes an accessorial after rates were shown (the most common case: they agree to add RSD from the residential safeguard), that IS a shipment change that requires a re-pull before booking — for both LTL and parcel. Call update_quote with addAccessorials/removeAccessorials AND getRates:true in one call, then read_rates to confirm the new price, then read the new rate back to the customer before proceeding. Skipping this step books on a stale rate and guarantees a carrier surcharge rebill.
 
 SAVING A SHIPMENT — you have a save_shipment tool:
-Booking has TWO steps: Save and Dispatch. A customer can save a shipment now and come back later to dispatch. When a customer says "save this for now," "book it but don't dispatch yet," or "I'll dispatch later," call save_shipment (NOT dispatch_shipment). It creates or updates the BOL in the system without scheduling pickup. When it returns ok, tell them the BOL number and that it's saved in My Shipments whenever they're ready to dispatch. To update an existing saved shipment, pass bol_id.
+Booking has TWO steps: Save and Dispatch. A customer can save a shipment now and come back later to dispatch. When a customer says "save this for now," "book it but don't dispatch yet," or "I'll dispatch later," call save_shipment (NOT dispatch_shipment). It creates or updates the BOL in the system without scheduling pickup. When it returns ok, tell them the BOL number and that it's saved in My Shipments — they open it there when they're ready to dispatch (dispatch happens from inside My Shipments; do NOT imply they can dispatch a saved shipment later just by asking you in a new chat). To update an existing saved shipment, pass bol_id.
 SAVE OUTCOME — VERBATIM, NEVER ASSUMED. This is as strict as the prepaid charge disclosure. A BOL number is a fact the system returned, never something you carry forward, reconstruct, or infer. Only say a shipment is saved, and only state a BOL number, when THIS save_shipment call returned ok:true AND returned a BOLNumber or BOLId — and then state that returned value character-for-character. Never reuse a BOL number from earlier in the conversation, from a previous shipment, from a quote number, or from what the customer typed; those are different numbers and are not confirmation of this save. If the call returns ok:false, or returns ok with no BOL, the shipment was NOT saved: say so plainly in one sentence, give the short reason the tool returned, state no BOL number at all, and do not say it is in My Shipments or use any success wording. Offer to try again or to email support@freightandlogistics.ai. The same rule applies to book_shipment. Telling a customer their freight is saved or booked when it is not is the single worst failure in this product — when in doubt, report that it did not go through.
 Never pressure a customer to dispatch immediately — if they want to save and come back, that's the right flow.
 
@@ -13859,11 +13861,46 @@ function _gateFinalText(finalText, ctx) {
   return out;
 }
 
+// ── Customer-facing agent-failure copy (PRODUCT RULE: email support, NEVER a phone number) ──
+// One line, used at every agent-turn failure surface. States plainly that it failed, that the
+// customer's quote/booking data is safe (nothing they entered is lost), and how to reach support.
+const AGENT_FAIL_MSG = "I hit a snag on my end just now — nothing you entered was lost, it's all still here. Give it another try in a moment, or email support@freightandlogistics.ai and we'll jump right on it.";
+
+// ── Structured agent-turn failure log — the diagnostic deliverable for the intermittent
+// "trouble connecting" occurrences. A single console.error with a STABLE prefix so the next
+// occurrence self-documents: phase, HTTP status, response-body excerpt, request size, elapsed
+// ms, retry count, and whether a tool was mid-execution. No PII beyond what is already logged.
+function _agentTurnFailed(info) {
+  info = info || {};
+  try {
+    console.error('[FP] agentTurnFailed ' + JSON.stringify({
+      agent: info.agent || 'aiConverse',
+      phase: info.phase || 'unknown',
+      httpStatus: (info.status != null ? info.status : null),
+      bodyExcerpt: (info.body != null ? String(info.body).slice(0, 300) : null),
+      requestBytes: (info.requestBytes != null ? info.requestBytes : null),
+      elapsedMs: (info.elapsedMs != null ? Math.round(info.elapsedMs) : null),
+      retryCount: (info.retryCount != null ? info.retryCount : null),
+      toolsInFlight: !!info.toolsInFlight,
+      loops: (info.loops != null ? info.loops : null)
+    }));
+  } catch (e) {}
+}
+
+// Pull a plausible HTTP status out of an error/proxy message ("... 503 ...", "status 429").
+function _statusFromMsg(m) {
+  var s = String(m == null ? '' : (m.message || m));
+  var mt = s.match(/\b(4\d\d|5\d\d|520|522|524|529)\b/);
+  return mt ? Number(mt[1]) : null;
+}
+
 async function aiConverse(userText) {
   showTyping();
   // Per-turn tool-call ledger for the promise-without-action enforcer: the gate may only treat a
   // promised save/book/dispatch as unbacked when the corresponding tool did NOT run this turn.
   window._turnToolCalls = { save: false, book: false, dispatch: false };
+  const _turnStartedAt = Date.now();
+  let _toolInFlight = false;
   let _lastBotShown = '';
   const _showBot = (t) => { const n = (t||'').toString().trim(); if (n && n !== _lastBotShown) { appendMessage('bot', n); _lastBotShown = n; } };
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
@@ -13908,11 +13945,13 @@ async function aiConverse(userText) {
     async function _callWithRetry(url, opts, tries) {
       tries = tries || 3;
       let lastErr;
+      const _reqBytes = (opts && opts.body) ? String(opts.body).length : 0;
       // Transient = worth a retry: Anthropic overload / rate-limit, any 5xx, Cloudflare edge
       // timeouts (520/522/524), an aborted (timed-out) attempt, a network blip, or the proxy's
       // own {error:'Proxy error'} failure shape.
       const _transient = (s) => /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s));
       for (let attempt = 1; attempt <= tries; attempt++) {
+        window._lastAgentCallMeta = { retryCount: attempt - 1, requestBytes: _reqBytes, status: null, body: null };
         const _ac = new AbortController();
         const _to = setTimeout(() => { try { _ac.abort(); } catch (e) {} }, 45000); // per-attempt hard cap, set above observed slow (~28s) swings but well below CF's ~100s edge timeout
         try {
@@ -13920,6 +13959,7 @@ async function aiConverse(userText) {
           // Some wrappers return an error object instead of throwing.
           if (d && d.type === 'error') {
             const msg = (d.error && (d.error.type + ' ' + (d.error.message||''))) || 'api error';
+            window._lastAgentCallMeta.status = _statusFromMsg(msg); window._lastAgentCallMeta.body = msg;
             if (_transient(msg) && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
             throw new Error(msg);
           }
@@ -13928,12 +13968,14 @@ async function aiConverse(userText) {
           // letting it fall through to empty text / "trouble connecting". (The status-aware
           // flAnthropic wrapper throws on this and is caught below.)
           if (d && typeof d.error === 'string' && !(d.content && d.content.length)) {
+            window._lastAgentCallMeta.status = _statusFromMsg(d.error); window._lastAgentCallMeta.body = d.error;
             if (attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
             throw new Error(d.error);
           }
           return d;
         } catch (err) {
           lastErr = err;
+          window._lastAgentCallMeta.status = _statusFromMsg(err); window._lastAgentCallMeta.body = String(err && err.message || err).slice(0, 300);
           if (_transient(err && err.message || err) && attempt < tries) { await new Promise(r => setTimeout(r, 600 * attempt)); continue; }
           throw err;
         } finally {
@@ -13942,6 +13984,10 @@ async function aiConverse(userText) {
       }
       throw lastErr;
     }
+    // One-shot latch: a 200 that yields NO text and NO tool_use is usually a transient model/proxy
+    // hiccup — retry the identical request ONCE (no side effect: nothing ran this turn) before any
+    // error copy. Bounded and unbypassable.
+    let _emptyRetried = false;
 
     while (loops < 5) {
       loops++;
@@ -14104,6 +14150,7 @@ async function aiConverse(userText) {
         // turn, so the agent never double-asks (a narration line plus a reworded final line).
         // Execute the requested tool
         let result;
+        _toolInFlight = true; // for the failure logger: a tool was mid-execution if we throw here
         try {
           if (toolUse.name === 'update_quote') {
             if (isMobile()) {
@@ -14279,6 +14326,7 @@ async function aiConverse(userText) {
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
+        _toolInFlight = false;
         // Feed the result back so Claude can continue naturally. Every tool_use block in the
         // assistant content we echo must have a matching tool_result, or the next call 400s on an
         // unpaired tool_use. We execute only the FIRST client tool (one action per turn — unlike
@@ -14296,18 +14344,27 @@ async function aiConverse(userText) {
         continue; // loop for Claude's natural follow-up
       }
 
-      // Normal completion (includes resolved server-side web_search)
-      removeTyping();
-      // Empty response = a failed turn. Do NOT commit the error line to chatHistory/waybHistory
-      // (the agent would later read its own "trouble connecting" as conversational context). Render
-      // it with skipHistory, mark the turn failed for one-shot recovery, and roll back this turn's
-      // entries (mirrors the catch below) so history and live state stay consistent.
+      // Empty response = a failed turn. RETRY ONCE first (transient hiccup — no tool ran, no side
+      // effect), then, if still empty, render the email-support copy with skipHistory, mark the turn
+      // failed for one-shot recovery, and roll back this turn's entries so history/live state stay
+      // consistent. The agent never reads its own error line back as conversational context.
       if (!textOut) {
+        if (!_emptyRetried) {
+          _emptyRetried = true;
+          console.log('[FP] agent empty completion — retrying once');
+          showTyping();
+          continue; // re-issue the same convo once (bounded by the one-shot latch + loop cap)
+        }
+        removeTyping();
+        const _m = window._lastAgentCallMeta || {};
+        _agentTurnFailed({ agent: 'aiConverse', phase: 'empty-completion', status: _m.status, body: _m.body, requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight, loops: loops });
         window._lastTurnFailed = true;
         _rollbackTurn(userText);
-        appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
+        appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
         return;
       }
+      // Normal completion (includes resolved server-side web_search)
+      removeTyping();
       let finalText = textOut;
       // Pre-rate cargo insurance: the agent appends [[INSURANCE]] when it asks the insurance
       // question (instead of pulling rates). Strip the marker and arm the collection flow so
@@ -14373,15 +14430,17 @@ async function aiConverse(userText) {
     }
     // Ran out of loops — show whatever we have
     removeTyping();
+    _agentTurnFailed({ agent: 'aiConverse', phase: 'loop-exhausted', elapsedMs: Date.now() - _turnStartedAt, toolsInFlight: _toolInFlight, loops: loops });
     window._lastTurnFailed = true;
     _rollbackTurn(userText); // orphan-clean this turn, matching the catch below
-    appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.", { skipHistory: true });
+    appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
   } catch (e) {
-    console.error('aiConverse error:', e);
+    const _m = window._lastAgentCallMeta || {};
+    _agentTurnFailed({ agent: 'aiConverse', phase: 'exception', status: _m.status || _statusFromMsg(e), body: (_m.body || String(e && e.message || e)), requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight });
     window._lastTurnFailed = true;
     _rollbackTurn(userText);
     removeTyping();
-    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
+    appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
   }
 }
 
@@ -14419,7 +14478,7 @@ RESPONSE RULES - MUST FOLLOW:
 - Never end with "Is there anything else I can help you with."
 - Direct confident broker voice. Just answer. No hedging.
 - Numbers formatted: $1,234.56. Dates as "June 5". Carrier names consistent: Metro W&D, Pilot, ABF, Estes, TForce, XPO, Saia, AAA Cooper.
-- When something needs a human: give a 1-sentence answer then say "Reach out to our team to handle this — call (800) 687-3713 or email support@freightandlogistics.ai."
+- When something needs a human: give a 1-sentence answer then say "Reach out to our team to handle this — email support@freightandlogistics.ai."
 - You do NOT have a calculator or any embedded tool. If asked about linear feet, freight class, or any calculation, compute the answer yourself and state it directly in plain prose. Never tell the customer to use a calculator or refer them to a tool you don't have.
 
 TONE RULES:
@@ -15164,7 +15223,7 @@ async function clientSideSearch(t, lower) {
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:300,system:'Freight broker assistant. Plain prose only, no markdown, no bullets. Be direct.',messages:[{role:'user',content:'The user asked: ' + t + '\n\nSearch result: ' + searchResult + '\n\nGive the terminal name, full street address including city, state and zip, and phone number in one plain sentence. Always include all of these.'}]})
           });
-          const reply = (finalData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim() || 'I could not find that terminal. Try arcb.com or call (800) 687-3713.';
+          const reply = (finalData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim() || "I could not find that terminal. Try the carrier's own website, or email support@freightandlogistics.ai and we'll track it down.";
           removeTyping();
           appendMessage('bot', reply);
           return true;
@@ -15562,17 +15621,17 @@ async function clientSideSearch(t, lower) {
           msg += '. Status: ' + status + '.';
           if (trackingInfo) msg += ' ' + trackingInfo;
           else if (pro) msg += ' PRO: ' + pro + '.';
-          if (status.toLowerCase().includes('exception') || status.toLowerCase().includes('delay')) msg += ' Call us at (800) 687-3713 to escalate.';
+          if (status.toLowerCase().includes('exception') || status.toLowerCase().includes('delay')) msg += ' Email support@freightandlogistics.ai to escalate.';
           removeTyping(); appendMessage('bot', msg);
         } else {
-          removeTyping(); appendMessage('bot', 'Could not find BOL ' + bolNum + '. Double-check the number or call us at (800) 687-3713.');
+          removeTyping(); appendMessage('bot', 'Could not find BOL ' + bolNum + '. Double-check the number, or email support@freightandlogistics.ai.');
         }
       } catch(e) {
-        removeTyping(); appendMessage('bot', 'Had trouble pulling that shipment. Call us at (800) 687-3713.');
+        removeTyping(); appendMessage('bot', 'Had trouble pulling that shipment — email support@freightandlogistics.ai and we\'ll look it up.');
       }
       return true;
     } else {
-      appendMessage('bot', 'If you have a late or delayed shipment, give me the BOL number and I will pull the current status. You can also call us at (800) 687-3713 and we will get on it with the carrier right away.');
+      appendMessage('bot', 'If you have a late or delayed shipment, give me the BOL number and I will pull the current status. You can also email support@freightandlogistics.ai and we will get on it with the carrier right away.');
       return true;
     }
   }
@@ -15580,14 +15639,14 @@ async function clientSideSearch(t, lower) {
   // ── Refused shipment ──
   const isRefusedQuery = /\b(refused|refus|reject|rejected|return.*ship|ship.*return|disposition|dispose|what.*do.*refused|refused.*what)\b/.test(lower);
   if (isRefusedQuery && currentCustomer) {
-    appendMessage('bot', 'A refused shipment means the consignee declined delivery. You have a few options: we can redeliver with corrected instructions, return it to the origin, or dispose of it if the value does not justify the freight cost. Storage fees start accruing quickly at the terminal so we need to act fast. Call us at (800) 687-3713 or email support@freightandlogistics.ai with your BOL number and we will sort out the best disposition.');
+    appendMessage('bot', 'A refused shipment means the consignee declined delivery. You have a few options: we can redeliver with corrected instructions, return it to the origin, or dispose of it if the value does not justify the freight cost. Storage fees start accruing quickly at the terminal so we need to act fast. Email support@freightandlogistics.ai with your BOL number and we will sort out the best disposition.');
     return true;
   }
 
   // ── Carrier did not pick up ──
   const isMissedPickup = /\b(didn.?t pick up|did not pick up|no show|no-show|missed pickup|missed.*pick|pick.*missed|never came|never showed|not picked up|pickup.*failed|failed.*pickup|driver.*not|not.*driver|still.*waiting.*pick|waiting.*pickup)\b/.test(lower);
   if (isMissedPickup && currentCustomer) {
-    appendMessage('bot', 'If the carrier missed your pickup, call us right away at (800) 687-3713 and we will contact the carrier to get a driver out same day or reschedule first thing tomorrow. Make sure your freight is still staged and ready. If it is urgent we can also switch to a different carrier that has availability.');
+    appendMessage('bot', 'If the carrier missed your pickup, email support@freightandlogistics.ai right away and we will contact the carrier to get a driver out same day or reschedule first thing tomorrow. Make sure your freight is still staged and ready. If it is urgent we can also switch to a different carrier that has availability.');
     return true;
   }
 
@@ -16856,10 +16915,10 @@ async function _handleInputFallback(text) {
     removeTyping();
     const response = result && result.content && result.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
     if (response) appendMessage('bot', response);
-    else appendMessage('bot', 'Having trouble connecting. Try again or call (800) 687-3713.');
+    else appendMessage('bot', 'Having trouble connecting. Try again in a moment, or email support@freightandlogistics.ai.');
   } catch(e) {
     removeTyping();
-    appendMessage('bot', 'Error connecting. Try again or call (800) 687-3713.');
+    appendMessage('bot', 'Error connecting. Try again in a moment, or email support@freightandlogistics.ai.');
     console.error('AI fallback error:', e);
   }
 }
@@ -19072,7 +19131,7 @@ function showQuoteForm(prefill, silent) {
         '<tbody id="qt-rates-tbody"></tbody>' +
       '</table>' +
     '</div>' +
-    '<div id="qt-rates-empty" style="text-align:center;padding:32px;color:var(--mu);display:none;">No rates found. Please call (800) 687-3713.</div>' +
+    '<div id="qt-rates-empty" style="text-align:center;padding:32px;color:var(--mu);display:none;">No rates found. Email support@freightandlogistics.ai and we\'ll help get this lane covered.</div>' +
     '<div id="qt-rates-error" style="text-align:center;padding:20px;color:#dc2626;font-size:13px;display:none;"></div>';
 
   container.appendChild(quotePane);
@@ -20982,7 +21041,7 @@ function _speechTextFor(t) {
 }
 
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
-const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null };
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null, restartTimer:null, starting:false };
 window._vm = _vm;
 _vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
 _vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
@@ -21055,9 +21114,11 @@ function _vmTeardown() {
   _vm.active = false;
   _vm.speakToken++;                 // invalidate any in-flight speak/resume/relisten callbacks
   _vm.listening = false;
-  if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
-  if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
-  if (_vm.tailTimer)    { clearTimeout(_vm.tailTimer);    _vm.tailTimer = null; }
+  _vm.starting = false;             // release the re-entrancy guard so a later _vmEnter can start
+  if (_vm.silenceTimer)  { clearTimeout(_vm.silenceTimer);  _vm.silenceTimer = null; }
+  if (_vm.watchdog)      { clearTimeout(_vm.watchdog);      _vm.watchdog = null; }
+  if (_vm.tailTimer)     { clearTimeout(_vm.tailTimer);     _vm.tailTimer = null; }
+  if (_vm.restartTimer)  { clearTimeout(_vm.restartTimer);  _vm.restartTimer = null; }
   [_vm.rec, _vm.bargeRec].forEach(function(rec) {
     if (!rec) return;
     try { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); } catch(e) {}
@@ -21079,22 +21140,50 @@ function _vmExit() {
 function _vmStopListen() {
   _vm.listening = false;
   if (_vm.silenceTimer) { clearTimeout(_vm.silenceTimer); _vm.silenceTimer = null; }
+  if (_vm.restartTimer) { clearTimeout(_vm.restartTimer); _vm.restartTimer = null; } // no stale restart survives a stop
   if (_vm.rec) {
     try { _vm.rec.onend = null; _vm.rec.onresult = null; _vm.rec.onerror = null; _vm.rec.abort(); } catch(e) {}
     _vm.rec = null;
   }
 }
 
+// THE one listen-restart scheduler. Only ONE restart may ever be pending — a stale delayed restart
+// firing into a live or freshly-started capture is exactly what interrupted the second voice
+// message mid-word. Every deferred restart routes through here; a newer schedule supersedes the
+// older, and the fire re-checks state so a recovered capture is never torn down.
+function _vmScheduleRestart(ms) {
+  if (_vm.restartTimer) clearTimeout(_vm.restartTimer);
+  _vm.restartTimer = setTimeout(function () {
+    _vm.restartTimer = null;
+    if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen();
+  }, ms);
+}
+
+// Canonical capture start: idempotent and re-entrancy-guarded. Before opening a NEW recognizer it
+// fully releases the prior lifecycle — pending restart, the barge detector (so only one recognizer
+// is ever live on the listen path), any TTS audio still holding the output device, and the prior
+// listen recognizer — so the Nth capture behaves exactly like the first.
 function _vmStartListen() {
-  _vmDiag('_vmStartListen: active=', _vm.active);
+  _vmDiag('_vmStartListen: active=', _vm.active, 'starting=', _vm.starting, 'listening=', _vm.listening);
   if (!_vm.active) return;
-  _vmStopListen();
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec;
-  try { rec = new SR(); } catch(e) { return; }
-  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
-  _vmDiag('recognizer constructed');
-  _vmAttachListenHandlers(rec, false);
+  if (_vm.starting) { _vmDiag('start ignored — a start is already in progress'); return; } // re-entrancy guard: a rapid second trigger cannot open two captures
+  _vm.starting = true;
+  try {
+    if (_vm.restartTimer) { clearTimeout(_vm.restartTimer); _vm.restartTimer = null; } // this IS the restart — cancel any other pending one
+    if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
+    _vmStopBargeDetector();           // never leave a second recognizer alive alongside the listener
+    try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch (e) {} // release any TTS still playing
+    _vm.playStartedAt = null; _vm.speakingText = '';
+    _vmStopListen();                  // hard-stop + unbind the prior listener before opening a new one
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let rec;
+    try { rec = new SR(); } catch(e) { return; }
+    rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+    _vmDiag('recognizer constructed');
+    _vmAttachListenHandlers(rec, false);
+  } finally {
+    _vm.starting = false;
+  }
 }
 
 // ── Barge-in echo guards (Phase 0) — tunable thresholds ───────────────────────
@@ -21147,10 +21236,9 @@ function _vmAttachListenHandlers(rec, alreadyStarted) {
   rec.onerror = (e) => {
     _vmDiag('listen onerror', e && e.error);
     if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) { _vmExit(); return; }
-    // transient ('no-speech' / 'aborted' / 'network') → restart shortly if still listening with no result
-    if (_vm.active && _vm.state === 'listen' && !finalText.trim()) {
-      setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
-    }
+    // transient ('no-speech' / 'aborted' / 'network') → restart shortly if still listening with no
+    // result. Through the ONE scheduler so a later live capture can never be torn down by this.
+    if (_vm.active && _vm.state === 'listen' && !finalText.trim()) _vmScheduleRestart(500);
   };
   rec.onend = () => {
     _vm.listening = false;
@@ -21159,12 +21247,12 @@ function _vmAttachListenHandlers(rec, alreadyStarted) {
     if (!_vm.active) return;
     const said = finalText.trim();
     if (said) _vmHandleFinal(said);
-    else if (_vm.state === 'listen') setTimeout(() => { if (_vm.active && _vm.state === 'listen' && !_vm.listening) _vmStartListen(); }, 500);
+    else if (_vm.state === 'listen') _vmScheduleRestart(500);
   };
   if (!alreadyStarted) {
     _vmDiag('rec.start()');
     try { rec.start(); }
-    catch(e) { setTimeout(() => { if (_vm.active && !_vm.listening) _vmStartListen(); }, 400); }
+    catch(e) { _vmScheduleRestart(400); }
   }
 }
 
@@ -23020,7 +23108,37 @@ function _waybTrim(hist, cap) {
 
 async function waybAgent(text) {
   showTyping();
-  const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
+  const _bareCall = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
+  const _waybStartedAt = Date.now();
+  // Bounded transient retry (mirrors aiConverse's _callWithRetry): a fetch-level failure throws
+  // BEFORE any tool runs this loop iteration, so retrying the HTTP call is side-effect-free.
+  // Records meta into window._lastAgentCallMeta for the failure logger.
+  const _call = async (url, opts) => {
+    const _reqBytes = (opts && opts.body) ? String(opts.body).length : 0;
+    const _transient = (s) => /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s));
+    let lastErr;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      window._lastAgentCallMeta = { retryCount: attempt - 1, requestBytes: _reqBytes, status: null, body: null };
+      const _ac = new AbortController();
+      const _to = setTimeout(() => { try { _ac.abort(); } catch (e) {} }, 45000);
+      try {
+        const d = await _bareCall(url, Object.assign({}, opts, { signal: _ac.signal }));
+        if (d && d.type === 'error') {
+          const msg = (d.error && (d.error.type + ' ' + (d.error.message || ''))) || 'api error';
+          window._lastAgentCallMeta.status = _statusFromMsg(msg); window._lastAgentCallMeta.body = msg;
+          if (_transient(msg) && attempt < 2) { await new Promise(r => setTimeout(r, 600)); continue; }
+          return d; // non-transient error object: let the existing branch throw with its message
+        }
+        return d;
+      } catch (err) {
+        lastErr = err;
+        window._lastAgentCallMeta.status = _statusFromMsg(err); window._lastAgentCallMeta.body = String(err && err.message || err).slice(0, 300);
+        if (_transient(err && err.message || err) && attempt < 2) { await new Promise(r => setTimeout(r, 600)); continue; }
+        throw err;
+      } finally { clearTimeout(_to); }
+    }
+    throw lastErr;
+  };
   // Snapshot for rollback: if the turn fails, discard everything it added so history stays a
   // valid, fully-paired transcript (no dangling user or unmatched tool_use).
   const _snapshot = waybHistory.slice();
@@ -23089,7 +23207,8 @@ async function waybAgent(text) {
 
       // Final text answer.
       removeTyping();
-      const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
+      if (!textOut) { _agentTurnFailed({ agent: 'waybAgent', phase: 'empty-completion', elapsedMs: Date.now() - _waybStartedAt, loops: loops, retryCount: (window._lastAgentCallMeta || {}).retryCount, requestBytes: (window._lastAgentCallMeta || {}).requestBytes }); }
+      const reply = textOut || AGENT_FAIL_MSG;
       waybHistory.push({ role: 'assistant', content: reply });
       // (chatHistory mirror removed: appendMessage — the ONE transcript writer — records the user
       // turn at send time and the reply below, so a manual mirror here would double-record.)
@@ -23103,12 +23222,14 @@ async function waybAgent(text) {
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
     waybHistory = _snapshot;
     removeTyping();
-    appendMessage('bot', "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.", { skipHistory: true });
+    _agentTurnFailed({ agent: 'waybAgent', phase: 'loop-exhausted', elapsedMs: Date.now() - _waybStartedAt, loops: loops });
+    appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
   } catch (e) {
-    console.error('waybAgent error:', e);
+    const _m = window._lastAgentCallMeta || {};
+    _agentTurnFailed({ agent: 'waybAgent', phase: 'exception', status: _m.status || _statusFromMsg(e), body: (_m.body || String(e && e.message || e)), requestBytes: _m.requestBytes, retryCount: _m.retryCount, elapsedMs: Date.now() - _waybStartedAt });
     waybHistory = _snapshot; // discard the failed turn entirely — keeps the transcript valid
     removeTyping();
-    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
+    appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
   }
 }
 
