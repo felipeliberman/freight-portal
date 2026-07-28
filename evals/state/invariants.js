@@ -967,9 +967,9 @@ const invariants = [
   },
   // ── 36 ──────────────────────────────────────────────────────────────────────
   {
-    id: 36, name: 'sort wiring: shipments field map aligns 1:1, Invoices Status sorts, filters reset sort state',
-    property: 'the shipments header→field array matches the cols array position-for-position; sortAndRenderInvoices gives Status a real comparator (isPaid + date tiebreak), not a binary no-op; every raw/filtered re-render clears the canonical table.sortField so the next click starts fresh',
-    catches: 'F4(a/b/e): Status/Total sorting the wrong column (off-by-one), the Invoices Status column doing nothing, the toggle not flipping after a stat-tile filter',
+    id: 36, name: 'sort wiring: shipments field map aligns 1:1, Invoices Status sorts, FILTERS clear the persisted sort',
+    property: 'the shipments header→field array matches the cols array position-for-position; sortAndRenderInvoices gives Status a real comparator (isPaid + date tiebreak), not a binary no-op; a genuine filter/show-all re-render clears the PERSISTED sort (window._shipSort/_invSort) so a filtered view shows default order — distinct from a sort-triggered re-render, which preserves it (see 40)',
+    catches: 'F4(a/b/e): Status/Total sorting the wrong column (off-by-one), the Invoices Status column doing nothing, a stat-tile filter leaving a stale sort applied',
     run(ctx) {
       const src = require('./harness').appScript();
       // Field map is 1:1 with the 11 sortable cols (BOL#…Total).
@@ -980,9 +980,9 @@ const invariants = [
       A.ok(/field === 'status'/.test(invSort) && /isPaid/.test(invSort) && /_dateSortVal/.test(invSort),
         'Invoices Status has no real comparator (still a binary label no-op)');
       A.ok(/return _cmpValues\(va, vb, dir\)/.test(invSort), 'invoice sort does not route through the one canonical comparator');
-      // The canonical sort state is reset on every raw/filtered re-render (2 shipments sites + 1 invoices).
-      A.ok((src.match(/parentElement\.sortField = null; tbody\.parentElement\.sortDir = 'asc';/g) || []).length >= 3,
-        'sort state not reset on filter/show-all re-render at all three sites');
+      // A genuine FILTER change clears the persisted sort (2 shipments filter sites + 1 invoices).
+      A.ok((src.match(/window\._shipSort = null;/g) || []).length >= 3, 'shipments filter/query sites do not clear window._shipSort');
+      A.ok((src.match(/window\._invSort = null;/g) || []).length >= 2, 'invoice filter/fetch sites do not clear window._invSort');
     },
   },
   // ── 37 ──────────────────────────────────────────────────────────────────────
@@ -1027,13 +1027,71 @@ const invariants = [
            /id="ship-date-apply"/.test(src) && /id="ship-date-all"/.test(src),
         'My Shipments is missing the in-panel date-range control (from/to/apply/all)');
       A.ok(/async function _loadShipWindow\(dateFrom, dateTo\)/.test(src), 'no _loadShipWindow refetch helper');
-      const lsw = src.slice(src.indexOf('async function _loadShipWindow'), src.indexOf('async function _loadShipWindow') + 700);
+      const lsw = src.slice(src.indexOf('async function _loadShipWindow'), src.indexOf('async function _loadShipWindow') + 1000);
       A.ok(/while\(!shipCtx\.done && Date\.now\(\)<_dl\)\{ await fetchNextBatch\(\); \}/.test(lsw) &&
            /return \{ list: list, total: shipCtx\.total \}/.test(lsw),
         '_loadShipWindow does not drain the window and return the backend total');
       A.ok(/_loadShipWindow\(_shFromEl\.value, _shToEl\.value\)/.test(src), 'Apply does not refetch via _loadShipWindow');
       A.ok(/renderShipments\(list, list, 0, false, total\)/.test(src) && /openRightPanel\(newEl/.test(src),
         'the in-panel control does not re-render + recount the panel in place');
+    },
+  },
+  // ── 39 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 39, name: 'invoices fetch at a supported page size and never render a false empty state',
+    property: '/applet/v1/invoice is fetched at limit=10 (limit=100 returns HTTP 200 + empty results while reporting full pagination, so the drain loop grinds ~200 empty pages ≈ 67s to nothing); a zero harvest while the backend total is non-zero — or every page errored / nothing responded — throws INVOICE_FETCH_INCOMPLETE instead of returning [], so the caller shows truthful copy rather than a false "No invoices found."',
+    catches: 'R1: limit=100 → 67s then "No invoices found." on a ~2,050-invoice account',
+    async run(ctx) {
+      const w = ctx.win;
+      const src = require('./harness').appScript();
+      A.ok(/invoice\?limit=10&page=/.test(src), 'invoice fetch is not at limit=10');
+      A.ok(!/invoice\?limit=100/.test(src), 'invoice fetch still uses the unsupported limit=100');
+      const route = (body) => { ctx.routes.length = 0; ctx.routes.push({ match: (u) => u.includes('/applet/v1/invoice'), reply: () => ({ status: 200, body }) }); };
+      // A non-empty backend response can NEVER render as "No invoices found": empty pages under a
+      // non-zero backend total must throw, not return [].
+      route({ data: { pagingDetails: { totalResults: 2050, pages: 205 }, results: [] } });
+      let threw = false;
+      try { await w.fetchInvoices(); } catch (e) { threw = (e && e.message === 'INVOICE_FETCH_INCOMPLETE'); }
+      A.ok(threw, 'empty pages under a non-zero backend total did not throw (would render a false empty state)');
+      // A genuine zero (backend total 0) is a legitimate empty state → returns [].
+      route({ data: { pagingDetails: { totalResults: 0, pages: 0 }, results: [] } });
+      let r; try { r = await w.fetchInvoices(); } catch (e) { r = 'THREW'; }
+      A.ok(Array.isArray(r) && r.length === 0, 'a genuine zero did not return an empty array');
+    },
+  },
+  // ── 40 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 40, name: 'sort survives a panel re-render and toggles on repeat clicks (both tables)',
+    property: 'sort state persists on window._shipSort/_invSort, not the transient table element, so a re-render (which rebuilds the table) preserves both the direction and the sorted row order, and a second click on the same column flips direction; a fresh query/window/filter clears it back to default order',
+    catches: 'R2: clicking Total sorted once then did nothing — a re-render reset the on-element sortField, so every click read null and re-sorted ascending',
+    async run(ctx) {
+      const w = ctx.win;
+      const mk = (bol, cost) => ({ BOLNumber: String(bol), vendor: { cost: cost, name: 'Estes' }, consignee: { name: 'C' + bol }, shipper: { name: 'S' + bol }, trackingInformation: {}, status: 'BOOKED' });
+      const ships = [mk(1, 500), mk(2, 100), mk(3, 900), mk(4, 300), mk(5, 700)];
+      const totalOf = t => { const tr = t.querySelector('tbody tr'); const td = tr.querySelectorAll('td'); return td[td.length - 2].textContent.trim(); };
+      const mount = () => { const el = w.renderShipments(ships, ships, 0, false, 5); w.document.body.innerHTML = ''; w.document.body.appendChild(el); return el.querySelector('table'); };
+      const thTotal = t => [...t.querySelectorAll('th')].find(x => x.dataset.field === 'total');
+      w._shipSort = null;
+      let table = mount();
+      thTotal(table).onclick();
+      A.ok(w._shipSort && w._shipSort.field === 'total' && w._shipSort.dir === 'asc', 'sort not persisted to window._shipSort after first click');
+      A.ok(totalOf(table) === '$100.00', 'first click did not sort ascending');
+      // The re-render that happens live between clicks must PRESERVE the sort (state AND row order).
+      table = mount();
+      A.ok(table.sortField === 'total' && table.sortDir === 'asc', 're-render lost the persisted sort state');
+      A.ok(totalOf(table) === '$100.00', 're-rendered rows are not in sorted order');
+      // The second click on the SAME column must FLIP to descending — the core R2 regression.
+      thTotal(table).onclick();
+      A.ok(w._shipSort.dir === 'desc' && totalOf(table) === '$900.00', 'repeat click did not toggle to descending');
+      // A fresh query clears the persisted sort (default order restored).
+      ctx.routes.length = 0;
+      ctx.routes.push({ match: (u) => u.includes('/applet/v1/book'), reply: () => ({ status: 200, body: { data: { pagingDetails: { totalResults: 0 }, results: [] } } }) });
+      await w.runShipQuery({ action: 'list', sortField: 'date', sortDir: 'desc' });
+      A.ok(w._shipSort === null, 'a fresh query did not clear the persisted sort');
+      // Invoices carry the identical persistence wiring (read + write + clear).
+      const src = require('./harness').appScript();
+      A.ok(/window\._invSort = \{ field: table\.sortField, dir: table\.sortDir \}/.test(src), 'invoice sort is not persisted to window._invSort');
+      A.ok(/table\.sortField = \(window\._invSort && window\._invSort\.field\)/.test(src), 'invoice table does not seed from the persisted sort');
     },
   },
 ];

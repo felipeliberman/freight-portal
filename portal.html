@@ -3631,8 +3631,8 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       footer._invoices = filtered;
       footer._paginationState.page = 0;
       footer._paginationState.total = filtered.length;
-      // Filtered subset renders in raw order — reset canonical sort state so the next
-      // header click starts a fresh ascending sort (matches My Shipments behavior).
+      // A stat-tile filter is a genuine filter change → clear the persisted sort (matches My Shipments).
+      window._invSort = null;
       if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
       renderInvoiceRows(filtered, tbody, PAGE_SIZE, 0);
       updateInvoiceFooter();
@@ -3915,8 +3915,11 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
 
   const table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:700px;';
-  table.sortField = null;
-  table.sortDir = 'asc';
+  // Sort state persists on a stable global (same fix as My Shipments) — a re-render rebuilds the table,
+  // so on-element sortField would be lost and the next click would re-sort ascending forever. Seed the
+  // fresh table from the persisted sort; only a filter / date-range change clears window._invSort.
+  table.sortField = (window._invSort && window._invSort.field) || null;
+  table.sortDir   = (window._invSort && window._invSort.dir)   || 'asc';
 
   const cols = ['Invoice #','BOL #','Date','Due Date','Shipper','Consignee','Amount','Status'];
   const fieldKeys = ['invNum','bolNum','date','due','shipper','consignee','amount','status'];
@@ -3961,6 +3964,8 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       const field = th.dataset.field;
       table.sortDir = table.sortField === field ? (table.sortDir === 'asc' ? 'desc' : 'asc') : 'asc';
       table.sortField = field;
+      // Persist so a re-render preserves the sort and the next click flips direction.
+      window._invSort = { field: table.sortField, dir: table.sortDir };
       paginationState.displayed = 10;
       sortAndRenderInvoices(allInvoices, table.sortField, table.sortDir, tbody, footer, PAGE_SIZE);
       updateInvoiceFooter();
@@ -4075,7 +4080,9 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   wrap.appendChild(footer);
   container.appendChild(wrap);
 
-  renderInvoiceRows(allInvoices, tbody, PAGE_SIZE, 0);
+  // Apply a persisted sort on (re-)render so it survives a re-render; else default order.
+  if (table.sortField) sortAndRenderInvoices(allInvoices, table.sortField, table.sortDir, tbody, footer, PAGE_SIZE);
+  else renderInvoiceRows(allInvoices, tbody, PAGE_SIZE, 0);
 
   // Wire date picker buttons — query the detached dateBar directly (no timer,
   // no getElementById). The container isn't in the document yet, and Apply
@@ -5313,8 +5320,9 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
       const ps = window._shipFooter._paginationState;
       if (ps) { ps.page = 0; ps.total = allShipments.length; ps.displayed = 0; }
     }
-    // Rows now render in raw (unsorted) order — clear the canonical sort state so the
-    // next header click starts a fresh ascending sort instead of a stale direction flip.
+    // Show-all is a genuine filter reset → clear the PERSISTED sort so rows render in default order
+    // and the next header click starts fresh ascending (the transient table reset is kept too).
+    window._shipSort = null;
     if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
     renderShipmentRows(allShipments, tbody, PAGE_SIZE_S, 0);
     if (window._shipUpdateFooter) window._shipUpdateFooter();
@@ -5365,7 +5373,8 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
         const ps = window._shipFooter._paginationState;
         if (ps) { ps.page = 0; ps.total = filtered.length; ps.displayed = 0; }
       }
-      // Filtered subset renders in raw order — reset canonical sort state (see show-all above).
+      // A stat-tile filter is a genuine filter change → clear the persisted sort (see show-all above).
+      window._shipSort = null;
       if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
       renderShipmentRows(filtered, tbody, PAGE_SIZE_S, 0);
       if (window._shipUpdateFooter) window._shipUpdateFooter();
@@ -5502,10 +5511,14 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
   table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;min-width:980px;';
   const cols = ['BOL#','Status','Mode','Created','Est. PU','Est. DEL','Shipper','Consignee','Carrier','PRO#','Total',''];
   
-  // Store sort state on the table element
-  table.sortField = null;
-  table.sortDir = 'asc';
-  
+  // Sort state persists on a STABLE global (window._shipSort), not just the transient table element —
+  // any panel re-render destroys the table and, with it, an on-element sortField, which made the next
+  // header click read null and re-sort ascending forever (the "sorts once then does nothing" bug). We
+  // seed the fresh table from the persisted sort so a re-render preserves it; only a filter / refetch /
+  // window change clears window._shipSort (see the reset sites and runShipQuery/_loadShipWindow).
+  table.sortField = (window._shipSort && window._shipSort.field) || null;
+  table.sortDir   = (window._shipSort && window._shipSort.dir)   || 'asc';
+
   // Create pagination state early so sort onclick can reference it
   const PAGE_SIZE_S = 20;
   const initialDisplayed = Math.min(startOffset + PAGE_SIZE_S, allShipments.length);
@@ -5561,6 +5574,8 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
           table.sortField = field;
           table.sortDir = 'asc';
         }
+        // Persist so a re-render (which rebuilds the table) preserves the sort and the NEXT click flips.
+        window._shipSort = { field: table.sortField, dir: table.sortDir };
         // Reset pagination when sorting
         paginationState.displayed = 10;
         sortAndRenderShipments(allShipments, table.sortField, table.sortDir, tbody);
@@ -5701,8 +5716,10 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
   wrap.appendChild(footer);
   container.appendChild(wrap);
 
-  // Populate initial rows
-  renderShipmentRows(allShipments, tbody, PAGE_SIZE_S, 0);
+  // Populate initial rows — if a sort is active (persisted across this re-render), apply it so the
+  // rows come back sorted rather than in raw order; otherwise render the default order.
+  if (table.sortField) sortAndRenderShipments(allShipments, table.sortField, table.sortDir, tbody);
+  else renderShipmentRows(allShipments, tbody, PAGE_SIZE_S, 0);
 
   return container;
 }
@@ -11708,6 +11725,7 @@ function presentShips(q,initial){
   if(shipShown<cap) appendMessage('bot','Showing '+shipShown+' of '+cap+(shipCtx.done?'':' so far')+'. Say "show 10 more" to continue.');
 }
 async function runShipQuery(q){
+  window._shipSort = null;   // a fresh query is a new dataset → default (date-desc) order, not a stale sort
   const now=new Date(); let from,to;
   // Specific-entity searches (a named consignee/shipper) must span full history — a 90-day window
   // would drop older matches and recreate the "2 Keith becomes 1" undercount. Generic list views
@@ -11742,6 +11760,7 @@ async function runShipQuery(q){
 // the same 15s deadline as the panel-list path), and returns the rows plus the backend's authoritative
 // total. No chat output and no presentShips — the caller swaps the panel in place.
 async function _loadShipWindow(dateFrom, dateTo){
+  window._shipSort = null;   // a date-range change is a window change → reset sort to default order
   const now=new Date();
   const from = dateFrom ? new Date(dateFrom) : (function(){ const d=new Date(now); d.setDate(d.getDate()-30); return d; })();
   const to   = dateTo   ? new Date(dateTo)   : now;
@@ -20128,6 +20147,7 @@ function showQuoteForm(prefill, silent) {
 }
 
 async function fetchInvoices(dateFrom, dateTo) {
+  window._invSort = null;   // a (re)fetch is new data / a window change → default order, not a stale sort
   const token = await getToken();
   // /applet/v1/invoice ignores dateFrom/dateTo (verified: an absurd range still returns the
   // full set), so we fetch ALL invoices and filter client-side on the invoice date in
@@ -20137,24 +20157,38 @@ async function fetchInvoices(dateFrom, dateTo) {
   // Step 1: Fetch invoice list directly — one paginated call, no per-invoice fetches
   const invoiceList = [];
   let page = 1, totalPages = 1;
+  // limit MUST stay 10: /applet/v1/invoice does not honor a larger perPage — with limit=100 it returns
+  // HTTP 200 + empty results while still reporting pagingDetails for the full set, so the drain loop
+  // grinds through every page harvesting nothing (~67s) and renders a false "No invoices found". 10 is
+  // the known-good value. (If Primus ever confirms a supported larger perPage, raise it here.)
+  let backendTotal = null, sawError = false, sawResponse = false;
   while (page <= totalPages && page <= 200) {
     const batches = [];
     for (let p = page; p < page + 6 && p <= totalPages; p++) batches.push(p);
     if (!batches.length) break;
     const results = await Promise.all(batches.map(p =>
-      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
-        .then(r => r.ok ? r.json() : null).catch(() => null)
+      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=10&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
+        .then(r => r.ok ? r.json() : (sawError = true, null)).catch(() => (sawError = true, null))
     ));
     results.forEach(d => {
       if (!d) return;
+      sawResponse = true;
       const pd = d.data && d.data.pagingDetails;
+      if (pd && pd.totalResults != null && backendTotal == null) backendTotal = pd.totalResults;
       if (pd && pd.pages) totalPages = pd.pages;
       const arr = (d.data && d.data.results) || [];
       arr.forEach(inv => invoiceList.push(inv));
     });
     page += batches.length;
   }
-  console.log('[Invoices] total fetched (all, unfiltered):', invoiceList.length);
+  console.log('[Invoices] total fetched (all, unfiltered):', invoiceList.length, '| backendTotal:', backendTotal, '| errors:', sawError);
+  // Loud failure (never render an empty state that implies zero invoices when the backend has some):
+  // if the backend reports invoices exist — or every page errored / nothing responded — but we
+  // harvested none, surface an error so the caller shows truthful copy instead of "No invoices found".
+  if (invoiceList.length === 0 && ((backendTotal != null && backendTotal > 0) || sawError || !sawResponse)) {
+    console.error('[Invoices] fetch returned no usable rows while backend total =', backendTotal, '(errors:', sawError, ') — surfacing error instead of a false empty state');
+    throw new Error('INVOICE_FETCH_INCOMPLETE');
+  }
 
   // Step 2: Build invoice objects from invoice list — no extra API calls
   // Also load shipments in parallel to get consignee/carrier info
