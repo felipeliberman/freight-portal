@@ -116,19 +116,21 @@ const invariants = [
   // ── 4 ───────────────────────────────────────────────────────────────────────
   {
     id: 4, name: 'accessorials survive as one set',
-    property: 'accessorialSet(labels) yields every selected code; BOL set keeps LAD/APT/INS and drops RSO',
-    catches: 'bug (C) — LAD, APT and INS silently dropped between the chips and accessorialsList',
+    property: 'accessorialSet(labels) yields every selected code; BOL set keeps LAD/APD/INS and drops RSO',
+    catches: 'bug (C) — LAD, appointment and INS silently dropped between the chips and accessorialsList',
+    // Updated for commit 30c045a: appointment's REAL Primus code is APD ('APT' was never a valid
+    // code). APD is an ordinary accessorial that rides BOTH the rate and the book accessorialsList.
     run(ctx) {
       const w = ctx.win;
       const codes = w.accessorialSet(fx.SHIPMENT.accessorials.concat(['Residential Pickup']));
-      ['RSD', 'LFD', 'LAD', 'APT', 'INS', 'RSO'].forEach(c => A.ok(codes.includes(c), c + ' lost by accessorialSet'));
+      ['RSD', 'LFD', 'LAD', 'APD', 'INS', 'RSO'].forEach(c => A.ok(codes.includes(c), c + ' lost by accessorialSet'));
+      A.ok(!codes.includes('APT'), 'the fake APT code resurfaced — appointment must map to APD');
       const BOL = ctx.g('ACC_BOL_CODES'), RATEABLE = ctx.g('ACC_RATEABLE_CODES');
       const bol = codes.filter(c => BOL.has(c));
-      ['RSD', 'LFD', 'LAD', 'APT', 'INS'].forEach(c => A.ok(bol.includes(c), c + ' missing from the BOL set'));
+      ['RSD', 'LFD', 'LAD', 'APD', 'INS'].forEach(c => A.ok(bol.includes(c), c + ' missing from the BOL set'));
       A.ok(!bol.includes('RSO'), 'RSO must stay a shipper flag, not an accessorial code');
       const rateable = codes.filter(c => RATEABLE.has(c));
-      A.ok(!rateable.includes('APT'), 'APT must be dropped from the RATE call only');
-      A.ok(rateable.includes('LAD') && rateable.includes('INS'), 'LAD/INS must survive to the rate call');
+      ['LAD', 'INS', 'APD'].forEach(c => A.ok(rateable.includes(c), c + ' must survive to the rate call'));
     },
   },
   // ── 5 ───────────────────────────────────────────────────────────────────────
@@ -254,6 +256,79 @@ const invariants = [
         A.ok(!/160135280/.test(blob), 'the previous shipment\'s BOL leaked into a failed save report');
         A.ok(!/\bSaved as BOL\b/i.test(blob), 'success wording emitted on a failed save');
       });
+    },
+  },
+  // ── 9 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 9, name: 'intercept-authored turns land in the agent transcript',
+    property: 'every rendered user/bot bubble is recorded in chatHistory (appendMessage is the ONE writer); skipHistory renders without recording',
+    catches: 'the QA booking loop — "jts" swallowed by an intercept never reached the transcript, so the agent re-asked the carrier forever',
+    async run(ctx) {
+      const w = ctx.win; openQuote(w);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      // The send path: bubble first (records), then the turn. A bare carrier name resolves in the
+      // deterministic intercept and never reaches the agent — exactly the class that used to vanish.
+      w.appendMessage('user', 'jts');
+      await w.handleInput('jts');
+      const hist = ctx.g('chatHistory');
+      A.ok(hist.some(m => m.role === 'user' && m.content === 'jts'), "the user's carrier selection is missing from chatHistory");
+      const lastBot = hist.slice().reverse().find(m => m.role === 'assistant');
+      A.ok(lastBot && /JTS/i.test(String(lastBot.content)), 'the intercept reply is missing from chatHistory: ' + JSON.stringify(lastBot || null));
+      // skipHistory renders a bubble WITHOUT recording (transient error copy).
+      const n = ctx.g('chatHistory').length;
+      w.appendMessage('bot', 'transient error line', { skipHistory: true });
+      A.ok(ctx.g('chatHistory').length === n, 'a skipHistory line leaked into the transcript');
+      // An identical double-render is absorbed, never double-recorded.
+      w.appendMessage('bot', 'dup line');
+      w.appendMessage('bot', 'dup line');
+      A.ok(ctx.g('chatHistory').filter(m => m.content === 'dup line').length === 1, 'a double-render was recorded twice');
+    },
+  },
+  // ── 10 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 10, name: 'a booking panel rebuild preserves the party data',
+    property: 'party fields written before showBookingPanel re-runs are back in the DOM after the rebuild',
+    catches: 'root cause B — every repeated carrier selection rebuilt the form blank over the pasted parties',
+    run(ctx) {
+      const w = ctx.win; openQuote(w);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      let sel = w.selectRate({ carrier: 'JTS' }, { shipment: fx.SHIPMENT, source: 'test' });
+      A.ok(sel.ok, 'could not select JTS: ' + (sel.code || ''));
+      w.applyPartyData({
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', phone: '5625551234' },
+        consignee: { name: 'Haynes Brothers',    address: '1250 Main St',    phone: '8135559876' },
+      }, { source: 'test' });
+      // A DIFFERENT carrier re-selection rebuilds the panel — the data must survive the rebuild.
+      sel = w.selectRate({ carrier: 'AAA Cooper' }, { shipment: fx.SHIPMENT, source: 'test' });
+      A.ok(sel.ok, 'could not select AAA Cooper: ' + (sel.code || ''));
+      const v = id => (w.document.getElementById(id) || {}).value || '';
+      A.ok(v('bk-pu-name') === 'Michaels Furniture', 'shipper name wiped by the rebuild: "' + v('bk-pu-name') + '"');
+      A.ok(v('bk-dl-name') === 'Haynes Brothers', 'consignee name wiped by the rebuild: "' + v('bk-dl-name') + '"');
+      A.ok(v('bk-pu-street') === '7240 Crider Ave' && v('bk-dl-street') === '1250 Main St', 'a street address was wiped by the rebuild');
+    },
+  },
+  // ── 11 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 11, name: 'same-carrier re-selection is a no-rebuild',
+    property: 're-stating the locked carrier keeps the SAME panel DOM (no wipe) and answers from real state',
+    catches: 'root cause C — every repeated "jts" wiped the form and re-emitted the same hardcoded greeting',
+    async run(ctx) {
+      const w = ctx.win; openQuote(w);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      w.appendMessage('user', 'jts');
+      await w.handleInput('jts');          // opens the JTS panel via the intercept
+      w.applyPartyData({ shipper: { name: 'Michaels Furniture', address: '7240 Crider Ave' } }, { source: 'test' });
+      const nodeBefore = w.document.getElementById('bk-pu-name');
+      A.ok(nodeBefore, 'no booking panel after the first selection');
+      ctx.reset();
+      w.appendMessage('user', 'jts');
+      await w.handleInput('jts');          // the SAME carrier again
+      const nodeAfter = w.document.getElementById('bk-pu-name');
+      A.ok(nodeAfter === nodeBefore, 'the panel was rebuilt on a same-carrier re-selection');
+      A.ok(nodeAfter.value === 'Michaels Furniture', 'typed data lost on re-selection: "' + nodeAfter.value + '"');
+      const reply = ctx.messages.filter(m => m.role === 'bot').map(m => m.text).join(' ');
+      A.ok(/already set/i.test(reply), 'no state-truthful reply on re-selection — got: ' + reply);
+      A.ok(reply.indexOf('I need the pickup and delivery details') < 0, 'the hardcoded greeting was re-emitted on re-selection');
     },
   },
 ];

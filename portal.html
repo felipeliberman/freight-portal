@@ -1893,7 +1893,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     <div class="sb-divider"></div>
 
     <div class="sb-link" onclick="setNav(this);quickAction('My Shipments')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg><span class="sb-link-text">My Shipments</span><span id="nav-badge-ships" style="min-width:16px;height:16px;background:var(--ac);color:#fff;border-radius:8px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px;margin-left:auto;"></span><span class="sb-tooltip">My Shipments</span></div>
-    <div class="sb-link" onclick="setNav(this);_snapshotOpenBookingTab();resetShipmentState(false);showQuoteForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
+    <div class="sb-link" onclick="setNav(this);startQuote()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="sb-link-text">Get a Quote</span><span class="sb-tooltip">Get a Quote</span></div>
     <div class="sb-link" id="nav-saved-quotes" onclick="setNav(this);showSavedQuotes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="sb-link-text">Saved Quotes</span><span class="sb-tooltip">Saved Quotes</span></div>
     <div class="sb-link" onclick="setNav(this);quickAction('Track Shipment')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="flex-shrink:0;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg><span class="sb-link-text">Track Shipment</span><span class="sb-tooltip">Track Shipment</span></div>
     <div class="sb-divider"></div>
@@ -2274,6 +2274,44 @@ let pendingPicker   = null;
 let lastQuotedShipment = null;
 var chatHistory = []; // global conversation history for AI responses
 
+// ── THE ONE TRANSCRIPT WRITER ─────────────────────────────────────────────────
+// appendMessage calls this for every rendered user/bot bubble, so a turn the customer SAW can
+// never be missing from the agent's transcript. This is the defect-class fix for the split-brain
+// loop: deterministic intercepts (carrier select, party paste, insurance, greetings) used to render
+// bubbles without recording them, so the agent legitimately "never heard" the customer pick a
+// carrier and re-asked forever. Rules:
+//   - Only appendMessage may write conversational turns here (agent paths ensure/roll back, never
+//     blind-push). extras.skipHistory renders a bubble WITHOUT recording — reserved for transient
+//     connection-error copy the agent must never read back as context.
+//   - An identical trailing entry is absorbed (double-render guards), never double-recorded.
+function _recordTurn(role, text) {
+  try {
+    const r = role === 'bot' ? 'assistant' : (role === 'user' ? 'user' : null);
+    if (!r) return;
+    const t = String(text == null ? '' : text).trim();
+    if (!t) return;
+    const last = chatHistory[chatHistory.length - 1];
+    if (last && last.role === r && typeof last.content === 'string' && last.content === t) return;
+    chatHistory.push({ role: r, content: t });
+    if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+  } catch (e) {}
+}
+
+// Roll back a failed turn: remove everything from (and including) the LAST user entry matching
+// this turn's text. Replaces the blind chatHistory.pop() — with interim bot lines now recorded,
+// a pop could orphan-clean the wrong entry.
+function _rollbackTurn(userText) {
+  try {
+    const t = String(userText == null ? '' : userText).trim();
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      if (chatHistory[i] && chatHistory[i].role === 'user' && chatHistory[i].content === t) {
+        chatHistory.length = i;
+        return;
+      }
+    }
+  } catch (e) {}
+}
+
 // ── SINGLE OWNER of conversation-scoped shipment/rate/booking state ────────────
 // Call at every boundary that should start clean (new chat, switching chats, fresh quote)
 // so a session never inherits a prior shipment's rates, form, or context.
@@ -2293,6 +2331,10 @@ function resetShipmentState(wipeConversation) {
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
+    // Stale-container hygiene on EVERY reset (was wipe-only): every fresh-quote path rebuilds the
+    // form right after this reset, so no ghost line-item rows or stale-container writes can survive.
+    window._quoteContainer = null;
+    window._quoteExplicitOpen = false;
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
@@ -2318,7 +2360,6 @@ function resetShipmentState(wipeConversation) {
       // both survive a fresh-quote reset (false) and only clear on a full wipe (new/switch chat),
       // so a booking panel snapshotted on the way out is still restorable after a same-chat re-rate.
       window._pendingContactRestore = null;
-      window._quoteContainer = null;
       // Clear shipment conversation context so "New chat" starts truly fresh
       // (previously these survived New chat and only cleared on logout/reload).
       if (typeof shipCtx !== 'undefined') { shipCtx = null; }
@@ -5801,6 +5842,11 @@ function appendMessage(role, text, extras) {
   // this function, which speaks this same `text` variable. One call, both paths.
   text = stripControlTokens(role, text);
   extras = extras || {};
+  // ONE transcript writer: every rendered user/bot bubble is recorded (post-strip, i.e. exactly
+  // what the customer saw). skipHistory renders without recording — transient error copy only.
+  if (!extras.skipHistory && (role === 'user' || role === 'bot') && typeof _recordTurn === 'function') {
+    _recordTurn(role, text);
+  }
   const wrap = document.getElementById('messages');
 
   const row = document.createElement('div');
@@ -5899,10 +5945,7 @@ function appendMessage(role, text, extras) {
       btn.style.cssText = 'background:var(--card);border:1.5px solid var(--ac);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:500;color:var(--ac);cursor:pointer;font-family:var(--font);transition:all .12s;';
       btn.onmouseover = () => { btn.style.background = 'var(--ac)'; btn.style.color = '#fff'; };
       btn.onmouseout  = () => { btn.style.background = 'var(--card)'; btn.style.color = 'var(--ac)'; };
-      btn.onclick = () => {
-        appendMessage('user', label);
-        handleInput(label);
-      };
+      btn.onclick = () => { _submitUserTurn(label); };
       qrDiv.appendChild(btn);
     });
     bubble.appendChild(qrDiv);
@@ -7835,8 +7878,7 @@ async function showShipmentDetail(s) {
         (wt ? ', ' + wt + ' lbs' : '') +
         (cls ? ', class ' + cls : '') +
         (acc ? ', ' + acc : '');
-      appendMessage('user', msg);
-      handleInput(msg);
+      _submitUserTurn(msg);
     };
   }
   const invBtn = overlay.querySelector('#ship-modal-inv-btn');
@@ -8809,7 +8851,7 @@ function openMeetingPanel() {
 function closeTalk(){ var t=document.getElementById('talk-view'); if(t) t.style.display='none'; setLoggedIn(!!currentCustomer); }
 function talkToQuote(){
   closeTalk();
-  if(currentCustomer){ resetShipmentState(false); showQuoteForm(); return; }
+  if(currentCustomer){ startQuote(); return; }
   var f=document.getElementById('public-frame');
   if(f && f.contentWindow){ try{ if(f.contentWindow.expandAndAsk){ f.contentWindow.expandAndAsk('I need a freight quote'); } else if(f.contentWindow.expandChat){ f.contentWindow.expandChat(); } }catch(e){} }
 }
@@ -9254,8 +9296,21 @@ function sendMessage() {
   // only the most recent message and replay it when the current turn finishes — never run two
   // turns at once. The queued message's bubble is shown when it actually runs (on drain), so a
   // superseded double-send never leaves an orphaned bubble with no reply.
+  _submitUserTurn(txt);
+}
+
+// ── THE ONE TURN ENTRY POINT ─────────────────────────────────────────────────
+// Every user-authored message — chat box, welcome box, quick replies, voice, mobile ask — enters
+// here. It renders the bubble (which records the turn) and runs the turn under the single-in-flight
+// lock. Paths that used to call appendMessage+handleInput directly could run two turns at once and
+// render duplicate bubbles (the "resdince, no liftgate" double); routing them all through this
+// helper makes that structurally impossible. A message arriving mid-turn is queued (most recent
+// wins) and its bubble renders when it actually runs, exactly like the chat box always did.
+function _submitUserTurn(txt) {
+  txt = String(txt == null ? '' : txt).trim();
+  if (!txt) return;
   if (window._turnInFlight) { window._queuedSend = txt; return; }
-  appendMessage('user',txt);
+  appendMessage('user', txt);
   _runTurn(txt);
 }
 
@@ -9800,7 +9855,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if (submitBtn) { submitForm(); return; }
   });
   }
-  function welcomeSend(){const txt=wt?wt.value.trim():'';if(!txt)return;wt.value='';wt.style.height='auto';showChatArea();appendMessage('user',txt);handleInput(txt);}
+  function welcomeSend(){const txt=wt?wt.value.trim():'';if(!txt)return;wt.value='';wt.style.height='auto';showChatArea();_submitUserTurn(txt);}
   if(ws) ws.addEventListener('click',welcomeSend);
   if(wt){
     wt.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();welcomeSend();}});
@@ -9991,6 +10046,32 @@ function parseBookingBlock(text, fallbackZip) {
   }
 
   return data;
+}
+
+// ── Split a two-party paste into pickup and delivery halves ──────────────────
+// Returns { shipperText, consigneeText } when BOTH sides can be confidently identified by explicit
+// side markers, else null. Null means the caller must NOT half-apply — a paste with two parties
+// that can't be split hands off to the agent (which is instructed to call update_booking with
+// both parties) rather than silently dropping the delivery side.
+function _splitPartyBlock(t) {
+  try {
+    const s = String(t == null ? '' : t);
+    const delRe = /\b(?:ship\s*to|deliver(?:y|ing)?\s*(?:to|address|at)?|consignee|destination)\b\s*:?/i;
+    const puRe  = /\b(?:ship\s*from|pick\s*-?\s*up\s*(?:at|from|address)?|shipper|origin)\b\s*:?/i;
+    const dm = delRe.exec(s);
+    if (!dm) return null;
+    // Strip a LEADING side marker off a half so it can't leak into the parsed name
+    // ("Pickup at Michaels Furniture" must parse as "Michaels Furniture").
+    const stripLead = h => String(h || '').replace(/^\s*(?:ship\s*from|pick\s*-?\s*up\s*(?:at|from|address)?|shipper|origin|from)\b\s*:?\s*/i, '');
+    const before = s.slice(0, dm.index);
+    const after  = s.slice(dm.index + dm[0].length);
+    // Normal order: pickup text first, then the delivery marker.
+    if (before.trim().length >= 8) return { shipperText: stripLead(before), consigneeText: after };
+    // Reversed order: the message STARTS with the delivery side — find a pickup marker inside it.
+    const pm = puRe.exec(after);
+    if (pm) return { shipperText: after.slice(pm.index + pm[0].length), consigneeText: after.slice(0, pm.index) };
+    return null;
+  } catch (e) { return null; }
 }
 
 function bookingSummary() {
@@ -10332,8 +10413,13 @@ async function bookShipment(payload, opts) {
   const result = bookData.data && bookData.data.results && bookData.data.results[0];
   const BOLId = result && result.BOLId;
   if (!BOLId) {
-    try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' no-id] status ' + bookRes.status + ' body:', bookText.slice(0, 300)); } catch(e) {}
-    if (editBolId) return { BOLId: null, BOLNumber: null, docs: [], result: null, editAcknowledged: true };
+    if (editBolId) {
+      // EXPECTED Primus behavior, not a failure: a successful edit PUT acknowledges with 2xx and
+      // an empty body (no id). Logged at info level so it stops reading as an error during triage.
+      try { console.log('[' + errLabel + ' PUT ok] edit acknowledged by Primus (2xx, empty body — expected; edit acks carry no BOL id)'); } catch(e) {}
+      return { BOLId: null, BOLNumber: null, docs: [], result: null, editAcknowledged: true };
+    }
+    try { console.error('[' + errLabel + ' POST no-id] status ' + bookRes.status + ' body:', bookText.slice(0, 300)); } catch(e) {}
     const _noId = new Error(errLabel + ' did not return a BOL id — the shipment was not confirmed.');
     _noId.code = 'NO_BOL_IN_RESPONSE';
     throw _noId;
@@ -12046,13 +12132,22 @@ function _quoteFormState() {
 // Snapshot of the booking panel state — whether it's actually open and what's filled.
 function _bookingPanelState() {
   try {
-    const open = !!document.getElementById('bk-pu-name');
-    if (!open) return { bookingPanelOpen: false };
+    // "No bk-pu-name in the document" used to mean "no booking" — but the Book Shipment tab keeps
+    // its DOM (and the lock keeps the carrier) while ANOTHER tab is the one rendered. Conflating
+    // the two told the agent there was no booking in flight, which is where "which carrier?" over
+    // a chosen carrier came from. Now: a booking is reported whenever a lock OR the rendered panel
+    // exists; panelRendered says whether the DOM is currently mounted. Field values come from the
+    // live DOM when rendered, else from the collectBookingForm precedence chain
+    // (bookingData → _quotedContacts → the rates shipment).
+    const domRendered = !!document.getElementById('bk-pu-name');
+    const lock = window._bookingLock;
+    const lockRate = (lock && lock.rate) || null;
+    if (!domRendered && !lockRate) return { bookingPanelOpen: false };
     const g = id => { const el = document.getElementById(id); return el ? String(el.value||'').trim() : ''; };
     // Surface the freight being booked so read-back never guesses (e.g. "pallet").
     let freight = [];
     try {
-      const s = (window._bookingLock && window._bookingLock.shipment) || window._lastRatesShipment || (typeof lastQuotedShipment!=='undefined'?lastQuotedShipment:null);
+      const s = (lock && lock.shipment) || window._lastRatesShipment || (typeof lastQuotedShipment!=='undefined'?lastQuotedShipment:null);
       const its = (s && s.items && s.items.length) ? s.items : [];
       freight = its.map(it => ({
         pieces: Number(it.pieces||it.qty)||1,
@@ -12063,16 +12158,33 @@ function _bookingPanelState() {
         commodity: it.description || it.commodity || 'Freight'
       }));
     } catch(e) {}
-    const lockRate = (window._bookingLock && window._bookingLock.rate) || null;
+    let shipper, consignee, pickupDate, pickupOpen, pickupClose, referenceNumber, specialInstructions;
+    if (domRendered) {
+      shipper   = { name:g('bk-pu-name'), street:g('bk-pu-street'), contact:g('bk-pu-contact'), phone:g('bk-pu-phone') };
+      consignee = { name:g('bk-dl-name'), street:g('bk-dl-street'), contact:g('bk-dl-contact'), phone:g('bk-dl-phone') };
+      pickupDate = g('bk-pu-date'); pickupOpen = g('bk-pu-open'); pickupClose = g('bk-pu-close');
+      referenceNumber = g('bk-pu-ref');
+      specialInstructions = (document.getElementById('bk-special-instructions')||{}).value || '';
+    } else {
+      const f = (typeof collectBookingForm === 'function') ? collectBookingForm() : null;
+      shipper   = f ? { name:f.shipper.name,   street:f.shipper.street,   contact:f.shipper.contact,   phone:f.shipper.phone }   : {};
+      consignee = f ? { name:f.consignee.name, street:f.consignee.street, contact:f.consignee.contact, phone:f.consignee.phone } : {};
+      pickupDate = f ? f.pickup.date : ''; pickupOpen = f ? f.pickup.open : ''; pickupClose = f ? f.pickup.close : '';
+      referenceNumber = f ? f.referenceNumber : '';
+      specialInstructions = f ? f.specialInstructions : '';
+    }
     return {
-      bookingPanelOpen: true,
+      bookingPanelOpen: domRendered,
+      bookingInFlight: true,
+      panelRendered: domRendered,
       carrier: lockRate ? (lockRate._name || lockRate.name || lockRate.carrier || '') : '',
+      price: lockRate ? _ratePrice(lockRate) : null,
       freight: freight,
-      shipper: { name:g('bk-pu-name'), street:g('bk-pu-street'), contact:g('bk-pu-contact'), phone:g('bk-pu-phone') },
-      consignee: { name:g('bk-dl-name'), street:g('bk-dl-street'), contact:g('bk-dl-contact'), phone:g('bk-dl-phone') },
-      pickupDate: g('bk-pu-date'), pickupOpen: g('bk-pu-open'), pickupClose: g('bk-pu-close'),
-      referenceNumber: g('bk-pu-ref'),
-      specialInstructions: (document.getElementById('bk-special-instructions')||{}).value || ''
+      shipper: shipper,
+      consignee: consignee,
+      pickupDate: pickupDate, pickupOpen: pickupOpen, pickupClose: pickupClose,
+      referenceNumber: referenceNumber,
+      specialInstructions: specialInstructions
     };
   } catch(e) { return { bookingPanelOpen: false }; }
 }
@@ -12149,11 +12261,27 @@ function _liveStateBlock() {
       lines.push('hazmat: the freight is already flagged hazardous on the form — do not ask whether it is hazmat. Collect the UN number and 24-hour emergency contact at BOOKING.');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
+    if (b && b.bookingInFlight && !b.panelRendered) {
+      lines.push('bookingInFlight: a booking IS in progress for the carrier and fields shown above, even though its panel tab is not the one currently displayed. Never say there is no booking, never re-ask which carrier, and never re-ask for any field shown non-empty above.');
+    }
     if (window._lockDropped && window._lockDropped.carrier) {
       lines.push('carrierNoLongerAvailable: ' + window._lockDropped.carrier + ' was the selected carrier but did not come back on the refreshed rates. Tell the customer that plainly and ask which of the current options they want. Do NOT pick one for them.');
     }
     const _rs = window._residentialStatus;
-    if (_rs) lines.push('residentialStatus: ' + JSON.stringify(_rs));
+    if (_rs) {
+      lines.push('residentialStatus: ' + JSON.stringify(_rs));
+      // When the address lookup and the quote's accessorials DISAGREE, force one coherent message —
+      // left alone, the agent fused them into "it's commercial, so residential delivery is already
+      // on the quote", a self-contradiction shown to a real customer.
+      try {
+        const _rsdOn = !!(q && (q.accessorialCodes || []).indexOf('RSD') >= 0);
+        if (_rs.residential === false && _rsdOn) {
+          lines.push('residentialConflict: the address lookup says this delivery address is COMMERCIAL, but residential delivery is currently ON the quote. State exactly those two facts in plain words and ask ONE question: keep residential delivery on, or remove it and re-rate? Never merge them into a single claim — never say residential is on "because" the address is commercial, and never say it is "already covered."');
+        } else if (_rs.residential === true && !_rsdOn) {
+          lines.push('residentialConflict: the address lookup says this delivery address is RESIDENTIAL but residential delivery is NOT on the quote — follow the residential safeguard: state the fact and ask whether to add residential delivery (and liftgate where appropriate).');
+        }
+      } catch (e) {}
+    }
     // Cargo insurance — plain broker language, no internal field names or codes. Surfacing this here
     // (under the "Never re-ask for anything shown here" directive above) is what stops the agent
     // re-asking for a value it already has. 'declined' allows a later customer-initiated re-request.
@@ -12161,7 +12289,7 @@ function _liveStateBlock() {
       var _is = q.insurance.status;
       if (_is === 'added') lines.push('cargoInsurance: added, declared value $' + Number(q.insurance.declaredValue||0).toLocaleString('en-US') + ' — do not ask about cargo insurance again.');
       else if (_is === 'being added') lines.push('cargoInsurance: the declared value is being collected right now — do not ask about cargo insurance.');
-      else if (_is === 'started, no value yet') lines.push('cargoInsurance: selected but the declared value is still needed — do not treat it as fully added.');
+      else if (_is === 'started, no value yet') lines.push('cargoInsurance: the insurance option is selected on the form but NO declared value is set, so insurance is NOT active and is NOT in any rate on screen. Never tell the customer insurance is added or included. If they want insurance, ask one question — the declared cargo value — and never direct them to fill in a form field themselves.');
       else if (_is === 'declined') lines.push('cargoInsurance: the customer declined it earlier for this quote — do not re-offer it on your own, but if they now ask to add it, go ahead normally.');
     }
     return lines.join('\n');
@@ -12524,8 +12652,14 @@ function _rekeyLockOnPublish(rates, shipment) {
 // Mirrors update_quote: opens showBookingPanel for the frozen rate so the customer
 // watches the Pickup/Delivery sections populate live, then book_shipment clicks the
 // panel's own Book & Dispatch button (one proven path, no duplicate payload).
-function _execUpdateBooking(input) {
+async function _execUpdateBooking(input) {
   input = input || {};
+  // The panel builds synchronously, but its own one-shot fills (lane-gated restore, address-book
+  // default shipper) land on ~0–200ms timers. Waiting them out before applying the agent's fields
+  // and snapshotting means the returned bookingState reflects the POST-fill panel — the old
+  // fire-and-forget setTimeout(400) returned a snapshot that was stale by construction on every
+  // panel-open path, which is what let the agent claim fills that had not happened yet.
+  const _settle = () => new Promise(r => setTimeout(r, 300));
   try {
     // PRECEDENCE: resolve an explicit reference BEFORE reading the lock. Previously the lock was
     // read first and input.rank / input.carrier were only reachable when no lock existed — so
@@ -12535,7 +12669,8 @@ function _execUpdateBooking(input) {
       const sel = selectRate({ rank: input.rank, carrier: input.carrier },
         { shipment: window._lastRatesShipment || lastQuotedShipment, source: 'agent-select' });
       if (!sel.ok) return { ok: false, code: sel.code, error: sel.message, candidates: sel.candidates };
-      setTimeout(() => _applyBookingFields(input), 400);
+      await _settle();
+      _applyBookingFields(input);
       return { ok:true, carrier: sel.carrier, price: sel.price,
         summary:'Booking panel is now open for ' + sel.carrier + ' at $' + sel.price.toFixed(2) + '. The Pickup and Delivery sections are visible.',
         bookingState: _bookingPanelState() };
@@ -12557,7 +12692,8 @@ function _execUpdateBooking(input) {
     if (!panelActuallyOpen) {
       const re = selectRate(lock.rate, { shipment: lock.shipment, source: 'reopen' });
       if (!re.ok) return { ok: false, code: re.code, error: re.message, candidates: re.candidates };
-      setTimeout(() => _applyBookingFields(input), 400);
+      await _settle();
+      _applyBookingFields(input);
       return { ok:true, carrier: re.carrier,
         summary:'Booking panel is now open for ' + re.carrier + '. The Pickup and Delivery sections are visible.',
         bookingState: _bookingPanelState() };
@@ -13270,6 +13406,8 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
 3b. HAZMAT AT BOOKING — if formState shows the line item is hazmat, you MUST proactively ask the customer for the UN number and a 24-hour emergency contact name and phone BEFORE you read the booking back — do not wait for the customer to volunteer it. Pass these to update_booking as unNumber, emergencyContactName, and emergencyPhone. The hazmat class and packing group are looked up automatically from the UN number — never ask the customer for them. NEVER put the UN number or emergency contact in specialInstructions — they have dedicated fields. Include the UN number and emergency contact in the booking read-back.
 4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, report it and ask whether to add RSD (and liftgate for heavier LTL freight). State the fact, ask the question — let the customer decide; do NOT push them toward a choice. Word it like: "That delivery address comes back residential — want me to add residential delivery and a liftgate, or are you good handling the unload?" Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still inform the customer about RSD if the address is residential. If after adding RSD the parcel rate does not change, say: "Residential was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
+
+PARTY DETAILS ARE WRITTEN, NEVER JUST ACKNOWLEDGED. When the customer provides shipper or consignee details in chat — names, addresses, contacts, phones, one side or both — replying with text alone is FORBIDDEN: you MUST call update_booking in that SAME turn with every field they provided, both parties when both are present. And NEVER claim a party detail is "on file," "already filled," "captured," or "saved" unless the CURRENT bookingState or formState snapshot shows that exact field non-empty — if the snapshot shows a field blank, it is blank, no matter what was said earlier in the conversation; the only way to make it true is to call update_booking with it now. If bookingState shows bookingInFlight true with panelRendered false, the booking still exists exactly as shown (carrier, price, and fields) — never say there is no booking, and never re-ask which carrier.
 6. When they confirm ("yes," "lock it in," "go"), call book_shipment. This creates the BOL using the booking panel's filled details. When it returns ok, give them the BOL number, then offer to dispatch: "You're all set with BOL [number] — ready to go. Want me to dispatch it to [carrier] and grab your shipping docs?"
 7. DISPATCHING — when the customer says yes, call dispatch_shipment ONLY (uses the last booked shipment automatically) — do NOT call book_shipment again (that creates a duplicate). NEVER call book_shipment more than once for the same shipment.
 
@@ -13414,15 +13552,30 @@ async function aiConverse(userText) {
   const _showBot = (t) => { const n = (t||'').toString().trim(); if (n && n !== _lastBotShown) { appendMessage('bot', n); _lastBotShown = n; } };
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
 
-  // Build message history (text-only for past turns, current message appended)
-  const msgs = chatHistory.slice(-20)
+  // appendMessage (the ONE transcript writer) already recorded the visible user turn at send time.
+  // Synthetic agent calls (e.g. SmartPaste narration) have no bubble, so ENSURE the turn is present
+  // rather than pushing unconditionally — exactly one entry either way. The store keeps the full
+  // conversation (capped at 200); the API payload below is sliced to the last 20 for context/cost.
+  {
+    const _lastH = chatHistory[chatHistory.length - 1];
+    if (!_lastH || _lastH.role !== 'user' || _lastH.content !== userText) {
+      chatHistory.push({ role: 'user', content: userText });
+      if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+    }
+  }
+  // Build the API payload from the store. Intercept-authored turns mean history is no longer
+  // strictly paired, so normalize for the API: merge consecutive same-role entries and drop any
+  // leading assistant block (the payload must start with a user turn).
+  const msgs = [];
+  chatHistory.slice(-20)
     .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(b => b && b.type === 'text').map(b => b.text).join(' ') : '') }))
-    .filter(m => m.content);
-  msgs.push({ role: 'user', content: userText });
-  chatHistory.push({ role: 'user', content: userText });
-  // Keep the full conversation (capped at 200) so reopening a saved chat shows everything.
-  // The API payload above is sliced to the last 20 turns for context/cost — not the store.
-  if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+    .filter(m => m.content)
+    .forEach(m => {
+      const p = msgs[msgs.length - 1];
+      if (p && p.role === m.role) p.content += '\n' + m.content;
+      else msgs.push({ role: m.role, content: m.content });
+    });
+  while (msgs.length && msgs[0].role !== 'user') msgs.shift();
 
   try {
     let loops = 0;
@@ -13798,7 +13951,7 @@ async function aiConverse(userText) {
           } else if (toolUse.name === 'requote_shipment') {
             result = await _execRequoteShipment(toolUse.input);
           } else if (toolUse.name === 'update_booking') {
-            result = _execUpdateBooking(toolUse.input);
+            result = await _execUpdateBooking(toolUse.input);
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
@@ -13822,13 +13975,13 @@ async function aiConverse(userText) {
       // Normal completion (includes resolved server-side web_search)
       removeTyping();
       // Empty response = a failed turn. Do NOT commit the error line to chatHistory/waybHistory
-      // (the agent would later read its own "trouble connecting" as conversational context). Route
-      // it through appendMessage, mark the turn failed for one-shot recovery, and roll back the user
-      // push (mirrors the catch below) so history and live state stay consistent.
+      // (the agent would later read its own "trouble connecting" as conversational context). Render
+      // it with skipHistory, mark the turn failed for one-shot recovery, and roll back this turn's
+      // entries (mirrors the catch below) so history and live state stay consistent.
       if (!textOut) {
         window._lastTurnFailed = true;
-        chatHistory.pop();
-        appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+        _rollbackTurn(userText);
+        appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
         return;
       }
       let finalText = textOut;
@@ -13865,7 +14018,8 @@ async function aiConverse(userText) {
       // say; suppress rather than render an empty bubble. Silence beats a re-ask or a vanished promise.
       if (!finalText) { window._lastTurnFailed = false; return; }
       window._lastTurnFailed = false; // recovered — stop re-orienting on the next turn
-      chatHistory.push({ role: 'assistant', content: finalText });
+      // No assistant push here: _showBot → appendMessage records finalText (the ONE writer). If an
+      // identical interim bubble already recorded it, _recordTurn's trailing-dedupe absorbs it.
       // Mirror into waybHistory so waybAgent has full conversational context
       if (typeof waybHistory !== 'undefined') {
         waybHistory.push({ role: 'user', content: userText });
@@ -13881,17 +14035,21 @@ async function aiConverse(userText) {
     // Ran out of loops — show whatever we have
     removeTyping();
     window._lastTurnFailed = true;
-    chatHistory.pop(); // orphan-clean the user turn, matching the catch below
-    appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.");
+    _rollbackTurn(userText); // orphan-clean this turn, matching the catch below
+    appendMessage('bot', "I'm having trouble pulling that together. Please try again or call (800) 687-3713.", { skipHistory: true });
   } catch (e) {
     console.error('aiConverse error:', e);
     window._lastTurnFailed = true;
-    chatHistory.pop();
+    _rollbackTurn(userText);
     removeTyping();
-    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
   }
 }
 
+// DEAD CODE — NO LIVE CALLERS (verified: nothing invokes aiFreightAnswer). Kept only as reference.
+// If ever revived it MUST NOT receive booking/quote-flow turns as-is: it has NO tools and NO
+// _liveStateBlock, so it would answer booking questions from memory — a fabrication machine.
+// Wire in the live state block + tools (or route booking turns to aiConverse) before any use.
 async function aiFreightAnswer(t){
   showTyping();
   const sysPrompt = (function() {
@@ -13987,9 +14145,14 @@ ACCOUNT CONTEXT: ${shipCount} shipments loaded${dateRange ? ' (' + dateRange + '
 
     return sys;
   }());
-  chatHistory.push({role:'user', content:t});
-  // Keep full history (capped 200); the API payload is sliced to the last 20 turns below.
-  if(chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+  // Ensure-not-push, matching aiConverse: appendMessage owns the transcript.
+  {
+    const _lastH = chatHistory[chatHistory.length - 1];
+    if (!_lastH || _lastH.role !== 'user' || _lastH.content !== t) {
+      chatHistory.push({role:'user', content:t});
+      if(chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
+    }
+  }
   try{
     console.log('Claude call starting...');
     const r = await (window.parent.flAnthropic||((u,o)=>fetch(u,o).then(r=>r.json())))('https://anthropic-proxy.felipe-b80.workers.dev', {
@@ -14007,14 +14170,13 @@ ACCOUNT CONTEXT: ${shipCount} shipments loaded${dateRange ? ' (' + dateRange + '
     const d = r;
     console.log('Claude response blocks:', d.content && d.content.length);
     let text = (d.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('\n').trim() || "I am having trouble connecting. Please try again.";
-    chatHistory.push({role:'assistant', content:text});
     removeTyping();
-    appendMessage('bot', text);
+    appendMessage('bot', text); // appendMessage records — no separate push
   } catch(e) {
     console.error('Claude error:', e);
-    chatHistory.pop();
+    _rollbackTurn(t);
     removeTyping();
-    appendMessage('bot', "I am having trouble connecting right now. Please try again.");
+    appendMessage('bot', "I am having trouble connecting right now. Please try again.", { skipHistory: true });
   }
 }
 
@@ -15663,7 +15825,9 @@ async function handleInput(text) {
     // Through the one owner: toggle and value move together, and the form mirrors automatically.
     setInsurance({ status: 'added', amount: _val, commodityId: _match.id, commodityName: _match.name });
     window._insTempValue = null; window._insTempCommodity = null;
-    appendMessage('bot', 'Cargo insurance added — ' + _match.name + ', insured for $' + _val.toLocaleString('en-US') + '. Pulling rates with insurance included...');
+    // No inclusion claim yet — whether insurance actually rides the rates is only known when the
+    // pull completes (the evidence-gated callback below says which happened).
+    appendMessage('bot', 'Cargo insurance requested — ' + _match.name + ', declared value $' + _val.toLocaleString('en-US') + '. Pulling updated rates now...');
 
     // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
     // it ourselves, suppress the prefill auto-run so we control the single requote below.
@@ -15689,7 +15853,25 @@ async function handleInput(text) {
       if (insBtn && !insBtn.classList.contains('acc-active')) insBtn.click();
       const panel = qc.querySelector('#qt-insurance-panel'); if (panel) panel.style.display = 'block';
     }
-    window._onRatesReady = _summarizeRatesToChat;
+    // EVIDENCE-GATED "insurance included": the pull's own shipment (published to
+    // _lastRatesShipment) is the record of whether INS actually rode the rate call — the DOM
+    // clicks above can silently miss (commodity select mismatch, INS button not found), which is
+    // exactly how "rates are refreshed with insurance included" was said over an uninsured pull.
+    // Same loud-failure pattern as the outbound accessorial guard: state which happened, never
+    // claim inclusion without the evidence.
+    window._onRatesReady = function (rates) {
+      try {
+        const _shp = window._lastRatesShipment;
+        if (rates && rates.length && _shp && _shp.insuranceEnabled) {
+          appendMessage('bot', 'These rates include cargo insurance on the declared $' + _val.toLocaleString('en-US') + '.');
+          _summarizeRatesToChat();
+        } else if (rates && rates.length) {
+          appendMessage('bot', 'The rates are back, but I could not get cargo insurance applied on my side — the prices on screen do NOT include insurance. Say "add insurance" to try again, or email support@freightandlogistics.ai and the team will price it for you.');
+          _summarizeRatesToChat();
+        }
+        // No rates at all → the standard rate-failure copy speaks; never mention insurance success.
+      } catch (e) { try { _summarizeRatesToChat(); } catch (e2) {} }
+    };
     if (typeof window._doGetRates === 'function') {
       try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); }
     } else {
@@ -15746,6 +15928,27 @@ async function handleInput(text) {
       // Only claim the message when it unambiguously names a carrier on THIS quote. A miss falls
       // through untouched so ordinary conversation is never swallowed.
       if (_probe.ok) {
+        // SAME-CARRIER RE-SELECTION IS A NO-REBUILD. If this carrier is already the locked one and
+        // its Book Shipment tab exists, a rebuild would wipe the customer's typed fields and re-emit
+        // the same hardcoded line (the QA loop). Raise the existing tab and answer from real state.
+        const _lockRate0 = window._bookingLock && window._bookingLock.rate;
+        const _bkTabC = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
+          ? rpState.tabs.find(tb => String(tb.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Book Shipment') : null;
+        if (_lockRate0 && _bkTabC && _normCarrier(_rateDisplayName(_lockRate0)) === _normCarrier(_rateDisplayName(_probe.rate))) {
+          if (rpState.activeId !== _bkTabC.id) { rpState.activeId = _bkTabC.id; if (typeof renderPanel === 'function') renderPanel(); }
+          removeTyping();
+          window._inQuoteConvo = true;
+          const _missC = [];
+          [['bk-pu-name', 'pickup name'], ['bk-pu-street', 'pickup address'], ['bk-pu-phone', 'pickup phone'],
+           ['bk-dl-name', 'delivery name'], ['bk-dl-street', 'delivery address'], ['bk-dl-phone', 'delivery phone']]
+            .forEach(p => { const el = document.getElementById(p[0]); if (!el || !String(el.value || '').trim()) _missC.push(p[1]); });
+          appendMessage('bot', _rateDisplayName(_lockRate0) + ' is already set at $' + _ratePrice(_lockRate0).toFixed(2) +
+            ' — the booking form is open on the right. ' +
+            (_missC.length
+              ? 'I still need the ' + _missC.join(', ') + '.'
+              : 'Everything required is filled in — review it and hit Save Shipment when ready.'));
+          return;
+        }
         const _sel = selectRate(_probe.rate, { shipment: window._lastRatesShipment || lastQuotedShipment, source: 'chat-carrier-name' });
         removeTyping();
         if (_sel.ok) {
@@ -15762,7 +15965,11 @@ async function handleInput(text) {
   }
 
   if ((window._quoteFormOpen || window._inQuoteConvo) && !/\b(show|list|my)\s+(shipment|invoice|order|report)/i.test(lower)
-      && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t) && !_dataQuestion) {
+      && !isFullHistoryQ(t, lower) && !/\b\d{6,}\b/.test(t) && !_dataQuestion
+      // Party data for an open booking panel belongs to the deterministic party intercept below,
+      // not this agent route — _inQuoteConvo is armed by the carrier intercept itself, so without
+      // this carve-out a post-selection party paste could never reach the intercept at all.
+      && !(window._bookingPanelContainer && _turn.kind === 'data' && _turn.intent === 'party-field')) {
     // Full-history analytics / existence / comparison questions and explicit BOL numbers
     // break OUT of the quote conversation (otherwise the quote AI answers them off the
     // open quote's line items — confidently wrong). The quote form stays open underneath.
@@ -15814,24 +16021,51 @@ async function handleInput(text) {
     return;
   }
 
-  // If booking panel is open and chat has booking-like content, fill the panel
+  // If booking panel is open and chat has booking-like content, fill the panel.
+  // NEVER HALF-APPLY: a paste carrying BOTH parties is either split confidently and written whole,
+  // or handed to the agent untouched (the agent's prompt mandates update_booking with both parties).
+  // The old behavior applied SHIPPER ONLY, silently dropping the delivery side of a two-party paste.
   if (window._bookingPanelContainer && _turn.kind === 'data' && _turn.intent === 'party-field') {
-    const bd = parseBookingBlock(t, '');
-    if (bd.name || bd.address || bd.phone || bd.date) {
-      // Through the ONE writer, and the confirmation reports what it ACTUALLY wrote. The old count
-      // was of fields PARSED, not fields written — which is how the customer was told "I've filled
-      // 3 fields" over a form where nothing had changed.
-      const _w = applyPartyData({
-        shipper: { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone },
-        referenceNumber: bd.ref,
-        pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo },
+    const _split2 = _splitPartyBlock(t);
+    const _addrHits2 = (t.match(/\b\d+\s+[A-Za-z][A-Za-z0-9\s.'-]{2,35}(?:ave|avenue|st|street|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pl|place|cir|circle|hwy|highway|pkwy|parkway)\b/gi) || []).length;
+    if (_split2) {
+      // Two labeled sides — parse each half, write BOTH through the ONE writer, and report only
+      // what actually landed (written.length gate, unchanged).
+      const bs = parseBookingBlock(_split2.shipperText, lastQuotedShipment && lastQuotedShipment.originZip);
+      const bc = parseBookingBlock(_split2.consigneeText, lastQuotedShipment && lastQuotedShipment.destinationZip);
+      const _w2 = applyPartyData({
+        shipper:   { name: bs.name, address: bs.address, contact: bs.contact, phone: bs.phone },
+        consignee: { name: bc.name, address: bc.address, contact: bc.contact, phone: bc.phone },
+        referenceNumber: bs.ref || bc.ref,
+        pickup: { date: bs.date || bc.date, open: bs.timeFrom || bc.timeFrom, close: bs.timeTo || bc.timeTo },
       }, { source: 'chat-party-block' });
-      if (_w.written.length) {
-        appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form. Review and hit Book Shipment when ready!');
+      if (_w2.written.length) {
+        const _sw = _w2.written.filter(k => k.indexOf('shipper.') === 0).length;
+        const _cw = _w2.written.filter(k => k.indexOf('consignee.') === 0).length;
+        appendMessage('bot', 'Got it — I\'ve filled ' + _w2.written.length + ' field' + (_w2.written.length !== 1 ? 's' : '') +
+          (_sw && _cw ? ' across the pickup and delivery sections' : _cw ? ' in the delivery section' : ' in the pickup section') +
+          ' of the booking form. Review it and hit Save Shipment when ready.');
         return;
       }
       // Nothing landed: say nothing and let the agent handle it rather than claim a fill.
+    } else if (_addrHits2 < 2) {
+      // Single-party message. Which side it belongs to comes from its own wording — a
+      // delivery-labeled block fills the consignee, everything else fills the shipper (pickup
+      // details usually arrive first). Ref/PO and pickup window apply either way.
+      const bd = parseBookingBlock(t, '');
+      if (bd.name || bd.address || bd.phone || bd.date) {
+        const _isDel = /\b(deliver|consignee|ship\s*to|destination)\b/i.test(t);
+        const _parsed1 = { referenceNumber: bd.ref, pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo } };
+        _parsed1[_isDel ? 'consignee' : 'shipper'] = { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone };
+        const _w = applyPartyData(_parsed1, { source: 'chat-party-block' });
+        if (_w.written.length) {
+          appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form\'s ' + (_isDel ? 'delivery' : 'pickup') + ' section. Review it and hit Save Shipment when ready.');
+          return;
+        }
+        // Nothing landed: say nothing and let the agent handle it rather than claim a fill.
+      }
     }
+    // Two addresses but no confident split → fall through to the agent with the full text intact.
   }
 
   // (Old explicit carrier handler removed — aiConverse handles all carrier questions with web_search)
@@ -16478,6 +16712,13 @@ function showBookingPanel(rate, shipmentData) {
   const _bookingTabAlreadyOpen = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
     ? rpState.tabs.some(t => String(t.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Book Shipment')
     : false;
+  // A REBUILD MUST BE LOSSLESS. Snapshot any live booking form into _quotedContacts BEFORE the
+  // rebuild wipes its DOM — using the open tab's own stashed lane, and self-gated (an empty panel
+  // arms nothing). The lane-gated restore further down brings it back into the fresh form. Without
+  // this, every re-selection rebuilt the panel blank over the customer's typed party data.
+  if (document.getElementById('bk-pu-name') && typeof _snapshotOpenBookingTab === 'function') {
+    try { _snapshotOpenBookingTab(); } catch (e) {}
+  }
   const name      = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
   const logo      = rate._iconUrl || rate.iconUrl || rate.carrierLogo || '';
   const price     = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
@@ -16491,7 +16732,11 @@ function showBookingPanel(rate, shipmentData) {
   const pickupDate = shipmentData.pickupDate || getTomorrow();
 
   bookingRate = rate;
-  bookingData = { originZip, destZip, weight, pieces, accessorials: accList, pickupDate };
+  // MERGE, never reassign: bookingData carries party fields mirrored by applyPartyData /
+  // _syncBookingDataFromForm precisely so they survive a rebuild — a bare six-key reassignment
+  // here silently destroyed them on every open (and made the restore below read empty keys).
+  // resetShipmentState still clears bookingData at every real shipment boundary.
+  bookingData = Object.assign({}, bookingData, { originZip, destZip, weight, pieces, accessorials: accList, pickupDate });
 
   // Get dims from shipmentData (saved quote) or rate object if available
   const _bkL = Number(shipmentData.length || (shipmentData.lineItems&&shipmentData.lineItems[0]&&shipmentData.lineItems[0].length) || (rate._lineItems&&rate._lineItems[0]&&rate._lineItems[0].length) || 0);
@@ -17285,29 +17530,29 @@ function showBookingPanel(rate, shipmentData) {
     window._smartPasteBookingData = null;
   }
 
-  // Restore from bookingData into any still-empty form fields.
-  // Catches re-opens within the same booking flow (showBookingPanel rebuilds the form HTML each
-  // time, which clears the fields; bookingData persists across calls so phones/addresses survive).
+  // Restore into the rebuilt (blank) form — the CANONICAL fill-if-empty restore, replacing a
+  // hand-rolled bookingData block that had been dead code (bookingData used to be reassigned to six
+  // bare keys at the top of this function, so its party keys were always empty here). Two layers:
+  //   1. Lane-gated _restoreBookingFromQuoted() — party + pickup + PO + instructions + hazmat from
+  //      _quotedContacts (armed by the top-of-function snapshot, agent writes, or a requote exit).
+  //      Lane gate: a different shipment's rebuild never inherits these contacts.
+  //   2. bookingData fill-if-empty via applyPartyData — covers values mirrored only to bookingData.
   {
-    const _bdr = (id, v) => { const el = document.getElementById(id); if (el && v && !el.value) el.value = v; };
-    _bdr('bk-pu-name',    bookingData.shipperName);
-    _bdr('bk-pu-street',  bookingData.shipperStreet);
-    _bdr('bk-pu-city',    bookingData.shipperCity);
-    _bdr('bk-pu-state',   bookingData.shipperState);
-    _bdr('bk-pu-phone',   bookingData.shipperPhone);
-    _bdr('bk-pu-contact', bookingData.shipperContact);
-    _bdr('bk-pu-ref',     bookingData.shipperRef);
-    _bdr('bk-pu-date',    bookingData.pickupDate);
-    _bdr('bk-pu-open',    bookingData.pickupOpen);
-    _bdr('bk-pu-close',   bookingData.pickupClose);
-    _bdr('bk-dl-name',    bookingData.consigneeName);
-    _bdr('bk-dl-street',  bookingData.consigneeStreet);
-    _bdr('bk-dl-city',    bookingData.consigneeCity);
-    _bdr('bk-dl-state',   bookingData.consigneeState);
-    _bdr('bk-dl-phone',   bookingData.consigneePhone);
-    _bdr('bk-dl-contact', bookingData.consigneeContact);
-    const _siEl3 = document.getElementById('bk-special-instructions');
-    if (_siEl3 && !_siEl3.value && bookingData.specialInstructions) _siEl3.value = bookingData.specialInstructions;
+    const _lane = (originZip || '') + '->' + (destZip || '');
+    if (window._pendingContactRestore && window._pendingContactRestore.lane === _lane) {
+      _restoreBookingFromQuoted();
+      window._pendingContactRestore = null;
+    }
+    const bd0 = bookingData || {};
+    if (bd0.shipperName || bd0.shipperStreet || bd0.consigneeName || bd0.consigneeStreet) {
+      applyPartyData({
+        shipper:   { name: bd0.shipperName, address: bd0.shipperStreet, suite: bd0.shipperSuite, city: bd0.shipperCity, state: bd0.shipperState, contact: bd0.shipperContact, phone: bd0.shipperPhone },
+        consignee: { name: bd0.consigneeName, address: bd0.consigneeStreet, suite: bd0.consigneeSuite, city: bd0.consigneeCity, state: bd0.consigneeState, contact: bd0.consigneeContact, phone: bd0.consigneePhone },
+        referenceNumber: bd0.shipperRef,
+        pickup: { open: bd0.pickupOpen, close: bd0.pickupClose },
+        specialInstructions: bd0.specialInstructions,
+      }, { source: 'rebuild-restore', fillEmptyOnly: true });
+    }
   }
 
   window._bookingPanelContainer = c;
@@ -18145,7 +18390,16 @@ function showAddressBook() {
 
 
 // Customer-initiated new quote — go through the state chokepoint first (see resetShipmentState).
-function startQuote() { resetShipmentState(false); showQuoteForm(); }
+// THE one handler for an explicit user "Get a Quote" click (sidebar link, welcome pill, quick
+// action). Snapshots any open booking tab, resets, and opens with the explicit-click flag so the
+// open is ALWAYS acknowledged in chat — the greet dedupe only suppresses automatic/programmatic
+// re-opens, never a real click.
+function startQuote() {
+  try { _snapshotOpenBookingTab(); } catch (e) {}
+  resetShipmentState(false);
+  window._quoteExplicitOpen = true;
+  showQuoteForm();
+}
 
 // Entry-time ZIP gate (FORM UX only): grey out Get Rates while either ZIP is notfound.
 // The agent pull path is blocked separately by the fetchRates gate — not here.
@@ -18171,6 +18425,19 @@ function showQuoteForm(prefill, silent) {
   const _quoteTabAlreadyOpen = (typeof rpState !== 'undefined' && rpState && rpState.tabs)
     ? rpState.tabs.some(t => String(t.title || '').replace(/\s*\(\d+\)\s*$/, '') === 'Get a Quote')
     : false;
+  // Explicit-click flag (set by startQuote): consume it here so exactly the FIRST call of a
+  // multi-fire burst greets, and an explicit open greets even when the tab was already open.
+  const _explicitOpen = !!window._quoteExplicitOpen;
+  window._quoteExplicitOpen = false;
+  // MULTI-FIRE GUARD: the Get a Quote click was observed firing this whole chain 3× per click.
+  // Identical bare (no-prefill, non-silent) opens landing within 600ms of each other rebuild
+  // nothing — the first call already did (or is doing) the work.
+  const _nowQF = Date.now();
+  if (!prefill && !silent && _quoteTabAlreadyOpen && window._qfLastBareOpen && (_nowQF - window._qfLastBareOpen) < 600) {
+    console.log('[FP] showQuoteForm — deduped re-entrant open (multi-fire guard)');
+    return;
+  }
+  if (!prefill && !silent) window._qfLastBareOpen = _nowQF;
   window._quoteFormOpen = true;
   window._quoteFormSilent = silent;
   showChatArea();
@@ -18406,7 +18673,9 @@ function showQuoteForm(prefill, silent) {
   openRightPanel(container, 'Get a Quote');
 
   // ── Chat message ─────────────────────────────────────────────────────────
-  if (!window._quoteFormSilent && !_quoteTabAlreadyOpen) appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
+  // Greet on a genuine closed→open transition, OR on an explicit user click (which must ALWAYS be
+  // acknowledged — the dedupe exists to suppress automatic/programmatic re-opens, not real clicks).
+  if (!window._quoteFormSilent && (!_quoteTabAlreadyOpen || _explicitOpen)) appendMessage('bot', 'Quote form is open on the right. Fill it in there, or just tell me the details here and I\'ll fill it for you.');
 
   // ── Tab switching ────────────────────────────────────────────────────────
   function switchTab(tab) {
@@ -20219,7 +20488,7 @@ async function quickAction(action) {
 
   appendMessage('user', action);
   // Customer-initiated new quote — clear prior shipment/rate/booking state first.
-  if (action === 'Get a Quote') { resetShipmentState(false); showQuoteForm(); return; }
+  if (action === 'Get a Quote') { startQuote(); return; }
 
   if (action === 'Track Shipment') { appendMessage('bot', 'Sure! Give me a BOL number, PRO/tracking number, customer name, company, or carrier and I\'ll find it right away.'); return; }
   if (action === 'Freight Class Help')  { handleInput('freight class help'); return; }
@@ -20597,7 +20866,7 @@ function _vmHandleFinal(text) {
   const { ta } = _vmEls();
   if (ta) { ta.value = ''; ta.style.height = 'auto'; }
   // Auto-send exactly like a typed message so every agent capability runs (rates, booking, insurance…).
-  try { appendMessage('user', text); handleInput(text); } catch(e) { console.warn('[VM] send failed', e); }
+  try { _submitUserTurn(text); } catch(e) { console.warn('[VM] send failed', e); }
   // Watchdog: if no spoken reply arrives (e.g. a panel-only turn), relisten so we never stall.
   if (_vm.watchdog) clearTimeout(_vm.watchdog);
   _vm.watchdog = setTimeout(() => { if (_vm.active && _vm.state === 'think') _vmStartListen(); }, 25000);
@@ -22415,12 +22684,8 @@ async function waybAgent(text) {
       removeTyping();
       const reply = textOut || "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.";
       waybHistory.push({ role: 'assistant', content: reply });
-      // Mirror into chatHistory so aiFreightAnswer has full conversational context
-      if (typeof chatHistory !== 'undefined') {
-        chatHistory.push({ role: 'user', content: String(text) });
-        chatHistory.push({ role: 'assistant', content: reply });
-        if (chatHistory.length > 200) chatHistory = chatHistory.slice(-200);
-      }
+      // (chatHistory mirror removed: appendMessage — the ONE transcript writer — records the user
+      // turn at send time and the reply below, so a manual mirror here would double-record.)
       waybHistory = _waybTrim(waybHistory);
       const _row = appendMessage('bot', reply);
       // Document buttons (from get_documents) and an Excel button (when this turn's search
@@ -22431,12 +22696,12 @@ async function waybAgent(text) {
     // Ran out of tool loops — roll back the incomplete turn so history stays paired/valid.
     waybHistory = _snapshot;
     removeTyping();
-    appendMessage('bot', "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.");
+    appendMessage('bot', "I'm having trouble pulling that together right now. Please try again or call (800) 687-3713.", { skipHistory: true });
   } catch (e) {
     console.error('waybAgent error:', e);
     waybHistory = _snapshot; // discard the failed turn entirely — keeps the transcript valid
     removeTyping();
-    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.");
+    appendMessage('bot', "I'm having trouble connecting right now. Please try again or call (800) 687-3713.", { skipHistory: true });
   }
 }
 
@@ -22562,8 +22827,7 @@ function mobContentAsk() {
   inp.value = '';
   closeMobContent();
   if (typeof showChatArea === 'function') showChatArea();
-  if (typeof appendMessage === 'function') appendMessage('user', q);
-  if (typeof handleInput === 'function') handleInput(q);
+  if (typeof _submitUserTurn === 'function') _submitUserTurn(q);
 }
 
 function mobOpenContentView(title, buildFn) {

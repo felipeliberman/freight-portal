@@ -64,8 +64,14 @@ function boot(opts) {
   script.textContent = appScript();
   w.document.body.appendChild(script);
 
-  // Replace the chat sink AFTER load so the app's own definition is overridden.
-  w.appendMessage = (role, text) => { ctx.messages.push({ role, text: String(text == null ? '' : text) }); };
+  // Wrap (not replace) the chat sink AFTER load: capture what the customer would see, then
+  // DELEGATE to the app's real appendMessage so its transcript recording (the ONE chatHistory
+  // writer) runs exactly as in production — invariants 9–11 depend on the real wiring.
+  const _appAppend = w.appendMessage;
+  w.appendMessage = function (role, text, extras) {
+    ctx.messages.push({ role, text: String(text == null ? '' : text) });
+    try { if (typeof _appAppend === 'function') return _appAppend(role, text, extras); } catch (e) {}
+  };
   w.showTyping = () => {}; w.removeTyping = () => {}; w.showChatArea = () => {};
   w.getToken = () => Promise.resolve('test-token');
   w.flashField = () => {};
