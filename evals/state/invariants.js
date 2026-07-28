@@ -1126,6 +1126,59 @@ const invariants = [
         'a non-zero fetch filtered to zero showed a bare "No invoices found." instead of truthful in-range copy');
     },
   },
+  // ── 42 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 42, name: 'invoices reverse-page a recent window: last page backward, early-stop, windowed count',
+    property: '/applet/v1/invoice returns records oldest-first and honors only limit+page, so recent invoices are on the LAST pages; fetchInvoices reads pagingDetails once then pages from the last page BACKWARD, stopping as soon as a page\'s newest record predates the window start — it never walks the deep-old middle pages toward page 1; the displayed/tab count is the WINDOWED count, never the account total.',
+    catches: 'the ~66s empty/slow load: draining ~27k oldest-first records (or capping at page 200) instead of reverse-paging the recent window; showing 27,522 / 20,500 as the customer\'s invoice count',
+    async run(ctx) {
+      const w = ctx.win;
+      const PAGES = 20, PER = 100;
+      // Oldest-first fixed order (page 1 oldest … page 20 newest); date/sort params ignored.
+      const pageDate = p => { const base = Date.UTC(2026, 6, 28); const d = new Date(base - (20 - p) * 10 * 86400000); return d.toISOString().slice(0, 10) + ' 12:00:00'; };
+      ctx.routes.length = 0;
+      ctx.routes.push({ match: (u) => u.includes('/applet/v1/invoice'), reply: (u) => {
+        const p = +((u.match(/page=(\d+)/) || [])[1] || 1);
+        const results = []; for (let i = 0; i < PER; i++) results.push({ invoiceNumber: 'N' + p + '_' + i, invoiceId: 'ID' + p + '_' + i, BOLNumber: 'B' + p + '_' + i, issueDate: pageDate(p), dueDate: pageDate(p), total: 100, paid: false });
+        return { status: 200, body: { data: { pagingDetails: { totalResults: PAGES * PER, pages: PAGES }, results } } };
+      }});
+      const invs = await w.fetchInvoices('2026-06-28', '2026-07-28');   // last 30 days
+      const fetched = new Set(ctx.requests.filter(r => r.url.includes('/invoice')).map(r => +((r.url.match(/page=(\d+)/) || [])[1])));
+      // Deep-old middle pages must NOT be fetched — early-stop after the boundary batch.
+      let walkedDeepOld = false; for (let p = 2; p <= 13; p++) if (fetched.has(p)) walkedDeepOld = true;
+      A.ok(!walkedDeepOld, 'reverse paging walked deep-old middle pages instead of stopping at the window');
+      A.ok(fetched.has(PAGES) && fetched.has(PAGES - 1), 'reverse paging did not fetch the newest (last) pages');
+      // The tab/displayed count is the WINDOWED count (pages 17-20 = 400), never the account total.
+      w.renderInvoices(invs, invs, '2026-06-28', '2026-07-28');
+      A.ok(w._invLastRenderedCount === 400, 'displayed invoice count is not the windowed count (got ' + w._invLastRenderedCount + ')');
+      A.ok(w._invLastRenderedCount !== PAGES * PER, 'displayed invoice count is the account total, not the window');
+    },
+  },
+  // ── 43 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 43, name: 'shipment sort extractors mirror the display: every column sorts on the field it shows',
+    property: 'sortAndRenderShipments reads the same per-column source as renderShipmentRows (via _shipFieldRaw), so a column whose value comes from a display-priority s.* field (s.actualPickupDate, s.actualDeliveryDate, s.consigneeName, s.carrierPRO, s.totalDue, s.lastStatus, …) sorts correctly ascending AND descending, instead of sorting as if empty.',
+    catches: 'the "some columns sort, some don\'t" bug: the display was updated to prefer s.* fields but the sort extractors read only nested ti/vendor/consignee fields, so populated columns sorted as blank',
+    run(ctx) {
+      const w = ctx.win;
+      // Populate ONLY the display-priority s.* fields the OLD sort ignored; rank correlates to BOL 'S'+rank.
+      const ship = rank => ({ BOLNumber: 'S' + rank,
+        lastStatus: ['ALPHA', 'BRAVO', 'CHARLIE', 'DELTA', 'ECHO'][rank - 1],
+        actualPickupDate: '2026-02-0' + rank + ' 10:00:00', actualDeliveryDate: '2026-03-0' + rank + ' 10:00:00',
+        consigneeName: 'CO' + rank, carrierPRO: 'PRO' + rank, totalDue: rank * 100,
+        bookDate: '2026-01-0' + rank + ' 10:00:00', shipperName: 'SH' + rank, carrierName: 'V' + rank, shipmentMode: ['A', 'B', 'C', 'D', 'E'][rank - 1] });
+      const ships = [3, 1, 5, 2, 4].map(ship);
+      const order = tb => [...tb.querySelectorAll('tr')].map(tr => { const td = tr.querySelectorAll('td'); return (td[1] || td[0]).textContent.trim(); }).join(',');
+      const fields = ['bol', 'status', 'mode', 'created', 'estPU', 'estDEL', 'shipper', 'consignee', 'carrier', 'pro', 'total'];
+      for (const f of fields) {
+        const tb = w.document.createElement('tbody'); w._shipFooter = null;
+        w.sortAndRenderShipments(ships, f, 'asc', tb); const asc = order(tb);
+        w.sortAndRenderShipments(ships, f, 'desc', tb); const desc = order(tb);
+        A.ok(asc === 'S1,S2,S3,S4,S5', 'column "' + f + '" did not sort ascending on its display field (got ' + asc + ')');
+        A.ok(desc === 'S5,S4,S3,S2,S1', 'column "' + f + '" did not sort descending on its display field (got ' + desc + ')');
+      }
+    },
+  },
 ];
 
 module.exports = { invariants, A };

@@ -3892,13 +3892,24 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
 
   container.appendChild(titleSection);
 
+  // Truthful partial-load banner — the reverse-page drain hit the deadline before finishing (only
+  // possible on a very wide range like All Time on a huge account); say so rather than implying completeness.
+  if (window._invPartialLoad) {
+    const _pn = document.createElement('div');
+    _pn.style.cssText = 'margin-bottom:10px;padding:8px 14px;border-radius:8px;border:1px solid #e5c07b;background:#fdf6e3;color:#8a6d3b;font-size:12px;';
+    _pn.textContent = 'Partial load — this account has more invoices than can be fetched in one pass within the time limit, so older ones may be missing. Narrow the date range for a complete recent window.';
+    container.appendChild(_pn);
+  }
+
   const wrap = document.createElement('div');
   if (!allInvoices || !allInvoices.length) {
-    // Distinguish a genuine zero from a non-empty fetch filtered to zero by the active range — the
-    // latter must log loudly and tell the truth ("you have N, none in range"), never imply zero total.
+    // Non-empty fetch filtered to zero by the active range → log loudly and name the RANGE. Never cite
+    // the fetched-set size or the account total as "your invoices" — both are wrong for the window (the
+    // displayed count must be the windowed count, which here is zero).
     if (_allFetched && _allFetched.length && (_invDateFrom || _invDateTo)) {
-      console.warn('[Invoices] ' + _allFetched.length + ' invoice(s) fetched but 0 fall in ' + (_invDateFrom || '…') + ' to ' + (_invDateTo || '…') + ' — showing an in-range-empty message, not a false "no invoices"');
-      wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">None of your <strong style="color:var(--tx);">' + _allFetched.length + '</strong> invoices fall in <strong style="color:var(--tx);">' + (_invDateFrom || '—') + '</strong> to <strong style="color:var(--tx);">' + (_invDateTo || '—') + '</strong>. Widen the date range or click <strong style="color:var(--tx);">All Time</strong>.</div>';
+      console.warn('[Invoices] fetched ' + _allFetched.length + ' record(s) but 0 fall in ' + (_invDateFrom || '…') + ' to ' + (_invDateTo || '…') + ' — in-range-empty message, not a false "no invoices"');
+      const _partial = window._invPartialLoad ? ' The load stopped early on this large account, so older invoices may not have been reached.' : '';
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No invoices dated between <strong style="color:var(--tx);">' + (_invDateFrom || '—') + '</strong> and <strong style="color:var(--tx);">' + (_invDateTo || '—') + '</strong>. Widen the date range or click <strong style="color:var(--tx);">All Time</strong> to see older invoices.' + _partial + '</div>';
     } else {
       wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No invoices found.</div>';
     }
@@ -5859,71 +5870,36 @@ function renderShipmentRows(shipments, tbody, limit, offset) {
   });
 }
 
+// RAW per-column value for a shipment — MUST mirror the display reads in renderShipmentRows EXACTLY.
+// The display was updated to prefer s.* fields (s.actualPickupDate, s.actualDeliveryDate, s.consigneeName,
+// s.carrierPRO, s.totalDue/s.invoiceAmount, s.lastStatus, …) but the sort extractors were not — so a
+// column that clearly shows data sorted as if empty ("some columns don't sort"). One reader for both:
+// keep this in lockstep with renderShipmentRows. Returns the RAW value; the caller applies the type coercion.
+function _shipFieldRaw(s, field) {
+  const ti = s.trackingInformation || {}, ven = s.vendor || {}, con = s.consignee || {};
+  switch (field) {
+    case 'bol':       return s.BOLNumber || s.bolNumber || s.BOLId || '';
+    case 'status':    return s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal || ti.statusName || s.status || '';
+    case 'mode':      return s.shipmentMode || 'LTL';
+    case 'created':   return s.bookDate || ti.bookDate || s.createdDate;
+    case 'estPU':     return s.actualPickupDate || s.estimatedPickupDate || ti.pickupDateActual || ti.pickupDateEstimated || ti.dispatchDate;
+    case 'estDEL':    return s.actualDeliveryDate || s.estimatedDeliveryDate || ti.deliveryDateActual || ti.deliveryDateEstimated;
+    case 'shipper':   return s.shipperName || s.shipperCompany || (s.shipper ? (s.shipper.name || s.shipper.companyName || s.shipper.contact || '') : '');
+    case 'consignee': return s.consigneeName || con.name || con.companyName || ti.consigneeName || con.contact || '';
+    case 'carrier':   return (s.carrierName || ven.name || ven.companyName || ti.carrierName || '').replace('Metropolitan Warehouse & Delivery Corp', 'Metro W&D').replace('Less Than Truckload', '').trim();
+    case 'pro':       return s.carrierPRO || ven.PRO || ti.PRO || ven.pickupNumber || ti.proNumber || s.proNumber || '';
+    case 'total':     return s.totalDue || s.invoiceAmount || ven.cost || ven.totalCharges || s.totalCharges || s.amount;
+    default:          return '';
+  }
+}
 function sortAndRenderShipments(shipments, field, dir, tbody) {
+  const _DATE = { created: 1, estPU: 1, estDEL: 1 };
   const sorted = [...shipments].sort((a, b) => {
-    const ti_a = a.trackingInformation || {};
-    const ven_a = a.vendor || {};
-    const con_a = a.consignee || {};
-    const ti_b = b.trackingInformation || {};
-    const ven_b = b.vendor || {};
-    const con_b = b.consignee || {};
-    
-    let val_a, val_b;
-    
-    switch(field) {
-      case 'bol':
-        val_a = (a.BOLNumber || a.bolNumber || a.BOLId || '').toLowerCase();
-        val_b = (b.BOLNumber || b.bolNumber || b.BOLId || '').toLowerCase();
-        break;
-      case 'mode':
-        val_a = (a.shipmentMode || 'LTL').toUpperCase();
-        val_b = (b.shipmentMode || 'LTL').toUpperCase();
-        break;
-      case 'created':
-        val_a = _dateSortVal(ti_a.bookDate || a.bookDate || a.createdDate);
-        val_b = _dateSortVal(ti_b.bookDate || b.bookDate || b.createdDate);
-        break;
-      case 'estPU':
-        val_a = _dateSortVal(ti_a.pickupDateActual || ti_a.pickupDateEstimated || ti_a.dispatchDate);
-        val_b = _dateSortVal(ti_b.pickupDateActual || ti_b.pickupDateEstimated || ti_b.dispatchDate);
-        break;
-      case 'estDEL':
-        val_a = _dateSortVal(ti_a.deliveryDateActual || ti_a.deliveryDateEstimated);
-        val_b = _dateSortVal(ti_b.deliveryDateActual || ti_b.deliveryDateEstimated);
-        break;
-      case 'shipper':
-        val_a = a.shipper ? (a.shipper.name || a.shipper.companyName || a.shipper.contact || '') : (a.shipperName || a.shipperCompany || '');
-        val_b = b.shipper ? (b.shipper.name || b.shipper.companyName || b.shipper.contact || '') : (b.shipperName || b.shipperCompany || '');
-        val_a = val_a.toLowerCase();
-        val_b = val_b.toLowerCase();
-        break;
-      case 'consignee':
-        val_a = (con_a.name || con_a.companyName || ti_a.consigneeName || con_a.contact || '').toLowerCase();
-        val_b = (con_b.name || con_b.companyName || ti_b.consigneeName || con_b.contact || '').toLowerCase();
-        break;
-      case 'carrier':
-        val_a = (ven_a.name || ven_a.companyName || a.carrierName || ti_a.carrierName || '')
-          .replace('Metropolitan Warehouse & Delivery Corp','Metro W&D')
-          .replace('Less Than Truckload','').trim().toLowerCase();
-        val_b = (ven_b.name || ven_b.companyName || b.carrierName || ti_b.carrierName || '')
-          .replace('Metropolitan Warehouse & Delivery Corp','Metro W&D')
-          .replace('Less Than Truckload','').trim().toLowerCase();
-        break;
-      case 'pro':
-        val_a = (ven_a.PRO || ti_a.PRO || ven_a.pickupNumber || ti_a.proNumber || a.proNumber || '').toLowerCase();
-        val_b = (ven_b.PRO || ti_b.PRO || ven_b.pickupNumber || ti_b.proNumber || b.proNumber || '').toLowerCase();
-        break;
-      case 'total':
-        val_a = _moneySortVal(ven_a.cost || ven_a.totalCharges || a.totalCharges || a.amount);
-        val_b = _moneySortVal(ven_b.cost || ven_b.totalCharges || b.totalCharges || b.amount);
-        break;
-      case 'status':
-        val_a = _strSortVal(ti_a.lastStatusExternal || ti_a.lastStatusInternal || ti_a.statusName || a.status);
-        val_b = _strSortVal(ti_b.lastStatusExternal || ti_b.lastStatusInternal || ti_b.statusName || b.status);
-        break;
-      default: return 0;
-    }
-    return _cmpValues(val_a, val_b, dir); // one canonical comparator: null/blank-safe, numeric-aware
+    let va, vb;
+    if (_DATE[field])           { va = _dateSortVal(_shipFieldRaw(a, field));  vb = _dateSortVal(_shipFieldRaw(b, field)); }
+    else if (field === 'total') { va = _moneySortVal(_shipFieldRaw(a, field)); vb = _moneySortVal(_shipFieldRaw(b, field)); }
+    else                        { va = _strSortVal(_shipFieldRaw(a, field));   vb = _strSortVal(_shipFieldRaw(b, field)); }
+    return _cmpValues(va, vb, dir); // one canonical comparator: null/blank-safe, numeric-aware
   });
   
   // Update footer so pagination works on sorted list
@@ -20185,44 +20161,61 @@ function showQuoteForm(prefill, silent) {
 async function fetchInvoices(dateFrom, dateTo) {
   window._invSort = null;   // a (re)fetch is new data / a window change → default order, not a stale sort
   const token = await getToken();
-  // /applet/v1/invoice ignores dateFrom/dateTo (verified: an absurd range still returns the
-  // full set), so we fetch ALL invoices and filter client-side on the invoice date in
-  // renderInvoices(). dateFrom/dateTo stay in the signature for caller compatibility but are
-  // intentionally NOT sent — sending them would imply a server filter that does not exist.
-
-  // Step 1: Fetch invoice list directly — one paginated call, no per-invoice fetches
+  // /applet/v1/invoice honors ONLY limit and page (verified live: dateFrom/dateTo, sort, sortDir are all
+  // IGNORED — totalResults stays the whole account and the first record never changes). Records come back
+  // in a FIXED order, OLDEST FIRST, so the customer's RECENT invoices are on the LAST pages (~page 205-276
+  // of 276). To show a recent window without draining ~27k records, REVERSE-PAGE: read pagingDetails once,
+  // then fetch from the last page backward, stopping as soon as a page's newest record predates the window
+  // start. A 30-day window is a few requests, not 276. dateTo/exact-window filtering is client-side below.
+  const fromTs = dateFrom ? parseFreightDate(dateFrom) : null;   // window start; null → drain all (search / All Time)
+  const invUrl = p => PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p;
+  const _ihdr = { headers: { 'Authorization': 'Bearer ' + token } };
   const invoiceList = [];
-  let page = 1, totalPages = 1;
-  // limit=100 is SUPPORTED (verified live against the tenant API: resultsPerPage=100, pages=276 for a
-  // 27,522-invoice account) — 10x fewer round-trips than limit=10. The earlier "limit=100 returns
-  // 200+empty" theory was WRONG; the empty panel was a date-FILTER format bug (see parseFreightDate),
-  // not the page size. pd.pages (server-reported) drives termination, so this is robust either way.
-  let backendTotal = null, sawError = false, sawResponse = false;
-  while (page <= totalPages && page <= 200) {
-    const batches = [];
-    for (let p = page; p < page + 6 && p <= totalPages; p++) batches.push(p);
-    if (!batches.length) break;
-    const results = await Promise.all(batches.map(p =>
-      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
-        .then(r => r.ok ? r.json() : (sawError = true, null)).catch(() => (sawError = true, null))
+  let backendTotal = null, sawError = false, sawResponse = false, deadlineHit = false;
+
+  // Step 1: page 1 ONCE, only to read pagingDetails (totalResults, pages). Cheap.
+  let d1 = null;
+  try { const r1 = await fetch(invUrl(1), _ihdr); d1 = r1.ok ? await r1.json() : (sawError = true, null); } catch (e) { d1 = (sawError = true, null); }
+  if (d1) sawResponse = true;
+  const pd1 = d1 && d1.data && d1.data.pagingDetails;
+  if (pd1 && pd1.totalResults != null) backendTotal = pd1.totalResults;
+  const pages = (pd1 && pd1.pages != null) ? pd1.pages
+    : (backendTotal != null ? Math.max(1, Math.ceil(backendTotal / 100)) : 1);
+
+  // Step 2: reverse-page from the LAST page backward (newest → older), batched, with early-stop.
+  const BATCH = 6, deadline = Date.now() + 15000;
+  for (let hi = pages; hi >= 1; hi -= BATCH) {
+    if (Date.now() > deadline) { deadlineHit = true; break; }
+    const bp = [];
+    for (let p = hi; p > hi - BATCH && p >= 1; p--) bp.push(p);   // [hi, hi-1, … hi-5], newest→older
+    const results = await Promise.all(bp.map(p =>
+      (p === 1 && d1) ? Promise.resolve(d1)
+      : fetch(invUrl(p), _ihdr).then(r => r.ok ? r.json() : (sawError = true, null)).catch(() => (sawError = true, null))
     ));
-    results.forEach(d => {
-      if (!d) return;
-      sawResponse = true;
-      const pd = d.data && d.data.pagingDetails;
-      if (pd && pd.totalResults != null && backendTotal == null) backendTotal = pd.totalResults;
-      if (pd && pd.pages) totalPages = pd.pages;
+    const oldestPageInBatch = bp[bp.length - 1];   // smallest page number in the batch = oldest records
+    let oldestPageNewestTs = null;
+    results.forEach((d, i) => {
+      if (!d) return; sawResponse = true;
       const arr = (d.data && d.data.results) || [];
       arr.forEach(inv => invoiceList.push(inv));
+      if (bp[i] === oldestPageInBatch && fromTs != null) {
+        arr.forEach(inv => { const t = parseFreightDate(inv.issueDate || inv.invoiceDate || ''); if (t != null && (oldestPageNewestTs == null || t > oldestPageNewestTs)) oldestPageNewestTs = t; });
+      }
     });
-    page += batches.length;
+    // Early-stop: even the NEWEST record on the oldest page of this batch predates the window start, so
+    // every still-older page is out of range too — never walk further toward page 1.
+    if (fromTs != null && oldestPageNewestTs != null && oldestPageNewestTs < fromTs) break;
   }
-  console.log('[Invoices] total fetched (all, unfiltered):', invoiceList.length, '| backendTotal:', backendTotal, '| errors:', sawError);
-  // Loud failure (never render an empty state that implies zero invoices when the backend has some):
-  // if the backend reports invoices exist — or every page errored / nothing responded — but we
-  // harvested none, surface an error so the caller shows truthful copy instead of "No invoices found".
+  window._invPartialLoad = deadlineHit;
+  const _isample = invoiceList[0];
+  console.log('[Invoices] reverse-paged', invoiceList.length, 'of', backendTotal, 'record(s); pages=' + pages,
+    '| window', (dateFrom || '(all)'), '→', (dateTo || '(all)'),
+    _isample ? ('| sample issueDate=' + JSON.stringify(_isample.issueDate) + ' → ts=' + parseFreightDate(_isample.issueDate) + ' | windowStartTs=' + fromTs) : '',
+    deadlineHit ? '| DEADLINE HIT (partial load)' : '');
+  // Loud failure: reached the API but harvested nothing while the backend has invoices — or every page
+  // errored — must surface, never render a false "No invoices found".
   if (invoiceList.length === 0 && ((backendTotal != null && backendTotal > 0) || sawError || !sawResponse)) {
-    console.error('[Invoices] fetch returned no usable rows while backend total =', backendTotal, '(errors:', sawError, ') — surfacing error instead of a false empty state');
+    console.error('[Invoices] reverse-page harvested 0 rows while backend total =', backendTotal, '(errors:', sawError, ') — surfacing error instead of a false empty state');
     throw new Error('INVOICE_FETCH_INCOMPLETE');
   }
 
