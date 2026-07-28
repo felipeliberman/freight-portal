@@ -936,6 +936,106 @@ const invariants = [
       A.ok(/else\s*\{[\s\S]*?trackBtn\.disabled = true;[\s\S]*?trackBtn\.title/.test(modal), 'the no-URL Track button is not fully disabled with a truthful tooltip');
     },
   },
+  // ── 35 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 35, name: 'sort comparators: reliable direction, empties always last, typed money/date/string',
+    property: '_cmpValues flips deterministically with dir and always sinks empties in BOTH directions; the money/date/string extractors normalize $, commas, blanks and invalid dates to a sortable value or null',
+    catches: 'F4(c/d): a repeat click not flipping direction, a blank/null cell aborting or reordering the sort, currency and date strings sorting lexically',
+    run(ctx) {
+      const w = ctx.win;
+      // Direction flips deterministically (eval c).
+      A.ok(w._cmpValues('apple', 'banana', 'asc') < 0, 'asc a<b failed');
+      A.ok(w._cmpValues('apple', 'banana', 'desc') > 0, 'desc did not flip');
+      // Numeric-aware string compare: "10" sorts after "2", not before.
+      A.ok(w._cmpValues('2', '10', 'asc') < 0, 'numeric-aware compare failed');
+      // Empties ALWAYS last, regardless of direction (eval d).
+      A.ok(w._cmpValues('', 'x', 'asc') > 0 && w._cmpValues('', 'x', 'desc') > 0, 'empty string not sunk in both directions');
+      A.ok(w._cmpValues(null, 5, 'asc') > 0 && w._cmpValues(null, 5, 'desc') > 0, 'null not sunk in both directions');
+      A.ok(w._cmpValues('', '', 'asc') === 0, 'two empties are not equal');
+      // Money extractor strips $/commas; blank/null → null.
+      A.ok(w._moneySortVal('$1,234.50') === 1234.5, 'money parse failed');
+      A.ok(w._moneySortVal('') === null && w._moneySortVal(null) === null, 'blank money not null');
+      // Money sorts numerically, not lexically: $1,000 > $900.
+      A.ok(w._cmpValues(w._moneySortVal('$1,000.00'), w._moneySortVal('$900.00'), 'asc') > 0, 'money sorted lexically ($900 > $1,000)');
+      // A blank money cell sinks below a real one in BOTH directions.
+      A.ok(w._cmpValues(w._moneySortVal(''), w._moneySortVal('$5.00'), 'asc') > 0 &&
+           w._cmpValues(w._moneySortVal(''), w._moneySortVal('$5.00'), 'desc') > 0, 'blank money not last in both directions');
+      // Date extractor: valid → epoch number, invalid/blank → null.
+      A.ok(typeof w._dateSortVal('2026-07-01') === 'number', 'valid date not numeric');
+      A.ok(w._dateSortVal('') === null && w._dateSortVal('not a date') === null, 'invalid/blank date not null');
+    },
+  },
+  // ── 36 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 36, name: 'sort wiring: shipments field map aligns 1:1, Invoices Status sorts, filters reset sort state',
+    property: 'the shipments header→field array matches the cols array position-for-position; sortAndRenderInvoices gives Status a real comparator (isPaid + date tiebreak), not a binary no-op; every raw/filtered re-render clears the canonical table.sortField so the next click starts fresh',
+    catches: 'F4(a/b/e): Status/Total sorting the wrong column (off-by-one), the Invoices Status column doing nothing, the toggle not flipping after a stat-tile filter',
+    run(ctx) {
+      const src = require('./harness').appScript();
+      // Field map is 1:1 with the 11 sortable cols (BOL#…Total).
+      A.ok(/\['bol','status','mode','created','estPU','estDEL','shipper','consignee','carrier','pro','total'\]\[idx\]/.test(src),
+        'shipments field array not aligned 1:1 with cols');
+      // Invoices Status is a real comparator keyed off isPaid, with a deterministic date tiebreak.
+      const invSort = src.slice(src.indexOf('function sortAndRenderInvoices'), src.indexOf('function sortAndRenderInvoices') + 1500);
+      A.ok(/field === 'status'/.test(invSort) && /isPaid/.test(invSort) && /_dateSortVal/.test(invSort),
+        'Invoices Status has no real comparator (still a binary label no-op)');
+      A.ok(/return _cmpValues\(va, vb, dir\)/.test(invSort), 'invoice sort does not route through the one canonical comparator');
+      // The canonical sort state is reset on every raw/filtered re-render (2 shipments sites + 1 invoices).
+      A.ok((src.match(/parentElement\.sortField = null; tbody\.parentElement\.sortDir = 'asc';/g) || []).length >= 3,
+        'sort state not reset on filter/show-all re-render at all three sites');
+    },
+  },
+  // ── 37 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 37, name: 'shipment counts show the backend total for the window, never the loaded-row count',
+    property: 'fetchNextBatch stores pagingDetails.totalResults on shipCtx.total; presentShips forwards it as shipmentsBackendTotal ONLY when no client filter dropped rows (loaded === matched); renderShipments and the panel tab render that total over the loaded length; the invoice tab counts the active-range set',
+    catches: 'F1: My Shipments header/tab reporting ~130 loaded rows as the total on a ~1,850-shipment window',
+    run(ctx) {
+      const src = require('./harness').appScript();
+      A.ok(/shipCtx\.total = \(pd1&&pd1\.totalResults!=null\) \? pd1\.totalResults : null;/.test(src),
+        'fetchNextBatch does not store the backend total on shipCtx.total');
+      A.ok(/list\.length===shipCtx\.loaded\.length && shipCtx\.total!=null/.test(src),
+        'presentShips forwards the backend total without the no-client-filter guard');
+      A.ok(/shipmentsBackendTotal: _backendTotal/.test(src), 'presentShips does not pass shipmentsBackendTotal');
+      const rs = src.slice(src.indexOf('function renderShipments'), src.indexOf('function renderShipments') + 1400);
+      A.ok(/backendTotal > allShipments\.length\) \? backendTotal : allShipments\.length/.test(rs),
+        'renderShipments header does not prefer the backend total');
+      A.ok(/shipmentsBackendTotal != null \? extras\.shipmentsBackendTotal/.test(src),
+        'the shipments tab title does not use the backend total');
+      A.ok(/window\._currentInvoiceList \? window\._currentInvoiceList\.length/.test(src),
+        'the invoice tab title does not use the active-range set');
+    },
+  },
+  // ── 38 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 38, name: 'both lists default to a 30-day window; the panel drains it instead of counting a truncated set',
+    property: 'the shipments rolling default is 30 days (shipmentDays===30 and the runShipQuery window is -30); a plain unfiltered panel list drains the whole window rather than stopping at SHIP_PAGE; the invoice panel and its date input default their active range to the last 30 days',
+    catches: 'F2: a 90-day default, and a panel that filtered an already-truncated 100-row set instead of refetching/loading the active range',
+    run(ctx) {
+      const src = require('./harness').appScript();
+      A.ok(/let shipmentDays\s*=\s*30;/.test(src), 'shipmentDays is not 30');
+      A.ok(/else \{ from=new Date\(now\); from\.setDate\(from\.getDate\(\)-30\); \}/.test(src),
+        'the runShipQuery rolling default window is not 30 days');
+      A.ok(/const _isPanelList = q\.action==='list' && !q\.limit/.test(src), 'no panel-list full-load branch');
+      A.ok(/while\(!shipCtx\.done && Date\.now\(\)<_dl\)\{ await fetchNextBatch\(\); \}/.test(src),
+        'the panel list does not drain the whole window');
+      A.ok(/_i30\.setDate\(_i30\.getDate\(\) - 30\)/.test(src), 'the invoice date input default is not 30 days');
+      A.ok(/_inv30\.setDate\(_inv30\.getDate\(\)-30\)/.test(src), 'the invoice nav path does not default to a 30-day active range');
+      // My Shipments has a VISIBLE in-panel date-range control mirroring the Invoices inputs, and its
+      // handlers refetch the whole window (recount from the backend total) rather than filtering.
+      A.ok(/id="ship-date-from"/.test(src) && /id="ship-date-to"/.test(src) &&
+           /id="ship-date-apply"/.test(src) && /id="ship-date-all"/.test(src),
+        'My Shipments is missing the in-panel date-range control (from/to/apply/all)');
+      A.ok(/async function _loadShipWindow\(dateFrom, dateTo\)/.test(src), 'no _loadShipWindow refetch helper');
+      const lsw = src.slice(src.indexOf('async function _loadShipWindow'), src.indexOf('async function _loadShipWindow') + 700);
+      A.ok(/while\(!shipCtx\.done && Date\.now\(\)<_dl\)\{ await fetchNextBatch\(\); \}/.test(lsw) &&
+           /return \{ list: list, total: shipCtx\.total \}/.test(lsw),
+        '_loadShipWindow does not drain the window and return the backend total');
+      A.ok(/_loadShipWindow\(_shFromEl\.value, _shToEl\.value\)/.test(src), 'Apply does not refetch via _loadShipWindow');
+      A.ok(/renderShipments\(list, list, 0, false, total\)/.test(src) && /openRightPanel\(newEl/.test(src),
+        'the in-panel control does not re-render + recount the panel in place');
+    },
+  },
 ];
 
 module.exports = { invariants, A };

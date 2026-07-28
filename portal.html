@@ -2386,7 +2386,7 @@ let chatSessions   = [];   // [{id, title, ts, customer, messages:[]}]
 let currentSession = null; // active session id   // rate object being booked
 let bookingStep    = null;   // 'shipper_name'|'shipper_addr'|'shipper_contact'|'shipper_ref'|'shipper_hours'|'shipper_date'|'consignee_name'|'consignee_addr'|'consignee_contact'|'confirm'
 let bookingData    = {};
-let shipmentDays    = 90;   // default date window in days
+let shipmentDays    = 30;   // default date window in days
 let shipmentDateFrom = null; // null = use shipmentDays rolling window
 let shipmentDateTo   = null;
 
@@ -3568,9 +3568,9 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
   dateBar.className = 'panel-summary-card';
   dateBar.style.cssText = 'padding:10px 18px;border-bottom:1px solid var(--bdr);background:var(--card);display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;';
   const _iNow = new Date();
-  const _i12Mo = new Date(_iNow); _i12Mo.setFullYear(_i12Mo.getFullYear() - 1);
+  const _i30 = new Date(_iNow); _i30.setDate(_i30.getDate() - 30);   // default active range: last 30 days (F2)
   const _fmtD = d => d.toISOString().split('T')[0];
-  const _dateFromVal = _invDateFrom || _fmtD(_i12Mo);
+  const _dateFromVal = _invDateFrom || _fmtD(_i30);
   const _dateToVal   = _invDateTo   || _fmtD(_iNow);
   dateBar.innerHTML =
     '<span style="font-size:11px;font-weight:600;color:var(--fa);">Date Range</span>' +
@@ -3631,6 +3631,9 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
       footer._invoices = filtered;
       footer._paginationState.page = 0;
       footer._paginationState.total = filtered.length;
+      // Filtered subset renders in raw order — reset canonical sort state so the next
+      // header click starts a fresh ascending sort (matches My Shipments behavior).
+      if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
       renderInvoiceRows(filtered, tbody, PAGE_SIZE, 0);
       updateInvoiceFooter();
     };
@@ -5096,6 +5099,26 @@ function showInvoiceDetail(inv) {
   if (closeBtn) closeBtn.onclick = () => overlay.remove();
 }
 
+// ── ONE canonical comparator for every sortable table ────────────────────────
+// Null/blank/NaN values sort LAST in BOTH directions (a blank cell never silently aborts the
+// sort or flips to the top on desc). Numbers compare numerically; strings via localeCompare with
+// numeric collation ("BOL 9" < "BOL 10"). Typed extractors normalize dates and currency so a
+// "$1,234.56" string or a missing date can't poison the order.
+function _sortEmpty(v) { return v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v)); }
+function _cmpValues(a, b, dir) {
+  const ae = _sortEmpty(a), be = _sortEmpty(b);
+  if (ae && be) return 0;
+  if (ae) return 1;          // empties always last, regardless of direction
+  if (be) return -1;
+  let r;
+  if (typeof a === 'number' && typeof b === 'number') r = a - b;
+  else r = String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  return dir === 'asc' ? r : -r;
+}
+function _dateSortVal(v) { if (!v) return null; const t = new Date(v).getTime(); return isNaN(t) ? null : t; }
+function _moneySortVal(v) { if (v === null || v === undefined || v === '') return null; const n = parseMoney(v); return isNaN(n) ? null : n; }
+function _strSortVal(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+
 function renderInvoiceRows(invoices, tbody, limit, offset) {
   offset = offset || 0;
   limit  = limit  || invoices.length;
@@ -5153,13 +5176,21 @@ function renderInvoiceRows(invoices, tbody, limit, offset) {
 function sortAndRenderInvoices(invoices, field, dir, tbody, footer, PAGE_SIZE) {
   const sorted = [...invoices].sort((a, b) => {
     const fa = getInvoiceFields(a), fb = getInvoiceFields(b);
+    if (field === 'status') {
+      // Status is a binary PAID/UNPAID label — sorting it alone is a visible no-op when the whole
+      // account is one state (the reported "every column sorts except Status"). Sort by paid-state,
+      // then a stable secondary (invoice date, newest first) so the column always visibly reorders
+      // and equal-status rows keep a deterministic order.
+      const pa = fa.isPaid ? 1 : 0, pb = fb.isPaid ? 1 : 0;
+      if (pa !== pb) return dir === 'asc' ? pa - pb : pb - pa;
+      return (_dateSortVal(fb.date) || 0) - (_dateSortVal(fa.date) || 0);
+    }
     let va, vb;
-    if (field === 'amount') { va = parseFloat(fa.rawAmt||0); vb = parseFloat(fb.rawAmt||0); }
-    else if (field === 'date') { va = new Date(fa.date||0).getTime(); vb = new Date(fb.date||0).getTime(); }
-    else if (field === 'due')  { va = new Date(fa.due||0).getTime(); vb = new Date(fb.due||0).getTime(); }
-    else { va = String(fa[field]||'').toLowerCase(); vb = String(fb[field]||'').toLowerCase(); }
-    if (typeof va === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-    return dir === 'asc' ? va - vb : vb - va;
+    if (field === 'amount')    { va = _moneySortVal(fa.rawAmt); vb = _moneySortVal(fb.rawAmt); }
+    else if (field === 'date') { va = _dateSortVal(fa.date);    vb = _dateSortVal(fb.date); }
+    else if (field === 'due')  { va = _dateSortVal(fa.due);     vb = _dateSortVal(fb.due); }
+    else                       { va = _strSortVal(fa[field]);   vb = _strSortVal(fb[field]); }
+    return _cmpValues(va, vb, dir); // one canonical comparator: null/blank-safe, numeric-aware
   });
   const ps = PAGE_SIZE || 20;
   // Update footer so pagination works on sorted list
@@ -5190,8 +5221,21 @@ function exportInvoicesToExcel(invoices) {
 }
 
 
-function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
+function renderShipments(shipments, fullShipmentsList, offset, singleResult, backendTotal) {
   const allShipments = fullShipmentsList || shipments;
+  // The count shown to the customer must be the backend's authoritative total for the active window
+  // (F1) — never the number of rows we happened to load. Falls back to the loaded length when a
+  // backend total is not available (e.g. a client-side-filtered agent subset).
+  const headerCount = (typeof backendTotal === 'number' && backendTotal > allShipments.length) ? backendTotal : allShipments.length;
+  // Label the active window from shipCtx when it is the plain rolling window (round day-span); a
+  // named-entity query widens to 2 years and should not claim a tidy "Last N Days".
+  let _winLabel = 'Last 30 Days';
+  try {
+    if (typeof shipCtx==='object' && shipCtx && shipCtx.from && shipCtx.to) {
+      const _d = Math.round((shipCtx.to - shipCtx.from)/86400000);
+      if (_d>0 && _d<=366) _winLabel = 'Last ' + _d + ' Days';
+    }
+  } catch(e){}
   const startOffset = offset || 0;
   const container = document.createElement('div');
 
@@ -5255,9 +5299,9 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
   headerLeft.style.cssText = 'flex:1;min-width:140px;border-right:1px solid var(--bdr);padding-right:24px;margin-right:24px;cursor:pointer;';
   headerLeft.title = 'Show all shipments';
   headerLeft.innerHTML = `
-    <div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">My Shipments · Last 90 Days</div>
+    <div style="font-size:10px;font-weight:600;color:var(--fa);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;">My Shipments · ${_winLabel}</div>
     <div style="display:flex;align-items:baseline;gap:6px;">
-      <span style="font-size:36px;font-weight:500;color:var(--tx);line-height:1.1;">${allShipments.length}</span>
+      <span style="font-size:36px;font-weight:500;color:var(--tx);line-height:1.1;">${headerCount}</span>
       <span style="font-size:12px;color:var(--fa);">total</span>
     </div>
   `;
@@ -5269,6 +5313,9 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
       const ps = window._shipFooter._paginationState;
       if (ps) { ps.page = 0; ps.total = allShipments.length; ps.displayed = 0; }
     }
+    // Rows now render in raw (unsorted) order — clear the canonical sort state so the
+    // next header click starts a fresh ascending sort instead of a stale direction flip.
+    if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
     renderShipmentRows(allShipments, tbody, PAGE_SIZE_S, 0);
     if (window._shipUpdateFooter) window._shipUpdateFooter();
   };
@@ -5318,6 +5365,8 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
         const ps = window._shipFooter._paginationState;
         if (ps) { ps.page = 0; ps.total = filtered.length; ps.displayed = 0; }
       }
+      // Filtered subset renders in raw order — reset canonical sort state (see show-all above).
+      if (tbody.parentElement) { tbody.parentElement.sortField = null; tbody.parentElement.sortDir = 'asc'; }
       renderShipmentRows(filtered, tbody, PAGE_SIZE_S, 0);
       if (window._shipUpdateFooter) window._shipUpdateFooter();
     };
@@ -5399,8 +5448,49 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
   excelBtnTop.onclick = () => { excelBtnTop.textContent = 'Exporting...'; exportShipmentsToExcel(allShipments); setTimeout(()=>{ excelBtnTop.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Excel'; },500); };
   titleSection.appendChild(excelBtnTop);
 
+  // In-panel date-range control — mirrors the Invoices control (same date inputs + Apply + All Time).
+  // Its handlers refetch the whole window and recount from the backend total, so changing the range
+  // refetches rather than filtering an already-truncated client set (F2). Defaults reflect the active
+  // shipCtx window (30-day rolling on first open). Wired before the empty-check so an over-narrow range
+  // still leaves a working control to widen from.
+  const _sNow = new Date();
+  const _sFromD = (typeof shipCtx==='object' && shipCtx && shipCtx.from) ? new Date(shipCtx.from) : (function(){ const d=new Date(_sNow); d.setDate(d.getDate()-30); return d; })();
+  const _sToD   = (typeof shipCtx==='object' && shipCtx && shipCtx.to)   ? new Date(shipCtx.to)   : _sNow;
+  const _sFmtD  = d => { try { return d.toISOString().split('T')[0]; } catch(e){ return ''; } };
+  const shipDateBar = document.createElement('div');
+  shipDateBar.style.cssText = 'margin-bottom:12px;padding:10px 18px;border-radius:10px;border:1px solid var(--bdr);background:var(--card);display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+  shipDateBar.innerHTML =
+    '<span style="font-size:11px;font-weight:600;color:var(--fa);">Date Range</span>' +
+    '<input id="ship-date-from" type="date" value="' + _sFmtD(_sFromD) + '" style="border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--tx);background:var(--bg);cursor:pointer;">' +
+    '<span style="font-size:11px;color:var(--fa);">to</span>' +
+    '<input id="ship-date-to" type="date" value="' + _sFmtD(_sToD) + '" style="border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--tx);background:var(--bg);cursor:pointer;">' +
+    '<button id="ship-date-apply" style="background:var(--ac);color:#fff;border:none;border-radius:6px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">Apply</button>' +
+    '<button id="ship-date-all" style="background:none;border:1px solid var(--bdr);color:var(--mu);border-radius:6px;padding:5px 14px;font-size:12px;cursor:pointer;font-family:var(--font);">All Time</button>';
+  container.appendChild(shipDateBar);
+  const _shFromEl = shipDateBar.querySelector('#ship-date-from');
+  const _shToEl   = shipDateBar.querySelector('#ship-date-to');
+  const _shApply  = shipDateBar.querySelector('#ship-date-apply');
+  const _shAll    = shipDateBar.querySelector('#ship-date-all');
+  const _shRerender = (list, total) => {
+    const newEl = renderShipments(list, list, 0, false, total);
+    openRightPanel(newEl, 'My Shipments (' + (total != null ? total : list.length) + ')');
+  };
+  if (_shApply) _shApply.onclick = async () => {
+    _shApply.textContent = 'Loading...'; _shApply.disabled = true;
+    try { const r = await _loadShipWindow(_shFromEl.value, _shToEl.value); _shRerender(r.list, r.total); }
+    catch(e) { _shApply.textContent = 'Apply'; _shApply.disabled = false; }
+  };
+  if (_shAll) _shAll.onclick = async () => {
+    _shAll.textContent = 'Loading...'; _shAll.disabled = true;
+    const _af = '2010-01-01', _at = new Date().toISOString().split('T')[0];
+    if (_shFromEl) _shFromEl.value = _af;
+    if (_shToEl)   _shToEl.value   = _at;
+    try { const r = await _loadShipWindow(_af, _at); _shRerender(r.list, r.total); }
+    catch(e) { _shAll.textContent = 'All Time'; _shAll.disabled = false; }
+  };
+
   container.appendChild(titleSection);
-  
+
   const wrap = document.createElement('div');
   if (!allShipments || !allShipments.length) {
     wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;padding:12px 0;">No shipments found for this date range.</div>';
@@ -5458,7 +5548,10 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult) {
       th.style.transition = 'background .1s';
       th.onmouseenter = () => th.style.background = 'rgba(0,0,0,.03)';
       th.onmouseleave = () => th.style.background = '';
-      th.dataset.field = ['bol','mode','created','estPU','estDEL','shipper','consignee','carrier','pro','total','status'][idx];
+      // Field array MUST align 1:1 with `cols` above. It was off by one from index 1 on — the
+      // 'Status' header sorted by mode, 'Total' sorted by status, etc. (the "clicking a column
+      // sometimes does nothing" bug, since the mismapped fields were low-cardinality).
+      th.dataset.field = ['bol','status','mode','created','estPU','estDEL','shipper','consignee','carrier','pro','total'][idx];
       
       th.onclick = () => {
         const field = th.dataset.field;
@@ -5739,16 +5832,16 @@ function sortAndRenderShipments(shipments, field, dir, tbody) {
         val_b = (b.shipmentMode || 'LTL').toUpperCase();
         break;
       case 'created':
-        val_a = new Date(ti_a.bookDate || a.bookDate || a.createdDate || 0).getTime();
-        val_b = new Date(ti_b.bookDate || b.bookDate || b.createdDate || 0).getTime();
+        val_a = _dateSortVal(ti_a.bookDate || a.bookDate || a.createdDate);
+        val_b = _dateSortVal(ti_b.bookDate || b.bookDate || b.createdDate);
         break;
       case 'estPU':
-        val_a = new Date(ti_a.pickupDateActual || ti_a.pickupDateEstimated || ti_a.dispatchDate || 0).getTime();
-        val_b = new Date(ti_b.pickupDateActual || ti_b.pickupDateEstimated || ti_b.dispatchDate || 0).getTime();
+        val_a = _dateSortVal(ti_a.pickupDateActual || ti_a.pickupDateEstimated || ti_a.dispatchDate);
+        val_b = _dateSortVal(ti_b.pickupDateActual || ti_b.pickupDateEstimated || ti_b.dispatchDate);
         break;
       case 'estDEL':
-        val_a = new Date(ti_a.deliveryDateActual || ti_a.deliveryDateEstimated || 0).getTime();
-        val_b = new Date(ti_b.deliveryDateActual || ti_b.deliveryDateEstimated || 0).getTime();
+        val_a = _dateSortVal(ti_a.deliveryDateActual || ti_a.deliveryDateEstimated);
+        val_b = _dateSortVal(ti_b.deliveryDateActual || ti_b.deliveryDateEstimated);
         break;
       case 'shipper':
         val_a = a.shipper ? (a.shipper.name || a.shipper.companyName || a.shipper.contact || '') : (a.shipperName || a.shipperCompany || '');
@@ -5773,21 +5866,16 @@ function sortAndRenderShipments(shipments, field, dir, tbody) {
         val_b = (ven_b.PRO || ti_b.PRO || ven_b.pickupNumber || ti_b.proNumber || b.proNumber || '').toLowerCase();
         break;
       case 'total':
-        val_a = parseFloat(ven_a.cost || ven_a.totalCharges || a.totalCharges || a.amount || 0);
-        val_b = parseFloat(ven_b.cost || ven_b.totalCharges || b.totalCharges || b.amount || 0);
+        val_a = _moneySortVal(ven_a.cost || ven_a.totalCharges || a.totalCharges || a.amount);
+        val_b = _moneySortVal(ven_b.cost || ven_b.totalCharges || b.totalCharges || b.amount);
         break;
       case 'status':
-        val_a = (ti_a.lastStatusExternal || ti_a.lastStatusInternal || ti_a.statusName || a.status || '').toLowerCase();
-        val_b = (ti_b.lastStatusExternal || ti_b.lastStatusInternal || ti_b.statusName || b.status || '').toLowerCase();
+        val_a = _strSortVal(ti_a.lastStatusExternal || ti_a.lastStatusInternal || ti_a.statusName || a.status);
+        val_b = _strSortVal(ti_b.lastStatusExternal || ti_b.lastStatusInternal || ti_b.statusName || b.status);
         break;
       default: return 0;
     }
-    
-    if (typeof val_a === 'string' && typeof val_b === 'string') {
-      return dir === 'asc' ? val_a.localeCompare(val_b) : val_b.localeCompare(val_a);
-    } else {
-      return dir === 'asc' ? val_a - val_b : val_b - val_a;
-    }
+    return _cmpValues(val_a, val_b, dir); // one canonical comparator: null/blank-safe, numeric-aware
   });
   
   // Update footer so pagination works on sorted list
@@ -5941,20 +6029,23 @@ function appendMessage(role, text, extras) {
     } catch(e) { console.error('trackInline error', e); }
   }
   if (extras.shipments !== undefined) {
-    const shipmentsEl = renderShipments(extras.shipments, extras.shipmentsList, extras.shipmentsOffset || 0, extras.singleResult || false);
+    const shipmentsEl = renderShipments(extras.shipments, extras.shipmentsList, extras.shipmentsOffset || 0, extras.singleResult || false, extras.shipmentsBackendTotal);
     // A single-result view is the shipment now in focus — make it the canonical active context.
     if ((extras.singleResult || (extras.shipments && extras.shipments.length === 1)) && extras.shipments && extras.shipments.length === 1) {
       setActiveShipment(extras.shipments[0]);
     }
     setTimeout(() => {
-      openRightPanel(shipmentsEl, 'My Shipments (' + (extras.shipmentsList || extras.shipments).length + ')');
+      openRightPanel(shipmentsEl, 'My Shipments (' + (extras.shipmentsBackendTotal != null ? extras.shipmentsBackendTotal : (extras.shipmentsList || extras.shipments).length) + ')');
     }, 100);
   }
   // Invoices — open in right panel
   if (extras.invoices !== undefined) {
-    const invoicesEl = renderInvoices(extras.invoices, extras.invoicesList);
+    const invoicesEl = renderInvoices(extras.invoices, extras.invoicesList, extras.invDateFrom, extras.invDateTo);
+    // renderInvoices binds window._currentInvoiceList to the active-range set — the tab count must
+    // match the visible rows, not the full unfiltered fetch (F1/F2).
+    const _invTabCount = (window._currentInvoiceList ? window._currentInvoiceList.length : (extras.invoicesList || extras.invoices).length);
     setTimeout(() => {
-      openRightPanel(invoicesEl, 'Invoices (' + (extras.invoicesList || extras.invoices).length + ')');
+      openRightPanel(invoicesEl, 'Invoices (' + _invTabCount + ')');
     }, 100);
   }
 
@@ -11325,6 +11416,9 @@ async function fetchNextBatch(){
     let d1; try{ d1=JSON.parse(t1); }catch(e){ shipCtx.done=true; return; }
     const pd1=d1.data&&d1.data.pagingDetails;
     shipCtx.totalPages = (pd1&&pd1.totalResults!=null) ? (Math.ceil(pd1.totalResults/perPage)||1) : 1;
+    // The backend's authoritative total for this window — the count any customer-facing surface must
+    // show, independent of how many rows we have loaded so far.
+    shipCtx.total = (pd1&&pd1.totalResults!=null) ? pd1.totalResults : null;
     const arr1=(d1.data&&d1.data.results)||[];
     arr1.forEach(function(sh){ shipCtx.loaded.push(sh); });
     if (typeof updateNavBadges === 'function') updateNavBadges();
@@ -11606,7 +11700,11 @@ function presentShips(q,initial){
   if(initial) shipShown=q.limit?cap:Math.min(10,cap);  // Changed from SHIP_PAGE to 10
   if(shipShown>cap)shipShown=cap;
   const slice=list.slice(0,shipShown);
-  appendMessage('bot',describeQuery(q,list.length),{shipments:slice, shipmentsTotal: cap, shipmentsList: list});
+  // When no client-side filter dropped rows (loaded === matched), the backend total for the window is
+  // authoritative for what we are showing — pass it so the panel header/tab count it, not the loaded
+  // length. A narrowed query (loaded > matched) has no backend total for the subset, so fall back.
+  const _backendTotal = (list.length===shipCtx.loaded.length && shipCtx.total!=null) ? shipCtx.total : null;
+  appendMessage('bot',describeQuery(q,list.length),{shipments:slice, shipmentsTotal: cap, shipmentsList: list, shipmentsBackendTotal: _backendTotal});
   if(shipShown<cap) appendMessage('bot','Showing '+shipShown+' of '+cap+(shipCtx.done?'':' so far')+'. Say "show 10 more" to continue.');
 }
 async function runShipQuery(q){
@@ -11616,16 +11714,43 @@ async function runShipQuery(q){
   // keep the 90-day default; explicit dateFrom always wins.
   if(q.dateFrom)from=new Date(q.dateFrom);
   else if(q.consignee||q.shipper){ from=new Date(now); from.setFullYear(from.getFullYear()-2); }
-  else { from=new Date(now); from.setDate(from.getDate()-90); }
+  else { from=new Date(now); from.setDate(from.getDate()-30); }
   if(q.dateTo)to=new Date(q.dateTo); else to=new Date(now);
-  shipCtx={from:from,to:to,page:1,totalPages:null,loaded:[],done:false,query:q,filtered:[]};
+  shipCtx={from:from,to:to,page:1,totalPages:null,total:null,loaded:[],done:false,query:q,filtered:[]};
   shipShown=0;
   // Pre-apply aggregateCarrier filter into query so matchQuery scopes it
   if (q.aggregateCarrier && !q.carrier) {
     q.carrier = q.aggregateCarrier;
   }
-  await ensureMatches(q.limit||SHIP_PAGE);
+  // Panel-list views (the "My Shipments" nav + date-range buttons) must show the WHOLE window so the
+  // displayed count is the account's real total, not the first 100 rows we happened to load. A plain
+  // unfiltered list fully drains the window (bounded by the 15s deadline inside the loop); any narrowed
+  // or limited query keeps the old lazy target so the agent's "last 10" etc. stay cheap.
+  const _isPanelList = q.action==='list' && !q.limit && !q.consignee && !q.shipper && !q.carrier &&
+    !q.destCity && !q.destState && !q.originCity && !q.originState && !q.status && !q.mode &&
+    !q.commodity && q.costMin==null && q.costMax==null && q.weightMin==null && q.weightMax==null;
+  if (_isPanelList) {
+    const _dl = Date.now()+15000;
+    while(!shipCtx.done && Date.now()<_dl){ await fetchNextBatch(); }
+  } else {
+    await ensureMatches(q.limit||SHIP_PAGE);
+  }
   presentShips(q,true);
+}
+// Load a full shipment window for the in-panel date-range control — the shipments analogue of
+// fetchInvoices for the Invoices control. Builds a fresh shipCtx, drains the whole window (bounded by
+// the same 15s deadline as the panel-list path), and returns the rows plus the backend's authoritative
+// total. No chat output and no presentShips — the caller swaps the panel in place.
+async function _loadShipWindow(dateFrom, dateTo){
+  const now=new Date();
+  const from = dateFrom ? new Date(dateFrom) : (function(){ const d=new Date(now); d.setDate(d.getDate()-30); return d; })();
+  const to   = dateTo   ? new Date(dateTo)   : now;
+  shipCtx={from:from,to:to,page:1,totalPages:null,total:null,loaded:[],done:false,query:{action:'list',sortField:'date',sortDir:'desc'},filtered:[]};
+  shipShown=0;
+  const _dl=Date.now()+15000;
+  while(!shipCtx.done && Date.now()<_dl){ await fetchNextBatch(); }
+  const list=filteredList(); shipCtx.filtered=list;
+  return { list: list, total: shipCtx.total };
 }
 // Silently ensure the full ~2-year history is loaded (no chat output). Used by the aggregate,
 // existence, and consignee-name paths so counts are deterministic regardless of a prior narrow
@@ -20017,7 +20142,7 @@ async function fetchInvoices(dateFrom, dateTo) {
     for (let p = page; p < page + 6 && p <= totalPages; p++) batches.push(p);
     if (!batches.length) break;
     const results = await Promise.all(batches.map(p =>
-      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=10&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
+      fetch(PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p + '&sort=invoiceNumber&sortDir=desc', { headers: { 'Authorization': 'Bearer ' + token } })
         .then(r => r.ok ? r.json() : null).catch(() => null)
     ));
     results.forEach(d => {
@@ -21069,13 +21194,17 @@ async function quickAction(action) {
   if (action === 'My Invoices') {
     showTyping();
     try {
-      const _invNow = new Date(); const _inv12 = new Date(_invNow); _inv12.setFullYear(_inv12.getFullYear()-1);
-      const invoices = await fetchInvoices(_inv12.toISOString().split('T')[0], _invNow.toISOString().split('T')[0]);
+      const _invNow = new Date(); const _inv30 = new Date(_invNow); _inv30.setDate(_inv30.getDate()-30);
+      const _invFromISO = _inv30.toISOString().split('T')[0], _invToISO = _invNow.toISOString().split('T')[0];
+      // fetchInvoices ignores the server date filter and returns the whole set; the 30-day default is
+      // applied as the panel's active range (F2), so the visible count reflects the last 30 days and
+      // the customer can widen with the date picker or All Time.
+      const invoices = await fetchInvoices(_invFromISO, _invToISO);
       removeTyping();
       if (!invoices.length) {
         appendMessage('bot', 'No invoices found for your account.');
       } else {
-        appendMessage('bot', 'Found ' + invoices.length + ' invoice' + (invoices.length !== 1 ? 's' : '') + ' — click any row for details:', { invoices, invoicesList: invoices });
+        appendMessage('bot', 'Here are your invoices — showing the last 30 days. Use the date range or All Time to see more.', { invoices, invoicesList: invoices, invDateFrom: _invFromISO, invDateTo: _invToISO });
       }
     } catch(e) {
       removeTyping();
