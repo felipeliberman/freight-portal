@@ -19934,7 +19934,13 @@ function showQuoteForm(prefill, silent) {
         closeBtn.textContent = '✕';
         closeBtn.style.cssText = 'background:rgba(0,0,0,.07);border:none;border-radius:6px;cursor:pointer;padding:5px 10px;font-size:14px;color:var(--mu);flex-shrink:0;';
         closeBtn.onclick = () => modal.remove();
-        hdr.innerHTML = '<div><div style="font-size:16px;font-weight:700;color:var(--tx);">'+name+'</div><div style="font-size:12px;color:var(--mu);margin-top:2px;">'+svc+(transit!=='—'?' · '+transit+' day transit':'')+'</div></div>';
+        // Carrier logo to the LEFT of the name (same source the Select Rate rows use — rate.iconUrl),
+        // vertically centered against the two-line block, so the modal reads as a zoomed-in row. Missing
+        // or failed logo hides the <img> entirely (no broken icon; the flex gap collapses → name flush left).
+        const _bkLogo = rate.iconUrl
+          ? '<img src="'+rate.iconUrl+'" alt="" style="height:30px;width:auto;max-width:100px;object-fit:contain;flex-shrink:0;" onerror="this.onerror=null;this.hidden=true">'
+          : '';
+        hdr.innerHTML = '<div style="display:flex;align-items:center;gap:10px;min-width:0;">'+_bkLogo+'<div style="min-width:0;"><div style="font-size:16px;font-weight:700;color:var(--tx);">'+name+'</div><div style="font-size:12px;color:var(--mu);margin-top:2px;">'+svc+(transit!=='—'?' · '+transit+' day transit':'')+'</div></div></div>';
         hdr.appendChild(closeBtn);
         box.appendChild(hdr);
         const divLabel = document.createElement('div');
