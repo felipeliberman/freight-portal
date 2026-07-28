@@ -2338,6 +2338,7 @@ function resetShipmentState(wipeConversation) {
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+    window._insValueArmed = false;
     window._insPreRate = false; window._insDecided = false;
     window._lastTurnFailed = false;
     lastQuotedShipment = null;
@@ -2784,6 +2785,7 @@ function _insGateBeforeRates(shipment, summary) {
   }
   window._insPreRate = true;
   window._insCollecting = 'value'; window._insReaskCount = 0;
+  window._insValueArmed = true; // just asked — the next bare number is the declared value
   appendMessage('bot', (summary ? summary + ' ' : '') + 'One last thing — would you like to add cargo insurance? If so, what is the total value of the cargo? Or say "no" to skip.');
   return true;
 }
@@ -10370,11 +10372,13 @@ function _hazmatShipmentFields(haz, specialInstructions) {
 // shipments — so this checks ONLY fields the backend genuinely refuses to create a record without.
 // Do not grow it into a general required-field form validator.
 function validateBookingPayload(payload) {
+  // ZIPs ONLY — deliberately minimal. The documented two-step flow says a customer may save a
+  // PARTIAL shipment (missing names, contacts, addresses) and complete it later; requiring party
+  // names here blocked that core flow. ZIPs are the one thing every save genuinely needs (they
+  // come from the quote and Primus rejects without them). Never widen this list back to names.
   const missing = [];
   const p = payload || {};
   const blank = v => v === undefined || v === null || String(v).trim() === '';
-  if (blank(p.shipper && p.shipper.name))       missing.push('pickup business name');
-  if (blank(p.consignee && p.consignee.name))   missing.push('delivery business name');
   if (blank(p.shipper && p.shipper.zipCode))    missing.push('pickup ZIP');
   if (blank(p.consignee && p.consignee.zipCode)) missing.push('delivery ZIP');
   if (!missing.length) return { ok: true };
@@ -10712,17 +10716,9 @@ async function submitBooking() {
       return;
     }
 
-    // Residential guard — must fire before saveRate or Primus POST.
-    // consParts.address1 is the delivery street filled in the booking form.
-    if (!window._resWarnShown && !accCodes.includes('RSD')) {
-      const _sbgRes = await _geocodioResidentialCheck(consParts.address1, consParts.city, consParts.state, consParts.zipCode);
-      if (_sbgRes.residential) {
-        window._resWarnShown = true;
-        removeTyping();
-        appendMessage('bot', 'The delivery address ' + (_sbgRes.formatted || consParts.address1) + ' appears to be residential. Residential deliveries need residential delivery added to the quote — it changes the carrier rate. I stopped the booking to avoid a surprise surcharge. Please add residential delivery via the quote form and get updated rates, then try again.');
-        return;
-      }
-    }
+    // (Chat-side residential guard removed — PRODUCT RULE: chat never mentions residential/
+    // commercial classification. The geocoder's verdict speaks only via checkRDIBeforeDispatch
+    // and the two RDI overlays, which still protect this shipment before the irreversible step.)
 
     // Auto-save rate to get official quoteNumber — this assigns the carrier to the BOL
     // Without quoteNumber, dispatch fails with "shipment does not have a carrier assigned"
@@ -12267,21 +12263,10 @@ function _liveStateBlock() {
     if (window._lockDropped && window._lockDropped.carrier) {
       lines.push('carrierNoLongerAvailable: ' + window._lockDropped.carrier + ' was the selected carrier but did not come back on the refreshed rates. Tell the customer that plainly and ask which of the current options they want. Do NOT pick one for them.');
     }
-    const _rs = window._residentialStatus;
-    if (_rs) {
-      lines.push('residentialStatus: ' + JSON.stringify(_rs));
-      // When the address lookup and the quote's accessorials DISAGREE, force one coherent message —
-      // left alone, the agent fused them into "it's commercial, so residential delivery is already
-      // on the quote", a self-contradiction shown to a real customer.
-      try {
-        const _rsdOn = !!(q && (q.accessorialCodes || []).indexOf('RSD') >= 0);
-        if (_rs.residential === false && _rsdOn) {
-          lines.push('residentialConflict: the address lookup says this delivery address is COMMERCIAL, but residential delivery is currently ON the quote. State exactly those two facts in plain words and ask ONE question: keep residential delivery on, or remove it and re-rate? Never merge them into a single claim — never say residential is on "because" the address is commercial, and never say it is "already covered."');
-        } else if (_rs.residential === true && !_rsdOn) {
-          lines.push('residentialConflict: the address lookup says this delivery address is RESIDENTIAL but residential delivery is NOT on the quote — follow the residential safeguard: state the fact and ask whether to add residential delivery (and liftgate where appropriate).');
-        }
-      } catch (e) {}
-    }
+    // PRODUCT RULE: chat never mentions residential/commercial classification. The geocoder's
+    // verdict is deliberately NOT surfaced to the agent (no residentialStatus JSON, no conflict
+    // instructions) — it speaks ONLY through checkRDIBeforeDispatch and the two RDI overlays.
+    // The customer's intake answer (the accessorial chips) is the agent's only residential truth.
     // Cargo insurance — plain broker language, no internal field names or codes. Surfacing this here
     // (under the "Never re-ask for anything shown here" directive above) is what stops the agent
     // re-asking for a value it already has. 'declined' allows a later customer-initiated re-request.
@@ -12415,6 +12400,7 @@ function _insMsgMovedOn(t) {
 function _releaseInsuranceCollection(text) {
   var wasPreRate = !!window._insPreRate;
   window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
+  window._insValueArmed = false;
   window._insReaskCount = 0; window._insPreRate = false; window._insDecided = true;
   if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
   if (wasPreRate) {
@@ -13052,16 +13038,10 @@ async function _execBookShipment(input) {
     const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
     const items = (s.items && s.items.length) ? s.items : [];
 
-    // Residential safeguard — uses the shared _geocodioResidentialCheck() helper.
-    // Fires BEFORE _bookingLock, saveRate, or Primus POST so no stale BOL is ever created.
-    if (!window._resWarnShown && !accCodes.includes('RSD')) {
-      const _bsRes = await _geocodioResidentialCheck(cn.address, cn.city || s.destinationCity, cn.state || s.destinationState, s.destinationZip);
-      if (_bsRes.residential) {
-        window._resWarnShown = true;
-        return { ok:false, residentialWarning:true, address:_bsRes.formatted || s.destinationZip,
-          message:'Before booking: the delivery address ' + (_bsRes.formatted || s.destinationZip) + ' comes back RESIDENTIAL. Residential deliveries need residential delivery service, plus a liftgate if there is no loading dock, and adding them changes the rate. Tell the customer and ask whether to add residential delivery (and liftgate for LTL/heavy freight) or proceed as-is at their own risk. If they agree to add RSD (or RSD+LFD): call update_quote with addAccessorials:["RSD"] (and "LFD" if applicable) AND getRates:true in a single call to re-pull rates with the surcharge included, then call read_rates to confirm the new price, read it back to the customer, and only then call book_shipment. For parcel carriers (SMALL PACKAGE), omit the liftgate question but still re-pull if RSD is added. Do NOT call book_shipment until the re-pull is done and the customer has confirmed the new rate.' };
-      }
-    }
+    // (Agent-path residential safeguard removed — PRODUCT RULE: chat never mentions residential/
+    // commercial classification, and this tool result instructed the agent to do exactly that.
+    // The geocoder's verdict speaks only via checkRDIBeforeDispatch and the two RDI overlays;
+    // the customer's intake answer, reflected in the accessorial chips, rides the booking as-is.)
 
     // Freeze rate+shipment AFTER the residential guard — only when we are actually proceeding to book.
     // If we entered via the _bookingLock reuse path at the top of this function, skip (already frozen).
@@ -13404,7 +13384,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 3b. HAZMAT AT BOOKING — if formState shows the line item is hazmat, you MUST proactively ask the customer for the UN number and a 24-hour emergency contact name and phone BEFORE you read the booking back — do not wait for the customer to volunteer it. Pass these to update_booking as unNumber, emergencyContactName, and emergencyPhone. The hazmat class and packing group are looked up automatically from the UN number — never ask the customer for them. NEVER put the UN number or emergency contact in specialInstructions — they have dedicated fields. Include the UN number and emergency contact in the booking read-back.
-4. RESIDENTIAL / LIFTGATE SAFEGUARD: if residentialStatus in the live state above shows residential:true, OR the customer explicitly says the delivery is a home or residence, report it and ask whether to add RSD (and liftgate for heavier LTL freight). State the fact, ask the question — let the customer decide; do NOT push them toward a choice. Word it like: "That delivery address comes back residential — want me to add residential delivery and a liftgate, or are you good handling the unload?" Never silently add or skip it. If they decline, honor it and book as-is. Do NOT infer or assume residential without residentialStatus confirmation or explicit customer statement. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. Still inform the customer about RSD if the address is residential. If after adding RSD the parcel rate does not change, say: "Residential was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
+4. RESIDENTIAL CLASSIFICATION IS NEVER YOURS TO RAISE. The customer is asked ONCE, at quote intake, whether the delivery is a residence or a business — and their answer is final for the whole conversation. Never state, imply, or ask about an address "coming back" residential or commercial, never mention an address lookup, check, or verification, and never challenge, confirm, or second-guess the customer's stated answer at any phase — quoting, saving, or dispatching. If the customer THEMSELVES later says the delivery is a home or residence, treat that as their intake answer: add residential delivery (and offer liftgate for heavier LTL freight unless they decline), re-pull per the rule below, and say nothing about classification. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. If after adding residential delivery the parcel rate does not change, say: "Residential delivery was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 
 PARTY DETAILS ARE WRITTEN, NEVER JUST ACKNOWLEDGED. When the customer provides shipper or consignee details in chat — names, addresses, contacts, phones, one side or both — replying with text alone is FORBIDDEN: you MUST call update_booking in that SAME turn with every field they provided, both parties when both are present. And NEVER claim a party detail is "on file," "already filled," "captured," or "saved" unless the CURRENT bookingState or formState snapshot shows that exact field non-empty — if the snapshot shows a field blank, it is blank, no matter what was said earlier in the conversation; the only way to make it true is to call update_booking with it now. If bookingState shows bookingInFlight true with panelRendered false, the booking still exists exactly as shown (carrier, price, and fields) — never say there is no booking, and never re-ask which carrier.
@@ -13542,6 +13522,17 @@ function _gateFinalText(finalText, ctx) {
       }
     }
   } catch (e) { out.text = String(finalText == null ? '' : finalText); return out; } // never let the gate break a turn
+  // ── NEVER SILENCE ──────────────────────────────────────────────────────────
+  // A strip that empties the whole turn is treated as a suspected false positive: deliver the
+  // ORIGINAL reply un-stripped and log the would-have-stripped event. A wrong question or a soft
+  // promise is recoverable by the customer in one message; a vanished reply is not. Partial strips
+  // (one offending sentence removed, the rest delivered) and the fabrication REWRITE (which always
+  // yields the classified message, never emptiness) are unchanged.
+  if (!String(text).trim() && String(finalText == null ? '' : finalText).trim()) {
+    try { console.log('[FP] _gateFinalText would-have-stripped — delivering original reply un-stripped:', String(finalText).slice(0, 200)); } catch (e) {}
+    out.wouldHaveStripped = true;
+    text = String(finalText);
+  }
   out.text = text;
   return out;
 }
@@ -13935,7 +13926,8 @@ async function aiConverse(userText) {
             } else {
               _rr = { count: null, settled: false, options: [], note: 'No rate result has settled yet — a pull may still be running or none has run. Do NOT tell the customer no carriers came back and do NOT say rates are ready. If they asked for a price, tell them you are pulling it and will have it shortly.' };
             }
-            if (window._residentialStatus) _rr.residentialStatus = window._residentialStatus;
+            // (residentialStatus deliberately NOT attached — the classification never reaches the
+            // agent; see the PRODUCT RULE note in _liveStateBlock.)
             result = _rr;
           } else if (toolUse.name === 'book_shipment') {
             if (isMobile()) {
@@ -13997,6 +13989,7 @@ async function aiConverse(userText) {
         finalText = finalText.replace(/\[\[INSURANCE\]\]/g, '').trim();
         if (!window._insDecided) {
           window._insCollecting = 'value'; window._insReaskCount = 0;
+          window._insValueArmed = true; // the agent just asked for the value — next bare number is it
           window._insPreRate = true;
         }
       }
@@ -14014,8 +14007,9 @@ async function aiConverse(userText) {
         continue;
       }
       finalText = _g.text;
-      // A gate that stripped the whole turn (a bare re-ask or a bare false promise) → nothing safe to
-      // say; suppress rather than render an empty bubble. Silence beats a re-ask or a vanished promise.
+      // Structurally unreachable for a non-empty reply since the gate's NEVER-SILENCE terminal
+      // (a whole-turn strip now delivers the original un-stripped) — kept as a guard against
+      // rendering an empty bubble if the model's reply itself was empty after markers stripped.
       if (!finalText) { window._lastTurnFailed = false; return; }
       window._lastTurnFailed = false; // recovered — stop re-orienting on the next turn
       // No assistant push here: _showBot → appendMessage records finalText (the ONE writer). If an
@@ -15751,6 +15745,7 @@ async function handleInput(text) {
       window._insCollecting !== 'value' && window._insCollecting !== 'commodity' &&
       lastQuotedShipment && !lastQuotedShipment.insuranceEnabled) {
     window._insCollecting = 'value'; window._insReaskCount = 0;
+    window._insValueArmed = true; // just asked — the next bare number is the declared value
     appendMessage('bot', 'To add cargo insurance, I need two things. First, what is the total value of the cargo in USD?');
     return;
   }
@@ -15760,8 +15755,12 @@ async function handleInput(text) {
   }
   // 6b: collect the cargo value (or a decline).
   if (window._insCollecting === 'value') {
+    // One-turn arm: set wherever the value question was JUST asked, consumed here regardless of
+    // outcome. Only a just-asked turn may treat a bare number as a declared value.
+    const _insArmed = !!window._insValueArmed;
+    window._insValueArmed = false;
     // Decline → skip insurance. If we were gating a pre-rate pull, pull the rates now.
-    if (/\b(no|nope|skip|none|no thanks?|not needed|without|don'?t|no insurance)\b/i.test(t) && !/\d/.test(t)) {
+    if (/\b(no|nope|skip|none|no thanks?|not needed|without|don'?t|no insurance|never ?mind)\b/i.test(t) && !/\d/.test(t)) {
       window._insCollecting = null; window._insTempValue = null;
       if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
       if (window._insPreRate) {
@@ -15774,24 +15773,36 @@ async function handleInput(text) {
       }
       return;
     }
-    const _m = String(t).replace(/[$,]/g, '').match(/\d+(?:\.\d+)?/);
+    // A declared value needs GENUINE monetary intent — a $ sign, money words, or the one-turn
+    // just-asked arm — and digits that read as an address or a measurement are NEVER a value
+    // ("1145 s drive is for sure a residence" must not become $1,145).
+    const _addrLike =
+         /\b\d[\d,]*\s+(?:[nsew]\.?\s+)?(?:[a-z][a-z.'-]*\s+)?(?:st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pl|place|cir|circle|hwy|highway|pkwy|parkway)\b/i.test(t)
+      || /\b\d[\d,]*(?:\.\d+)?\s*(?:lbs?|pounds?|kg|kilos?|x\b|inch(?:es)?|"|ft\b|feet|foot|cm)\b/i.test(t);
+    const _moneyIntent =
+         /\$\s*\d/.test(t)
+      || /\b\d[\d,]*(?:\.\d+)?\s*(?:dollars?|bucks|usd|grand|k)\b/i.test(t)
+      || /\b(?:worth|valued?|value of|insured? for|coverage of|declared?)\b[^.?!]*\d/i.test(t);
+    const _m = (_addrLike || !(_moneyIntent || _insArmed)) ? null : String(t).replace(/[$,]/g, '').match(/\d+(?:\.\d+)?/);
     const _num = _m ? parseFloat(_m[0]) : NaN;
     if (_num > 0) {
       window._insTempValue = _num;
       window._insCollecting = 'commodity';
-      const _list = REDKIK_COMMODITIES.map((c, i) => (i + 1) + '. ' + c.name).join('\n');
-      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. What type of commodity is it? Reply with a number:\n\n' + _list);
+      appendMessage('bot', 'Got it — $' + _num.toLocaleString('en-US') + '. What type of commodity is it — for example furniture, electronics, or machinery?');
     } else {
       if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
       window._insReaskCount = (window._insReaskCount || 0) + 1;
       if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
+      window._insValueArmed = true; // re-asking right now — the customer's next number is the answer
       appendMessage('bot', 'I did not catch a dollar amount. What is the total value of the cargo? (Or say "no" to skip insurance.)');
     }
     return;
   }
   // 6c: match the commodity, apply it, and requote with insurance included.
   if (window._insCollecting === 'commodity') {
-    if (/^\s*(cancel|never ?mind|stop|forget it|no thanks?)\s*$/i.test(t)) {
+    // A plain refusal exits the insurance flow immediately at ANY point — "no" alone must never
+    // be fuzzy-matched against a commodity name.
+    if (/^\s*(cancel|never ?mind|stop|forget it|no|nope|none|skip|no thanks?|no insurance)[.!]?\s*$/i.test(t)) {
       window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
       if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
       if (window._insPreRate) {
@@ -15818,7 +15829,7 @@ async function handleInput(text) {
       if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
       window._insReaskCount = (window._insReaskCount || 0) + 1;
       if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
-      appendMessage('bot', 'I could not match that. Reply with the number (1-' + REDKIK_COMMODITIES.length + ') or a keyword for the commodity type, or say "cancel" to skip insurance.');
+      appendMessage('bot', 'I could not match that commodity type. What kind of goods are they — furniture, appliances, electronics, machinery, or something else? Or say "no" to skip insurance.');
       return;
     }
     const _val = Number(window._insTempValue) || 0;
@@ -16084,16 +16095,12 @@ async function handleInput(text) {
   // alone would fix the miss and keep that false positive, so both sides move
   // together. A false positive costs a booking; a miss costs an email.
   //
-  // Lengths are bounded to 48 and 53 on purpose. 20/40/45 are container
-  // lengths that show up in drayage and intermodal talk, and 28 is an LTL
-  // linehaul pup — none of those read as unambiguously truckload.
-  //
-  // Deliberately NOT matched: "TL" (collides with LTL for a two-letter
-  // token), "full trailer", "semi truck" — all three are things a shipper
-  // with six pallets might plausibly say. The exclusion below likely catches
-  // them, but likely is not good enough when a false positive costs a
-  // booking. Revisit if real traffic shows the miss.
-  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|(48|53).?(foot|ft)|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?siz(e|ed)|over.?dimension(al)?|conestoga|rgn|removable.?gooseneck|power.?only|hot.?shot)s?\b/i.test(lower) &&
+  // REVERTED to the narrow matcher from 69efeb6 (plural fix intact). The widened set from
+  // 877bc26 — 48ft, adjectival oversized, specialist equipment (conestoga/rgn/power only/
+  // hot shot) — deflected normal LTL customers who merely mentioned equipment or dimension
+  // words to email instead of quoting them. A false positive costs a booking; keep this
+  // matcher to unambiguous truckload vocabulary only.
+  const isTruckloadQ = /\b(full.?truck|ftl|truckload|truck.?load|flatbed|reefer|dry.?van|53.?foot|53.?ft|full.*load|partial.*truck|step.?deck|tanker|heavy.?haul|over.?size|over.?dimension)s?\b/i.test(lower) &&
     !/\b(ltl|pallet|small|parcel|quote.*ltl|ltl.*quote)s?\b/i.test(lower);
   if (isTruckloadQ) {
     appendMessage('bot', 'We handle full truckload — email support@freightandlogistics.ai with your lane, weight, and equipment type and the team will get you options and pricing, typically within about an hour during business hours.');

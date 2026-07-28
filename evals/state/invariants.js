@@ -331,6 +331,147 @@ const invariants = [
       A.ok(reply.indexOf('I need the pickup and delivery details') < 0, 'the hardcoded greeting was re-emitted on re-selection');
     },
   },
+  // ── 12 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 12, name: 'a partial save needs ZIPs only',
+    property: 'validateBookingPayload passes with both ZIPs and nothing else; fails only on a missing ZIP',
+    catches: 'Path B conviction 67da612 — the name requirements blocked the documented save-partial-and-finish-later flow',
+    run(ctx) {
+      const w = ctx.win;
+      const ok = w.validateBookingPayload({ shipper: { zipCode: '90660' }, consignee: { zipCode: '33511' } });
+      A.ok(ok.ok === true, 'a partial save (ZIPs only, no names) was refused: ' + JSON.stringify(ok));
+      const bad = w.validateBookingPayload({ shipper: { name: 'Michaels Furniture' }, consignee: { name: 'Haynes Brothers' } });
+      A.ok(bad.ok === false, 'a save with NO ZIPs was allowed');
+      A.ok((bad.fields || []).indexOf('pickup ZIP') >= 0 && (bad.fields || []).indexOf('delivery ZIP') >= 0,
+        'missing-ZIP report wrong: ' + JSON.stringify(bad.fields));
+      A.ok(!(bad.fields || []).some(f => /name/i.test(f)), 'name requirements resurfaced: ' + JSON.stringify(bad.fields));
+    },
+  },
+  // ── 13 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 13, name: 'equipment vocabulary does not deflect an LTL customer',
+    property: 'only unambiguous truckload phrasing deflects to email; 877bc26 vocabulary (48 ft, oversized, hot shot) falls through to the quote path',
+    catches: 'Path B conviction 877bc26 — normal customers bounced to email instead of quoted',
+    async run(ctx) {
+      const w = ctx.win;
+      let sawAgent = false;
+      w.aiConverse = async () => { sawAgent = true; };
+      w.waybAgent = async () => { sawAgent = true; };
+      const deflected = () => ctx.messages.some(m => m.role === 'bot' && /truckload/i.test(m.text) && /support@freightandlogistics/i.test(m.text));
+      // Genuine truckload still deflects (69efeb6 behavior, plural fix intact).
+      ctx.reset(); await w.handleInput('I need a full truckload to Dallas');
+      A.ok(deflected(), 'a genuine truckload ask no longer deflects');
+      ctx.reset(); await w.handleInput('2 full truckloads of furniture next week');
+      A.ok(deflected(), "the 69efeb6 plural fix ('truckloads') did not survive the revert");
+      // 877bc26 vocabulary must NOT deflect.
+      ctx.reset(); sawAgent = false;
+      await w.handleInput('shipping an oversized recliner, 48 ft from my dock to the store');
+      A.ok(!deflected(), "'oversized' / '48 ft' deflected a normal LTL customer to email");
+      ctx.reset(); sawAgent = false;
+      await w.handleInput('can you move a hot shot order of chairs for me');
+      A.ok(!deflected(), "'hot shot' deflected a normal customer to email");
+    },
+  },
+  // ── 14 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 14, name: 'the output gate never silences a reply',
+    property: '_gateFinalText returns non-empty text for any non-empty input; a whole-turn strip delivers the original and flags wouldHaveStripped',
+    catches: 'Path B conviction d9ff59d — a gate false positive made the agent say nothing at all',
+    run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      w.setInsurance({ status: 'added', amount: 5000, commodityId: 'abc', commodityName: 'General Goods' });
+      // First catch still regenerates (unchanged).
+      const g1 = w._gateFinalText('Would you like to add cargo insurance?', { regenDone: false });
+      A.ok(g1.regenerate === true, 'the one-shot regeneration path was lost');
+      // Post-regen, a bare re-ask used to strip to NOTHING — it must now deliver the original.
+      const g2 = w._gateFinalText('Would you like to add cargo insurance?', { regenDone: true });
+      A.ok(String(g2.text).trim().length > 0, 'the gate silenced a whole turn (empty text returned)');
+      A.ok(g2.wouldHaveStripped === true, 'a delivered-instead-of-stripped turn was not flagged/logged');
+      // A bare unbacked promise (no pull in flight, no rates) also must not vanish.
+      const g3 = w._gateFinalText('Give me a moment.', { regenDone: true });
+      A.ok(String(g3.text).trim().length > 0, 'a bare promise was silenced instead of delivered');
+      // Partial strips still work: offending sentence removed, the rest delivered.
+      const g4 = w._gateFinalText('Your quote is ready to review. Would you like to add cargo insurance?', { regenDone: true });
+      A.ok(/quote is ready/i.test(g4.text), 'the surviving sentence was lost in a partial strip');
+      A.ok(!/add cargo insurance\?/i.test(g4.text), 'the offending re-ask survived a partial strip');
+    },
+  },
+  // ── 15 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 15, name: 'the geocoder verdict never reaches the chat agent',
+    property: 'with a residential verdict cached, no agent-facing surface (live state block, system prompt) carries the classification; only the RDI overlays/dispatch check may speak it',
+    catches: 'product-rule regression born 80dd91f/9afbca9/834ec3c — chat challenged the customer with "comes back residential"',
+    run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      w._residentialStatus = { residential: true, liftgateRecommended: true, weight: 450 };
+      const ls = w._liveStateBlock();
+      A.ok(ls.indexOf('residentialStatus') < 0, 'residentialStatus is still surfaced to the agent');
+      A.ok(ls.indexOf('residentialConflict') < 0, 'residentialConflict instructions are still surfaced to the agent');
+      A.ok(!/residential/i.test(ls), 'the live state block still mentions residential classification: ' + (ls.match(/.{0,60}residential.{0,60}/i) || [''])[0]);
+      const sys = ctx.g('_convoSysPrompt');
+      A.ok(sys.indexOf('comes back residential') < 0, 'the "comes back residential" challenge wording survives in the system prompt');
+      A.ok(sys.indexOf('RESIDENTIAL / LIFTGATE SAFEGUARD') < 0, 'the RESIDENTIAL / LIFTGATE SAFEGUARD rule survives in the system prompt');
+      A.ok(/NEVER YOURS TO RAISE/i.test(sys), 'the never-mention-classification rule is missing from the system prompt');
+    },
+  },
+  // ── 16 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 16, name: 'a plain refusal exits the insurance flow at any point',
+    property: '"no"/"skip"/"no insurance"/"never mind" ends collection immediately in BOTH the value and commodity stages, and the 31-item numbered list is never shown',
+    catches: 'insurance flow trapping customers who declined mid-collection; the numbered-list UX',
+    async run(ctx) {
+      const w = ctx.win; openQuote(w);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      // Value stage: plain "no" exits.
+      w._insCollecting = 'value'; w._insValueArmed = true;
+      await w.handleInput('no');
+      A.ok(w._insCollecting === null, '"no" did not exit the value stage: ' + w._insCollecting);
+      // Commodity stage: bare "no" exits too (used to require "cancel"/"no thanks").
+      w._insCollecting = 'commodity'; w._insTempValue = 5000;
+      ctx.reset();
+      await w.handleInput('no');
+      A.ok(w._insCollecting === null, '"no" did not exit the commodity stage: ' + w._insCollecting);
+      A.ok(ctx.messages.some(m => m.role === 'bot' && /left cargo insurance off|without insurance/i.test(m.text)), 'no exit confirmation after a commodity-stage refusal');
+      // The numbered commodity list is gone: a captured value asks free-text, no "Reply with a number".
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insReaskCount = 0;
+      ctx.reset();
+      await w.handleInput('5000');
+      A.ok(w._insCollecting === 'commodity', 'a bare number on a just-asked turn was not captured as the value');
+      const ask = ctx.messages.filter(m => m.role === 'bot').map(m => m.text).join(' ');
+      A.ok(!/reply with a number|^\s*1\./im.test(ask) && !/\b1\.\s/.test(ask), 'the numbered commodity list is still shown: ' + ask.slice(0, 120));
+      A.ok(/what type of commodity/i.test(ask), 'the free-text commodity ask is missing: ' + ask.slice(0, 120));
+    },
+  },
+  // ── 17 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 17, name: 'address and measurement digits never capture as a declared value',
+    property: 'value capture requires monetary intent ($, money words, or the one-turn just-asked arm) and always rejects address/measurement-shaped digits',
+    catches: 'the "1145 s drive is for sure a residence" → $1,145 declared-value misparse class',
+    async run(ctx) {
+      const w = ctx.win; openQuote(w);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      // The exact reported string, even on a just-asked (armed) turn, must NOT capture.
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insTempValue = null; w._insReaskCount = 0;
+      ctx.reset();
+      await w.handleInput('1145 s drive is for sure a residence');
+      A.ok(w._insTempValue !== 1145 && w._insCollecting !== 'commodity', 'an address captured as a $1,145 declared value');
+      A.ok(!ctx.messages.some(m => m.role === 'bot' && /\$\s*1,?145/.test(m.text)), 'the bot echoed the address digits as money');
+      // Measurement digits do not capture either.
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insTempValue = null; w._insReaskCount = 0;
+      await w.handleInput('each pallet is 450 lbs');
+      A.ok(w._insTempValue !== 450 && w._insCollecting !== 'commodity', 'a weight captured as a declared value');
+      // Un-armed, un-monetary bare digits do not capture...
+      w._insCollecting = 'value'; w._insValueArmed = false; w._insTempValue = null; w._insReaskCount = 0;
+      await w.handleInput('7500');
+      A.ok(w._insCollecting !== 'commodity', 'a bare number captured with no arm and no monetary intent');
+      // ...but genuine monetary intent always does, armed or not.
+      w._insCollecting = 'value'; w._insValueArmed = false; w._insTempValue = null; w._insReaskCount = 0;
+      await w.handleInput('$7,500');
+      A.ok(w._insTempValue === 7500 && w._insCollecting === 'commodity', 'an explicit $7,500 was not captured: ' + w._insTempValue);
+    },
+  },
 ];
 
 module.exports = { invariants, A };
