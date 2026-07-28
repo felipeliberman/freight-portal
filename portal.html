@@ -12022,6 +12022,11 @@ function _applyQuoteFields(input) {
       if (_cn.phone)   _setBkField('bk-dl-phone',   _cn.phone);
     }
   }
+  // Lane-stamp the captured contacts so the panel restore can trust them for THIS shipment
+  // (and never bleed them into a different lane's panel).
+  if ((input.shipper || input.consignee) && window._quotedContacts) {
+    try { const _ln = _partyLane(); if (_ln !== '->') window._quotedContacts._lane = _ln; } catch (e) {}
+  }
 
   // Pull rates if requested — but GUARD against redundant pulls that churn the form.
   // Only actually pull if the shipment signature changed since the last pull.
@@ -12459,6 +12464,110 @@ function _insDeclineSettle() {
   if (typeof window._doGetRates === 'function') { try { window._doGetRates(); } catch (e) { console.warn('[FP] no-insurance pull failed', e); } }
 }
 
+// ── Commodity matching, ONE implementation (value-stage combined answers + commodity stage) ──
+// Free-text → Redkik CATEGORY: the Redkik list carries category names, not everyday commodity
+// words (no "furniture" entry), so common words map to their category first; the fuzzy name
+// match is the fallback for answers naming a category directly; a bare index still works.
+function _matchInsCommodity(txt) {
+  const t = String(txt == null ? '' : txt).trim();
+  if (!t) return null;
+  if (/^\s*\d+\s*$/.test(t)) {
+    const _n = parseInt(t, 10);
+    if (_n >= 1 && _n <= REDKIK_COMMODITIES.length) return REDKIK_COMMODITIES[_n - 1];
+  }
+  const _synName = (() => {
+    if (/\b(used)\b/i.test(t) && /\b(electronic|tv|television|appliance)/i.test(t)) return 'Used Household Electronics';
+    if (/\b(electronic|tv|television|appliance)/i.test(t)) return 'New Household Electronics';
+    if (/\b(used)\b/i.test(t) && /\b(computer|laptop|cell ?phone|phone|tablet)/i.test(t)) return 'Used Computers/Cell Phones';
+    if (/\b(computer|laptop|cell ?phone|phone|tablet|server)\b/i.test(t)) return 'New Computers/Cell Phones';
+    if (/\b(machin|equipment|tool|motor|engine part|industrial)/i.test(t) && !/\bmedical\b/i.test(t)) return 'Machinery (excluding Medical Equipment)';
+    if (/\bmedical\b/i.test(t) && /\b(device|equipment|machine)/i.test(t)) return 'Medical Devices';
+    if (/\bmedical\b/i.test(t)) return 'Medical Supplies';
+    if (/\b(food|snack|grocer|canned|beverage(?!.*(beer|wine|spirit)))/i.test(t)) return 'Non-Perishable Foods';
+    if (/\b(beer|wine|spirit|liquor|alcohol)/i.test(t)) return 'Beer, Wine, and Spirits';
+    if (/\b(car|auto|automobile|vehicle|truck)s?\b/i.test(t) && !/\bparts?\b/i.test(t)) return 'Automobiles';
+    if (/\b(fragile|glass(?!.*crate)|ceramic|porcelain|china)\b/i.test(t)) return 'Fragile Goods';
+    if (/\b(solar)\b/i.test(t)) return 'Solar Panels';
+    if (/\b(pharma|medicine|drugs?)\b/i.test(t)) return 'Pharmaceuticals';
+    if (/\b(furniture|sofa|couch|chair|table|mattress|bed|dresser|cabinet|desk|recliner|shelv|bookcase|clothing|apparel|textile|toys?|houseware|home goods|decor|retail|merchandise|general goods|consumer goods|parts)\b/i.test(t)) return 'General Goods &/or Merchandise';
+    return null;
+  })();
+  if (_synName) { const m = REDKIK_COMMODITIES.find(c => c.name === _synName); if (m) return m; }
+  const _lc = t.toLowerCase();
+  return REDKIK_COMMODITIES.find(c => c.name.toLowerCase().includes(_lc)) ||
+         REDKIK_COMMODITIES.find(c => _lc.split(/\s+/).some(w => w.length >= 3 && c.name.toLowerCase().includes(w))) || null;
+}
+
+// A re-ask's example list must never contain a term the customer already used this conversation —
+// re-asking with "for example furniture" right after the customer said "furniture" reads as deaf.
+function _insExampleList(baseExamples) {
+  let used = '';
+  try { used = chatHistory.filter(m => m.role === 'user' && typeof m.content === 'string').map(m => m.content).join(' ').toLowerCase(); } catch (e) {}
+  return baseExamples.filter(w => used.indexOf(w.toLowerCase()) < 0);
+}
+
+// ── Commodity-complete: the single settle path once value + commodity are both known ──
+// (Extracted from the commodity stage so the value stage can settle a COMBINED answer —
+// "furniture, $2500" — in the same turn instead of discarding half of it.)
+function _insCompleteWithCommodity(_match) {
+  const _val = Number(window._insTempValue) || 0;
+  // Through the one owner: toggle and value move together, and the form mirrors automatically.
+  setInsurance({ status: 'added', amount: _val, commodityId: _match.id, commodityName: _match.name });
+  window._insTempValue = null; window._insTempCommodity = null; window._insCollecting = null;
+  // No inclusion claim yet — whether insurance actually rides the rates is only known when the
+  // pull completes (the evidence-gated callback below says which happened).
+  appendMessage('bot', 'Cargo insurance requested — ' + _match.name + ', declared value ' + fmtMoney(_val) + '. Pulling updated rates now...');
+
+  // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
+  // it ourselves, suppress the prefill auto-run so we control the single requote below.
+  if (!_quoteFormIsOpen()) {
+    window._suppressQuoteAutoRun = true;
+    try { showQuoteForm(_lqsToPrefill(lastQuotedShipment), true); } catch(e) { console.warn('[FP] insurance: showQuoteForm failed', e); }
+    // Re-apply the original accessorials so the requote matches the prior quote.
+    const _origAcc = accessorialSet(lastQuotedShipment && lastQuotedShipment.accessorials);
+    const _qcNew = window._quoteContainer;
+    if (_qcNew) _origAcc.forEach(code => {
+      const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
+      if (b && !b.classList.contains('acc-active')) b.click();
+    });
+  }
+  // Populate the insurance panel from the (scoped) container, activate INS, THEN requote — once.
+  const qc = window._quoteContainer;
+  if (qc) {
+    const cSel = qc.querySelector('#qt-ins-commodity');
+    const vInp = qc.querySelector('#qt-ins-value');
+    if (cSel) cSel.value = _match.id;
+    if (vInp) vInp.value = _val;
+    const insBtn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
+    if (insBtn && !insBtn.classList.contains('acc-active')) insBtn.click();
+    const panel = qc.querySelector('#qt-insurance-panel'); if (panel) panel.style.display = 'block';
+  }
+  // EVIDENCE-GATED "insurance included": the pull's own shipment (published to
+  // _lastRatesShipment) is the record of whether INS actually rode the rate call — the DOM
+  // clicks above can silently miss (commodity select mismatch, INS button not found), which is
+  // exactly how "rates are refreshed with insurance included" was said over an uninsured pull.
+  // Same loud-failure pattern as the outbound accessorial guard: state which happened, never
+  // claim inclusion without the evidence.
+  window._onRatesReady = function (rates) {
+    try {
+      const _shp = window._lastRatesShipment;
+      if (rates && rates.length && _shp && _shp.insuranceEnabled) {
+        appendMessage('bot', 'These rates include cargo insurance on the declared ' + fmtMoney(_val) + '.');
+        _summarizeRatesToChat();
+      } else if (rates && rates.length) {
+        appendMessage('bot', 'The rates are back, but I could not get cargo insurance applied on my side — the prices on screen do NOT include insurance. Say "add insurance" to try again, or email support@freightandlogistics.ai and the team will price it for you.');
+        _summarizeRatesToChat();
+      }
+      // No rates at all → the standard rate-failure copy speaks; never mention insurance success.
+    } catch (e) { try { _summarizeRatesToChat(); } catch (e2) {} }
+  };
+  if (typeof window._doGetRates === 'function') {
+    try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); }
+  } else {
+    console.warn('[FP] insurance: _doGetRates unavailable — could not requote with insurance');
+  }
+}
+
 function _insMsgMovedOn(t) {
   var s = String(t || '').toLowerCase();
   return /\b(rate|rates|quote|book|booking|cheapest|carrier|track|tracking|status|where are)\b/.test(s)
@@ -12821,6 +12930,7 @@ function _snapshotBookingToQuoted(originZip, destZip) {
       };
     }
     window._pendingContactRestore = { lane: (originZip || '') + '->' + (destZip || '') };
+    if ((originZip || '') || (destZip || '')) window._quotedContacts._lane = (originZip || '') + '->' + (destZip || '');
     return true;
   } catch (e) { console.warn('[FP] _snapshotBookingToQuoted failed', e); return false; }
 }
@@ -12882,6 +12992,20 @@ function _restoreBookingFromQuoted() {
     fillEmpty('bk-haz-contact', hz.contact);
     fillEmpty('bk-haz-phone', hz.phone);
   } catch (e) { console.warn('[FP] _restoreBookingFromQuoted failed', e); }
+}
+
+// The current shipment's lane ("originZip->destZip"), best-known: the live quote form first,
+// then bookingData, then lastQuotedShipment. Used to lane-stamp _quotedContacts so a panel
+// restore can trust captured contacts for THIS shipment and never bleed them across lanes.
+function _partyLane() {
+  try {
+    const _root = (typeof _quoteRoot === 'function') ? (_quoteRoot() || document) : document;
+    const qo = (_root.querySelector && (_root.querySelector('#qt-origin') || {}).value) || '';
+    const qd = (_root.querySelector && (_root.querySelector('#qt-dest') || {}).value) || '';
+    const o = String(qo).trim() || (typeof bookingData !== 'undefined' && bookingData && bookingData.originZip) || (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.originZip) || '';
+    const d = String(qd).trim() || (typeof bookingData !== 'undefined' && bookingData && bookingData.destZip) || (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment && lastQuotedShipment.destinationZip) || '';
+    return (o || '') + '->' + (d || '');
+  } catch (e) { return '->'; }
 }
 
 // ── CANONICAL PARTY DATA ──────────────────────────────────────────────────────
@@ -12951,6 +13075,7 @@ function applyPartyData(parsed, opts) {
     });
     if (form.referenceNumber) window._quotedContacts.referenceNumber = form.referenceNumber;
     if (form.specialInstructions) window._quotedContacts.specialInstructions = form.specialInstructions;
+    try { const _ln = _partyLane(); if (_ln !== '->') window._quotedContacts._lane = _ln; } catch (e) {}
   }
   console.log('[FP] applyPartyData — wrote', written.length, 'field(s):', JSON.stringify(written), '| source:', opts.source || 'unknown');
   return { written: written, shipper: (form && form.shipper) || {}, consignee: (form && form.consignee) || {} };
@@ -15971,8 +16096,22 @@ async function handleInput(text) {
     const _num = _m ? parseFloat(_m[0]) : NaN;
     if (_num > 0) {
       window._insTempValue = _num;
+      // COMBINED ANSWER: "furniture, $2500" / "$2500, furniture" / "furniture worth $2500" —
+      // capture the value AND run the non-money remainder through the same commodity mapper in
+      // this turn. Discarding half the answer and then re-asking with "for example furniture"
+      // is the deaf-parse class this closes.
+      const _remainder = String(t)
+        .replace(/\$?\s*[\d,]+(?:\.\d+)?\s*(?:dollars?|bucks|usd|grand|k\b)?/gi, ' ')
+        .replace(/\b(?:worth|valued?\s*(?:at|of)?|value of|insured? for|coverage of|declared?|total|cargo|value|is|it'?s|about)\b/gi, ' ')
+        .replace(/[,;.!]/g, ' ').replace(/\s+/g, ' ').trim();
+      const _comboMatch = _remainder.length >= 3 ? _matchInsCommodity(_remainder) : null;
+      if (_comboMatch) {
+        _insCompleteWithCommodity(_comboMatch);
+        return;
+      }
       window._insCollecting = 'commodity';
-      appendMessage('bot', 'Got it — ' + fmtMoney(_num) + '. What type of commodity is it — for example furniture, electronics, or machinery?');
+      const _ex1 = _insExampleList(['furniture', 'electronics', 'machinery']);
+      appendMessage('bot', 'Got it — ' + fmtMoney(_num) + '. What type of commodity is it' + (_ex1.length ? ' — for example ' + _ex1.join(', ') : '') + '?');
     } else {
       // Neither money-shaped nor a refusal. RELEASE to normal routing when (a) the ask never
       // actually rendered — a ghost-armed collector may never eat a message ("jts" became
@@ -16012,103 +16151,17 @@ async function handleInput(text) {
       window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null; window._insValueArmed = false;
       return handleInput(t); // soft release — no decline recorded
     }
-    let _match = null;
-    if (/^\s*\d+\s*$/.test(t)) {
-      const _n = parseInt(t.trim(), 10);
-      if (_n >= 1 && _n <= REDKIK_COMMODITIES.length) _match = REDKIK_COMMODITIES[_n - 1];
-    }
-    // Free-text → Redkik CATEGORY mapping. The Redkik list carries category names, not everyday
-    // commodity words — it has NO "furniture" entry, so the single most common answer this
-    // brokerage hears matched nothing by name. Everyday words map to their category here first;
-    // the fuzzy name match below stays as the fallback for answers that name a category directly.
-    if (!_match) {
-      const _synName = (() => {
-        if (/\b(used)\b/i.test(t) && /\b(electronic|tv|television|appliance)/i.test(t)) return 'Used Household Electronics';
-        if (/\b(electronic|tv|television|appliance)/i.test(t)) return 'New Household Electronics';
-        if (/\b(used)\b/i.test(t) && /\b(computer|laptop|cell ?phone|phone|tablet)/i.test(t)) return 'Used Computers/Cell Phones';
-        if (/\b(computer|laptop|cell ?phone|phone|tablet|server)\b/i.test(t)) return 'New Computers/Cell Phones';
-        if (/\b(machin|equipment|tool|motor|engine part|industrial)/i.test(t) && !/\bmedical\b/i.test(t)) return 'Machinery (excluding Medical Equipment)';
-        if (/\bmedical\b/i.test(t) && /\b(device|equipment|machine)/i.test(t)) return 'Medical Devices';
-        if (/\bmedical\b/i.test(t)) return 'Medical Supplies';
-        if (/\b(food|snack|grocer|canned|beverage(?!.*(beer|wine|spirit)))/i.test(t)) return 'Non-Perishable Foods';
-        if (/\b(beer|wine|spirit|liquor|alcohol)/i.test(t)) return 'Beer, Wine, and Spirits';
-        if (/\b(car|auto|automobile|vehicle|truck)s?\b/i.test(t) && !/\bparts?\b/i.test(t)) return 'Automobiles';
-        if (/\b(fragile|glass(?!.*crate)|ceramic|porcelain|china)\b/i.test(t)) return 'Fragile Goods';
-        if (/\b(solar)\b/i.test(t)) return 'Solar Panels';
-        if (/\b(pharma|medicine|drugs?)\b/i.test(t)) return 'Pharmaceuticals';
-        if (/\b(furniture|sofa|couch|chair|table|mattress|bed|dresser|cabinet|desk|recliner|shelv|bookcase|clothing|apparel|textile|toys?|houseware|home goods|decor|retail|merchandise|general goods|consumer goods|parts)\b/i.test(t)) return 'General Goods &/or Merchandise';
-        return null;
-      })();
-      if (_synName) _match = REDKIK_COMMODITIES.find(c => c.name === _synName) || null;
-    }
-    if (!_match) {
-      const _lc = lower.trim();
-      _match = REDKIK_COMMODITIES.find(c => c.name.toLowerCase().includes(_lc)) ||
-               REDKIK_COMMODITIES.find(c => _lc.split(/\s+/).some(w => w.length >= 3 && c.name.toLowerCase().includes(w)));
-    }
+    // ONE matcher (shared with the value stage's combined-answer path).
+    const _match = _matchInsCommodity(t);
     if (!_match) {
       if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
       window._insReaskCount = (window._insReaskCount || 0) + 1;
       if (window._insReaskCount >= 2) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
-      appendMessage('bot', 'I could not match that commodity type. What kind of goods are they — furniture, appliances, electronics, machinery, or something else? Or say "no" to skip insurance.');
+      const _ex2 = _insExampleList(['furniture', 'appliances', 'electronics', 'machinery']);
+      appendMessage('bot', 'I could not match that commodity type. What kind of goods are they' + (_ex2.length ? ' — ' + _ex2.join(', ') + ', or something else' : '') + '? Or say "no" to skip insurance.');
       return;
     }
-    const _val = Number(window._insTempValue) || 0;
-    // Through the one owner: toggle and value move together, and the form mirrors automatically.
-    setInsurance({ status: 'added', amount: _val, commodityId: _match.id, commodityName: _match.name });
-    window._insTempValue = null; window._insTempCommodity = null;
-    // No inclusion claim yet — whether insurance actually rides the rates is only known when the
-    // pull completes (the evidence-gated callback below says which happened).
-    appendMessage('bot', 'Cargo insurance requested — ' + _match.name + ', declared value ' + fmtMoney(_val) + '. Pulling updated rates now...');
-
-    // Ensure the quote form is open so the INS panel + scoped fields exist. When we open
-    // it ourselves, suppress the prefill auto-run so we control the single requote below.
-    if (!_quoteFormIsOpen()) {
-      window._suppressQuoteAutoRun = true;
-      try { showQuoteForm(_lqsToPrefill(lastQuotedShipment), true); } catch(e) { console.warn('[FP] insurance: showQuoteForm failed', e); }
-      // Re-apply the original accessorials so the requote matches the prior quote.
-      const _origAcc = accessorialSet(lastQuotedShipment.accessorials);
-      const _qcNew = window._quoteContainer;
-      if (_qcNew) _origAcc.forEach(code => {
-        const b = [..._qcNew.querySelectorAll('.qt-acc')].find(x => x.dataset.code === code);
-        if (b && !b.classList.contains('acc-active')) b.click();
-      });
-    }
-    // Populate the insurance panel from the (scoped) container, activate INS, THEN requote — once.
-    const qc = window._quoteContainer;
-    if (qc) {
-      const cSel = qc.querySelector('#qt-ins-commodity');
-      const vInp = qc.querySelector('#qt-ins-value');
-      if (cSel) cSel.value = _match.id;
-      if (vInp) vInp.value = _val;
-      const insBtn = [...qc.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS');
-      if (insBtn && !insBtn.classList.contains('acc-active')) insBtn.click();
-      const panel = qc.querySelector('#qt-insurance-panel'); if (panel) panel.style.display = 'block';
-    }
-    // EVIDENCE-GATED "insurance included": the pull's own shipment (published to
-    // _lastRatesShipment) is the record of whether INS actually rode the rate call — the DOM
-    // clicks above can silently miss (commodity select mismatch, INS button not found), which is
-    // exactly how "rates are refreshed with insurance included" was said over an uninsured pull.
-    // Same loud-failure pattern as the outbound accessorial guard: state which happened, never
-    // claim inclusion without the evidence.
-    window._onRatesReady = function (rates) {
-      try {
-        const _shp = window._lastRatesShipment;
-        if (rates && rates.length && _shp && _shp.insuranceEnabled) {
-          appendMessage('bot', 'These rates include cargo insurance on the declared ' + fmtMoney(_val) + '.');
-          _summarizeRatesToChat();
-        } else if (rates && rates.length) {
-          appendMessage('bot', 'The rates are back, but I could not get cargo insurance applied on my side — the prices on screen do NOT include insurance. Say "add insurance" to try again, or email support@freightandlogistics.ai and the team will price it for you.');
-          _summarizeRatesToChat();
-        }
-        // No rates at all → the standard rate-failure copy speaks; never mention insurance success.
-      } catch (e) { try { _summarizeRatesToChat(); } catch (e2) {} }
-    };
-    if (typeof window._doGetRates === 'function') {
-      try { window._doGetRates(); } catch(e) { console.warn('[FP] insurance requote failed', e); }
-    } else {
-      console.warn('[FP] insurance: _doGetRates unavailable — could not requote with insurance');
-    }
+    _insCompleteWithCommodity(_match); // the single settle path: value + commodity known
     return;
   }
 
@@ -16192,7 +16245,9 @@ async function handleInput(text) {
         removeTyping();
         if (_sel.ok) {
           window._inQuoteConvo = true;
-          if (_bkTabWasOpen) setTimeout(() => { appendMessage('bot', _bookingGreeting(_sel.carrier, _sel.price)); }, 250);
+          if (_bkTabWasOpen) (window._bookingRestoreDone || Promise.resolve()).then(() => {
+            try { appendMessage('bot', _bookingGreeting(_sel.carrier, _sel.price)); } catch (e) {}
+          });
           return;
         }
       } else if (_probe.code === 'AMBIGUOUS') {
@@ -16954,6 +17009,16 @@ function showBookingPanel(rate, shipmentData) {
   if (document.getElementById('bk-pu-name') && typeof _snapshotOpenBookingTab === 'function') {
     try { _snapshotOpenBookingTab(); } catch (e) {}
   }
+  // RESTORE-CHAIN COMPLETION, made explicit. The greeting is SEQUENCED on this promise — it may
+  // only compose its text after every restore that could change the fields it reports on has
+  // finished (the one-shots, the _quotedContacts restores, bookingData fill-if-empty, the
+  // address-book default, and the requote overrides). A timed guess raced the restores and lost:
+  // "I still need the delivery name…" over a panel whose delivery side landed a beat later.
+  // Restore calls' return values are collected as thenables so a genuinely async restore is
+  // awaited too, not just the synchronous ones.
+  let _restoreResolve;
+  const _restoreThenables = [];
+  window._bookingRestoreDone = new Promise(res => { _restoreResolve = res; });
   const name      = rate._name || rate.name || rate.carrierName || rate.carrier || 'Carrier';
   const logo      = rate._iconUrl || rate.iconUrl || rate.carrierLogo || '';
   const price     = Number((rate.billTo&&rate.billTo.total)||rate.total||rate.cost||rate._price||0);
@@ -17279,10 +17344,18 @@ function showBookingPanel(rate, shipmentData) {
     // so their entries win and the default only fills what is still blank. One-shot, lane-gated so a
     // genuinely new quote (different lane, or no pending flag) never inherits a prior shipment's detail.
     if (window._pendingContactRestore && window._pendingContactRestore.lane === (originZip + '->' + destZip)) {
-      _restoreBookingFromQuoted();
+      _restoreThenables.push(_restoreBookingFromQuoted());
       window._pendingContactRestore = null;
     }
-    applyDefaultShipper();
+    // The tail of the restore chain: default shipper → requote overrides → every collected restore
+    // thenable → THEN the completion promise resolves and the greeting may read the DOM and speak.
+    Promise.resolve(typeof applyDefaultShipper === 'function' ? applyDefaultShipper() : null)
+      .catch(() => {})
+      .then(() => { _requoteOverrides(); })
+      .then(() => Promise.all(_restoreThenables.map(p => Promise.resolve(p).catch(() => {}))))
+      .then(() => { try { if (_restoreResolve) _restoreResolve(); } catch (e) {} });
+
+    function _requoteOverrides() {
     const _rqCtx = window._requoteContext;
     if (_rqCtx && _rqCtx.bolId) {
       // Requote flow: update the original BOL (PUT) instead of creating a new one. Through the
@@ -17317,6 +17390,7 @@ function showBookingPanel(rate, shipmentData) {
       const _rsi = document.getElementById('bk-special-instructions');
       if (_rsi) _rsi.value = _rs.BOLInstructions || _rs.specialInstructions || '';
       window._requoteContext = null;
+    }
     }
   }, 200);
 
@@ -17775,8 +17849,15 @@ function showBookingPanel(rate, shipmentData) {
   {
     const _lane = (originZip || '') + '->' + (destZip || '');
     if (window._pendingContactRestore && window._pendingContactRestore.lane === _lane) {
-      _restoreBookingFromQuoted();
+      _restoreThenables.push(_restoreBookingFromQuoted());
       window._pendingContactRestore = null;
+    }
+    // Lane-stamped restore even when the one-shot flag wasn't armed: _quotedContacts captured via
+    // the agent's party writes carries its own lane stamp now, so data for THIS lane always comes
+    // back on open (the flag only covers snapshot-on-exit paths), and a different lane never bleeds.
+    const _qcLane = window._quotedContacts && window._quotedContacts._lane;
+    if (window._quotedContacts && (!_qcLane || _qcLane === _lane)) {
+      _restoreThenables.push(_restoreBookingFromQuoted());
     }
     const bd0 = bookingData || {};
     if (bd0.shipperName || bd0.shipperStreet || bd0.consigneeName || bd0.consigneeStreet) {
@@ -17815,11 +17896,14 @@ function showBookingPanel(rate, shipmentData) {
     }, 150);
   };
 
-  // ONE greeting per genuine open (see guard above), and it must be TRUE: emitted after the
-  // restores/defaults have landed, reading the actual DOM fill state via _bookingGreeting.
-  if (!_bookingTabAlreadyOpen) setTimeout(() => {
-    appendMessage('bot', _bookingGreeting(name, price));
-  }, 250);
+  // ONE greeting per genuine open (see guard above), and it must be TRUE: SEQUENCED strictly
+  // after the restore chain completes (no fixed timer — a timer raced the restores and lost),
+  // then it reads the actual DOM fill state via _bookingGreeting and speaks.
+  if (!_bookingTabAlreadyOpen) {
+    (window._bookingRestoreDone || Promise.resolve()).then(() => {
+      try { appendMessage('bot', _bookingGreeting(name, price)); } catch (e) {}
+    });
+  }
 }
 
 // ── THE booking-panel greeting: ONE message per open, and it must be TRUE ─────

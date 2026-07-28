@@ -703,17 +703,110 @@ const invariants = [
       A.ok(/carried over/i.test(greets[0].text), 'a filled panel was not acknowledged: ' + greets[0].text);
       A.ok(!/tell me the shipper name/i.test(greets[0].text), 'a filled panel was asked for its own details');
       A.ok(ctx.messages.every(m => m.text.indexOf('I need the pickup and delivery details') < 0), 'the deleted hardcoded line resurfaced');
-      // Empty panel on a fresh quote → the full ask, exactly once.
+      // A DIFFERENT lane on a fresh quote: the lane-stamped contacts must NOT bleed in — the
+      // panel opens genuinely empty and the greeting gives the full ask, exactly once.
       w.resetShipmentState(false);
-      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
-      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      const LANE2 = Object.assign({}, fx.SHIPMENT, { originZip: '10001', destinationZip: '60601', originCity: 'New York', destinationCity: 'Chicago' });
+      w.showQuoteForm({ originZip: '10001', destZip: '60601' }, true);
+      w._publishRatesForAI(fx.RATES, LANE2);
+      w._quotedContacts._lane = '90660->33511'; // stamped for the FIRST shipment's lane
       ctx.reset();
-      const sel2 = w.selectRate({ carrier: 'AAA Cooper' }, { shipment: fx.SHIPMENT, source: 'test' });
+      const sel2 = w.selectRate({ carrier: 'AAA Cooper' }, { shipment: LANE2, source: 'test' });
       A.ok(sel2.ok, 'setup: could not select AAA Cooper');
       await new Promise(r => setTimeout(r, 350));
+      const v2 = id => (w.document.getElementById(id) || {}).value || '';
+      A.ok(!v2('bk-pu-name') && !v2('bk-dl-name'), 'another lane\'s contacts bled into the new panel: ' + v2('bk-pu-name') + '/' + v2('bk-dl-name'));
       const greets2 = ctx.messages.filter(m => m.role === 'bot' && /^Booking .* at \$/.test(m.text));
       A.ok(greets2.length === 1, 'expected one greeting on the empty open, got ' + greets2.length);
       A.ok(/tell me the shipper name/i.test(greets2[0].text), 'the empty-panel greeting lost its ask: ' + greets2[0].text);
+    },
+  },
+  // ── 28 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 28, name: 'a combined insurance answer resolves value AND commodity in one turn',
+    property: '"furniture, $2500", "$2500, furniture", and "furniture worth $2500" each settle insurance in a single turn with zero re-asks',
+    catches: 'tonight\'s repro — "furniture, $2500" captured the value, discarded the commodity, then re-asked with "for example furniture"',
+    async run(ctx) {
+      const w = ctx.win;
+      for (const answer of ['furniture, $2500', '$2500, furniture', 'furniture worth $2500']) {
+        w.resetShipmentState(false);
+        w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+        w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+        w._doGetRates = () => {};
+        w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true; w._insPreRate = true;
+        ctx.reset();
+        await w.handleInput(answer);
+        const lqs = w.eval('lastQuotedShipment') || {};
+        A.ok(lqs.insuranceEnabled === true && Number(lqs.insuranceAmount) === 2500,
+          '"' + answer + '" did not settle value+commodity in one turn: enabled=' + lqs.insuranceEnabled + ' amount=' + lqs.insuranceAmount);
+        A.ok(/General Goods/i.test(lqs.insuranceCommodityName || ''), '"' + answer + '" mapped commodity wrong: ' + lqs.insuranceCommodityName);
+        A.ok(!ctx.messages.some(m => /what type of commodity/i.test(m.text)), '"' + answer + '" still re-asked for the commodity');
+      }
+    },
+  },
+  // ── 29 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 29, name: 'a re-ask never offers an example the customer already used',
+    property: 'the commodity ask and the no-match re-ask exclude any example term present in the customer\'s own prior messages',
+    catches: 're-asking "for example furniture" right after the customer said furniture',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w.appendMessage('user', 'it is furniture mostly'); // the term is now in the conversation
+      // Value-only answer whose remainder maps to nothing → the commodity ask fires, minus "furniture".
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true;
+      ctx.reset();
+      await w.handleInput('the total is $500 even');
+      const ask = ctx.messages.filter(m => m.role === 'bot' && /commodity/i.test(m.text)).map(m => m.text).join(' ');
+      A.ok(ask.length > 0, 'no commodity ask rendered');
+      A.ok(!/furniture/i.test(ask), 'the ask offered a term the customer already used: ' + ask);
+      A.ok(/electronics/i.test(ask), 'the ask lost its remaining examples: ' + ask);
+      // No-match re-ask excludes it too.
+      ctx.reset();
+      await w.handleInput('blorptastic widgets');
+      const reask = ctx.messages.filter(m => m.role === 'bot' && /could not match/i.test(m.text)).map(m => m.text).join(' ');
+      A.ok(reask.length > 0, 'no no-match re-ask rendered');
+      A.ok(!/furniture/i.test(reask), 'the re-ask offered a used term: ' + reask);
+    },
+  },
+  // ── 30 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 30, name: 'the greeting is sequenced after the restore chain, not timed',
+    property: 'with full _quotedContacts present and a deliberately SLOW restore, the greeting still reports a filled panel — it waits for the chain, it does not race it',
+    catches: 'tonight\'s repro — "I still need the delivery name…" over a panel whose restore landed a beat later',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      w._quotedContacts = {
+        _lane: fx.SHIPMENT.originZip + '->' + fx.SHIPMENT.destinationZip,
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', phone: '5625551234' },
+        consignee: { name: 'Haynes Brothers',    address: '1250 Main St',    phone: '8135559876' },
+      };
+      // SLOW restore: the real fill happens 300ms later, returned as a promise. Sequencing (not a
+      // timer) is the only way the greeting can still tell the truth.
+      const _realFill = () => {
+        const s = (id, v) => { const el = w.document.getElementById(id); if (el && !el.value) el.value = v; };
+        const qc = w._quotedContacts;
+        s('bk-pu-name', qc.shipper.name); s('bk-pu-street', qc.shipper.address); s('bk-pu-phone', qc.shipper.phone);
+        s('bk-dl-name', qc.consignee.name); s('bk-dl-street', qc.consignee.address); s('bk-dl-phone', qc.consignee.phone);
+      };
+      w._restoreBookingFromQuoted = () => new Promise(res => setTimeout(() => { _realFill(); res(); }, 300));
+      ctx.reset();
+      const sel = w.selectRate({ carrier: 'JTS' }, { shipment: fx.SHIPMENT, source: 'test' });
+      A.ok(sel.ok, 'setup: could not select JTS');
+      // Poll for the greeting (it must arrive only after the slow restore resolves).
+      let greet = null;
+      for (let i = 0; i < 30 && !greet; i++) {
+        await new Promise(r => setTimeout(r, 50));
+        greet = ctx.messages.find(m => m.role === 'bot' && /^Booking .* at \$/.test(m.text)) || null;
+      }
+      A.ok(greet, 'no greeting arrived within 1.5s');
+      A.ok(/carried over/i.test(greet.text), 'the greeting raced the slow restore and reported missing fields: ' + greet.text);
+      A.ok(!/still need/i.test(greet.text), 'the greeting named fields the restore was about to fill: ' + greet.text);
+      const v = id => (w.document.getElementById(id) || {}).value || '';
+      A.ok(v('bk-dl-name') === 'Haynes Brothers', 'the slow restore itself did not land: ' + v('bk-dl-name'));
     },
   },
 ];
