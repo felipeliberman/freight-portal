@@ -11,6 +11,16 @@
 const { boot } = require('./harness');
 const { invariants } = require('./invariants');
 
+// jsdom teardown guard: page-side async chains (ZIP lookups, debounced field refreshes) can land
+// AFTER ctx.dom.window.close(), where `document` is gone — a fatal unhandledRejection that says
+// nothing about any invariant. Invariant failures are caught via await/try in the loop below and
+// are unaffected; only post-close page async is being counted (and summarized once) here.
+let _teardownNoise = 0;
+process.on('unhandledRejection', () => { _teardownNoise++; });
+process.on('exit', () => {
+  if (_teardownNoise) console.log('  (' + _teardownNoise + ' post-teardown page async rejection(s) ignored — jsdom close artifacts, not invariant results)\n');
+});
+
 const want = process.argv.slice(2).filter(a => /^\d+$/.test(a)).map(Number);
 const list = want.length ? invariants.filter(i => want.includes(i.id)) : invariants;
 

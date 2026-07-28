@@ -2340,6 +2340,7 @@ function resetShipmentState(wipeConversation) {
     window._insCollecting = null; window._insTempValue = null; window._insTempCommodity = null;
     window._insValueArmed = false;
     window._insPreRate = false; window._insDecided = false;
+    window._gateSaveInFlight = false; window._turnToolCalls = null;
     window._lastTurnFailed = false;
     lastQuotedShipment = null;
     bookingRate = null; bookingStep = null; bookingData = {};
@@ -2788,6 +2789,26 @@ function _insGateBeforeRates(shipment, summary) {
   window._insValueArmed = true; // just asked — the next bare number is the declared value
   appendMessage('bot', (summary ? summary + ' ' : '') + 'One last thing — would you like to add cargo insurance? If so, what is the total value of the cargo? Or say "no" to skip.');
   return true;
+}
+
+// ── Gate-enforcement readiness: the SAME requirements the Get Rates button checks ──
+// (valid origin/dest ZIP or Canadian postal, a weight, and L×W×H dims). Used by the
+// promise-without-action enforcer so a gate-fired pull can never hit doGetRates' alerts.
+function _gateRateReadiness() {
+  try {
+    var q = (typeof _quoteFormState === 'function') ? _quoteFormState() : {};
+    if (!q || !q.quoteFormOpen || typeof window._doGetRates !== 'function') return { ok: false, formOpen: false, missing: [] };
+    var _zipOk = function (z) { z = String(z || '').trim(); return !!z && (z.length === 5 || (typeof _isCanadianPostal === 'function' && _isCanadianPostal(z))); };
+    var missing = [];
+    if (!_zipOk(q.origin))      missing.push('a valid origin ZIP or Canadian postal code');
+    if (!_zipOk(q.destination)) missing.push('a valid destination ZIP or Canadian postal code');
+    if (!(Number(q.weight) > 0)) missing.push('the weight');
+    if (!(Number(q.length) > 0 && Number(q.width) > 0 && Number(q.height) > 0)) missing.push('the dimensions (L×W×H)');
+    return { ok: missing.length === 0, formOpen: true, missing: missing };
+  } catch (e) { return { ok: false, formOpen: false, missing: [] }; }
+}
+function _gateMissingList(missing) {
+  return missing.length === 1 ? missing[0] : (missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1]);
 }
 
 // ─── RATE-ERROR CLASSIFICATION ────────────────────────────────────────────────
@@ -12939,6 +12960,7 @@ function _describeBookingInput(input) {
 // ── TOOL: book_shipment — conversational booking via Primus ────────────────────
 async function _execBookShipment(input) {
   input = input || {};
+  try { if (window._turnToolCalls) window._turnToolCalls.book = true; } catch (e) {}
   try {
     // GUARD AGAINST DUPLICATE BOOKING. If we already booked this shipment and it hasn't
     // been dispatched yet, do NOT create a second shipment in Primus. Return the existing
@@ -13124,6 +13146,7 @@ async function _execBookShipment(input) {
 // ── TOOL: dispatch_shipment — dispatch a booked shipment to the carrier ────────
 async function _execDispatchShipment(input) {
   input = input || {};
+  try { if (window._turnToolCalls) window._turnToolCalls.dispatch = true; } catch (e) {}
   try {
     const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
     if (!BOLId) return { ok: false, error: 'No booked shipment to dispatch. Book the shipment first.' };
@@ -13205,6 +13228,7 @@ async function _execDispatchShipment(input) {
 // ── TOOL: save_shipment — save/update a BOL without dispatching ──────────────
 async function _execSaveShipment(input) {
   input = input || {};
+  try { if (window._turnToolCalls) window._turnToolCalls.save = true; } catch (e) {}
   try {
     const bolRef = input.bol_id || input.BOLId;
     // If a specific BOL is given, wire the PUT; otherwise falls through to a fresh POST
@@ -13301,6 +13325,7 @@ HOW TO TALK:
 - EMPTY RATE RESULT — STATE THE FACT, POINT TO SUPPORT, NEVER INVENT A CAUSE: when a rate pull returns zero carriers on a lane whose ZIPs resolved (rateCount:0 with no ZIP-resolution problem), tell the customer only that no carriers came back for this lane and that it's best to email support@freightandlogistics.ai so the team can help get it covered. You CANNOT see why nothing returned, so never theorize a reason — do not say the item is oversize or too large, do not say it falls outside standard LTL rate tables, do not say it needs a volume or custom quote, and do not blame the lane, the carriers, or the dimensions. State the fact, point to the support email, and stop.
 - RATE FAILURE — SAY ONLY THE CLASSIFIED MESSAGE: on ANY rate failure, the LIVE PORTAL STATE and the tool result give you the exact customer-safe wording. State only that. Never invent a cause, never attribute the failure to the lane, the carrier mix, the freight, or an accessorial combination, and never speculate about why. A validation reject (a service the customer requested cannot be priced on this account) is NOT the same as no carriers returning — when the state says a request was rejected, do NOT describe it as no carriers being available, do NOT name any accessorial code, and tell the customer only that the rest of the quote is fine and that support can price that service manually.
 - BOOKING, SAVE, UPDATE, AND DISPATCH FAILURES — SAY ONLY THE CLASSIFIED MESSAGE, NEVER A CARRIER, NEVER AN INVENTED CAUSE: when a book_shipment, save_shipment, update_booking, requote_shipment, or dispatch_shipment result comes back with ok:false, it carries a customer-safe "message" field — relay ONLY what that message says. A failed action did not succeed: never claim the attempted step went through — do not say it was booked on a book failure, saved on a save failure, or dispatched on a dispatch failure — and never state or imply a BOL number for a failed write. (A dispatch failure's message may note the shipment is already saved from the earlier step and give a My Shipments fix path — relay that exactly; that is not a success claim.) NEVER attribute a booking, save, or dispatch failure to a carrier — these failures are identical on every carrier, so saying a named carrier "isn't accepting," "is rejecting," or "won't take" a service or accessorial is ALWAYS wrong and forbidden. Do NOT name any accessorial, service, or code as the cause unless the classified message itself names the friendly service, do NOT invent a reason, and do NOT theorize about the freight, the lane, or the account. If the message says a service could not be set up on the account, relay exactly that and that support can handle it manually — nothing more.
+- NEVER ANNOUNCE AN ACTION YOU ARE NOT TAKING THIS TURN. Saying you are pulling rates, saving, booking, or dispatching without making the corresponding tool call in the SAME turn is forbidden. Either call the tool in this very turn, or say plainly what is still needed before you can. Never say rates are "being pulled" or promise results "in a moment" unless the tool call that produces them is part of this same turn — a promise with no action behind it is a fabrication.
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then point them to email support@freightandlogistics.ai and the team will follow up. Hazmat is self-serve regardless of hazard class — quote and book it normally. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
@@ -13496,11 +13521,16 @@ function _gateFinalText(finalText, ctx) {
       }
     }
 
-    // ── 2. PROMISE-WITHOUT-ACTION (flag-keyed) ──────────────────────────────────
+    // ── 2. PROMISE-WITHOUT-ACTION — the gate is an ENFORCER, not a censor ───────
+    // Detection was always right (the agent promises rates and never calls the tool); the response
+    // was wrong twice: silent deletion (d9ff59d) and then delivered-but-still-false (Path B).
+    // Now: a rate promise with nothing running gets BACKED — fire the canonical pull the button
+    // uses — or, when the form can't pull yet, replaced with a truthful ask for exactly what's
+    // missing. Never silence, never a false promise.
     var _inFlight = false, _avail = { state: 'not_settled' };
     try { _inFlight = !!window._ratePullInFlight; } catch (e) {}
     try { _avail = (typeof _rateAvailability === 'function') ? _rateAvailability() : _avail; } catch (e) {}
-    var _deferral = /(give me (a|one) (moment|sec|second|minute)|just a (moment|sec|second)|one (moment|sec|second)|hang on|hold on|bear with me|coming (right )?up|i'?ll have (it|them|that|those|your|the)|i will have|let me (pull|grab|get|run|fetch)|pulling (it|them|those|that|your|the)?\s*(rates?)?\s*(now|up)?|getting (you )?(the |those |your )?rates?|working on (it|that|those)|moment while|be right (back|with))/i;
+    var _deferral = /(give me (a|one) (moment|sec|second|minute)|just a (moment|sec|second)|one (moment|sec|second)|hang on|hold on|bear with me|coming (right )?up|i'?ll have (it|them|that|those|your|the)|i will have|let me (pull|grab|get|run|fetch)|pulling (it|them|those|that|your|the)?\s*(rates?)?\s*(now|up)?|rates? (are|is)( being| getting)? (pulled|fetched|run)|being pulled|getting (you )?(the |those |your )?rates?|working on (it|that|those)|moment while|be right (back|with))/i;
     if (_inFlight) {
       // A pull IS running, but this terminal turn armed nothing to announce it (the agent getRates
       // path never sets _onRatesReady). Arm it so doGetRates delivers the summary on completion —
@@ -13509,9 +13539,87 @@ function _gateFinalText(finalText, ctx) {
     } else if (_avail.state === 'settled_with_rates') {
       // Rates already here. If the turn deferred delivery, deliver the summary now and drop the promise.
       if (_deferral.test(text)) { text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); })); out.deliver = true; }
+    } else if (_avail.state === 'not_settled' && _deferral.test(text)) {
+      var _ready = _gateRateReadiness();
+      if (_ready.ok && !window._ratePullInFlight) {
+        // The form can pull RIGHT NOW — make the promise true via the canonical chat-pull sequence:
+        // the standard pre-rate cargo-insurance question first (the same _insGateBeforeRates wrapper
+        // every programmatic chat pull uses — its collectors call _doGetRates themselves), else the
+        // exact same window._doGetRates() the Get Rates button fires. In-flight guard: doGetRates
+        // arms _ratePullInFlight synchronously at entry, so a gate fire can never stack a second pull.
+        var _insHeld = false;
+        try {
+          _insHeld = (typeof _insGateBeforeRates === 'function' && typeof lastQuotedShipment !== 'undefined')
+            ? _insGateBeforeRates(lastQuotedShipment || {}, '') : false;
+        } catch (e) { _insHeld = false; }
+        if (_insHeld) {
+          // The insurance question just rendered and its flow OWNS the pull after the answer.
+          // Drop the promise sentences — the ask itself is this turn's truthful message.
+          console.log('[FP] gate-enforced rate pull — held for the standard cargo-insurance question');
+          text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); }));
+          out.enforced = true; // a real message rendered; never-silence must not resurrect the promise
+        } else {
+          console.log('[FP] gate-enforced rate pull — firing window._doGetRates()');
+          try { if (!window._onRatesReady && typeof _summarizeRatesToChat === 'function') window._onRatesReady = _summarizeRatesToChat; } catch (e) {}
+          try { window._doGetRates(); out.enforced = true; } catch (e) { console.warn('[FP] gate-enforced rate pull failed', e); }
+        }
+      } else if (_ready.formOpen) {
+        // The form cannot pull yet — never deliver the false promise; ask for exactly what's missing.
+        text = "I can't pull rates just yet — I still need " + _gateMissingList(_ready.missing) + '. Give me that and I\'ll get your rates.';
+        out.enforced = true;
+      } else {
+        // No live quote form to fire — Path B behavior (strip; never-silence delivers + logs).
+        text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); }));
+      }
     } else {
-      // Nothing pending and no rates. A forward promise here vanishes — strip it; silence beats it.
+      // A settled-empty/rejected pull already answered this shipment — a forward promise here is
+      // stripped as before (never-silence delivers the original and logs if that empties the turn).
       if (_deferral.test(text)) text = _clean(_sentences(text).filter(function (s) { return !_deferral.test(s); }));
+    }
+
+    // ── 2b. PROMISED SAVE — enforce via the canonical save, or say what's missing ──
+    var _tc = window._turnToolCalls || {};
+    var _savePromiseRe = /\b(?:sav(?:e|ing)\s+(?:it|that|this|the shipment|your shipment)(?:\s+(?:now|for you|right now))?|i'?ll\s+(?:save\s+(?:it|that|this|the shipment)|get\s+(?:it|that|this)\s+saved)|getting\s+(?:it|that|this)\s+saved)\b/i;
+    var _saveSentences = _sentences(text).filter(function (s) { return !/\?/.test(s) && _savePromiseRe.test(s); });
+    if (_saveSentences.length && !_tc.save) {
+      var _lockOk = !!(window._bookingLock && window._bookingLock.rate);
+      var _fZips = null;
+      try { _fZips = (typeof collectBookingForm === 'function') ? collectBookingForm() : null; } catch (e) {}
+      var _zipsOk = !!(_fZips && _fZips.shipper && _fZips.shipper.zip && _fZips.consignee && _fZips.consignee.zip);
+      if (_lockOk && _zipsOk && !window._gateSaveInFlight) {
+        // Safely performable — back the promise through the ONE canonical save path. The result
+        // (real BOL or classified failure) is announced when it lands; the agent's own text never
+        // states an outcome the backend hasn't returned (SAVE OUTCOME rule unchanged).
+        window._gateSaveInFlight = true;
+        console.log('[FP] gate-enforced save — firing _execSaveShipment()');
+        Promise.resolve().then(function () { return _execSaveShipment({}); }).then(function (r) {
+          window._gateSaveInFlight = false;
+          if (r && (r.message || r.error)) appendMessage('bot', r.message || r.error);
+        }).catch(function (e) {
+          window._gateSaveInFlight = false;
+          console.warn('[FP] gate-enforced save failed', e);
+          appendMessage('bot', 'The save did not go through — please try again, or use the Save Shipment button on the booking panel.');
+        });
+        out.enforced = true; // promise now backed
+      } else if (!_tc.save && !window._gateSaveInFlight) {
+        // Not safely performable — replace the promise with the truthful gap.
+        var _lack = !_lockOk ? 'a carrier selection — tell me which carrier to use and I\'ll save it'
+                             : 'the pickup and delivery ZIP codes';
+        text = _clean(_sentences(text).filter(function (s) { return !(!/\?/.test(s) && _savePromiseRe.test(s)); }));
+        text = (text ? text + ' ' : '') + "I haven't saved anything yet — I still need " + _lack + '.';
+        out.enforced = true;
+      }
+    }
+
+    // ── 2c. PROMISED BOOK/DISPATCH — NEVER gate-fired (irreversible); truth-correct instead ──
+    var _bookPromiseRe = /\b(?:book(?:ing)?\s+(?:it|that|this|your shipment)\s+(?:now|right now)|i'?ll\s+(?:book|dispatch)\s+(?:it|that|this)|dispatch(?:ing)?\s+(?:it|that|this|now|right now)|getting\s+(?:it|that)\s+(?:booked|dispatched))\b/i;
+    var _bookCond = /\b(?:once|when|after|if)\s+you\b|confirm/i;
+    var _bookHits = _sentences(text).filter(function (s) { return !/\?/.test(s) && _bookPromiseRe.test(s) && !_bookCond.test(s); });
+    if (_bookHits.length && !_tc.book && !_tc.dispatch) {
+      console.log('[FP] gate: unbacked book/dispatch promise — delivered with correction, NEVER gate-fired');
+      if (!/haven'?t sent anything/i.test(text)) {
+        text = _clean([text]) + " I haven't sent anything yet — say \"book it\" to confirm.";
+      }
     }
 
     // ── 3. FABRICATION BACKSTOP (state-gated) ───────────────────────────────────
@@ -13527,8 +13635,11 @@ function _gateFinalText(finalText, ctx) {
   // ORIGINAL reply un-stripped and log the would-have-stripped event. A wrong question or a soft
   // promise is recoverable by the customer in one message; a vanished reply is not. Partial strips
   // (one offending sentence removed, the rest delivered) and the fabrication REWRITE (which always
-  // yields the classified message, never emptiness) are unchanged.
-  if (!String(text).trim() && String(finalText == null ? '' : finalText).trim()) {
+  // yields the classified message, never emptiness) are unchanged. EXCEPTION: an ENFORCED turn
+  // (out.enforced) already produced a real customer-facing outcome — a fired pull, the insurance
+  // ask, or a truthful replacement — so an emptied text there must stay empty, never resurrect
+  // the false promise this rule exists to back.
+  if (!out.enforced && !String(text).trim() && String(finalText == null ? '' : finalText).trim()) {
     try { console.log('[FP] _gateFinalText would-have-stripped — delivering original reply un-stripped:', String(finalText).slice(0, 200)); } catch (e) {}
     out.wouldHaveStripped = true;
     text = String(finalText);
@@ -13539,6 +13650,9 @@ function _gateFinalText(finalText, ctx) {
 
 async function aiConverse(userText) {
   showTyping();
+  // Per-turn tool-call ledger for the promise-without-action enforcer: the gate may only treat a
+  // promised save/book/dispatch as unbacked when the corresponding tool did NOT run this turn.
+  window._turnToolCalls = { save: false, book: false, dispatch: false };
   let _lastBotShown = '';
   const _showBot = (t) => { const n = (t||'').toString().trim(); if (n && n !== _lastBotShown) { appendMessage('bot', n); _lastBotShown = n; } };
   const _call = window.parent.flAnthropic || ((u, o) => fetch(u, o).then(r => r.json()));
@@ -15819,6 +15933,30 @@ async function handleInput(text) {
     if (/^\s*\d+\s*$/.test(t)) {
       const _n = parseInt(t.trim(), 10);
       if (_n >= 1 && _n <= REDKIK_COMMODITIES.length) _match = REDKIK_COMMODITIES[_n - 1];
+    }
+    // Free-text → Redkik CATEGORY mapping. The Redkik list carries category names, not everyday
+    // commodity words — it has NO "furniture" entry, so the single most common answer this
+    // brokerage hears matched nothing by name. Everyday words map to their category here first;
+    // the fuzzy name match below stays as the fallback for answers that name a category directly.
+    if (!_match) {
+      const _synName = (() => {
+        if (/\b(used)\b/i.test(t) && /\b(electronic|tv|television|appliance)/i.test(t)) return 'Used Household Electronics';
+        if (/\b(electronic|tv|television|appliance)/i.test(t)) return 'New Household Electronics';
+        if (/\b(used)\b/i.test(t) && /\b(computer|laptop|cell ?phone|phone|tablet)/i.test(t)) return 'Used Computers/Cell Phones';
+        if (/\b(computer|laptop|cell ?phone|phone|tablet|server)\b/i.test(t)) return 'New Computers/Cell Phones';
+        if (/\b(machin|equipment|tool|motor|engine part|industrial)/i.test(t) && !/\bmedical\b/i.test(t)) return 'Machinery (excluding Medical Equipment)';
+        if (/\bmedical\b/i.test(t) && /\b(device|equipment|machine)/i.test(t)) return 'Medical Devices';
+        if (/\bmedical\b/i.test(t)) return 'Medical Supplies';
+        if (/\b(food|snack|grocer|canned|beverage(?!.*(beer|wine|spirit)))/i.test(t)) return 'Non-Perishable Foods';
+        if (/\b(beer|wine|spirit|liquor|alcohol)/i.test(t)) return 'Beer, Wine, and Spirits';
+        if (/\b(car|auto|automobile|vehicle|truck)s?\b/i.test(t) && !/\bparts?\b/i.test(t)) return 'Automobiles';
+        if (/\b(fragile|glass(?!.*crate)|ceramic|porcelain|china)\b/i.test(t)) return 'Fragile Goods';
+        if (/\b(solar)\b/i.test(t)) return 'Solar Panels';
+        if (/\b(pharma|medicine|drugs?)\b/i.test(t)) return 'Pharmaceuticals';
+        if (/\b(furniture|sofa|couch|chair|table|mattress|bed|dresser|cabinet|desk|recliner|shelv|bookcase|clothing|apparel|textile|toys?|houseware|home goods|decor|retail|merchandise|general goods|consumer goods|parts)\b/i.test(t)) return 'General Goods &/or Merchandise';
+        return null;
+      })();
+      if (_synName) _match = REDKIK_COMMODITIES.find(c => c.name === _synName) || null;
     }
     if (!_match) {
       const _lc = lower.trim();

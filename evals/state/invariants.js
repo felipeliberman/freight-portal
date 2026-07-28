@@ -442,6 +442,13 @@ const invariants = [
       const ask = ctx.messages.filter(m => m.role === 'bot').map(m => m.text).join(' ');
       A.ok(!/reply with a number|^\s*1\./im.test(ask) && !/\b1\.\s/.test(ask), 'the numbered commodity list is still shown: ' + ask.slice(0, 120));
       A.ok(/what type of commodity/i.test(ask), 'the free-text commodity ask is missing: ' + ask.slice(0, 120));
+      // Everyday words map to their Redkik CATEGORY — the list has no "furniture" entry, so the
+      // brokerage's most common answer must resolve via the synonym mapper, not re-ask.
+      ctx.reset();
+      await w.handleInput('furniture');
+      const lqs = w.eval('lastQuotedShipment') || {};
+      A.ok(lqs.insuranceEnabled === true, '"furniture" did not resolve to a commodity category (insurance not enabled)');
+      A.ok(/General Goods/i.test(lqs.insuranceCommodityName || ''), '"furniture" mapped to the wrong category: ' + lqs.insuranceCommodityName);
     },
   },
   // ── 17 ──────────────────────────────────────────────────────────────────────
@@ -470,6 +477,99 @@ const invariants = [
       w._insCollecting = 'value'; w._insValueArmed = false; w._insTempValue = null; w._insReaskCount = 0;
       await w.handleInput('$7,500');
       A.ok(w._insTempValue === 7500 && w._insCollecting === 'commodity', 'an explicit $7,500 was not captured: ' + w._insTempValue);
+    },
+  },
+  // ── 18 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 18, name: 'a rate promise with no pull behind it fires exactly one canonical pull',
+    property: 'gate-detected rate promise + no settled/in-flight pull + ready form → exactly one _doGetRates; a pull already in flight fires nothing extra',
+    catches: 'the live repro — "Rates are being pulled — I\'ll have them in a moment!" over a panel where no pull ever fired',
+    run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._insDecided = true; // insurance already settled — enforcement must go straight to the pull
+      let pulls = 0;
+      w._doGetRates = () => { pulls++; w._ratePullInFlight = true; };
+      const promise = "Rates are being pulled — I'll have them for you in just a moment!";
+      const g = w._gateFinalText(promise, { regenDone: true });
+      A.ok(pulls === 1, 'expected exactly one gate-enforced pull, got ' + pulls);
+      A.ok(String(g.text).trim().length > 0, 'the backed promise was not delivered');
+      A.ok(g.enforced === true, 'the enforcement was not flagged (console triage marker missing)');
+      // (b) same promise with a pull already in flight → nothing extra fires.
+      const g2 = w._gateFinalText(promise, { regenDone: true });
+      A.ok(pulls === 1, 'a second pull was stacked while one was in flight: ' + pulls);
+      A.ok(String(g2.text).trim().length > 0, 'the in-flight promise was not delivered');
+    },
+  },
+  // ── 19 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 19, name: 'a rate promise on an unready form becomes a truthful missing-fields ask',
+    property: 'form open but missing weight/dims → the promise is replaced by the exact missing list; no pull fires',
+    catches: 'delivering "I\'ll have them in a moment" over a form that cannot pull',
+    run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true); // no weight, no dims
+      w._insDecided = true;
+      let pulls = 0;
+      w._doGetRates = () => { pulls++; };
+      const g = w._gateFinalText("Pulling your rates now — I'll have them in just a moment!", { regenDone: true });
+      A.ok(pulls === 0, 'a pull fired on an unready form');
+      A.ok(!/moment/i.test(g.text), 'the false promise survived: ' + g.text);
+      A.ok(/still need/i.test(g.text) && /weight/i.test(g.text) && /dimensions/i.test(g.text),
+        'the truthful missing-fields ask is wrong: ' + g.text);
+    },
+  },
+  // ── 20 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 20, name: 'a save promise is enforced via the canonical save, or replaced with the gap',
+    property: 'promised save + lock + ZIPs → exactly one _execSaveShipment; no lock → truthful "I haven\'t saved anything yet" replacement',
+    catches: 'the "saving it now" class — announced saves that never called the save path',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._publishRatesForAI(fx.RATES, fx.SHIPMENT);
+      const sel = w.selectRate({ carrier: 'JTS' }, { shipment: fx.SHIPMENT, open: false, source: 'test' });
+      A.ok(sel.ok, 'setup: could not select JTS');
+      let saves = 0;
+      w._execSaveShipment = async () => { saves++; return { ok: true, BOLNumber: '160135280', message: 'Shipment saved. BOL 160135280 is in My Shipments — dispatch when ready.' }; };
+      w._turnToolCalls = { save: false, book: false, dispatch: false };
+      const g = w._gateFinalText("Saving it now — you'll see it in My Shipments.", { regenDone: true });
+      await new Promise(r => setTimeout(r, 20)); // the enforced save is async fire-and-announce
+      A.ok(saves === 1, 'expected exactly one gate-enforced save, got ' + saves);
+      A.ok(g.enforced === true, 'the save enforcement was not flagged');
+      A.ok(ctx.messages.some(m => m.role === 'bot' && /BOL 160135280/.test(m.text)), 'the real save outcome was never announced');
+      // Not performable (no carrier lock) → truthful replacement, no fire.
+      w._bookingLock = null; w._gateSaveInFlight = false; saves = 0;
+      w._turnToolCalls = { save: false, book: false, dispatch: false };
+      const g2 = w._gateFinalText('Saving it now.', { regenDone: true });
+      A.ok(saves === 0, 'a save fired with no carrier selected');
+      A.ok(/haven'?t saved anything/i.test(g2.text) && /carrier/i.test(g2.text), 'no truthful replacement: ' + g2.text);
+      // A save that really ran this turn is left alone.
+      w._turnToolCalls = { save: true, book: false, dispatch: false };
+      const g3 = w._gateFinalText('Saving it now.', { regenDone: true });
+      A.ok(saves === 0 && /Saving it now/.test(g3.text), 'a genuinely-backed save promise was altered: ' + g3.text);
+    },
+  },
+  // ── 21 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 21, name: 'a book/dispatch promise is never gate-fired',
+    property: 'irreversible actions are never fired by the gate — the promise is delivered with a truthful correction line instead',
+    catches: 'the enforcement class over-reaching into irreversible writes',
+    run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w._insDecided = true;
+      let books = 0, dispatches = 0;
+      w._execBookShipment = async () => { books++; return { ok: true }; };
+      w._execDispatchShipment = async () => { dispatches++; return { ok: true }; };
+      w._turnToolCalls = { save: false, book: false, dispatch: false };
+      const g = w._gateFinalText('Booking it now with JTS Express.', { regenDone: true });
+      A.ok(books === 0 && dispatches === 0, 'the gate fired an irreversible action: books=' + books + ' dispatches=' + dispatches);
+      A.ok(/haven'?t sent anything yet/i.test(g.text) && /book it/i.test(g.text), 'no truthful correction on an unbacked book promise: ' + g.text);
+      // A book that really ran this turn gets no correction.
+      w._turnToolCalls = { save: false, book: true, dispatch: false };
+      const g2 = w._gateFinalText('Booking it now with JTS Express.', { regenDone: true });
+      A.ok(!/haven'?t sent anything/i.test(g2.text), 'a genuinely-backed book promise was corrected: ' + g2.text);
     },
   },
 ];
