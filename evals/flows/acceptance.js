@@ -452,6 +452,85 @@ const voiceSteps = [
       } finally { ctx.dom.window.close(); }
     },
   },
+  {
+    id: 'V2', name: 'self-echo is discarded during playback+tail; genuine barge-in is accepted and stops TTS',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        w.eval([
+          'window.__recs = [];',
+          'window.MockSR = function(){ var self=this; self.aborted=false; self.started=false;',
+          '  self.onresult=null; self.onend=null; self.onerror=null; self.onstart=null;',
+          '  self.continuous=false; self.interimResults=false; self.lang="";',
+          '  self.start=function(){ self.started=true; };',
+          '  self.stop=function(){ if(self.onend) self.onend(); };',
+          '  self.abort=function(){ self.aborted=true; };',
+          '  window.__recs.push(self); };',
+          'window.SpeechRecognition = window.MockSR;'
+        ].join('\n'));
+        const recs = () => w.eval('window.__recs');
+        const submits = [];
+        w._submitUserTurn = (t) => { submits.push(t); };
+        // fake result event with confidence
+        const ev = (txt, conf) => ({ resultIndex: 0, results: { 0: { isFinal: false, 0: { transcript: txt, confidence: conf } }, length: 1 } });
+
+        // Enter "speaking" state with a known TTS utterance and a fake audio handle we can watch.
+        const spoken = 'booking jts express at three hundred dollars i need the pickup and delivery details';
+        let paused = false;
+        w._vm.active = true; w._vm.state = 'speak';
+        w._vm.audio = { pause: () => { paused = true; } };
+        w._vm.speakingText = spoken;
+        w._vm.echoUntil = Infinity;                 // playback active
+        w._vm.playStartedAt = Date.now() - w.eval('VM_LEADIN_MS') - 50; // past the lead-in guard
+        w._vmStartBargeDetector();
+        const brec = recs()[recs().length - 1];
+
+        // (a) ECHO during playback — a transcript of our own TTS — is discarded; zero turns, no barge.
+        brec.onresult(ev('the pickup and delivery details', 0.9));
+        await sleep(20);
+        brec.onresult(ev('i need the pickup and delivery', 0.9));
+        A.ok(w._vm.state === 'speak', 'echo tripped a barge-in (state left speak)');
+        A.ok(!paused, 'echo stopped the TTS');
+        A.ok(submits.length === 0, 'echo was submitted as a turn: ' + JSON.stringify(submits));
+
+        // (b) NON-matching speech during playback IS accepted → barge-in stops TTS and switches to listen.
+        w._vm.bargeCandidateAt = 0;
+        brec.onresult(ev('actually hold on stop', 0.9));   // candidate starts
+        await sleep(w.eval('VM_BARGE_MIN_MS') + 60);        // persist past the duration floor
+        brec.onresult(ev('actually hold on stop please', 0.9));
+        A.ok(paused === true, 'a genuine barge-in did not stop the TTS');
+        A.ok(w._vm.state === 'listen', 'a genuine barge-in did not switch to listening: ' + w._vm.state);
+
+        // (c) after the decay tail, echo rejection is off (normal sensitivity resumes).
+        A.ok(typeof w._vmEchoActive === 'function', '_vmEchoActive missing');
+        w._vm.echoUntil = Date.now() + w.eval('VM_ECHO_TAIL_MS');
+        A.ok(w._vmEchoActive() === true, 'echo should still be active within the decay tail');
+        w._vm.echoUntil = Date.now() - 1;              // tail elapsed
+        A.ok(w._vmEchoActive() === false, 'echo rejection did not lift after the decay tail');
+        w._vmTeardown();
+      } finally { ctx.dom.window.close(); }
+    },
+  },
+  {
+    id: 'V3', name: 'mic acquisition always carries echoCancellation + noiseSuppression + autoGainControl',
+    async run() {
+      const ctx = boot(); const w = ctx.win;
+      try {
+        let captured = null;
+        w.navigator.mediaDevices = { getUserMedia: (c) => { captured = c; return Promise.resolve({ getTracks: () => [{ stop: () => {} }] }); } };
+        w.eval('window.SpeechRecognition = function(){ this.start=function(){}; this.abort=function(){}; this.stop=function(){}; };');
+        await w._vmAcquireMicStream();
+        A.ok(captured && captured.audio, 'getUserMedia was called without an audio constraint');
+        A.ok(captured.audio.echoCancellation === true, 'echoCancellation not requested');
+        A.ok(captured.audio.noiseSuppression === true, 'noiseSuppression not requested');
+        A.ok(captured.audio.autoGainControl === true, 'autoGainControl not requested');
+        // The stream is held for the session and released on teardown.
+        A.ok(w._vm.micStream, 'the AEC stream was not held for the session');
+        w._vm.active = true; w._vmTeardown();
+        A.ok(w._vm.micStream === null, 'the AEC stream was not released on teardown');
+      } finally { ctx.dom.window.close(); }
+    },
+  },
 ];
 
 async function runFlow() {

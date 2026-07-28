@@ -21041,7 +21041,7 @@ function _speechTextFor(t) {
 }
 
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
-const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null, restartTimer:null, starting:false };
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null, restartTimer:null, starting:false, micStream:null, echoUntil:0, bargeCandidateAt:0 };
 window._vm = _vm;
 _vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
 _vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
@@ -21097,6 +21097,7 @@ function _vmEnter() {
   const { ta } = _vmEls();
   if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
   _vm.active = true;
+  _vmAcquireMicStream();   // Layer 1: warm the constrained-AEC pipeline for this voice session (non-blocking)
   const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.add('show');
   _vmUpdateButtons();
   _vmStartListen();
@@ -21119,6 +21120,8 @@ function _vmTeardown() {
   if (_vm.watchdog)      { clearTimeout(_vm.watchdog);      _vm.watchdog = null; }
   if (_vm.tailTimer)     { clearTimeout(_vm.tailTimer);     _vm.tailTimer = null; }
   if (_vm.restartTimer)  { clearTimeout(_vm.restartTimer);  _vm.restartTimer = null; }
+  _vm.echoUntil = 0; _vm.bargeCandidateAt = 0;
+  _vmReleaseMicStream();            // release the constrained-AEC primer stream (OS mic indicator off)
   [_vm.rec, _vm.bargeRec].forEach(function(rec) {
     if (!rec) return;
     try { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); } catch(e) {}
@@ -21173,7 +21176,8 @@ function _vmStartListen() {
     if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
     _vmStopBargeDetector();           // never leave a second recognizer alive alongside the listener
     try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch (e) {} // release any TTS still playing
-    _vm.playStartedAt = null; _vm.speakingText = '';
+    // Transitioning to genuine listening (post-tail / fresh) → normal sensitivity, no echo floor.
+    _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0; _vm.bargeCandidateAt = 0;
     _vmStopListen();                  // hard-stop + unbind the prior listener before opening a new one
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec;
@@ -21193,6 +21197,35 @@ const VM_LEADIN_MS      = 400;  // ignore candidate interrupts within this windo
 const VM_TAIL_MS        = 300;  // warm-promote path: wait before the mic resumes after playback ends
 const VM_TAIL_FRESH_MS  = 800;  // fresh-listen fallback: longer wait so the speaker fully clears
 const VM_ECHO_MIN_WORDS = 3;    // >= this many words → contiguous match; fewer → all-words-present match
+// ── Self-echo rejection knobs (separate output/input devices = no browser AEC → speaker feedback) ──
+const VM_ECHO_TAIL_MS   = 400;  // keep rejecting echo this long AFTER playback ends (speaker/room decay)
+const VM_ECHO_OVERLAP   = 0.6;  // token-overlap ratio at/above which a result is treated as our own TTS echo
+const VM_BARGE_MIN_MS   = 300;  // a genuine barge-in must persist at least this long during playback before we accept it
+const VM_BARGE_MIN_WORDS= 2;    // ...and carry at least this many words (ragged echo fragments are shorter)
+const VM_BARGE_MIN_CONF = 0.5;  // ...and, WHEN the browser reports a nonzero confidence, clear this floor
+
+// ── Layer 1: AEC constraints on the ONLY mic-acquisition lever we have ─────────
+// Web Speech SpeechRecognition manages its own internal microphone and accepts NO audio
+// constraints, so there is no getUserMedia in the recognition path to repair. This primer
+// acquires a constrained stream (echoCancellation + noiseSuppression + autoGainControl) at
+// voice-enter to warm the browser/OS acoustic-echo-cancellation pipeline for the session, and
+// releases it on teardown. Fire-and-forget and fully guarded: if getUserMedia is unavailable or
+// denied, voice still runs on the Web Speech default mic (layers 2 and 3 remain the real defense).
+const VM_MIC_CONSTRAINTS = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
+async function _vmAcquireMicStream() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { _vmDiag('getUserMedia unavailable — Web Speech default mic'); return; }
+    if (_vm.micStream) return; // already warm this session
+    _vm.micStream = await navigator.mediaDevices.getUserMedia(VM_MIC_CONSTRAINTS);
+    _vmDiag('AEC mic stream acquired', JSON.stringify(VM_MIC_CONSTRAINTS.audio));
+  } catch (e) { _vmDiag('getUserMedia rejected', e && e.name); } // non-fatal — voice still works
+}
+function _vmReleaseMicStream() {
+  try { if (_vm.micStream) _vm.micStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} }); } catch (e) {}
+  _vm.micStream = null;
+}
+// Echo is active during playback AND for a short decay tail after it ends.
+function _vmEchoActive() { return Date.now() < (_vm.echoUntil || 0); }
 
 // Wire the full listening behavior (silence timer, finalText accumulation, dispatch to
 // _vmHandleFinal) onto a recognizer. Used for a freshly-created recognizer (_vmStartListen)
@@ -21286,11 +21319,16 @@ function _vmIsEcho(transcript, spokenText) {
   const spoken = _vmNorm(spokenText);
   if (!spoken) return false;                 // nothing playing to echo → treat as a real hit
   const tw = t.split(' ');
-  if (tw.length >= VM_ECHO_MIN_WORDS) {
-    return (' ' + spoken + ' ').indexOf(' ' + t + ' ') !== -1;
-  }
   const set = new Set(spoken.split(' '));
-  return tw.every(w => set.has(w));
+  // Short fragments ("the", "and delivery"): echo only if EVERY word is in the spoken text.
+  if (tw.length < VM_ECHO_MIN_WORDS) return tw.every(w => set.has(w));
+  // Contiguous match — the transcript appears verbatim inside the spoken text.
+  if ((' ' + spoken + ' ').indexOf(' ' + t + ' ') !== -1) return true;
+  // Normalized token-OVERLAP: with separate output/input devices the acoustic path distorts words
+  // enough that echo is no longer contiguous, but the token overlap with our own TTS stays high.
+  // A result whose words substantially come from the spoken text is our own voice, not the user's.
+  const overlap = tw.filter(w => set.has(w)).length / tw.length;
+  return overlap >= VM_ECHO_OVERLAP;
 }
 
 // ── Barge-in (interrupt) ──────────────────────────────────────────────────────
@@ -21309,24 +21347,42 @@ function _vmStartBargeDetector() {
   try { rec = new SR(); } catch(e) { return; }
   rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
   _vm.bargeRec = rec;
+  _vm.bargeCandidateAt = 0;
   let hits = 0;
+  const _resetCand = () => { hits = 0; _vm.bargeCandidateAt = 0; };
   rec.onresult = (event) => {
-    let heard = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) heard += event.results[i][0].transcript;
+    let heard = '', conf = 0;
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      heard += event.results[i][0].transcript;
+      const c = event.results[i][0].confidence; if (c && c > conf) conf = c;
+    }
     // Guard 1 — lead-in: TTS onset bleeds hardest into the mic. Ignore any candidate interrupt
     // within VM_LEADIN_MS of playback actually starting. Not counted toward the debounce.
     if (_vm.playStartedAt && (Date.now() - _vm.playStartedAt) < VM_LEADIN_MS) {
       _vmDiag('barge veto (lead-in):', JSON.stringify(heard));
-      return;
+      _resetCand(); return;
     }
-    // Guard 2 — echo veto: the transcript is our own TTS bleeding into the mic. Discard it and
-    // do NOT count it toward the 2-consecutive-hit debounce, so it can never trip barge-in.
-    if (_vmIsEcho(heard, _vm.speakingText)) {
+    // Guard 2 — self-echo veto: the transcript is our own TTS bleeding back in (during playback OR
+    // the decay tail after it ends). Discard it and do NOT count it toward the debounce, so echo
+    // can never trip barge-in. Genuine non-matching speech falls through immediately.
+    if (_vmEchoActive() && _vmIsEcho(heard, _vm.speakingText)) {
       _vmDiag('barge veto (echo):', JSON.stringify(heard));
-      return;   // leave hits untouched
+      _resetCand(); return;
     }
-    if (heard.trim().length >= 3) { hits++; if (hits >= 2) _vmBargeIn(); }
-    else hits = 0;
+    // Guard 3 — confidence/duration floor, DURING PLAYBACK ONLY (this detector runs only while we
+    // speak / decay). A genuine barge-in must persist VM_BARGE_MIN_MS, carry VM_BARGE_MIN_WORDS,
+    // and — when the browser reports a nonzero confidence — clear VM_BARGE_MIN_CONF. This rejects
+    // ragged echo fragments without dulling a real interruption. Outside playback the main listen
+    // recognizer runs with no floor at all.
+    const words = _vmNorm(heard).split(' ').filter(Boolean).length;
+    if (heard.trim().length >= 3 && words >= 1) {
+      if (!_vm.bargeCandidateAt) _vm.bargeCandidateAt = Date.now();
+      hits++;
+      const durOk   = (Date.now() - _vm.bargeCandidateAt) >= VM_BARGE_MIN_MS;
+      const wordsOk = words >= VM_BARGE_MIN_WORDS;
+      const confOk  = !(conf > 0) || conf >= VM_BARGE_MIN_CONF; // interim confidence is often 0 → don't hard-block
+      if (hits >= 2 && durOk && wordsOk && confOk) _vmBargeIn();
+    } else _resetCand();
   };
   rec.onerror = () => {};   // ignore transient errors while speaking
   rec.onend = () => {
@@ -21349,8 +21405,9 @@ function _vmBargeIn() {
   if (_vm.state !== 'speak') return;
   _vm.speakToken++;                                   // invalidate in-flight speak/resume callbacks
   if (_vm.tailTimer) { clearTimeout(_vm.tailTimer); _vm.tailTimer = null; }  // cancel any pending tail resume
-  try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
-  _vm.playStartedAt = null; _vm.speakingText = '';   // pause() fires no onended — clear echo state here
+  try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}  // STOP TTS immediately on an accepted barge-in
+  // The user IS talking — clear all echo state so the promoted listener captures at full sensitivity.
+  _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0; _vm.bargeCandidateAt = 0;
   _vmSetState('listen');
   if (!_vmPromoteBargeToListen()) { _vmStopBargeDetector(); _vmStartListen(); }
 }
@@ -21479,10 +21536,14 @@ async function _vmSpeakReply(text) {
     // playStartedAt (lead-in guard) is stamped the instant audio truly begins, not at fetch time.
     _vm.speakingText = spoken;
     _vm.playStartedAt = null;
+    _vm.echoUntil = Infinity;          // echo-active while we intend to play; a decay tail replaces it at onended
     audio.onplay = () => { _vm.playStartedAt = Date.now(); };
     audio.onended = () => {
       try { URL.revokeObjectURL(url); } catch(e) {}
-      _vm.playStartedAt = null; _vm.speakingText = '';   // playback done → echo state no longer applies
+      // Playback ended — KEEP the echo reference through a short decay tail (speaker/room ring-out)
+      // so the final syllables bleeding in can't register as a user turn. speakingText is cleared
+      // when we actually transition to listening (below / _vmStartListen).
+      _vm.playStartedAt = null; _vm.echoUntil = Date.now() + VM_ECHO_TAIL_MS;
       if (!_vm.active || _vm.speakToken !== tok) return;
       // Tail guard: wait after playback ends so the final syllable + room reverb aren't captured as
       // the user's next utterance. Warm-promote path uses VM_TAIL_MS; the fresh-listen fallback (no
@@ -21502,12 +21563,12 @@ async function _vmSpeakReply(text) {
       }, tailMs);
     };
     audio.onerror = () => {
-      _vm.playStartedAt = null; _vm.speakingText = '';
+      _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0;
       if (!_vm.active || _vm.speakToken !== tok) return;
       _vmStopBargeDetector();
       setTimeout(() => { if (_vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     };
-    audio.play().catch(() => { _vm.playStartedAt = null; _vm.speakingText = ''; if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
+    audio.play().catch(() => { _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0; if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
   } catch(e) { resume(); }
 }
 
