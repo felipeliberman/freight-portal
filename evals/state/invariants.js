@@ -435,16 +435,14 @@ const invariants = [
       await w.handleInput('no');
       A.ok(w._insCollecting === null, '"no" did not exit the commodity stage: ' + w._insCollecting);
       A.ok(ctx.messages.some(m => m.role === 'bot' && /left cargo insurance off|without insurance/i.test(m.text)), 'no exit confirmation after a commodity-stage refusal');
-      // The numbered commodity list is gone: a captured value asks free-text, no "Reply with a number".
+      // Unknown commodity (no commodity on this quote) → the canonical NUMBERED LIST renders
+      // (Option B), then a free-text everyday word still resolves via the synonym mapper.
       w._insCollecting = 'value'; w._insValueArmed = true; w._insReaskCount = 0;
       ctx.reset();
       await w.handleInput('5000');
       A.ok(w._insCollecting === 'commodity', 'a bare number on a just-asked turn was not captured as the value');
       const ask = ctx.messages.filter(m => m.role === 'bot').map(m => m.text).join(' ');
-      A.ok(!/reply with a number|^\s*1\./im.test(ask) && !/\b1\.\s/.test(ask), 'the numbered commodity list is still shown: ' + ask.slice(0, 120));
-      A.ok(/what type of commodity/i.test(ask), 'the free-text commodity ask is missing: ' + ask.slice(0, 120));
-      // Everyday words map to their Redkik CATEGORY — the list has no "furniture" entry, so the
-      // brokerage's most common answer must resolve via the synonym mapper, not re-ask.
+      A.ok(/reply with a number/i.test(ask), 'the numbered list did not render for an unknown commodity: ' + ask.slice(0, 120));
       ctx.reset();
       await w.handleInput('furniture');
       const lqs = w.eval('lastQuotedShipment') || {};
@@ -746,28 +744,34 @@ const invariants = [
   },
   // ── 29 ──────────────────────────────────────────────────────────────────────
   {
-    id: 29, name: 'a re-ask never offers an example the customer already used',
-    property: 'the commodity ask and the no-match re-ask exclude any example term present in the customer\'s own prior messages',
-    catches: 're-asking "for example furniture" right after the customer said furniture',
+    id: 29, name: 'Option B: known commodity settles silently; the list only when unknown; meta-talk never selects',
+    property: 'a mappable quote commodity settles insurance with the read-back and no ask; unknown → the canonical numbered list; the live complaint sentence can never select a category',
+    catches: 'the live repro — "tables" on the quote yet we asked, then "you USED to present me" selected Used Aircraft Engines',
     async run(ctx) {
       const w = ctx.win;
-      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      // KNOWN commodity ("tables" on the quote) → "$2500" settles silently in one turn.
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 250, pieces: 3, length: 58, width: 30, height: 49,
+        lineItems: [{ qty: 3, type: 'PLT', weight: 250, length: 58, width: 30, height: 49, commodity: 'tables' }] }, true);
       w.eval('lastQuotedShipment = lastQuotedShipment || {}');
-      w.appendMessage('user', 'it is furniture mostly'); // the term is now in the conversation
-      // Value-only answer whose remainder maps to nothing → the commodity ask fires, minus "furniture".
-      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true;
+      w._doGetRates = () => {};
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true; w._insPreRate = true;
       ctx.reset();
-      await w.handleInput('the total is $500 even');
-      const ask = ctx.messages.filter(m => m.role === 'bot' && /commodity/i.test(m.text)).map(m => m.text).join(' ');
-      A.ok(ask.length > 0, 'no commodity ask rendered');
-      A.ok(!/furniture/i.test(ask), 'the ask offered a term the customer already used: ' + ask);
-      A.ok(/electronics/i.test(ask), 'the ask lost its remaining examples: ' + ask);
-      // No-match re-ask excludes it too.
-      ctx.reset();
-      await w.handleInput('blorptastic widgets');
-      const reask = ctx.messages.filter(m => m.role === 'bot' && /could not match/i.test(m.text)).map(m => m.text).join(' ');
-      A.ok(reask.length > 0, 'no no-match re-ask rendered');
-      A.ok(!/furniture/i.test(reask), 'the re-ask offered a used term: ' + reask);
+      await w.handleInput('$2500');
+      const lqs = w.eval('lastQuotedShipment') || {};
+      A.ok(lqs.insuranceEnabled === true && Number(lqs.insuranceAmount) === 2500, 'known commodity did not settle silently: ' + JSON.stringify(ctx.messages.map(m => m.text)));
+      A.ok(/General Goods/i.test(lqs.insuranceCommodityName || ''), '"tables" mapped wrong: ' + lqs.insuranceCommodityName);
+      const rb = ctx.messages.find(m => /Cargo insurance requested/.test(m.text));
+      A.ok(rb && /\(tables\)/.test(rb.text) && /\$2,500\.00/.test(rb.text), 'read-back missing category (commodity) $X.XX: ' + (rb && rb.text));
+      A.ok(!ctx.messages.some(m => /reply with a number|what type of commodity/i.test(m.text)), 'the list/ask rendered despite a known commodity');
+      // The live complaint sentence can NEVER select a category ("used" → Used Aircraft Engines).
+      A.ok(w._matchInsCommodity('I alrwady told you the commodity, you used to present me with a list of like 1 thru 18 where i had to choose the  commodity') === null,
+        'the complaint sentence still fuzzy-matches a category');
+      // Qualifiers still work INSIDE synonym rules.
+      A.ok(/Used Household Electronics/.test((w._matchInsCommodity('used electronics') || {}).name || ''), '"used electronics" lost its mapping');
+      A.ok(w._matchInsCommodity('used') === null, 'a bare qualifier still selects a category');
+      // The chat list mirrors the form dropdown source exactly.
+      const expected = ctx.g('REDKIK_COMMODITIES').map((c, i) => (i + 1) + '. ' + c.name).join('\n');
+      A.ok(w._insCommodityListText() === expected, 'the chat list drifted from the canonical REDKIK_COMMODITIES source');
     },
   },
   // ── 30 ──────────────────────────────────────────────────────────────────────
@@ -807,6 +811,38 @@ const invariants = [
       A.ok(!/still need/i.test(greet.text), 'the greeting named fields the restore was about to fill: ' + greet.text);
       const v = id => (w.document.getElementById(id) || {}).value || '';
       A.ok(v('bk-dl-name') === 'Haynes Brothers', 'the slow restore itself did not land: ' + v('bk-dl-name'));
+    },
+  },
+  // ── 31 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 31, name: 'the insurance commodity is always correctable — even after insuranceEnabled',
+    property: '"change the commodity to X" settles in one turn; "the commodity is wrong" re-opens the list; value preserved; cancel keeps it as is',
+    catches: 'a mis-set category (Used Aircraft Engines on tables) that could not be fixed before a certificate',
+    async run(ctx) {
+      const w = ctx.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._doGetRates = () => {};
+      w.setInsurance({ status: 'added', amount: 2500, commodityId: ctx.g("REDKIK_COMMODITIES.find(c=>/Aircraft/.test(c.name)).id"), commodityName: 'Used Aircraft Engines' });
+      // Inline correction settles in one turn, preserving the value.
+      ctx.reset();
+      await w.handleInput('change the commodity to electronics');
+      let lqs = w.eval('lastQuotedShipment');
+      A.ok(/Household Electronics/.test(lqs.insuranceCommodityName || ''), 'inline correction did not settle: ' + lqs.insuranceCommodityName);
+      A.ok(Number(lqs.insuranceAmount) === 2500, 'the declared value was lost in correction: ' + lqs.insuranceAmount);
+      // "the commodity is wrong" re-opens the list; a number fixes it; cancel keeps as-is.
+      ctx.reset();
+      await w.handleInput('the commodity is wrong');
+      A.ok(ctx.messages.some(m => /reply with a number/i.test(m.text)), 'the correction list did not render');
+      await w.handleInput('cancel');
+      lqs = w.eval('lastQuotedShipment');
+      A.ok(lqs.insuranceEnabled === true && /Household Electronics/.test(lqs.insuranceCommodityName || ''), 'cancel did not keep the existing insurance: ' + lqs.insuranceCommodityName);
+      ctx.reset();
+      await w.handleInput('the commodity is wrong');
+      await w.handleInput('4'); // Beer, Wine, and Spirits per the canonical list order
+      lqs = w.eval('lastQuotedShipment');
+      A.ok(/Beer, Wine/.test(lqs.insuranceCommodityName || ''), 'a number did not apply the correction: ' + lqs.insuranceCommodityName);
+      A.ok(Number(lqs.insuranceAmount) === 2500, 'the value drifted through the list correction: ' + lqs.insuranceAmount);
     },
   },
 ];

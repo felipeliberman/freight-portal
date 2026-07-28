@@ -63,5 +63,20 @@ const C = process.stdout.isTTY
   }
   const n = s => out.filter(o => o.status === s).length;
   console.log('  ' + C.g(n('PASS') + ' pass') + '   ' + C.y(n('EXPECTED-FAIL') + ' expected-fail') + '   ' + C.r(n('FAIL') + ' fail') + '   ' + C.r(n('UNEXPECTED-PASS') + ' unexpected-pass') + '\n');
-  process.exit(n('FAIL') + n('UNEXPECTED-PASS') > 0 ? 1 : 0);
+
+  // ── THE ACCEPTANCE FLOW — the product owner's ten-step script + negative flow, every run ──
+  // (Skipped when a subset of invariants was requested by id.)
+  let flowFails = 0;
+  if (!want.length) {
+    const { runFlow } = require('../flows/acceptance');
+    console.log('  ACCEPTANCE FLOW — evals/flows/acceptance.js\n');
+    const flow = await runFlow();
+    for (const r of flow) {
+      const tag = r.status === 'PASS' ? C.g('  PASS') : r.status === 'SKIP' ? C.y('  SKIP') : C.r('  FAIL');
+      console.log(tag + '  ' + r.id + '. ' + r.name + (r.error ? '\n        ' + C.r(r.error.slice(0, 300)) : ''));
+    }
+    flowFails = flow.filter(r => r.status !== 'PASS').length;
+    console.log('\n  FLOW: ' + C[flowFails ? 'r' : 'g']((flow.length - flowFails) + '/' + flow.length + ' steps green') + '\n');
+  }
+  process.exit(n('FAIL') + n('UNEXPECTED-PASS') + flowFails > 0 ? 1 : 0);
 })();
