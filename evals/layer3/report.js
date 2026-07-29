@@ -43,7 +43,8 @@ function renderMarkdown(rep) {
   L.push('- **Agent model:** ' + (rep.meta.agentModels.join(', ') || 'n/a') + '  ·  **Customer model:** ' + rep.meta.customerModel);
   L.push('- **Mode:** ' + rep.meta.mode + '  ·  **Personas × episodes × turns:** ' + rep.meta.scope);
   L.push('- **Replays for classification:** N=' + rep.meta.replayN + ' (REAL ≥2/3 · INTERMITTENT 1/3 · FLAKE 0/3)');
-  if (rep.meta.cost != null) L.push('- **Est. API spend:** $' + rep.meta.cost.toFixed(2) + '  ·  **Model calls:** ' + rep.meta.calls);
+  if (rep.meta.cost != null) L.push('- **Est. API spend:** $' + rep.meta.cost.toFixed(2) + '  ·  **Model calls:** ' + rep.meta.calls + (rep.meta.retries != null ? '  ·  **Retries:** ' + rep.meta.retries : ''));
+  if (rep.meta.partial) L.push('- **⚠ PARTIAL RUN** — ' + rep.meta.completedEpisodes + '/' + rep.meta.plannedEpisodes + ' episodes completed; this report covers the completed episodes only.');
   L.push('');
 
   const groups = groupFindings(rep.findings);
@@ -89,6 +90,13 @@ function renderMarkdown(rep) {
       L.push('  </details>');
       L.push('');
     });
+  }
+
+  if (rep.meta.runErrors && rep.meta.runErrors.length) {
+    L.push('## Run errors (episodes that did not complete)');
+    L.push('');
+    rep.meta.runErrors.forEach(e => L.push('- persona ' + e.persona + ', episode ' + e.episode + ': ' + e.error));
+    L.push('');
   }
 
   L.push('## What this run did NOT check (scope — a green run is not a proof)');

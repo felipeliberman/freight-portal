@@ -28,10 +28,12 @@ const PERSONA = arg('persona', null);
 const OUTDIR = path.join(__dirname, 'report');
 
 function stamp() { return new Date().toISOString().replace(/[:.]/g, '-'); }
-function writeReport(rep) {
+// Writes to `base` (a fixed path per run) so partial reports OVERWRITE one file — a mid-run crash
+// still leaves the latest completed-episode report on disk. base is computed once per run.
+function writeReport(rep, base) {
   if (!fs.existsSync(OUTDIR)) fs.mkdirSync(OUTDIR, { recursive: true });
+  base = base || path.join(OUTDIR, 'findings-' + stamp());
   const md = renderMarkdown(rep);
-  const base = path.join(OUTDIR, 'findings-' + stamp());
   fs.writeFileSync(base + '.md', md);
   fs.writeFileSync(base + '.json', JSON.stringify(rep, null, 2));
   return { md, base };
@@ -95,38 +97,59 @@ async function real(apiKey) {
   const { askCustomer } = require('./customer');
   const model = makeLiveModel(apiKey, { label: 'sonnet-4-6' });
   const list = (PERSONA ? personas.filter(p => p.id === PERSONA) : personas);
+  const planned = list.length * EPISODES;
   const allFindings = [];
-  for (const persona of list) {
-    for (let ep = 0; ep < EPISODES; ep++) {
-      const res = await runEpisode(model, persona, askCustomer);
-      if (!res.findings.length) continue;
-      // Classify each distinct rootKey in this episode via N=3 replay.
-      const keys = [...new Set(res.findings.map(f => f.rootKey))];
-      const rate = {};
-      for (const k of keys) {
-        let hit = 0;
-        for (let r = 0; r < REPLAY_N; r++) { const fired = await replayEpisode(model, persona, res.turns); if (fired.includes(k)) hit++; }
-        rate[k] = hit;
-      }
-      res.findings.forEach(f => {
-        const hit = rate[f.rootKey] || 0;
-        const bucket = hit >= 2 ? 'REAL' : (hit === 1 ? 'INTERMITTENT' : 'FLAKE');
-        allFindings.push(Object.assign({ persona: persona.id, episode: ep, transcript: res.snapshot.transcript, classification: { bucket, observed: hit + '/' + REPLAY_N } }, f));
-      });
-    }
-  }
-  const rep = {
+  const runErrors = [];
+  let completed = 0;
+  // One fixed base for the whole run; partial reports overwrite it after every episode.
+  const base = path.join(OUTDIR, 'findings-' + stamp());
+  const buildRep = partial => ({
     meta: {
       date: new Date().toISOString(), agentModels: [...model.acc.models], customerModel: 'claude-sonnet-4-6',
-      mode: 'LIVE', scope: list.length + ' personas × ' + EPISODES + ' episodes', replayN: REPLAY_N,
-      cost: model.acc.cost, calls: model.acc.calls,
+      mode: 'LIVE' + (partial ? ' — PARTIAL' : ''), scope: list.length + ' personas × ' + EPISODES + ' episodes',
+      replayN: REPLAY_N, cost: model.acc.cost, calls: model.acc.calls, retries: model.acc.retries,
+      partial: partial, completedEpisodes: completed, plannedEpisodes: planned, runErrors: runErrors,
     },
     findings: allFindings,
-  };
-  const { md, base } = writeReport(rep);
+  });
+  const flush = partial => { try { writeReport(buildRep(partial), base); } catch (e) {} };
+
+  for (const persona of list) {
+    for (let ep = 0; ep < EPISODES; ep++) {
+      try {
+        const res = await runEpisode(model, persona, askCustomer);
+        if (res.findings.length) {
+          // Classify each distinct rootKey in this episode via N=3 replay; a replay failure leaves
+          // the finding UNCLASSIFIED (kept, not dropped) and is recorded as a run error.
+          const keys = [...new Set(res.findings.map(f => f.rootKey))];
+          const rate = {};
+          for (const k of keys) {
+            try {
+              let hit = 0;
+              for (let r = 0; r < REPLAY_N; r++) { const fired = await replayEpisode(model, persona, res.turns); if (fired.includes(k)) hit++; }
+              rate[k] = hit;
+            } catch (e) { runErrors.push({ persona: persona.id, episode: ep, error: 'replay(' + k + '): ' + String(e && e.message || e) }); }
+          }
+          res.findings.forEach(f => {
+            const hit = rate[f.rootKey];
+            const bucket = hit == null ? 'UNCLASSIFIED' : (hit >= 2 ? 'REAL' : (hit === 1 ? 'INTERMITTENT' : 'FLAKE'));
+            allFindings.push(Object.assign({ persona: persona.id, episode: ep, transcript: res.snapshot.transcript, classification: { bucket, observed: hit == null ? 'replay failed' : hit + '/' + REPLAY_N } }, f));
+          });
+        }
+      } catch (e) {
+        // One episode failing (e.g. a live-model error after retries) must not abort the whole run.
+        runErrors.push({ persona: persona.id, episode: ep, error: String(e && e.message || e) });
+        console.error('episode failed (persona ' + persona.id + ', ep ' + ep + '): ' + String(e && e.message || e));
+      }
+      completed++;
+      flush(completed < planned); // overwrite the partial after every episode; final is written below
+    }
+  }
+
+  const { md } = writeReport(buildRep(false), base);
   console.log(md);
-  console.log('\n[report written to ' + path.relative(process.cwd(), base) + '.md]');
-  process.exit(0);
+  console.log('\n[report written to ' + path.relative(process.cwd(), base) + '.md]' + (runErrors.length ? '  (' + runErrors.length + ' episode error(s) — partials preserved)' : ''));
+  process.exit(runErrors.length ? 1 : 0);
 }
 
 (async () => {

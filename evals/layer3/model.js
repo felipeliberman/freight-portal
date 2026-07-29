@@ -5,6 +5,8 @@
 // which is exactly why the N=3 replay classification exists.
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const RETRYABLE = new Set([429, 500, 529]); // rate limit, server error, overloaded
 
 // claude-sonnet-4-6 pricing (USD per token). Cache reads ~0.1x input; cache writes ~1.25x (5m TTL).
 const PRICE = { in: 3 / 1e6, out: 15 / 1e6, cacheRead: 0.3 / 1e6, cacheWrite: 3.75 / 1e6 };
@@ -21,25 +23,44 @@ function costOf(usage) {
 // object ({content, stop_reason, usage, model, ...}). Records usage + cost + the resolved model id.
 function makeLiveModel(apiKey, opts) {
   opts = opts || {};
-  const acc = { calls: 0, cost: 0, models: new Set() };
+  const acc = { calls: 0, cost: 0, retries: 0, models: new Set() };
+  const MAX_ATTEMPTS = 3;
+  // Backoff before the next attempt: 600ms, then 1200ms (honors Retry-After when the server sends it).
+  const backoff = attempt => 600 * Math.pow(2, attempt - 1);
   async function call(body) {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error('AI ' + res.status + ': ' + t.slice(0, 300));
+    let lastErr = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let res = null;
+      try {
+        res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        // Network / connection failure before a response — retryable.
+        lastErr = e;
+        if (attempt < MAX_ATTEMPTS) { acc.retries++; await sleep(backoff(attempt)); continue; }
+        throw e;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        acc.calls++; acc.cost += costOf(data.usage);
+        if (data.model) acc.models.add(data.model);
+        return data;
+      }
+      const txt = await res.text().catch(() => '');
+      lastErr = new Error('AI ' + res.status + ': ' + txt.slice(0, 300));
+      // Retry only 429 / 500 / 529; 4xx (400/401/403/404) fail immediately.
+      if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS) {
+        acc.retries++;
+        const ra = Number(res.headers.get('retry-after'));
+        await sleep(ra > 0 ? ra * 1000 : backoff(attempt));
+        continue;
+      }
+      throw lastErr;
     }
-    const data = await res.json();
-    acc.calls++; acc.cost += costOf(data.usage);
-    if (data.model) acc.models.add(data.model);
-    return data;
+    throw lastErr || new Error('AI: retries exhausted');
   }
   return { call, acc, live: true, label: opts.label || 'live' };
 }
