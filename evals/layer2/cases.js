@@ -391,6 +391,68 @@ const cases = [
         'the agreed accessorial ' + AGREED + ' did not survive the insurance gate — released payload: ' + JSON.stringify(released.accessorials));
     },
   },
+
+  // ── 12 ─────────────────────────────────────────────────────────────────────
+  {
+    id: 12, name: 'compound gate answer: insurance answer + accessorial add — the add is not dropped',
+    catches: 'a customer turn that ANSWERS a pending gate AND makes a new request loses the request — the deterministic insurance collector swallows the whole utterance (portal.html:16575-16590)',
+    async run(h) {
+      const w = h.win;
+      w._suppressQuoteAutoRun = true;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48,
+        lineItems: [{ qty: 1, type: 'PLT', weight: 450, length: 48, width: 40, height: 48, commodity: 'furniture' }] }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._applyQuoteFields({ addAccessorials: ['RSD'] }); // residential already on (mirrors the live repro)
+      // The cargo-insurance gate is pending — the value question has just been asked.
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true; w._insPreRate = true;
+      // The forwarded remainder reaches the real agent; script its turn (layer-2 has no live model).
+      h.scriptAI([
+        turn([toolUse('update_quote', { addAccessorials: ['LFD'], getRates: true })]),
+        turn([text('Liftgate delivery added — pulling updated rates.')]),
+      ]);
+      h.reset();
+
+      // ONE compound turn: it ANSWERS the insurance gate AND asks to add liftgate delivery.
+      await w.handleInput("Yes add cargo insurance, declared value $1,200. And also add liftgate delivery while you're at it.");
+      await waitFor(() => h.rateRequests().some(r => r.accessorials.indexOf('LFD') >= 0), 2500);
+
+      // The insurance answer must apply...
+      A.ok(h.bots().some(t => /Cargo insurance requested/.test(t) && /\$1,200\.00/.test(t)), 'the insurance value was not applied from the compound answer');
+      // ...AND the bundled "add liftgate delivery" must survive into the released pull (the remainder
+      // was forwarded to the agent, not discarded).
+      const pull = h.rateRequests().slice(-1)[0];
+      A.ok(pull, 'no rate pull fired after the compound answer');
+      A.ok(pull.accessorials.indexOf('LFD') >= 0,
+        'the bundled "add liftgate delivery" was dropped — the gate answer discarded the remainder. Released pull accessorials: ' + JSON.stringify(pull.accessorials));
+    },
+  },
+
+  // ── 13 ─────────────────────────────────────────────────────────────────────
+  {
+    id: 13, name: 'empty-residual gate answer ("furniture, $2500") is unchanged — no extra message, no extra pull',
+    catches: 'the remainder-forwarding fix must not disturb a pure combined answer (value + commodity, nothing else) — no spurious forward, message, or re-pull',
+    async run(h) {
+      const w = h.win;
+      w._suppressQuoteAutoRun = true;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 250, pieces: 3, length: 58, width: 30, height: 49,
+        lineItems: [{ qty: 3, type: 'PLT', weight: 250, length: 58, width: 30, height: 49, commodity: 'furniture' }] }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insCollecting = 'value'; w._insValueArmed = true; w._insAskRendered = true; w._insPreRate = true;
+      h.scriptAI([]);          // if the agent is (wrongly) invoked, ctx.aiRequests records it
+      h.reset();
+
+      await w.handleInput('furniture, $2500');
+      await sleep(400);
+
+      // Settles silently with the read-back (Option B), and NOTHING else.
+      const readbacks = h.bots().filter(t => /Cargo insurance requested/.test(t));
+      A.eq(readbacks.length, 1, 'expected exactly one insurance read-back');
+      A.ok(/\$2,500\.00/.test(readbacks[0]), 'the value was not applied: ' + readbacks[0]);
+      A.eq(h.aiRequests.length, 0, 'a pure combined answer must NOT be forwarded to the agent (no residual): ' + h.aiRequests.length);
+      A.eq(h.rateRequests().length, 1, 'a pure combined answer must fire exactly one (insurance) pull, not a spurious extra one: ' + h.rateRequests().length);
+      A.ok(!h.bots().some(t => /didn'?t catch the rest|other change|restate/i.test(t)), 'a spurious "remainder" prompt was shown for an empty residual');
+    },
+  },
 ];
 
 module.exports = { cases };

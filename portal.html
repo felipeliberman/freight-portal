@@ -16462,7 +16462,36 @@ function classifyChatTurn(text, ctx) {
   return verdict('freetext', null, {}, 'no rule matched');
 }
 
-async function handleInput(text) {
+// ── Gate remainder forwarding (class-level) ─────────────────────────────────────
+// A customer turn may ANSWER a pending gate (the cargo-insurance value/commodity question, or any
+// future deterministic gate) AND carry an additional request ("...and also add liftgate delivery").
+// The gate collectors settle their own answer, then call _afterInsuranceSettle, which forwards any
+// ACTIONABLE remainder back through the normal front door so it is NEVER silently dropped — any gate,
+// any request type, no per-code special-casing. handleInput passes itself { fromGateRemainder: true }
+// on the re-entry, so a residual-forwarded turn can never forward again: re-entry is bounded to AT
+// MOST ONCE per top-level turn (provable from the call signature — and the forwarded turn also finds
+// insurance already settled, so it cannot re-reach a settle site). If the remainder is actionable it
+// is forwarded; the downstream agent applies it or asks — it is never discarded.
+function _gateRemainderText(t) {
+  return String(t || '')
+    .replace(/\$?\s*[\d,]+(?:\.\d+)?\s*(?:dollars?|bucks|usd|grand|k\b)?/gi, ' ') // the value the gate consumed
+    .replace(/\b(?:worth|valued?\s*(?:at|of)?|value of|insured? for|coverage of|declared?|total|cargo|value|insurance)\b/gi, ' ')
+    .replace(/\b(?:yes|yeah|yep|ok|okay|sure|please|go ahead|thanks|thank you)\b/gi, ' ') // pure answer filler
+    .replace(/\s+/g, ' ').trim();
+}
+function _gateRemainderActionable(r) {
+  // A bare commodity word ("furniture") is NOT actionable, so a pure combined answer ("furniture,
+  // $2500") forwards nothing. A change verb or a shipment/accessorial keyword IS actionable.
+  return r.length >= 3 && /\b(?:add|remove|include|also|as well|change|update|rerun|re-?run|liftgate|residential|inside|limited\s+access|appointment|two.?man|notify|overlength|sort|hazmat|hazardous|weight|lbs?|pounds?|class|\d+\s*x\s*\d+|\d{5})\b/i.test(r);
+}
+// Called right AFTER a deterministic gate settles. Forwards the leftover request, or nothing.
+function _afterInsuranceSettle(t, _opts) {
+  if (_opts && _opts.fromGateRemainder) return; // already a forwarded remainder — never forward again
+  const _rem = _gateRemainderText(t);
+  if (_gateRemainderActionable(_rem)) return handleInput(_rem, { fromGateRemainder: true });
+}
+
+async function handleInput(text, _opts) {
   const t = text.trim();
   const lower = t.toLowerCase();
   // One verdict per turn, computed before any interceptor can act on it. Every gate below reads
@@ -16579,7 +16608,7 @@ async function handleInput(text) {
       const _comboMatch = _remainder.length >= 3 ? _matchInsCommodity(_remainder) : null;
       if (_comboMatch) {
         _insCompleteWithCommodity(_comboMatch, _remainder);
-        return;
+        return _afterInsuranceSettle(t, _opts);
       }
       // OPTION B (product contract): the quote usually already knows the commodity ("tables") —
       // settle silently with the read-back. The numbered list renders ONLY when the commodity is
@@ -16587,7 +16616,7 @@ async function handleInput(text) {
       const _known1 = _insKnownCommodity();
       if (_known1) {
         _insCompleteWithCommodity(_known1.match, _known1.label);
-        return;
+        return _afterInsuranceSettle(t, _opts);
       }
       window._insCollecting = 'commodity';
       appendMessage('bot', 'Got it — ' + fmtMoney(_num) + '. What type of commodity is it? Reply with a number:\n\n' + _insCommodityListText() + '\n\nOr say "no" to skip insurance.');
@@ -16644,7 +16673,7 @@ async function handleInput(text) {
     let _match = _metaTalk ? null : _matchInsCommodity(t);
     if (!_match && !window._insCorrecting) { // during an explicit correction, only a real choice settles
       const _known2 = _insKnownCommodity();
-      if (_known2) { _insCompleteWithCommodity(_known2.match, _known2.label); return; }
+      if (_known2) { _insCompleteWithCommodity(_known2.match, _known2.label); return _afterInsuranceSettle(t, _opts); }
     }
     if (!_match) {
       if (_insMsgMovedOn(t)) { if (_releaseInsuranceCollection(t)) return; return handleInput(t); }
@@ -16654,7 +16683,7 @@ async function handleInput(text) {
       return;
     }
     _insCompleteWithCommodity(_match); // the single settle path: value + commodity known
-    return;
+    return _afterInsuranceSettle(t, _opts);
   }
 
   // ── Chart follow-up bypass ─────────────────────────────────────────────────────
