@@ -13787,12 +13787,16 @@ HOW TO TALK:
 - Never editorialize about a customer's choice — no "great choice," "excellent," or "perfect," and equally no negative or skeptical commentary. When a customer requests an accessorial (liftgate, residential delivery, inside delivery, appointment, limited access, and the like), just add it and re-quote — never call it "unusual," never second-guess it, and never push back on a routine request. Act on the request, do not question it.
 - Never editorialize about rates or carriers — no "tough to beat," "hard to beat," "great price," "right fit," "clearly the way to go," "the surcharge didn't apply," or any other value judgment. State the facts (carrier, price, transit days) and let the customer decide. You are not a salesperson.
 - Never fabricate explanations for rate behavior, carrier pricing, coverage, or residential status. If a carrier is not in the results, do not invent a reason why. If a rate did not change, do not invent a reason why. If you don't know, say "I'm not certain."
+- TREAT EVERY MESSAGE AS SINCERE — NEVER ASSUME SARCASM. When a message is ambiguous, terse, or echoes your own words back to you (e.g. you offered to "dig into specifics" and the customer replies "let me know if you'd like to dig into any specifics?"), it is a genuine question — they are asking "like what?". Answer it directly. Never read a message as sarcasm, never tease or joke at the customer's expense, and never make yourself the punchline.
+- NEVER UNDERCUT THE PRODUCT. Do not tell the customer they don't need you, that they can "just look it up," "see everything themselves," or check the portal on their own. You exist to do the work for them; pointing them away from yourself is never the answer.
+- WHEN ASKED WHAT YOU CAN DO, ANSWER CONCRETELY — never with a vague "let me know if there's anything else." Give the real options for the current context. For a carrier's shipments, for example: "I can pull the tracking status on any of them, your total spend with WARP, average transit time, or the details on a specific BOL — which would help?" List the actual actions available for what the customer is looking at.
 - Never use internal field or state names in anything the customer sees — not "residentialStatus," not "live form state," not "form state," not "LIVE PORTAL STATE," not "quoteForm," nor any other system or plumbing term. Those live in the state block for your use only and are never customer-facing words. When a customer asks how you knew a detail (for example "how do you know the address?"), answer in plain broker language that points to the shipment's real details — e.g. "based on the delivery address on your shipment" — never the internal fields or state that hold them.
 - ZIP RESOLUTION — when the LIVE PORTAL STATE shows originCityResolved:false or destCityResolved:false, that ZIP did not resolve to a city and rates cannot be pulled for it. Tell the customer plainly that you could not find a city for that ZIP (name the ZIP) and ask them to double-check it. If a pull already came back empty on an unresolved ZIP, NEVER attribute it to a guessed cause — not "no carriers," not a "local" or "same-metro" lane, not carrier coverage. The unresolved ZIP is the reason: state that and ask for a corrected ZIP.
 - EMPTY RATE RESULT — STATE THE FACT, POINT TO SUPPORT, NEVER INVENT A CAUSE: when a rate pull returns zero carriers on a lane whose ZIPs resolved (rateCount:0 with no ZIP-resolution problem), tell the customer only that no carriers came back for this lane and that it's best to email support@freightandlogistics.ai so the team can help get it covered. You CANNOT see why nothing returned, so never theorize a reason — do not say the item is oversize or too large, do not say it falls outside standard LTL rate tables, do not say it needs a volume or custom quote, and do not blame the lane, the carriers, or the dimensions. State the fact, point to the support email, and stop.
 - RATE FAILURE — SAY ONLY THE CLASSIFIED MESSAGE: on ANY rate failure, the LIVE PORTAL STATE and the tool result give you the exact customer-safe wording. State only that. Never invent a cause, never attribute the failure to the lane, the carrier mix, the freight, or an accessorial combination, and never speculate about why. A validation reject (a service the customer requested cannot be priced on this account) is NOT the same as no carriers returning — when the state says a request was rejected, do NOT describe it as no carriers being available, do NOT name any accessorial code, and tell the customer only that the rest of the quote is fine and that support can price that service manually.
 - BOOKING, SAVE, UPDATE, AND DISPATCH FAILURES — SAY ONLY THE CLASSIFIED MESSAGE, NEVER A CARRIER, NEVER AN INVENTED CAUSE: when a book_shipment, save_shipment, update_booking, requote_shipment, or dispatch_shipment result comes back with ok:false, it carries a customer-safe "message" field — relay ONLY what that message says. A failed action did not succeed: never claim the attempted step went through — do not say it was booked on a book failure, saved on a save failure, or dispatched on a dispatch failure — and never state or imply a BOL number for a failed write. (A dispatch failure's message may note the shipment is already saved from the earlier step and give a My Shipments fix path — relay that exactly; that is not a success claim.) NEVER attribute a booking, save, or dispatch failure to a carrier — these failures are identical on every carrier, so saying a named carrier "isn't accepting," "is rejecting," or "won't take" a service or accessorial is ALWAYS wrong and forbidden. Do NOT name any accessorial, service, or code as the cause unless the classified message itself names the friendly service, do NOT invent a reason, and do NOT theorize about the freight, the lane, or the account. If the message says a service could not be set up on the account, relay exactly that and that support can handle it manually — nothing more.
 - NEVER ANNOUNCE AN ACTION YOU ARE NOT TAKING THIS TURN. Saying you are pulling rates, saving, booking, or dispatching without making the corresponding tool call in the SAME turn is forbidden. Either call the tool in this very turn, or say plainly what is still needed before you can. Never say rates are "being pulled" or promise results "in a moment" unless the tool call that produces them is part of this same turn — a promise with no action behind it is a fabrication.
+- NEVER SAY AN ACCESSORIAL WAS ADDED UNLESS YOU CALLED update_quote WITH ITS CODE THIS TURN. Every accessorial you acknowledge — residential delivery (RSD), liftgate (LFD delivery / LFO pickup), inside delivery (IND), limited access (LAD delivery / LAO pickup), appointment (APD) — must be written through update_quote addAccessorials in the SAME turn you acknowledge it. Narrating "residential delivery and liftgate added" without the tool call leaves the rate short and the customer rebilled — the single worst error you can make. Compound intake replies answer more than one question: map EACH clause to its field — "yes, not hazmat" = liftgate yes (addAccessorials LFD) AND hazmat no; "no liftgate, not hazardous" = no LFD AND hazmat no; "residence, liftgate, no hazmat" = RSD + LFD, hazmat no; "yes to both" = both accessorials you just asked about. When the customer says the delivery is a residence, add residential delivery (RSD) that turn, and offer liftgate for heavier LTL freight.
 - Never invent specific shipping rates.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then point them to email support@freightandlogistics.ai and the team will follow up. Hazmat is self-serve regardless of hazard class — quote and book it normally. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
@@ -13924,6 +13928,22 @@ COMPANY: Freight and Logistics, Inc. Est. 2013. (800) 687-3713. support@freighta
 //      _classifyRateError message — the same copy shipped pre-generation, now enforced at the output.
 // Returns { text, regenerate, note, deliver }. Side effects (arming _onRatesReady) happen here; the
 // caller injects `note` and re-loops on regenerate, and calls _summarizeRatesToChat on deliver.
+
+// Map an accessorial NAME inside an agent "added/applied" claim to its Primus code. Delivery-default
+// per the accessorial rules; an explicit "pickup"/"origin" in the sentence flips to the origin-side code.
+// Used by the gate to BACK a claimed accessorial through the canonical writer so a narrated accessorial
+// can never go un-written (a missing accessorial at the rate pull is a silent under-quote / carrier rebill).
+function _claimedAccessorialCodes(sentence) {
+  var s = String(sentence || '').toLowerCase();
+  var out = [];
+  var pk = /\bpickup\b|\bat pickup\b|\bon pickup\b|\borigin\b/.test(s);
+  if (/residential|residence|\bhome\b/.test(s))   out.push(pk ? 'RSO' : 'RSD');
+  if (/lift ?gate|tail ?gate/.test(s))            out.push(pk ? 'LFO' : 'LFD');
+  if (/inside (delivery|deliver|pickup|pick up)/.test(s)) out.push(/inside pick/.test(s) ? 'INO' : 'IND');
+  if (/limited[- ]access/.test(s))                out.push(pk ? 'LAO' : 'LAD');
+  if (/appointment/.test(s))                      out.push('APD');
+  return out;
+}
 function _gateFinalText(finalText, ctx) {
   ctx = ctx || {};
   var text = String(finalText == null ? '' : finalText);
@@ -14096,6 +14116,45 @@ function _gateFinalText(finalText, ctx) {
         text = _clean([text]) + " I haven't sent anything yet — say \"book it\" to confirm.";
       }
     }
+
+    // ── 2d. CLAIMED ACCESSORIAL — back it through the canonical writer, or correct the text ──────
+    // The agent must never SAY an accessorial was added unless the form carries it: a missing
+    // accessorial at the rate pull is a silent under-quote → carrier rebill (same defect class as the
+    // RSO under-quote). For each accessorial the reply claims to have added/applied, if the form lacks
+    // it, WRITE it through the SAME path the chips use (_applyQuoteFields addAccessorials). If the write
+    // can't land (e.g. a declined liftgate suppressed by _filterLiftgateCodes), correct the false claim.
+    try {
+      var _accClaimRe = /\b(add(?:ed|ing)?|appl(?:ied|ying)|includ(?:ed|ing)|turn(?:ed)?\s+on|enabled|set\s+up|now\s+(?:on|included)|on\s+the\s+(?:quote|rate|request))\b/i;
+      var _accOfferRe = /\b(would you like|want me to|should i|shall i|do you (?:want|need)|if (?:it|you|this|that)|can (?:i|add)|i can add|let me know|would that|do you have|to add)\b/i;
+      var _claimed = [];
+      _sentences(text).forEach(function (s) {
+        if (/\?/.test(s) || !_accClaimRe.test(s) || _accOfferRe.test(s)) return;
+        _claimedAccessorialCodes(s).forEach(function (c) { if (_claimed.indexOf(c) < 0) _claimed.push(c); });
+      });
+      var _qc = (typeof window !== 'undefined') ? window._quoteContainer : null;
+      var _formHasAcc = function (code) { try { return !!(_qc && [].slice.call(_qc.querySelectorAll('.qt-acc')).find(function (b) { return b.dataset.code === code && b.classList.contains('acc-active'); })); } catch (e) { return false; } };
+      var _formHasChips = false; try { _formHasChips = !!(_qc && _qc.querySelector && _qc.querySelector('.qt-acc')); } catch (e) {}
+      if (_claimed.length && _formHasChips) {
+        var _toWrite = _claimed.filter(function (c) { return !_formHasAcc(c); });
+        if (_toWrite.length) {
+          console.warn('[FP] gate — reply claimed accessorial(s) not on the form:', _toWrite.join(','), '— writing through _applyQuoteFields to back the claim (prevents a silent under-quote)');
+          try {
+            if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ addAccessorials: _toWrite.slice() });
+            // A residential claim also establishes residential status for the pull-time guard + RDI machinery.
+            if (_toWrite.indexOf('RSD') >= 0 && !(window._residentialStatus && window._residentialStatus.residential === true)) {
+              window._residentialStatus = { residential: true, liftgateRecommended: true };
+            }
+          } catch (e) { console.warn('[FP] gate accessorial write failed', e); }
+          // VERIFY: anything the writer couldn't land must NOT be claimed as done — correct the text.
+          var _stillMissing = _toWrite.filter(function (c) { return !_formHasAcc(c); });
+          if (_stillMissing.length) {
+            var _nm = _stillMissing.map(function (c) { return (ACC_LABEL[c] || c).toLowerCase(); }).join(' and ');
+            text = _clean([text]) + ' One correction: I could not add ' + _nm + ' to this quote automatically — please add it on the panel, or tell me to try again, before we pull rates.';
+            out.enforced = true;
+          }
+        }
+      }
+    } catch (e) {}
 
     // ── 3. FABRICATION BACKSTOP (state-gated) ───────────────────────────────────
     if (_avail.state === 'not_settled' || _avail.state === 'settled_rejected') {
@@ -19998,6 +20057,21 @@ function showQuoteForm(prefill, silent) {
       return;
     }
     _showQuoteInsuranceError('');
+
+    // ── UNDER-QUOTE GUARD ──────────────────────────────────────────────────────
+    // A rate pull that omits an accessorial the conversation agreed to is an under-quote → guaranteed
+    // rebill. The deterministic agreed signal is residential status: if the delivery is established
+    // residential but Residential Delivery is not on the form, add it (through the canonical writer)
+    // and log LOUDLY rather than pull silently. Never let an agreed accessorial be dropped in silence.
+    try {
+      if (window._residentialStatus && window._residentialStatus.residential === true
+          && accessorials.indexOf('RSD') < 0 && accessorials.indexOf('RSO') < 0) {
+        console.warn('[FP] doGetRates GUARD — residential established but Residential Delivery missing from the form; adding RSD before the pull to prevent an under-quote');
+        if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ addAccessorials: ['RSD'] });
+        accessorials.length = 0;
+        [].slice.call(container.querySelectorAll('.qt-acc.acc-active')).forEach(function (b) { accessorials.push(b.dataset.code); });
+      }
+    } catch (e) {}
 
     console.log('[FP] doGetRates start — origin:', originZip, '→ dest:', destZip, '| weight:', items[0]&&items[0].weight, '| class:', items[0]&&items[0].freightClass, '| accs:', accessorials);
     // Switch to Rates tab and show loading

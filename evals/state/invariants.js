@@ -1179,6 +1179,53 @@ const invariants = [
       }
     },
   },
+  // ── 44 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 44, name: 'a chat-acknowledged accessorial is written to the form (no silent under-quote)',
+    property: '_claimedAccessorialCodes maps each accessorial name in an agent "added/applied" claim to its delivery-default code (an explicit pickup flips to the origin side); _gateFinalText writes any claimed-but-missing code through the SAME canonical writer the chips use (_applyQuoteFields addAccessorials) and establishes residentialStatus for a residential claim — so an accessorial the agent narrates can never go un-written.',
+    catches: 'BUG 1: the agent said "residential delivery and liftgate added" but wrote NEITHER, and rates pulled with one accessorial — a carrier rebill (the RSO under-quote defect class).',
+    run(ctx) {
+      const w = ctx.win;
+      // Name → code mapping (delivery default; pickup flips).
+      A.ok(JSON.stringify(w._claimedAccessorialCodes('residential delivery and liftgate added')) === '["RSD","LFD"]', 'residential+liftgate claim did not map to RSD+LFD');
+      A.ok(JSON.stringify(w._claimedAccessorialCodes('liftgate at pickup applied')) === '["LFO"]', 'pickup liftgate did not map to LFO');
+      A.ok(w._claimedAccessorialCodes('inside delivery added').indexOf('IND') >= 0, 'inside delivery did not map to IND');
+      A.ok(w._claimedAccessorialCodes('appointment set up').indexOf('APD') >= 0, 'appointment did not map to APD');
+      A.ok(w._claimedAccessorialCodes('would you like a liftgate?').length >= 0, 'mapping threw on a question');
+      // The gate writes claimed-but-missing codes through the canonical chip toggles.
+      const cont = w.document.createElement('div');
+      ['RSD', 'LFD', 'APD'].forEach(code => { const b = w.document.createElement('button'); b.className = 'qt-acc'; b.dataset.code = code; b.onclick = () => b.classList.toggle('acc-active'); cont.appendChild(b); });
+      cont.querySelector('[data-code="APD"]').classList.add('acc-active');
+      w._quoteContainer = cont;
+      w._residentialStatus = null;
+      const active = () => [...cont.querySelectorAll('.qt-acc.acc-active')].map(b => b.dataset.code).sort().join(',');
+      A.ok(active() === 'APD', 'setup: only APD should start active');
+      w._gateFinalText('Perfect — residential delivery and liftgate added. Cargo insurance?', {});
+      A.ok(active() === 'APD,LFD,RSD', 'the gate did not write the claimed accessorials to the form (got ' + active() + ')');
+      A.ok(!!(w._residentialStatus && w._residentialStatus.residential === true), 'a residential claim did not establish residentialStatus');
+    },
+  },
+  // ── 45 ──────────────────────────────────────────────────────────────────────
+  {
+    id: 45, name: 'the rate pull cannot silently omit an agreed accessorial; an un-writable claim is corrected',
+    property: 'doGetRates adds RSD before pulling when residential is established but the form omits it (a deterministic under-quote guard keyed off residentialStatus); and when a claimed accessorial cannot be written (no matching chip / suppressed), the reply is CORRECTED instead of asserting it was added — the anti-fabrication discipline extended to accessorials.',
+    catches: 'BUG 1(c/d): pulling an under-quote silently, and claiming an accessorial that never landed.',
+    run(ctx) {
+      const w = ctx.win;
+      const src = require('./harness').appScript();
+      // The pull-time under-quote guard exists and compares residentialStatus against the form set.
+      A.ok(/doGetRates GUARD — residential established but Residential Delivery missing/.test(src), 'the doGetRates under-quote guard is missing');
+      A.ok(/window\._residentialStatus && window\._residentialStatus\.residential === true/.test(src) && /accessorials\.indexOf\('RSD'\) < 0/.test(src), 'the guard does not gate on residentialStatus vs the form accessorials');
+      // A claimed accessorial with NO chip on the form cannot be written → the claim must be corrected.
+      const cont = w.document.createElement('div');
+      ['RSD', 'LFD', 'APD'].forEach(code => { const b = w.document.createElement('button'); b.className = 'qt-acc'; b.dataset.code = code; b.onclick = () => b.classList.toggle('acc-active'); cont.appendChild(b); });
+      w._quoteContainer = cont;   // note: NO 'IND' chip exists
+      const r = w._gateFinalText('Done — inside delivery added.', {});
+      const hasIND = () => !![...cont.querySelectorAll('.qt-acc.acc-active')].find(b => b.dataset.code === 'IND');
+      A.ok(!hasIND(), 'inside delivery has no chip yet was somehow marked active');
+      A.ok(/could not add inside delivery/i.test(r.text), 'an un-writable accessorial claim was not corrected in the reply (would fabricate "added")');
+    },
+  },
 ];
 
 module.exports = { invariants, A };
