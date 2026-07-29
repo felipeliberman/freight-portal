@@ -1054,6 +1054,10 @@ function closeRightPanel() {
   window._positionResizer = positionResizer;
   resizer.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    // While the demo is playing, USER dragging of the divider is disabled (it otherwise
+    // stopped the demo and emptied the pane). The demo's own pane movement uses
+    // _movieDragPane(), which sets panel.style.width directly and never fires this handler.
+    if (_movieRunning && !_movieKilled()) return;
     resizer.setPointerCapture(e.pointerId);
     panel.style.transition = 'none';
     document.body.style.userSelect = 'none';
@@ -3901,7 +3905,7 @@ document.addEventListener('DOMContentLoaded', function(){
   const ita=document.getElementById('input-textarea');
   if(ita){ ita.addEventListener('focus',_movieTakeOver); ita.addEventListener('keydown',_movieTakeOver); }
   // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
-  ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(e.isTrusted && _movieRunning && !_movieKilled()) _movieTakeOver(); }, true));
+  ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(!(e.isTrusted && _movieRunning && !_movieKilled())) return; if(ev==='pointerdown' && e.target && e.target.closest && e.target.closest('#right-resizer')) return; _movieTakeOver(); }, true));
   // Panel deep-link present? (?apply=1 / ?terms=1 / ?privacy=1) — the visitor came for a
   // specific panel, so suppress the demo auto-play, which would soft-reset and close it.
   let _panelDeepLink=false;
