@@ -559,6 +559,31 @@ const cases = [
       }
     },
   },
+
+  // ── 18 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 18, name: 'prose is never truth: an unbacked "residential + liftgate added" claim writes NO shipment state',
+    catches: 'the over-quote class — _gateFinalText 2d wrote accessorials AND _residentialStatus from the agent\'s own prose, with no customer request and no tool call, silently over-charging the customer',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insDecided = true;        // no insurance hold in the way
+      w._residentialStatus = null; // nothing established by customer or geocoder
+      const active = () => [...w._quoteContainer.querySelectorAll('.qt-acc.acc-active')].map(b => b.dataset.code);
+      A.ok(active().indexOf('RSD') < 0 && active().indexOf('LFD') < 0, 'setup: form already carried RSD/LFD before the gate');
+      h.reset();
+      // The agent CLAIMS in prose that it added them — but there was NO update_quote and NO customer request.
+      const g = w._gateFinalText("I've added residential delivery and liftgate to your quote.", { regenDone: true });
+      // CONTRACT: agent prose is never a source of truth for shipment state — nothing is written.
+      A.ok(active().indexOf('RSD') < 0, 'a prose claim wrote RSD onto the form (silent over-quote): ' + JSON.stringify(active()));
+      A.ok(active().indexOf('LFD') < 0, 'a prose claim wrote LFD onto the form (silent over-quote): ' + JSON.stringify(active()));
+      A.ok(w._residentialStatus == null, 'a prose claim set _residentialStatus from the agent\'s own words (RDI-contract violation): ' + JSON.stringify(w._residentialStatus));
+      // …and the unbacked claim is corrected, not silently accepted as true.
+      A.ok(/not added|could not add|haven'?t added|didn'?t add|tell me to add|add (it|them) on the panel/i.test(g.text),
+        'the unbacked accessorial claim was neither made false nor corrected: ' + JSON.stringify(g.text));
+    },
+  },
 ];
 
 module.exports = { cases };

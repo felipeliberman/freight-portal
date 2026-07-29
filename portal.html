@@ -14207,12 +14207,17 @@ function _gateFinalText(finalText, ctx) {
       }
     }
 
-    // ── 2d. CLAIMED ACCESSORIAL — back it through the canonical writer, or correct the text ──────
-    // The agent must never SAY an accessorial was added unless the form carries it: a missing
-    // accessorial at the rate pull is a silent under-quote → carrier rebill (same defect class as the
-    // RSO under-quote). For each accessorial the reply claims to have added/applied, if the form lacks
-    // it, WRITE it through the SAME path the chips use (_applyQuoteFields addAccessorials). If the write
-    // can't land (e.g. a declined liftgate suppressed by _filterLiftgateCodes), correct the false claim.
+    // ── 2d. CLAIMED ACCESSORIAL — CORRECT the text; agent prose NEVER writes shipment state ──────
+    // PRODUCT CONTRACT: agent prose is never a source of truth for shipment state. An accessorial is
+    // set ONLY by the canonical customer-request path (update_quote / chips / wizard) or the geocoder.
+    // A real request routes through update_quote and lands on the form, so 2d fires ONLY when the form
+    // LACKS a claimed code — i.e. the claim is UNBACKED (no tool call, no request). The right response
+    // to an unbacked claim is to make it FALSE and correct it — NEVER to write state to make it true.
+    // (The prior version wrote the claimed codes AND set _residentialStatus from the claim: a hallucinated
+    // "residential + liftgate added" became a real surcharge the customer never asked for — the mirror of
+    // the under-quote, and worse, because a silent over-charge is one the customer may never discover.
+    // The genuine under-quote is still guarded: the geocoder-driven doGetRates GUARD adds RSD when the
+    // delivery is really residential, and inv6/layer-2 catch a dropped agreed code.)
     try {
       var _accClaimRe = /\b(add(?:ed|ing)?|appl(?:ied|ying)|includ(?:ed|ing)|turn(?:ed)?\s+on|enabled|set\s+up|now\s+(?:on|included)|on\s+the\s+(?:quote|rate|request))\b/i;
       var _accOfferRe = /\b(would you like|want me to|should i|shall i|do you (?:want|need)|if (?:it|you|this|that)|can (?:i|add)|i can add|let me know|would that|do you have|to add)\b/i;
@@ -14225,23 +14230,14 @@ function _gateFinalText(finalText, ctx) {
       var _formHasAcc = function (code) { try { return !!(_qc && [].slice.call(_qc.querySelectorAll('.qt-acc')).find(function (b) { return b.dataset.code === code && b.classList.contains('acc-active'); })); } catch (e) { return false; } };
       var _formHasChips = false; try { _formHasChips = !!(_qc && _qc.querySelector && _qc.querySelector('.qt-acc')); } catch (e) {}
       if (_claimed.length && _formHasChips) {
-        var _toWrite = _claimed.filter(function (c) { return !_formHasAcc(c); });
-        if (_toWrite.length) {
-          console.warn('[FP] gate — reply claimed accessorial(s) not on the form:', _toWrite.join(','), '— writing through _applyQuoteFields to back the claim (prevents a silent under-quote)');
-          try {
-            if (typeof _applyQuoteFields === 'function') _applyQuoteFields({ addAccessorials: _toWrite.slice() });
-            // A residential claim also establishes residential status for the pull-time guard + RDI machinery.
-            if (_toWrite.indexOf('RSD') >= 0 && !(window._residentialStatus && window._residentialStatus.residential === true)) {
-              window._residentialStatus = { residential: true, liftgateRecommended: true };
-            }
-          } catch (e) { console.warn('[FP] gate accessorial write failed', e); }
-          // VERIFY: anything the writer couldn't land must NOT be claimed as done — correct the text.
-          var _stillMissing = _toWrite.filter(function (c) { return !_formHasAcc(c); });
-          if (_stillMissing.length) {
-            var _nm = _stillMissing.map(function (c) { return (ACC_LABEL[c] || c).toLowerCase(); }).join(' and ');
-            text = _clean([text]) + ' One correction: I could not add ' + _nm + ' to this quote automatically — please add it on the panel, or tell me to try again, before we pull rates.';
-            out.enforced = true;
-          }
+        // 2d fires only for codes the form does NOT carry — an unbacked claim (no update_quote/request).
+        var _unbacked = _claimed.filter(function (c) { return !_formHasAcc(c); });
+        if (_unbacked.length) {
+          console.warn('[FP] gate — reply claimed accessorial(s) not backed by any tool call:', _unbacked.join(','), '— correcting the text; agent prose never writes shipment state');
+          var _nm = _unbacked.map(function (c) { return (ACC_LABEL[c] || c).toLowerCase(); }).join(' and ');
+          var _it = _unbacked.length > 1 ? 'them' : 'it';
+          text = _clean([text]) + ' One correction: I have not added ' + _nm + ' to this quote — tell me to add ' + _it + ', or add ' + _it + ' on the panel, before we pull rates.';
+          out.enforced = true;
         }
       }
     } catch (e) {}

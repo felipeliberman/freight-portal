@@ -78,6 +78,7 @@ Quote → Rate → Book (Save) → Edit/Complete → Dispatch
 - When a number is ambiguous (e.g. "100 x 48 40 40"), confirm which number is the weight.
 - Must treat a ZIP the user states as theirs — never say "it was already in the form."
 - Responses: plain prose, no markdown, no emoji, no bullets, 2–4 sentences max.
+- **Agent prose is never a source of truth for shipment state (product contract):** an accessorial or residential classification may be set ONLY by the canonical customer-request path (`update_quote` / form chips / wizard) or by the geocoder/RDI — never inferred from what the agent *says*. If the agent claims an accessorial was added but no tool call backed it, the system makes the claim FALSE and corrects the text; it must never write state to make the claim true (that fabricates agreement the customer never gave → a silent over-quote). The `_gateFinalText` 2d block enforces this: it corrects an unbacked accessorial claim and writes nothing. This is the mirror of the promise-without-action enforcer, which is legitimate because it fires a REAL tool call to satisfy a claim about an action the customer actually requested.
 
 ---
 
