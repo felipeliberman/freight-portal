@@ -453,6 +453,61 @@ const cases = [
       A.ok(!h.bots().some(t => /didn'?t catch the rest|other change|restate/i.test(t)), 'a spurious "remainder" prompt was shown for an empty residual');
     },
   },
+
+  // ── 14 ─────────────────────────────────────────────────────────────────────
+  {
+    id: 14, name: 'insurance held: the deterministic ask speaks; the model does not also speak or narrate the mechanism',
+    catches: 'BUG A / Defect 2 — when the mandatory insurance ask fires (held pull), aiConverse feeds the model the held-pull result and lets it emit a SECOND turn that re-asks and narrates internal gating (portal.html:14564-14568, 14700-14705)',
+    async run(h) {
+      const w = h.win;
+      w._suppressQuoteAutoRun = true;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      // Insurance undecided (default). Script the agent: pull rates, then (the buggy second turn) narrate.
+      h.scriptAI([
+        turn([toolUse('update_quote', { getRates: true })]),
+        turn([text('The system is still processing your insurance decline and will pull rates automatically right after — could you type "no insurance" one more time so it captures it?')]),
+      ]);
+      h.reset();
+      await w.handleInput('go ahead and pull the rates');
+      await sleep(300);
+
+      // The deterministic gate asked exactly once...
+      A.ok(h.bots().some(t => /cargo insurance/i.test(t)), 'the deterministic insurance ask did not render');
+      // ...and the model must NOT be invoked a second time to narrate after the gate already spoke.
+      A.eq(h.aiRequests.length, 1, 'the model spoke again after the gate already asked (the held pull did not end the turn): ' + h.aiRequests.length + ' model calls');
+      A.ok(!h.bots().some(t => /processing your insurance|type "no insurance" one more time|the system (is )?(still )?(processing|holding|finaliz|captures)/i.test(t)),
+        'the model narrated internal gating mechanics to the customer');
+    },
+  },
+
+  // ── 15 ─────────────────────────────────────────────────────────────────────
+  {
+    id: 15, name: 'a deterministic agent exception does not tell the customer to retry something that will fail again',
+    catches: 'BUG B — a swallowed NON-transient exception surfaces the generic "give it another try" copy (portal.html:14799-14805) even though a retry will fail identically',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);
+      // A DETERMINISTIC (non-transient) model failure — a code error, not a 5xx/429/network blip.
+      const boom = async () => { throw new TypeError('cannot read properties of undefined (reading foo)'); };
+      w.flAnthropic = boom; try { w.parent.flAnthropic = boom; } catch (e) {}
+      h.reset();
+      const USERMSG = 'here are my dimensions: 48x40x48, 450 lbs — what transit times do you see?';
+      await w.handleInput(USERMSG);
+      await sleep(300);
+
+      const bots = h.bots();
+      A.ok(bots.length >= 1, 'no failure message rendered (the exception path was not reached)');
+      // B2 (the real bug): the customer's message must survive the failed turn, or the next turn treats
+      // their just-supplied details (the dimensions here) as "missing".
+      const ch = h.g('chatHistory');
+      A.ok(ch.some(e => e.role === 'user' && e.content === USERMSG),
+        'the customer message was rolled back on failure — the next turn would treat their dimensions as missing');
+      // B3: a deterministic error must not tell the customer to retry something that will fail again.
+      A.ok(!bots.some(t => /give it another try|try again in a moment/i.test(t)),
+        'a DETERMINISTIC error told the customer to retry something that will fail again: ' + JSON.stringify(bots));
+    },
+  },
 ];
 
 module.exports = { cases };

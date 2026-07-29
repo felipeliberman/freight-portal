@@ -14227,6 +14227,11 @@ function _gateFinalText(finalText, ctx) {
 // One line, used at every agent-turn failure surface. States plainly that it failed, that the
 // customer's quote/booking data is safe (nothing they entered is lost), and how to reach support.
 const AGENT_FAIL_MSG = "I hit a snag on my end just now — nothing you entered was lost, it's all still here. Give it another try in a moment, or email support@freightandlogistics.ai and we'll jump right on it.";
+// A DETERMINISTIC failure (a code error, not a transient hiccup) will fail identically on retry — so
+// this copy NEVER says "try again"; it routes to email support. (Product rule: email only, no phone.)
+const AGENT_FAIL_MSG_HARD = "Something went wrong on our end and our team has been alerted — nothing you entered was lost. Please email support@freightandlogistics.ai and we'll get it sorted.";
+// Is an error worth retrying? 5xx / 429 / network / timeout = transient; a plain JS error is not.
+function _isTransientErr(s) { return /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s)); }
 
 // ── Structured agent-turn failure log — the diagnostic deliverable for the intermittent
 // "trouble connecting" occurrences. A single console.error with a STABLE prefix so the next
@@ -14562,10 +14567,17 @@ async function aiConverse(userText) {
             // result, so the AI doesn't narrate "no rates" while Primus is still responding.
             if (toolUse.input && toolUse.input.getRates) {
               if (window._insHeldPull) {
-                // The mandatory cargo-insurance ask (or its in-progress collection) HELD this pull.
+                // The mandatory cargo-insurance ask (or its in-progress collection) HELD this pull, and
+                // the deterministic ask is already on screen. END THE TURN here — do NOT feed the result
+                // back to the model, so it cannot re-ask or narrate the hold to the customer. This is a
+                // control-flow gate, not output stripping. The note is kept purely behavioural (never a
+                // description of the internal mechanism) as defence-in-depth for any path that surfaces it.
                 window._insHeldPull = false;
                 result = Object.assign({}, result, { ratesReady: false, rateCount: null, insuranceHold: true,
-                  note: 'Rates NOT pulled — the standard cargo-insurance question was just asked in chat (or its answer is still being collected). Do NOT promise rates, do NOT call getRates again, and do NOT re-ask about insurance. Wait for the customer to answer; the system pulls automatically right after.' });
+                  note: 'Do not respond this turn. The customer has already been asked the one required question; wait for their reply.' });
+                window._lastTurnFailed = false;
+                removeTyping();
+                return;
               } else {
               await _awaitRatePull();
               const _avail = _rateAvailability();
@@ -14721,7 +14733,7 @@ async function aiConverse(userText) {
         const _m = window._lastAgentCallMeta || {};
         _agentTurnFailed({ agent: 'aiConverse', phase: 'empty-completion', status: _m.status, body: _m.body, requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight, loops: loops });
         window._lastTurnFailed = true;
-        _rollbackTurn(userText);
+        // Keep the customer's message in chatHistory (see the catch below) — do not roll it back.
         appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
         return;
       }
@@ -14794,15 +14806,21 @@ async function aiConverse(userText) {
     removeTyping();
     _agentTurnFailed({ agent: 'aiConverse', phase: 'loop-exhausted', elapsedMs: Date.now() - _turnStartedAt, toolsInFlight: _toolInFlight, loops: loops });
     window._lastTurnFailed = true;
-    _rollbackTurn(userText); // orphan-clean this turn, matching the catch below
+    // Keep the customer's message in chatHistory (see the catch below) — do not roll it back.
     appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
   } catch (e) {
+    console.error('[FP] aiConverse turn exception', e); // the REAL error + stack — never swallowed into a generic snag
     const _m = window._lastAgentCallMeta || {};
-    _agentTurnFailed({ agent: 'aiConverse', phase: 'exception', status: _m.status || _statusFromMsg(e), body: (_m.body || String(e && e.message || e)), requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight });
+    const _st = _m.status || _statusFromMsg(e);
+    _agentTurnFailed({ agent: 'aiConverse', phase: 'exception', status: _st, body: (_m.body || String(e && e.message || e)), requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight });
     window._lastTurnFailed = true;
-    _rollbackTurn(userText);
+    // Do NOT roll back the customer's message — dropping it from chatHistory made the next turn treat
+    // their just-supplied details (e.g. dimensions) as "missing". The failed turn simply gets no reply.
     removeTyping();
-    appendMessage('bot', AGENT_FAIL_MSG, { skipHistory: true });
+    // A transient failure (5xx / 429 / network) is worth retrying; a deterministic one (a code error)
+    // will fail identically, so never tell the customer to "try again".
+    const _transientErr = _isTransientErr(String(e && e.message || e)) || _st >= 500 || _st === 429;
+    appendMessage('bot', _transientErr ? AGENT_FAIL_MSG : AGENT_FAIL_MSG_HARD, { skipHistory: true });
   }
 }
 
