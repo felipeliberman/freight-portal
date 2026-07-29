@@ -83,7 +83,61 @@ function invSingleAsk(ctx, turn) {
   };
 }
 
-const CHECKS = [invChangeProp, invFreshness, invNoInternals, invSingleAsk];
+// ── Invariant 5 — answer-or-re-ask ─────────────────────────────────────────────────────────────
+// A gate question the customer poses an answer to must be answered or re-asked — never assumed. The
+// enforceable deterministic instance is the cargo-insurance gate (it has a deterministic ask AND a
+// settlement state): if the ask was pending coming into this turn, the customer's message did NOT
+// address insurance, and yet the insurance decision was recorded settled WITHOUT the ask being
+// re-posed, the agent assumed the answer (typically an assumed decline → uninsured freight). Harm
+// ranks with wrong price. The per-turn signals are computed in the harness (agentTurn).
+function invAnswerOrReask(ctx, turn) {
+  if (!turn.insAskOpenBefore) return null;   // the insurance gate was not awaiting an answer
+  if (turn.insAnsweredThisTurn) return null; // the customer addressed insurance — fine
+  if (turn.insReAskedThisTurn) return null;  // the agent re-asked — fine
+  if (!turn.insSettledNow) return null;      // nothing assumed — still legitimately pending
+  return {
+    invariant: 'answer-or-reask', harm: HARM.WRONG_PRICE, rootKey: 'unanswered-gate-assumed-settled',
+    summary: 'a gate question the customer never answered was recorded as settled without being re-asked',
+    detail: 'the cargo-insurance question was pending; the customer did not address insurance this turn; yet the insurance decision was settled without a re-ask (an assumed decline → uninsured freight)',
+    evidence: { insAskOpenBefore: true, answeredThisTurn: false, reAskedThisTurn: false, settled: true },
+  };
+}
+
+// ── Invariant 6 — no unrequested accessorial in the pull ───────────────────────────────────────
+// Every customer-controlled accessorial in the outbound pull must trace to a customer request
+// (requestedConfig.addCodes) or to a documented automatic rule (residential established in the
+// customer's OWN words → RSD, and its mandatory liftgate). Anything else is an over-quote (customer
+// harm: wrong price). Residential establishment is read from the TRANSCRIPT, never from
+// window._residentialStatus — the prose-backing path (portal.html ~14185) sets that flag from a mere
+// agent claim, which is precisely the over-quote this invariant exists to catch.
+const CONTROLLED_ACC = new Set(['RSD', 'RSO', 'LFD', 'LFO', 'IND', 'INO', 'LAD', 'LAO', 'APD']);
+function invUnrequestedAccessorial(ctx, turn) {
+  const pulls = turn.newRatePayloads;
+  if (!pulls.length) return null;
+  const p = pulls[pulls.length - 1];
+  const requested = turn.requestedConfig.addCodes;
+  const ct = String(turn.customerText || '').toLowerCase();
+  const saysBusiness = /\b(business|commercial|warehouse|loading dock|has a dock|company|office|storefront|distribution center)\b/.test(ct);
+  const saysResidence = /\b(residence|residential|a home|to a home|my home|a house|to a house|apartment|\bapt\b|condo|townhouse|house address|home address)\b/.test(ct);
+  const resEstablished = saysResidence && !saysBusiness;
+  const unrequested = [];
+  (p.accessorials || []).forEach(code => {
+    if (!CONTROLLED_ACC.has(code)) return;                            // INS/HZM/etc have their own gates
+    if (requested.has(code)) return;                                  // the customer asked for it
+    if ((code === 'RSD' || code === 'LFD') && resEstablished) return; // documented residential rule
+    unrequested.push(code);
+  });
+  if (!unrequested.length) return null;
+  return {
+    invariant: 'no-unrequested-accessorial', harm: HARM.WRONG_PRICE, rootKey: 'unrequested-accessorial-in-pull',
+    summary: 'the outbound pull carried an accessorial the customer never requested',
+    detail: 'unrequested accessorial(s) in the pull: ' + unrequested.join(', ') + ' (customer requested: ' + ([...requested].join(', ') || 'none') + '; residential established in transcript: ' + resEstablished + ')',
+    evidence: { unrequested, requested: [...requested], payloadAccessorials: p.accessorials, resEstablished, payloadUrl: p.url },
+  };
+}
+
+// WRONG_PRICE-tier checks first (they order the same in the report, but keep the source grouped).
+const CHECKS = [invChangeProp, invUnrequestedAccessorial, invAnswerOrReask, invFreshness, invNoInternals, invSingleAsk];
 
 function runInvariants(ctx, turn) {
   const out = [];

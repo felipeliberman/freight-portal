@@ -29,6 +29,8 @@ const SAY_TOOL = {
           setDestZip: { type: 'string' },
           hazmat: { type: 'boolean' },
           insurance: { type: 'string', enum: ['add', 'decline'] },
+          probe: { type: 'boolean', description: 'True if THIS message is a test/probe rather than a durable change you want kept — e.g. asking to bump a value only to force a re-pull, then revert. Probed changes are not treated as your agreed configuration.' },
+          priorRequestOutcome: { type: 'string', enum: ['applied', 'refused', 'ignored', 'na'], description: "How the agent handled the request in your PREVIOUS message: 'applied' (it made the change), 'refused' (it openly declined and said so), 'ignored' (it silently did nothing), or 'na' (you asked for nothing, or this is your first message). Set 'refused' ONLY when the agent explicitly told you it would not make the change — your earlier request is then withdrawn from your agreed configuration." },
         },
       },
       done: { type: 'boolean', description: 'True if you are satisfied and would end the conversation.' },
@@ -45,6 +47,8 @@ function personaSystem(persona) {
     'Say ONE natural message per turn. Do not repeat yourself word-for-word. Stay in character.',
     'Whenever you ask the agent to add/remove an accessorial, change weight, change a ZIP, mention hazmat,',
     'or answer the insurance question, ALSO record it in intentDelta so we can verify the agent applied it.',
+    'If a message is only a TEST/PROBE (e.g. asking to bump a value just to force a re-pull, not a change you want kept), set probe=true.',
+    'In each message, set priorRequestOutcome to how the agent handled your PREVIOUS request — use "refused" ONLY if the agent explicitly said it would not do it.',
     'Call the "say" tool exactly once.',
   ].join('\n');
 }

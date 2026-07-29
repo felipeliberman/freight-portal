@@ -80,6 +80,24 @@ async function smoke() {
     botMessagesThisTurn: ['Cheapest is Forward Air at $241.13.'], summarizedThisTurn: true, banned: ctx.banned,
   }), null);
 
+  // (5) answer-or-re-ask: the insurance gate was open, the customer did NOT address insurance, yet it
+  //     settled with no re-ask — an assumed decline.
+  push('SELFTEST', 0, 4, runInvariants(ctx, {
+    requestedConfig: { addCodes: new Set(), removeCodes: new Set(), weight: null }, newRatePayloads: [],
+    botMessagesThisTurn: ['7 carriers came back. Cheapest is Forward Air at $233.92, 2 days.'],
+    insAskOpenBefore: true, insAnsweredThisTurn: false, insReAskedThisTurn: false, insSettledNow: true,
+    summarizedThisTurn: false, banned: ctx.banned,
+  }), null);
+
+  // (6) no-unrequested-accessorial: the pull carried RSD|LFD the customer never asked for and in fact
+  //     said was a business with a dock, no liftgate — an over-quote.
+  push('SELFTEST', 0, 5, runInvariants(ctx, {
+    requestedConfig: { addCodes: new Set(), removeCodes: new Set(), weight: null },
+    newRatePayloads: [{ url: '/applet/v1/rate/multiple?accessorialsList[]=RSD|LFD', accessorials: ['RSD', 'LFD'], freightInfo: [{ weight: 450 }] }],
+    customerText: 'it is going to a business with a loading dock on both ends, so no liftgate needed',
+    botMessagesThisTurn: ['Pulling live rates...'], summarizedThisTurn: false, banned: ctx.banned,
+  }), null);
+
   try { ctx.close(); } catch (e) {}
   const rep = {
     meta: { date: new Date().toISOString(), agentModels: [], customerModel: 'none (crafted)', mode: 'SMOKE — crafted invariant self-test against real portal.html; NOT a live model run and NOT a discovered bug', scope: 'self-test', replayN: REPLAY_N, cost: 0, calls: 0 },
