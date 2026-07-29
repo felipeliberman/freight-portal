@@ -2767,6 +2767,41 @@ function _quoteFormIsOpen() {
   return !!(window._quoteContainer && document.body.contains(window._quoteContainer));
 }
 
+// Read the most recent customer utterance from the transcript (mirrors _filterLiftgateCodes' last-user
+// scan). Returns '' when there is no user turn yet.
+function _lastUserTurnText() {
+  try {
+    for (var _i = chatHistory.length - 1; _i >= Math.max(0, chatHistory.length - 6); _i--) {
+      if (chatHistory[_i] && chatHistory[_i].role === 'user') return String(chatHistory[_i].content || '');
+    }
+  } catch (e) {}
+  return '';
+}
+// True only when the text CLEARLY declines cargo insurance. Precision-biased so a gate never mis-reads
+// an unrelated "no" (e.g. "no liftgate") — and never a message that actually WANTS insurance:
+//   • the text must name insurance/coverage;
+//   • a negation must sit within ~4 words of the insurance token (either order), not merely co-occur;
+//   • any affirmative insurance signal (a declared value tied to insurance, "add/include/yes insurance")
+//     disqualifies a decline read — UNLESS that affirmative verb is itself negated ("don't add insurance").
+function _utteranceDeclinesInsurance(text) {
+  var t = String(text || '').toLowerCase();
+  if (!/\b(insurance|insure|insured|coverage)\b/.test(t)) return false;
+  var NEG = "(?:no|not|skip|decline|declining|without|don'?t|do\\s+not|drop|dropping|forgo|forgoing|pass\\s+on|leave\\s+(?:it|that)\\s+off|no\\s+need(?:\\s+for)?|nope|none|never)";
+  var INS = "(?:insur\\w*|coverage)";
+  // A negation adjacent to the insurance token (≤4 words), either order — the core decline signal.
+  var declines = new RegExp("\\b" + NEG + "\\b(?:\\W+\\w+){0,4}\\W+" + INS, "i").test(t)
+              || new RegExp("\\b" + INS + "\\b(?:\\W+\\w+){0,4}\\W+" + NEG, "i").test(t);
+  if (!declines) return false;
+  // Affirmative insurance signal (add/keep verb or a declared value adjacent to insurance)…
+  var affirmative = new RegExp("\\b(?:add|include|yes|keep)\\W+(?:the\\W+|some\\W+|cargo\\W+)*" + INS, "i").test(t)
+                 || new RegExp("\\b" + INS + "\\W+(?:for|of|at|worth)\\W*\\$?\\s*\\d", "i").test(t)
+                 || new RegExp("\\$\\s*[\\d,]+(?:\\.\\d+)?\\W+(?:of\\W+|in\\W+|for\\W+)?(?:cargo\\W+)?" + INS, "i").test(t);
+  // …unless the affirmative verb is itself negated ("don't add insurance"), in which case the decline stands.
+  var negatedAffirm = new RegExp("\\b" + NEG + "\\b\\W+(?:add|include|keep|want)\\W+(?:the\\W+|some\\W+|cargo\\W+)*" + INS, "i").test(t);
+  if (affirmative && !negatedAffirm) return false;
+  return true;
+}
+
 // Insurance gate for the fast-quote shortcut paths (one-liner detection, parseShipQuery,
 // wizard) that build a shipment and call fetchRates directly, skipping the conversational
 // checklist. Call this right before fetchRates: it asks the cargo-insurance question once,
@@ -2777,6 +2812,20 @@ function _insGateBeforeRates(shipment, summary) {
   if (window._insDecided) return false;
   if (window._insCollecting === 'value' || window._insCollecting === 'commodity') return false;
   if (shipment && shipment.insuranceEnabled) return false;
+  // CLASS INVARIANT: a gate must never ask a question the customer already answered THIS turn. If the
+  // most recent user message clearly declines insurance (even bundled with another request, e.g.
+  // "no insurance, and also add liftgate"), honor the decline and pull without insurance instead of
+  // re-asking. Uses the SAME terminal state + settle helper as the value-stage decline (portal.html
+  // ~16600), so the outcome is identical to answering "no" at the ask.
+  if (_utteranceDeclinesInsurance(_lastUserTurnText())) {
+    window._insCollecting = null; window._insTempValue = null; window._insValueArmed = false;
+    if (shipment) shipment.insuranceEnabled = false;
+    if (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) lastQuotedShipment.insuranceEnabled = false;
+    window._insPreRate = false; window._insDecided = true;
+    console.log('[FP] _insGateBeforeRates — in-turn insurance decline honored; settling declined, not re-asking');
+    _insDeclineSettle();
+    return true; // the gate now owns the pull (via _insDeclineSettle) — caller must not also pull
+  }
   // Capture the shipment so the insurance flow can pull rates for it.
   lastQuotedShipment = shipment;
   // Open the quote form silently so the INS panel + window._doGetRates exist for both the

@@ -508,6 +508,57 @@ const cases = [
         'a DETERMINISTIC error told the customer to retry something that will fail again: ' + JSON.stringify(bots));
     },
   },
+
+  // ── 16 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 16, name: 'insurance decline bundled with a request: the gate honors the in-turn decline, never re-asks',
+    catches: 'the A3 residual — _insGateBeforeRates asks the mandatory insurance question even though the customer already declined insurance in the SAME turn (a gate must never ask a question already answered this turn)',
+    async run(h) {
+      const w = h.win;
+      const asks = () => h.messages.filter(m => m.role === 'bot' && /cargo insurance/i.test(m.text)).length;
+      w.showQuoteForm(READY, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insDecided = false; w._insCollecting = null; w._insPreRate = false;
+      let pulls = 0; w._doGetRates = () => { pulls++; w._ratePullInFlight = true; return Promise.resolve(); };
+      h.reset();
+      // The customer's CURRENT turn declines insurance while also asking for another change.
+      w.appendMessage('user', 'no insurance, and also add liftgate');
+      const held = w._insGateBeforeRates(w.eval('lastQuotedShipment'), '');
+      // FIXED CONTRACT: the in-turn decline is honored — zero re-asks, insurance settled declined,
+      // rates pulled without insurance, and the gate owns the pull (returns true).
+      A.eq(asks(), 0, 'the gate re-asked the insurance question the customer already declined this turn (asks=' + asks() + ')');
+      A.ok(w._insDecided === true, 'the in-turn decline was not settled (window._insDecided !== true)');
+      A.ok(pulls >= 1, 'rates were not pulled without insurance after the honored decline (pulls=' + pulls + ')');
+      A.ok(held === true, '_insGateBeforeRates must return true when it owns the pull via the decline settle');
+    },
+  },
+
+  // ── 17 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 17, name: 'affirmative insurance is never mis-read as a decline (tightened detector)',
+    catches: 'a bundled message that declines a DIFFERENT accessorial but ADDS insurance (with a declared value) must not be treated as an insurance decline',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insDecided = false; w._insCollecting = null; w._insPreRate = false;
+      let pulls = 0; w._doGetRates = () => { pulls++; w._ratePullInFlight = true; return Promise.resolve(); };
+      h.reset();
+      w.appendMessage('user', 'no liftgate, and yes add insurance $1,200');
+      w._insGateBeforeRates(w.eval('lastQuotedShipment'), '');
+      // The affirmative insurance signal ($ value + "add insurance") must NOT settle a decline.
+      A.ok(w._insDecided !== true, 'an affirmative-insurance message was wrongly settled as an insurance decline');
+      // Unit-level guard on the detector itself (present only after the Part 4 fix lands).
+      if (typeof w._utteranceDeclinesInsurance === 'function') {
+        A.ok(w._utteranceDeclinesInsurance('no liftgate, and yes add insurance $1,200') === false,
+          'detector wrongly classified an affirmative-insurance message as a decline');
+        A.ok(w._utteranceDeclinesInsurance('no insurance, and also add liftgate') === true,
+          'detector failed to classify a clear insurance decline');
+        A.ok(w._utteranceDeclinesInsurance('no liftgate needed, please pull rates') === false,
+          'detector wrongly treated an unrelated "no liftgate" as an insurance decline');
+      }
+    },
+  },
 ];
 
 module.exports = { cases };
