@@ -12287,6 +12287,20 @@ function _applyQuoteFields(input) {
     if (!wantOn && isOn) btn.click();
   };
 
+  // Cargo insurance is NOT a peer accessorial — it needs a declared value + commodity, so it routes
+  // through the ONE insurance writer (never the plain chip toggle, which would leave a priced-nothing
+  // half-state on enable, or a cancel-but-still-billed split-brain on remove). Pull INS out of the
+  // toggle lists and fold it into the insurance intent handled just before the pull below.
+  var _insIntent = (input.insurance && typeof input.insurance === 'object') ? Object.assign({}, input.insurance) : null;
+  if (input.addAccessorials && input.addAccessorials.indexOf('INS') >= 0) {
+    _insIntent = _insIntent || {}; if (_insIntent.enable == null) _insIntent.enable = true;
+    input.addAccessorials = input.addAccessorials.filter(function (c) { return c !== 'INS'; });
+  }
+  if (input.removeAccessorials && input.removeAccessorials.indexOf('INS') >= 0) {
+    _insIntent = _insIntent || {}; _insIntent.enable = false;
+    input.removeAccessorials = input.removeAccessorials.filter(function (c) { return c !== 'INS'; });
+  }
+
   // Run the shared liftgate-suppression guard before applying codes to the form.
   if (input.addAccessorials && input.addAccessorials.length) {
     input.addAccessorials = _filterLiftgateCodes(input.addAccessorials);
@@ -12343,9 +12357,26 @@ function _applyQuoteFields(input) {
     try { const _ln = _partyLane(); if (_ln !== '->') window._quotedContacts._lane = _ln; } catch (e) {}
   }
 
+  // Cargo-insurance change (from the insurance object or an INS toggle) → the ONE writer, applied
+  // AFTER items/accessorials/parties so any re-pull reflects them. It owns whatever (re-)pull it needs
+  // (settle + re-pull, or decline + re-pull, or arm the collector), so skip the getRates block below.
+  var _insHandled = false;
+  if (_insIntent) {
+    _insHandled = true; // the pull (if any) belongs to the insurance path — never also fire getRates below
+    try {
+      _applyInsuranceIntent(_insIntent);
+    } catch (e) {
+      // FAIL LOUD, never silent: the writer threw, so insurance did NOT change and no pull fired.
+      // Say so plainly (email-only per the support-copy contract) rather than leaving the turn silent —
+      // a silent omission on a priced coverage change is exactly the class we have been eliminating.
+      console.warn('[FP] update_quote insurance intent failed', e);
+      try { appendMessage('bot', "I couldn't update cargo insurance just now — the rest of your quote is unchanged. Please try again, or email support@freightandlogistics.ai and we'll set it up for you."); } catch (e2) {}
+    }
+  }
+
   // Pull rates if requested — but GUARD against redundant pulls that churn the form.
   // Only actually pull if the shipment signature changed since the last pull.
-  if (input.getRates) {
+  if (input.getRates && !_insHandled) {
     // Hold the pull while cargo insurance is being collected — the insurance flow sets the
     // DOM and pulls once it's resolved, so the premium is always in the rate.
     if (window._insCollecting === 'value' || window._insCollecting === 'commodity') { window._insHeldPull = true; return; }
@@ -12955,6 +12986,51 @@ function _insCompleteWithCommodity(_match, _srcLabel) {
   } else {
     console.warn('[FP] insurance: _doGetRates unavailable — could not requote with insurance');
   }
+}
+
+// ── Canonical chat/agent entrypoint for cargo insurance — reachable at ANY point ──────────────
+// ONE writer for enable / disable / value / commodity, before OR after the gate has closed (after a
+// decline or a settle). Routes straight to setInsurance (the sole state writer, which moves lqs +
+// chip + panel + value together) and, when value AND commodity are both known, through
+// _insCompleteWithCommodity (settle + re-pull + evidence-gated "insurance included" read-back). No
+// collector re-arm for a complete change; the collector is used ONLY to ask for a genuinely-missing
+// piece. This is what makes a decline/settle reversible from chat with no split-brain — the same
+// helper backs both update_quote's insurance object and the deterministic chat phrasings.
+function _applyInsuranceIntent(o) {
+  o = o || {};
+  var lqs = (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) ? lastQuotedShipment : (lastQuotedShipment = {});
+  // DISABLE / CANCEL — clear lqs AND the DOM together (setInsurance 'declined'), then re-pull so the
+  // premium actually leaves the on-screen rates. This is the fix for the removeAccessorials split-brain.
+  if (o.enable === false) {
+    setInsurance({ status: 'declined' });
+    _insDeclineSettle();
+    return true;
+  }
+  // ENABLE / SET VALUE / SET COMMODITY — merge against what is already settled so a value-only or a
+  // commodity-only change preserves the OTHER field (Option B contract).
+  var _val = (typeof o.declaredValue === 'number' && o.declaredValue > 0)
+    ? o.declaredValue
+    : (Number(lqs.insuranceAmount) > 0 ? Number(lqs.insuranceAmount) : (Number(window._insTempValue) || 0));
+  var _hasCommodityHint = o.commodity != null && String(o.commodity).trim();
+  var _match = _hasCommodityHint ? _matchInsCommodity(String(o.commodity)) : null;
+  if (!_match && lqs.insuranceCommodityId) _match = REDKIK_COMMODITIES.find(function (c) { return c.id === lqs.insuranceCommodityId; }) || null;
+  if (!_match) { var _k = _insKnownCommodity(); if (_k) _match = _k.match; }
+  window._insTempValue = _val;
+  // BOTH pieces known → settle + re-pull through the ONE canonical completion path.
+  if (_val > 0 && _match) {
+    _insCompleteWithCommodity(_match, _hasCommodityHint ? String(o.commodity).trim() : _match.name);
+    return true;
+  }
+  // Value known, commodity not → ask ONLY the missing piece (the numbered list); it then completes.
+  if (_val > 0 && !_match) {
+    window._insCollecting = 'commodity'; window._insReaskCount = 0; window._insAskRendered = true;
+    appendMessage('bot', 'Got it — cargo insurance for ' + fmtMoney(_val) + '. What type of commodity is it? Reply with a number:\n\n' + _insCommodityListText() + '\n\nOr say "no" to skip insurance.');
+    return true;
+  }
+  // No value yet → ask for it (the collector then owns value → commodity → pull).
+  window._insCollecting = 'value'; window._insReaskCount = 0; window._insValueArmed = true; window._insAskRendered = true;
+  appendMessage('bot', 'To add cargo insurance, I need the total declared value of the cargo in USD — what is it?');
+  return true;
 }
 
 function _insMsgMovedOn(t) {
@@ -13947,7 +14023,7 @@ READING WEIGHT AND DIMENSIONS — NEVER MISMAP THE NUMBERS. When a customer ratt
 PULLING RATES — act like a real broker, never rush it:
 Do NOT call update_quote with getRates:true until the customer has given you the real weight and dimensions AND you have asked about accessorials — is it going to a residence or a business, do they need a liftgate, is it a limited-access location. Also ask whether the freight is hazardous material (hazmat / dangerous goods) — if the customer says yes, or gives a UN number, set hazmat:true on the line item so the rate includes the carrier hazmat surcharge. You do not need the UN number to quote; the full UN number, packing group, and emergency contact are collected at booking, NOT at quote. PO / reference number, special instructions, and pickup date and window are collected at BOOKING — only after the customer has picked a carrier — and are NEVER asked during quoting. During quoting the only questions are accessorials (residence vs business, liftgate, limited access), the hazmat yes/no, and cargo insurance, then pull rates. Do not ask for a PO or reference number, special instructions, or pickup date at quote time even if the form looks complete; the pickup date defaults on the panel and is never proactively asked until a carrier is selected. During quoting, never ask for UN number, UN packaging group, or hazmat class details. The only hazmat question allowed at quote time is: is the freight hazardous material (yes/no)? All other hazmat details are collected at booking only. Do not ask for them early even if the customer volunteers the information. Never guess hazmat — only set it when the customer indicates it. A wrong weight or a missing accessorial means a wrong rate and a costly rebill. Only set getRates:true once the customer has provided the actual details and explicitly asks you to pull rates ("get me rates", "pull the rates", "what's it cost"). When weight or dimensions are still unknown, ask for them instead of quoting. PACKING SLIP EXCEPTION: when the customer's message is a packing slip or structured shipping document that already answers the accessorial questions — explicitly stating liftgate is not needed, identifying the facility type (commercial/dock/residential), or specifying limited access — do NOT re-ask those questions. The written document is the customer's answer. Extract the answers from the doc and apply them; asking again after the customer already provided a document is friction, not diligence.
 
-CARGO INSURANCE — REQUIRED LAST QUESTION BEFORE RATES. After the hazmat question and before you pull rates, you MUST ask exactly once: "Would you like to add cargo insurance? If so, what is the total value of the cargo?" End that message with [[INSURANCE]] on its own line, and do NOT call update_quote with getRates on that turn. The system then takes over: it collects the cargo value and the commodity type and pulls the rates itself with the premium included (insurance must be priced into the rate, so it has to be decided before rates run). Do not ask for the commodity yourself and never quote an insurance price. If the customer already declined insurance earlier in this quote, skip the question. If the customer declines cargo insurance at any point — up front in their freight description, or when you ask — end that message with [[NOINSURANCE]] on its own line to record the decline, and do not bring insurance up again for this quote. Never pull rates before this insurance question has been asked and answered.
+CARGO INSURANCE — REQUIRED LAST QUESTION BEFORE RATES. After the hazmat question and before you pull rates, you MUST ask exactly once: "Would you like to add cargo insurance? If so, what is the total value of the cargo?" End that message with [[INSURANCE]] on its own line, and do NOT call update_quote with getRates on that turn. The system then takes over: it collects the cargo value and the commodity type and pulls the rates itself with the premium included (insurance must be priced into the rate, so it has to be decided before rates run). Do not ask for the commodity yourself and never quote an insurance price. If the customer already declined insurance earlier in this quote, skip the question. If the customer declines cargo insurance at any point — up front in their freight description, or when you ask — end that message with [[NOINSURANCE]] on its own line to record the decline, and do not bring insurance up again for this quote. Never pull rates before this insurance question has been asked and answered. CHANGE OF MIND — this is the ONE exception to "don't bring it up again," and you CAN act on it directly: if the customer later wants insurance after declining, wants to raise or lower the declared value, correct the commodity, or cancel coverage, call update_quote with the "insurance" field to make the change ({enable:true, declaredValue, commodity} to add or change, {enable:false} to cancel) — the system re-pulls with or without the premium. Never tell the customer to use the form for this and never say you cannot do it: the insurance field IS your tool for it. You still never quote an insurance price or percentage; you set the declared value they give you and let the rate reflect the premium.
 
 FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote to fill the form fields (origin, dest, weight, dims, accessorials) WITHOUT getRates — let the customer watch the form populate on the Quote Details tab. CRITICAL SEQUENCE: opening/filling the form and pulling rates must be SEPARATE turns. Never include getRates:true on the same update_quote call that opens the form or first fills fields — that flips the customer to the rates tab before they've even seen the form fill in, and before you've confirmed accessorials. The correct flow: (1) fill fields as you gather info, form stays on Quote Details so the customer watches it build; (2) ask the accessorial questions (residence/business, liftgate, limited access) and get answers; (3) ONLY THEN, when the customer says they're ready or asks for the price, call update_quote with getRates:true as its own dedicated call. If you ever catch yourself about to pull rates while still asking a question, don't — finish the questions first. Pull rates with getRates:true exactly ONCE, when the customer is ready and asks. After that single pull, the rates are on screen — do NOT pull again. If the customer asks anything about the rates, or seems to think the rates are incomplete, or asks "is that all" / "only 4?" — use read_rates to look at what's there and answer; do NOT re-pull. The rate count is whatever the carriers returned for that lane (a short or same-zip lane may only return a few carriers — that's normal and correct, not an error). Re-pull (getRates:true) when: (a) the shipment genuinely changes (new weight, dims, accessorial, origin, or destination), OR (b) the customer explicitly asks to re-rate or requote. Never decline an explicit customer request for new rates. Repeatedly pulling rates unprompted churns the form and confuses the customer.
 
@@ -14448,8 +14524,13 @@ async function aiConverse(userText) {
                     }
                   },
                   itemsMode: { type: 'string', enum: ['auto','append','replace'], description: "How to apply items. 'append' ADDS each item as a NEW line — use this whenever the customer is adding freight to a quote that already has lines. 'replace' rewrites lines positionally from the first. Omit for 'auto': edits the only line when exactly one exists, otherwise adds." },
-                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APD appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, LAO limited access pickup. Other: INS insurance. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it.' },
-                  removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF' },
+                  addAccessorials: { type: 'array', items: { type: 'string' }, description: 'Accessorial codes to turn ON. DELIVERY (most common): RSD residential delivery, LFD liftgate delivery, IND inside delivery, LAD limited access delivery, APD appointment. PICKUP (only when the customer clearly means the pickup/origin side): RSO residential pickup, LFO liftgate pickup, LAO limited access pickup. DEFAULT TO DELIVERY codes (RSD/LFD) for "residential"/"liftgate" unless the customer explicitly says the pickup/origin needs it. Do NOT put INS here — cargo insurance is set through the "insurance" field below (it needs a declared value and commodity, not a bare toggle).' },
+                  removeAccessorials: { type: 'array', items: { type: 'string' }, description: 'Codes to turn OFF (not INS — cancel insurance via the "insurance" field: {enable:false})' },
+                  insurance: { type: 'object', description: 'Cargo insurance — set/change/cancel at ANY point, before OR after rates, and after a prior decline. This is the ONLY way to price insurance: turning it on needs a declared value AND a commodity, so use these fields, never addAccessorials. enable:true with declaredValue and commodity settles it and re-pulls with the premium; enable:false cancels it and re-pulls without the premium; passing only declaredValue (or only commodity) on an already-on quote changes that one field and keeps the other.', properties: {
+                    enable: { type: 'boolean', description: 'true to add/keep cargo insurance, false to cancel it' },
+                    declaredValue: { type: 'number', description: 'Total declared value of the cargo in USD (e.g. 1200)' },
+                    commodity: { type: 'string', description: 'What is being shipped, in the customer\'s words (e.g. "furniture", "electronics") — mapped to the underwriter category automatically. Omit to keep the current commodity.' }
+                  } },
                   getRates: { type: 'boolean', description: 'Set true to pull live rates now' },
                   shipper: { type: 'object', description: 'Pickup/origin party. Set whenever the customer provides the shipper name, address, or contact — especially when they paste a complete shipment in one message. These are stored and carried through to booking automatically so you never re-ask.', properties: {
                     name:    { type: 'string', description: 'Company or person name at pickup' },
@@ -16592,6 +16673,35 @@ async function handleInput(text, _opts) {
       _spAutoExtractAndRate(t);
       return;
     }
+  }
+
+  // ── Cargo insurance — change of mind at ANY point (Option B): set value / commodity / cancel ──
+  // Routes to the ONE writer (_applyInsuranceIntent → setInsurance / _insCompleteWithCommodity), so it
+  // works AFTER a decline and AFTER a settle, not only inside the armed collector — the Tier-1 gap.
+  // Never fires mid-collection (the value/commodity stages below own those turns) and requires an
+  // insurance token in the SAME message, so an unrelated dollar figure is never read as a value.
+  if (window._insCollecting !== 'value' && window._insCollecting !== 'commodity'
+      && lastQuotedShipment && /\b(insurance|insure|insured|coverage|declared value)\b/i.test(lower)) {
+    // CANCEL / DISABLE — only when insurance is actually on (else it is a no-op, let it pass through).
+    if (/\b(cancel|remove|drop|take off|turn off|no longer|don'?t want|get rid of)\b/i.test(lower)
+        && !/\b(add|keep|want|need|include|raise|increase)\b/i.test(lower)) {
+      var _insOn = !!(lastQuotedShipment.insuranceEnabled)
+        || (typeof _readQuoteInsurance === 'function' && _readQuoteInsurance().active);
+      if (_insOn) { _applyInsuranceIntent({ enable: false }); return; }
+    }
+    // SET / RAISE / CHANGE the declared value (an amount in the message) — enables if off, adjusts if
+    // on, and preserves the commodity unless the message names a new one. Money signal required: a $
+    // amount, or a value-word immediately followed by a number — never a bare token (so ZIP/weight
+    // are never mistaken for a value).
+    var _tAmt = String(t).replace(/(\d),(\d)/g, '$1$2');
+    var _amt = 0;
+    var _md = _tAmt.match(/\$\s*(\d+(?:\.\d+)?)/);
+    if (_md) _amt = Number(_md[1]);
+    if (!_amt) {
+      var _mv = _tAmt.match(/\b(?:declared value|value|valued|worth|coverage|insured?\s+(?:for|at)|insure\s+it\s+for|cover(?:age)?\s+of)\b[^.?!]{0,8}(\d+(?:\.\d+)?)/i);
+      if (_mv) _amt = Number(_mv[1]);
+    }
+    if (_amt > 0) { _applyInsuranceIntent({ enable: true, declaredValue: _amt, commodity: t }); return; }
   }
 
   // ── Redkik cargo insurance — conversational intent + collection (pre-AI) ────────

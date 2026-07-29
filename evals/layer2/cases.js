@@ -584,6 +584,79 @@ const cases = [
         'the unbacked accessorial claim was neither made false nor corrected: ' + JSON.stringify(g.text));
     },
   },
+
+  // ── 19 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 19, name: 'insurance value reachable AFTER a decline: "set the declared value to $1,200" settles + prices',
+    catches: 'the Tier-1 gap — once the insurance gate declines, there was no chat path to set a declared value; the agent had no tool and improvised',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);              // real doGetRates so the outbound pull is captured
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      // Gate already CLOSED by a decline.
+      w._insDecided = true; w._insCollecting = null;
+      w.eval('lastQuotedShipment.insuranceEnabled = false');
+      h.reset();
+      await w.handleInput("set the declared value to $1,200, it's furniture");
+      await waitFor(() => { const l = w.eval('lastQuotedShipment') || {}; return l.insuranceEnabled === true; }, 2500);
+      const lqs = w.eval('lastQuotedShipment') || {};
+      A.ok(lqs.insuranceEnabled === true, 'declared value after a decline did not enable insurance: ' + JSON.stringify({en:lqs.insuranceEnabled, amt:lqs.insuranceAmount}));
+      A.eq(Number(lqs.insuranceAmount), 1200, 'declared value not recorded as 1200: ' + lqs.insuranceAmount);
+      await waitFor(() => h.rateRequests().some(r => r.insurance && Number(r.insurance.amount) === 1200), 2500);
+      const insPull = h.rateRequests().filter(r => r.insurance && Number(r.insurance.amount) === 1200);
+      A.ok(insPull.length >= 1, 'the re-pull did not carry the insurance premium (declared value): ' + JSON.stringify(h.rateRequests().map(r=>r.insurance)));
+    },
+  },
+
+  // ── 20 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 20, name: 'insurance cancel is atomic: "cancel the insurance" after a settle clears state AND drops the premium',
+    catches: 'the split-brain — removeAccessorials:[\'INS\'] cleared the chip/DOM but left lastQuotedShipment.insuranceEnabled true, so the customer cancelled coverage and was still billed the premium',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      // Insurance already SETTLED (added) — chip on, value + commodity on the form via the sole writer.
+      w.eval("setInsurance({ status: 'added', amount: 2500, commodityId: REDKIK_COMMODITIES[0].id, commodityName: REDKIK_COMMODITIES[0].name })");
+      // The last pull carried the premium (the real state after a settle) — so cancel must re-pull to drop it.
+      w.eval("window._lastRatesShipment = { insuranceEnabled: true }");
+      const insBtnOn = () => !![...w._quoteContainer.querySelectorAll('.qt-acc')].find(b => b.dataset.code === 'INS' && b.classList.contains('acc-active'));
+      A.ok(insBtnOn(), 'setup: INS chip was not active after settle');
+      const before = h.rateRequests().length;
+      h.reset();
+      await w.handleInput('cancel the insurance');
+      await waitFor(() => { const l = w.eval('lastQuotedShipment') || {}; return l.insuranceEnabled === false; }, 2500);
+      const lqs = w.eval('lastQuotedShipment') || {};
+      A.ok(lqs.insuranceEnabled === false, 'cancel left lastQuotedShipment.insuranceEnabled true (split-brain — billed after cancel)');
+      A.ok(!insBtnOn(), 'cancel left the INS chip active');
+      await waitFor(() => h.rateRequests().length > before, 2500);
+      const after = h.rateRequests().slice(before);
+      A.ok(after.length >= 1, 'cancel did not re-pull without insurance');
+      A.ok(after.every(r => !r.insurance || !(Number(r.insurance.amount) > 0)), 'the post-cancel pull STILL carried an insurance premium: ' + JSON.stringify(after.map(r=>r.insurance)));
+    },
+  },
+
+  // ── 21 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 21, name: 'inline enable in ONE turn: "add insurance for $1,200, it\'s furniture" settles with no re-ask',
+    catches: 'fix #2 — the enable path discarded an inline value and re-asked "what is the total value?" forcing the customer to repeat a revenue action',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insDecided = false; w._insCollecting = null;
+      h.reset();
+      await w.handleInput("add insurance for $1,200, it's furniture");
+      await waitFor(() => { const l = w.eval('lastQuotedShipment') || {}; return l.insuranceEnabled === true; }, 2500);
+      const lqs = w.eval('lastQuotedShipment') || {};
+      A.ok(lqs.insuranceEnabled === true, 'one-turn enable did not settle insurance: ' + JSON.stringify({en:lqs.insuranceEnabled, amt:lqs.insuranceAmount}));
+      A.eq(Number(lqs.insuranceAmount), 1200, 'inline declared value not captured: ' + lqs.insuranceAmount);
+      A.ok(!!lqs.insuranceCommodityId, 'inline commodity ("furniture") not mapped: ' + JSON.stringify(lqs.insuranceCommodityId));
+      A.ok(w._insCollecting == null, 'the enable re-armed the collector instead of settling in one turn: ' + w._insCollecting);
+      A.ok(!h.messages.some(m => m.role === 'bot' && /what is the total value|need the total|need two things/i.test(m.text)),
+        'the enable RE-ASKED for the value the customer already gave: ' + JSON.stringify(h.bots()));
+    },
+  },
 ];
 
 module.exports = { cases };
