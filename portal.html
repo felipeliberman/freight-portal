@@ -2323,6 +2323,7 @@ function resetShipmentState(wipeConversation) {
     window._lastRatePullError = null;
     window._accMismatch = {}; // card 3 Stage 1: fresh quote = fresh accessorial-retry history (no stale strikes)
     window._lastBooked = null; window._bookingLock = null; window._lastPulledSig = null;
+    window._lastRatesSig = null; window._rateFireSig = null; // rate-parameter signatures travel with the settled rates
     window._relockCarrier = null; window._lockDropped = null; // carrier-selection state travels with the lock
     window._shipCtxStale = true; // force one fresh history load after any reset
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
@@ -12330,6 +12331,7 @@ function _applyQuoteFields(input) {
       // while it's still loading. Primus takes ~5s; the flag clears when rates publish (or on timeout).
       window._ratePullInFlight = true;
       window._ratePullStartedAt = Date.now();
+      window._rateFireSig = _rateParamSig(); // fire-time parameter signature — publish discards if it no longer matches (supersede)
       if (window._doGetRates) window._doGetRates(); else { const b = document.querySelector('#qt-get-rates'); if (b) b.click(); }
     }, 450);
   }
@@ -12364,6 +12366,36 @@ function _quoteSignature() {
     ].join('x')).join('|');
     const acc = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code).sort().join(',');
     return [o, d, rows, acc].join('::');
+  } catch(e) { return null; }
+}
+
+// ── Rate-PARAMETER signature — the FULL set of inputs that change a Primus rate ──────────────
+// Deliberately SEPARATE from _quoteSignature (which feeds the anti-flicker dedupe at the
+// _applyQuoteFields pull and must not change behaviour). This wider hash is used ONLY by the
+// gate-release staleness check, the publish stamp (window._lastRatesSig), and the supersede guard
+// (window._rateFireSig). It adds freight class, per-line hazmat, and the cargo-insurance selection
+// to the origin/dest/dims/accessorials that _quoteSignature already covers — so ANYTHING the
+// customer agreed to before a gate (accessorial, dims, weight, class, hazmat, insurance) changes
+// the signature and the settled rates are known to be stale on release. GENERIC — no code is
+// special-cased. Compared against the signature captured when the on-screen rates were published.
+function _rateParamSig() {
+  try {
+    const panel = _quoteRoot() || document;
+    const o = (panel.querySelector('#qt-origin')||{}).value || '';
+    const d = (panel.querySelector('#qt-dest')||{}).value || '';
+    const rows = [...panel.querySelectorAll('.qt-line')].map(r => [
+      (r.querySelector('.li-qty')||{}).value||'',
+      (r.querySelector('.li-weight')||{}).value||'',
+      (r.querySelector('.li-len')||{}).value||'',
+      (r.querySelector('.li-wid')||{}).value||'',
+      (r.querySelector('.li-hgt')||{}).value||'',
+      (r.querySelector('.li-class')||{}).value||'',
+      (r.querySelector('.li-haz') && r.querySelector('.li-haz').checked) ? 'H' : ''
+    ].join('x')).join('|');
+    const acc = [...panel.querySelectorAll('.qt-acc.acc-active')].map(b=>b.dataset.code).sort().join(',');
+    let ins = '';
+    try { if (typeof _readQuoteInsurance === 'function') { const s = _readQuoteInsurance(panel); if (s.active) ins = 'INS:' + (s.commodityId||'') + ':' + (s.amount||0); } } catch(e) {}
+    return [o, d, rows, acc, ins].join('::');
   } catch(e) { return null; }
 }
 
@@ -12630,6 +12662,8 @@ function _publishRatesForAI(rates, shipment) {
     // rates already arrive sorted cheapest-first from fetchRates
     window._lastRatesRaw = rates;          // full rate objects, for booking
     window._lastRatesShipment = shipment;  // shipment used for these rates
+    window._lastRatesSig = _rateParamSig(); // parameter signature of the rates now on screen — any
+                                           // gate-release "present existing rates" shortcut must match this or re-pull
     // Keep lastQuotedShipment.items in sync with the exact items that were rated,
     // so the booking form (fHaz) and booking payload (s.items) see the real hazmat flag and dims.
     try {
@@ -12718,7 +12752,14 @@ function _insDeclineSettle() {
   try {
     var _avail = (typeof _rateAvailability === 'function') ? _rateAvailability() : { state: 'not_settled' };
     var _shp = window._lastRatesShipment;
-    if (_avail.state === 'settled_with_rates' && !(_shp && _shp.insuranceEnabled)) {
+    // The "present existing rates, don't re-pull" shortcut is sound ONLY if the on-screen rates were
+    // pulled with the CURRENT rate parameters. If anything the customer agreed to before this gate
+    // (an accessorial, dims, weight, class, hazmat) changed the signature since those rates settled,
+    // they are STALE and must never be reported as the answer — fall through to the re-pull below,
+    // which fires window._doGetRates() against the current form. Generic; no RSD/insurance special case.
+    var _fresh = (typeof _rateParamSig === 'function') && window._lastRatesSig != null
+                 && _rateParamSig() === window._lastRatesSig;
+    if (_avail.state === 'settled_with_rates' && !(_shp && _shp.insuranceEnabled) && _fresh) {
       appendMessage('bot', 'No problem — cargo insurance is off. Your rates are on the right, unchanged.');
       try { _summarizeRatesToChat(); } catch (e) {}
       return;
@@ -20095,6 +20136,8 @@ function showQuoteForm(prefill, silent) {
     // success (below, after publish) and in the catch; force-cleared by _awaitRatePull's maxWait and
     // resetShipmentState if a pull ever hangs.
     window._ratePullInFlight = true;
+    const _fireSig = _rateParamSig(); // the exact parameters this pull is being run with (post RSD-guard)
+    window._rateFireSig = _fireSig;
 
     // Rotating loading messages
     const _loadMsgs = [
@@ -20162,6 +20205,18 @@ function showQuoteForm(prefill, silent) {
         shipment.insuranceEnabled = false;
       }
       const rates = await fetchRates(shipment);
+      // SUPERSEDE — NEVER REPORT STALE: if the rate parameters changed while this pull was in flight
+      // (the customer added an accessorial, changed dims, etc.), a newer request has superseded it.
+      // Discard this result entirely — do not publish, render, or summarize it — so the stale response
+      // can never be presented as the answer to the newer request. The newer pull owns the outcome.
+      if (_fireSig != null && _rateParamSig() !== _fireSig) {
+        console.log('[FP] doGetRates — parameters changed mid-flight; discarding superseded result');
+        clearInterval(_loadTimer);
+        window._ratePullInFlight = false;
+        window._onRatesReady = null; // do not summarize stale rates
+        if (getBtn) { getBtn.textContent='Get Rates'; getBtn.disabled=false; }
+        return;
+      }
       currentRates = rates;
       console.log('[FP] doGetRates complete —', rates.length, 'rates | top:', rates[0] && (rates[0].name||rates[0].carrierName) + ' $' + ((rates[0].billTo&&rates[0].billTo.total)||rates[0].total));
       publishRates(rates, shipment, { paint: false }); // paints below via renderRates(); this raises the tab

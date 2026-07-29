@@ -353,6 +353,44 @@ const cases = [
       A.ok(/tell me the shipper name/i.test(empty), 'the empty-panel greeting lost its ask: ' + empty);
     },
   },
+
+  // ── 11 ─────────────────────────────────────────────────────────────────────
+  {
+    id: 11, name: 'pre-gate accessorial survives the insurance gate: released pull carries the agreed code',
+    catches: 'an accessorial agreed BEFORE a gate (insurance/RDI/hazmat) dropped on gate release — the RSD/RSO under-quote class',
+    async run(h) {
+      const w = h.win;
+      // Mirror the agent path (portal.html:12086): suppress showQuoteForm's 400ms prefill auto-run so
+      // it cannot fire a rescue pull that masks the gate-release bug (the live agent path suppresses it).
+      w._suppressQuoteAutoRun = true;
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 }, true);
+      // 1) A prior settled pull with NO accessorial (the customer's "manual quote"), uninsured.
+      w._insDecided = true;
+      await w._doGetRates();
+      await waitFor(() => (w._lastRates && w._lastRates.count > 0) || h.rateRequests().length >= 1, 2000);
+      const firstCount = h.rateRequests().length;
+      A.ok(firstCount >= 1, 'setup: the manual pull never fired');
+      A.ok(h.rateRequests()[firstCount - 1].accessorials.indexOf('RSD') < 0, 'setup: the manual pull should not carry RSD');
+
+      // 2) Agree an accessorial (class-level: a representative code) and rerun — insurance UNDECIDED
+      //    so the gate holds; then decline. The RELEASED pull must carry the agreed code.
+      w._insDecided = false; w._insHeldPull = false;
+      const AGREED = 'RSD';                     // representative; the contract is per-code, not RSD-only
+      w._applyQuoteFields({ addAccessorials: [AGREED], getRates: true });
+      await sleep(150);
+      A.ok(/cargo insurance/i.test((h.bots().slice(-1)[0] || '')), 'setup: the insurance gate did not hold the pull / ask');
+      h.reset();                                // isolate the RELEASE pull
+      await w.handleInput('no');                // decline → gate release
+      const settled = await waitFor(() => h.rateRequests().length >= 1, 2000);
+
+      // The class assertion: on release the newer request supersedes — the pull that reaches Primus
+      // must carry the agreed accessorial, never the stale pre-gate rates.
+      A.ok(settled, 'gate release presented stale rates without re-pulling (no /rate/multiple fired after decline)');
+      const released = h.rateRequests().slice(-1)[0];
+      A.ok(released.accessorials.indexOf(AGREED) >= 0,
+        'the agreed accessorial ' + AGREED + ' did not survive the insurance gate — released payload: ' + JSON.stringify(released.accessorials));
+    },
+  },
 ];
 
 module.exports = { cases };
