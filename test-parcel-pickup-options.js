@@ -34,7 +34,8 @@ const PORTAL_PATH = process.argv[2] || path.join(__dirname, 'portal.html');
 const RUNS = Number(process.argv[3] || 5);
 const SCENARIO = process.argv[4] || 'dispatch';
 const MODEL = 'claude-sonnet-4-6';
-const API_KEY = 'sk-ant-api03-GMOnZ8_4Ou-QjZ8XH' + 'Gl_DOyLwxwmcdt9fWOqgEQYn0E357_xSm_OI1jWBu9HAtCZTVj5Qya0FDo6H7ISwzwowA-ve7y6gAA';
+const API_KEY = process.env.ANTHROPIC_API_KEY;
+if (!API_KEY) { console.error('ANTHROPIC_API_KEY is not set. Export it before running this script.'); process.exit(1); }
 
 function extractSysPrompt(html) {
   const marker = 'const _convoSysPrompt = `';

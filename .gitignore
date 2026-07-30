@@ -4,3 +4,7 @@ node_modules/
 evals/results/*
 !evals/results/.gitkeep
 evals/questions.generated.json
+
+# Local investigation scripts — read secrets from the environment, never commit them
+measure-requote-timing.js
+.DS_Store
