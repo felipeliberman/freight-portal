@@ -12925,6 +12925,19 @@ function _insKnownCommodity() {
 // ── Commodity-complete: the single settle path once value + commodity are both known ──
 // (Extracted from the commodity stage so the value stage can settle a COMBINED answer —
 // "furniture, $2500" — in the same turn instead of discarding half of it.)
+// DISPLAY ONLY — the read-back parenthetical shows the customer's own commodity word, never their raw
+// sentence. Strip money + insurance/filler tokens; show the residual only if it reads as a short
+// commodity phrase (1–3 words). Otherwise return '' → the read-back names the canonical category alone.
+// This never touches state: setInsurance already stores _match.name/_match.id — this only shapes the string.
+function _insCommodityDisplay(srcLabel, categoryName) {
+  var s = String(srcLabel == null ? '' : srcLabel).toLowerCase()
+    .replace(/\$?\s*[\d,]+(?:\.\d+)?\s*(?:dollars?|bucks|usd|grand|k\b)?/g, ' ')
+    .replace(/\b(?:actually|insure|insured|insurance|coverage|cover|add(?:ing)?|please|go|ahead|yes|ok(?:ay)?|sure|want|need|get|put|take|the|an?|it'?s?|its|my|our|of|for|to|is|are|and|also|while|we'?re|at|worth|valued?|value|declared?|total|cargo|freight|about|on|this|that)\b/g, ' ')
+    .replace(/[^a-z '\/&-]/g, ' ').replace(/\s+/g, ' ').trim();
+  var words = s ? s.split(' ') : [];
+  return (words.length >= 1 && words.length <= 3 && s.length <= 28 && s !== String(categoryName || '').toLowerCase())
+    ? ' (' + s + ')' : '';
+}
 function _insCompleteWithCommodity(_match, _srcLabel) {
   const _val = Number(window._insTempValue) || 0;
   // Through the one owner: toggle and value move together, and the form mirrors automatically.
@@ -12934,8 +12947,7 @@ function _insCompleteWithCommodity(_match, _srcLabel) {
   // No inclusion claim yet — whether insurance actually rides the rates is only known when the
   // pull completes (the evidence-gated callback below says which happened). The read-back names
   // the underwriter category AND, when known, the customer's own commodity word (Option B).
-  const _lbl = _srcLabel && String(_srcLabel).trim() && String(_srcLabel).trim().toLowerCase() !== _match.name.toLowerCase()
-    ? ' (' + String(_srcLabel).trim() + ')' : '';
+  const _lbl = _insCommodityDisplay(_srcLabel, _match.name);
   appendMessage('bot', 'Cargo insurance requested — ' + _match.name + _lbl + ', declared value ' + fmtMoney(_val) + '. Pulling updated rates now...');
 
   // Ensure the quote form is open so the INS panel + scoped fields exist. When we open

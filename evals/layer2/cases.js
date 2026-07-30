@@ -657,6 +657,29 @@ const cases = [
         'the enable RE-ASKED for the value the customer already gave: ' + JSON.stringify(h.bots()));
     },
   },
+
+  // ── 22 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 22, name: 'insurance read-back shows the matched commodity, never the customer\'s raw sentence',
+    catches: 'display bug — the read-back echoed the whole utterance as the commodity name ("… (Actually insure it for $1,200, it\'s furniture) …"); the parenthetical must carry the matched phrase ("furniture") or nothing',
+    async run(h) {
+      const w = h.win;
+      w.showQuoteForm(READY, true);              // READY has no commodity — the word comes from the sentence
+      w.eval('lastQuotedShipment = lastQuotedShipment || {}');
+      w._insDecided = false; w._insCollecting = null;
+      h.reset();
+      await w.handleInput("Actually insure it for $1,200, it's furniture");
+      await waitFor(() => h.bots().some(t => /Cargo insurance requested/.test(t)), 2500);
+      const rb = h.bots().find(t => /Cargo insurance requested/.test(t));
+      A.ok(rb, 'no insurance read-back rendered: ' + JSON.stringify(h.bots()));
+      // Correct category still named, and the declared value still shown in the value clause.
+      A.ok(/General Goods &\/or Merchandise/.test(rb), 'read-back dropped the matched category: ' + rb);
+      A.ok(/declared value \$1,200\.00/.test(rb), 'read-back lost the declared value: ' + rb);
+      // The parenthetical carries the matched commodity word, NOT the raw sentence.
+      A.ok(/\(furniture\)/.test(rb), 'read-back parenthetical did not show the matched commodity "(furniture)": ' + rb);
+      A.ok(!/insure it for/i.test(rb) && !/actually/i.test(rb), 'read-back echoed the customer\'s raw sentence: ' + rb);
+    },
+  },
 ];
 
 module.exports = { cases };
