@@ -2331,7 +2331,7 @@ function resetShipmentState(wipeConversation) {
     // customer's answer clears both flags, so a later addDeliveryServices:true falls through to a
     // fresh guard run instead of the requote. The failure mode is a re-ask, never a silent dispatch.
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null; window._rdiPending = null;
-    window._requoteContext = null;
+    window._requoteContext = null; window._requoteWriteBOL = null;
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
@@ -7150,6 +7150,15 @@ function _rdiHoldMessage(names) {
     + them + ' and refresh the rate, or dispatch as-is?';
 }
 
+// ── Rate-divergence backstop copy — ONE definition, same never-surface rules as the hold ────────
+// Plain broker English: no field names, no BOL internals, no bare numbers lifted out of state. It
+// says what happened, that nothing went out, and what happens next. Deliberately carries NO price:
+// the two figures in play are precisely the ones we do not trust to agree, so quoting either at the
+// customer would be asserting a number the system cannot stand behind.
+function _rateDivergedMessage() {
+  return "I haven't dispatched this yet. The rate saved on this shipment doesn't match the one I just quoted you, and I won't send it to the carrier at a price you didn't agree to. Let me get the shipment updated to the quoted rate first, then we can dispatch.";
+}
+
 async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
   // OVERLAY surface — the two FORM dispatch buttons (7267/7548) only. Signature, markup, and both
   // callbacks are unchanged; only the verdict now comes from the shared classifier above.
@@ -7782,6 +7791,14 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   s = s || {};
   // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
   window._requoteContext = { bolId: s.BOLId || s.bolId || '', shipment: s };
+  // DURABLE requote marker — "this BOL was re-quoted and the new rate has NOT been written yet".
+  // _requoteContext cannot answer that: _requoteOverrides nulls it the moment the booking panel
+  // renders (~18256), long before any write. Set HERE because requoteSavedShipment is the ONE
+  // chokepoint every requote funnels through — the form overlay, the edit panel, the
+  // requote_shipment tool, and the residential hold all call it. Cleared ONLY by a successful
+  // write to this BOL (submitBookingOnly / _execBookShipment) and by resetShipmentState.
+  // Read by the duplicate-booking guard so a requote is written instead of being swallowed.
+  window._requoteWriteBOL = (s.BOLId || s.bolId || '') || null;
   const accCodes = accessorialSet(s.accessorials||s.accessorialsList||[]);
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
   const editShipData = {
@@ -11003,6 +11020,10 @@ async function submitBookingOnly(opts) {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
+    // The requote (if any) is now written to this BOL — clear the marker and note that _lastBooked
+    // above has just been refreshed to the NEW price, which is what stands the divergence backstop
+    // down. This is the write-success chokepoint for BOTH the form panel's Save and _execSaveShipment.
+    if (window._requoteWriteBOL && (!BOLId || window._requoteWriteBOL === BOLId)) window._requoteWriteBOL = null;
     // Show save-confirmed modal
     if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
@@ -13665,6 +13686,37 @@ async function _execBookShipment(input) {
     // "yes" to dispatch, the AI must dispatch the existing BOL, not book a duplicate).
     if (window._lastBooked && window._lastBooked.BOLId && !window._lastBooked.dispatched) {
       const lb = window._lastBooked;
+      // ── REQUOTE IS AN UPDATE, NOT A DUPLICATE ───────────────────────────────────────────────
+      // "Already booked" is the WRONG answer when this BOL has been re-quoted and the new rate has
+      // not been written yet. Live on BOL 160135778: the customer answered the residential hold,
+      // the quote form re-pulled at $304.75 WITH residential, they said "book it" — and this guard
+      // returned here carrying the OLD $161 and told the agent "do NOT book again... dispatch this
+      // existing BOL." Nothing was ever written, so dispatch went to the carrier at the original
+      // price with no residential: the exact surcharge the hold exists to prevent. The requote lived
+      // in chat state and never reached the BOL.
+      // Route it to the SAME PUT the form panel's Save uses (_execSaveShipment → setEditingBOLId →
+      // submitBookingOnly → bookShipment with editBolId). Gated on the marker matching THIS BOL so a
+      // stale marker from another shipment can never turn a genuine new booking into an edit.
+      if (window._requoteWriteBOL && window._requoteWriteBOL === lb.BOLId && typeof _execSaveShipment === 'function') {
+        console.warn('[FP] book after requote — writing the new rate to BOL', lb.BOLNumber, 'via PUT instead of reporting already-booked');
+        // Fold any party details the agent passed on THIS call into the panel first — the
+        // panel-harvest block below is skipped on this path, and submitBookingOnly reads the panel.
+        try {
+          if (window._bookingPanelOpen && document.getElementById('bk-pu-name') && typeof _applyBookingFields === 'function') _applyBookingFields(input);
+        } catch (e) {}
+        const _upd = await _execSaveShipment({ bol_id: lb.BOLId });
+        if (_upd && _upd.ok) {
+          return { ok:true, updatedExisting:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId,
+            carrier: (window._lastBooked && window._lastBooked.carrier) || lb.carrier,
+            price: (window._lastBooked && window._lastBooked.price) || lb.price,
+            message:'The existing shipment was updated with the newly quoted rate and services — no second shipment was created. Confirm the updated rate to the customer, then dispatch this same BOL when they are ready.' };
+        }
+        // The update FAILED. Never fall through to "already booked" — that would hand the agent a
+        // success line for a shipment still carrying the old rate, which is how this bug reached a
+        // carrier. Report the failure with the classified copy and write nothing.
+        return { ok:false, kind:(_upd && _upd.kind) || 'save',
+          message:(_upd && _upd.message) || 'I could not update this shipment with the new rate. Nothing was changed and it has not been dispatched — email support@freightandlogistics.ai and the team will get it sorted.' };
+      }
       return { ok:true, alreadyBooked:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
         message:'This shipment is already booked as BOL ' + lb.BOLNumber + '. It has not been dispatched yet — do NOT book again. To send it to the carrier, dispatch this existing BOL.' };
     }
@@ -13828,6 +13880,7 @@ async function _execBookShipment(input) {
     // Stash for the dispatch step
     window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false, isParcel: typeof isParcelRate === 'function' && isParcelRate(rate) };
+    window._requoteWriteBOL = null; // a create supersedes any pending requote marker
     window._bookingLock = null; // booking complete — release the frozen rate
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
@@ -13851,6 +13904,37 @@ async function _execDispatchShipment(input) {
       return { ok: true, alreadyDispatched: true, message: 'This shipment is already dispatched. Check My Shipments for your shipping documents.' };
     if (window._dispatchingBOLId === BOLId)
       return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
+
+    // ── DIVERGENCE BACKSTOP — chat and the BOL must agree on price before anything is tendered ──
+    // Independent of the requote fix above, deliberately: this is the check that would have caught
+    // BOL 160135778 at the moment of dispatch instead of in a transcript afterwards. FAILS CLOSED —
+    // on divergence nothing is dispatched.
+    // The distinguishing condition, and why it cannot fire on a healthy flow:
+    //   * _lastBooked exists and is THIS BOL  → this conversation booked it, so _lastBooked.price is
+    //     this shipment's written price. resetShipmentState nulls _lastBooked on EVERY reset (2325),
+    //     so a fresh quote in the same chat cannot leave a foreign price behind to compare against.
+    //   * a rate is currently selected      → book→dispatch with no requote selects the very rate it
+    //     booked, so the two agree to the cent and this is a no-op.
+    //   * requote + successful write        → submitBookingOnly refreshes _lastBooked.price to the
+    //     new price, so they agree again and this stands down.
+    //   * requote + swallowed write         → the ONLY case where they differ. That is the bug.
+    // Compared in whole cents so float noise cannot trip it. Known blind spot, stated rather than
+    // papered over: a requote that lands on a DIFFERENT carrier at the SAME price is invisible here
+    // — the requote marker above is what covers that, which is why both exist.
+    try {
+      const _lbP = window._lastBooked;
+      if (_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && typeof _selectedRateForPayload === 'function') {
+        const _selR = _selectedRateForPayload().rate;
+        const _selP = _selR ? Number((_selR.billTo && _selR.billTo.total) || _selR.total || _selR._price || 0) : 0;
+        const _bookP = Number(_lbP.price || 0);
+        if (_selP > 0 && _bookP > 0 && Math.round(_selP * 100) !== Math.round(_bookP * 100)) {
+          console.warn('[FP] DISPATCH BLOCKED — quoted/booked rate divergence on BOL', _lbP.BOLNumber, '| selected:', _selP, '| written:', _bookP);
+          if (typeof appendMessage === 'function') appendMessage('bot', _rateDivergedMessage());
+          return { ok: false, rateDiverged: true, _turnHandled: true,
+            message: 'NOT dispatched. The rate written on this shipment does not match the rate last quoted, so dispatch was blocked and the customer has already been told on screen — say nothing further this turn. To resolve it, save the shipment with the currently quoted rate (save_shipment with this bol_id), confirm the updated price to the customer, and only then dispatch.' };
+        }
+      }
+    } catch (e) {}  // a backstop that throws must never block a dispatch on its own
 
     // ── Residential (RDI) guard — CHAT path ───────────────────────────────────────────────────
     // Same canonical verdict as the two form dispatch buttons (classifyDeliveryForDispatch — one
@@ -14986,9 +15070,10 @@ async function aiConverse(userText) {
         // (the residential hold's own "refresh the rate" wording otherwise invites an update_quote,
         // whose pull posts a stray rate summary onto an unanswered question). The deterministic
         // collectors already work this way; this is the same contract for a tool-rendered turn.
-        // Deliberately scoped to residentialHold, NOT to _turnHandled alone: ending a turn silently is
-        // a big hammer, and no future tool should acquire it by accident just by setting a flag.
-        if (result && result._turnHandled && result.residentialHold) {
+        // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
+        // silently is a big hammer, and no future tool should acquire it by accident just by setting
+        // a flag. Both members render their own customer-facing copy and must not be restated.
+        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged)) {
           removeTyping();
           window._lastTurnFailed = false;
           if (typeof waybHistory !== 'undefined') {
