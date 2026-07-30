@@ -7799,6 +7799,11 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   // write to this BOL (submitBookingOnly / _execBookShipment) and by resetShipmentState.
   // Read by the duplicate-booking guard so a requote is written instead of being swallowed.
   window._requoteWriteBOL = (s.BOLId || s.bolId || '') || null;
+  // [TRACE] instrumentation — who opened this requote, and did the marker actually take?
+  try {
+    const _st = (new Error().stack || '').split('\n').slice(2, 5).map(l => l.trim()).join(' <- ');
+    console.log('[TRACE] requoteSavedShipment CALLED — marker now:', window._requoteWriteBOL, '| caller:', _st);
+  } catch (e) {}
   const accCodes = accessorialSet(s.accessorials||s.accessorialsList||[]);
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
   const editShipData = {
@@ -10761,6 +10766,18 @@ async function bookShipment(payload, opts) {
     body: JSON.stringify(payload)
   });
   const bookText = await bookRes.text();
+  // [TRACE] instrumentation — EVERY write to /applet/v1/book, success or failure, with the fields
+  // that decide whether the requote actually landed and whether instructions leaked into an address.
+  try {
+    const p = payload || {}, c = p.consignee || {}, sh = p.shipper || {};
+    console.log('[TRACE] WRITE', (editBolId ? 'PUT' : 'POST'), PRIMUS_BASE + '/applet/v1/book' + (editBolId ? ('/' + editBolId) : ''),
+      '→', bookRes.status, bookRes.ok ? 'OK' : 'FAIL');
+    console.log('[TRACE] WRITE payload — accessorials:', JSON.stringify(p.accessorialsList || p.accessorials || []),
+      '| quoteNumber:', p.quoteNumber, '| rateId:', p.rateId,
+      '| consignee.address1:', JSON.stringify(c.address1), '| consignee.address2:', JSON.stringify(c.address2),
+      '| shipper.address1:', JSON.stringify(sh.address1),
+      '| BOLInstructions:', JSON.stringify(p.BOLInstructions), '| shipperRef:', JSON.stringify(p.shipperReferenceNumber));
+  } catch (e) {}
   if (!bookRes.ok) {
     try { console.error('[' + errLabel + ' ' + (editBolId ? 'PUT' : 'POST') + ' ' + bookRes.status + ']', bookText, JSON.stringify(payload)); } catch(e) {}
     throw new Error(errLabel + ' failed ' + bookRes.status + ': ' + bookText.slice(0, 300));
@@ -13686,6 +13703,12 @@ async function _execBookShipment(input) {
     // "yes" to dispatch, the AI must dispatch the existing BOL, not book a duplicate).
     if (window._lastBooked && window._lastBooked.BOLId && !window._lastBooked.dispatched) {
       const lb = window._lastBooked;
+      // [TRACE] instrumentation — did the duplicate guard route to the PUT, or swallow it again?
+      try {
+        console.log('[TRACE] book guard — _requoteWriteBOL:', window._requoteWriteBOL, '| lb.BOLId:', lb.BOLId,
+          '| lb.price:', lb.price, '| markerMatches:', window._requoteWriteBOL === lb.BOLId,
+          '| route:', (window._requoteWriteBOL === lb.BOLId) ? 'PUT via _execSaveShipment' : 'RETURN alreadyBooked (no write)');
+      } catch (e) {}
       // ── REQUOTE IS AN UPDATE, NOT A DUPLICATE ───────────────────────────────────────────────
       // "Already booked" is the WRONG answer when this BOL has been re-quoted and the new rate has
       // not been written yet. Live on BOL 160135778: the customer answered the residential hold,
@@ -13897,6 +13920,15 @@ async function _execBookShipment(input) {
 async function _execDispatchShipment(input) {
   input = input || {};
   try { if (window._turnToolCalls) window._turnToolCalls.dispatch = true; } catch (e) {}
+  // [TRACE] instrumentation — remove once the requote/dispatch divergence is settled.
+  try {
+    const _lbT = window._lastBooked;
+    console.log('[TRACE] dispatch_shipment IN', JSON.stringify(input),
+      '| _rdiPending:', window._rdiPending ? window._rdiPending.BOLId + ':' + JSON.stringify(window._rdiPending.codes) : null,
+      '| _rdiAnsweredBOL:', window._rdiAnsweredBOL,
+      '| _requoteWriteBOL:', window._requoteWriteBOL,
+      '| _lastBooked:', _lbT ? (_lbT.BOLId + ' $' + _lbT.price + ' dispatched=' + _lbT.dispatched) : null);
+  } catch (e) {}
   try {
     const BOLId = input.BOLId || (window._lastBooked && window._lastBooked.BOLId);
     if (!BOLId) return { ok: false, error: 'No booked shipment to dispatch. Book the shipment first.' };
@@ -13923,6 +13955,19 @@ async function _execDispatchShipment(input) {
     // — the requote marker above is what covers that, which is why both exist.
     try {
       const _lbP = window._lastBooked;
+      // [TRACE] instrumentation — logs on EVERY dispatch, including when the comparison is skipped,
+      // so a silent backstop is distinguishable from a backstop that compared and found them equal.
+      try {
+        const _sr = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+        const _sp = _sr ? Number((_sr.billTo && _sr.billTo.total) || _sr.total || _sr._price || 0) : 0;
+        console.log('[TRACE] backstop —',
+          'lastBooked:', _lbP ? (_lbP.BOLId + ' $' + _lbP.price + ' dispatched=' + _lbP.dispatched) : 'NULL',
+          '| thisBOLId:', BOLId,
+          '| selectedRate:', _sr ? ((_sr.name || _sr._name || _sr.carrierName || '?') + ' $' + _sp) : 'NONE (bookingRate and _bookingLock both empty)',
+          '| bookingRate:', (typeof bookingRate !== 'undefined' && bookingRate) ? 'set' : 'null',
+          '| _bookingLock:', window._bookingLock ? 'set' : 'null',
+          '| willCompare:', !!(_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && _sp > 0 && Number(_lbP.price || 0) > 0));
+      } catch (e) {}
       if (_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && typeof _selectedRateForPayload === 'function') {
         const _selR = _selectedRateForPayload().rate;
         const _selP = _selR ? Number((_selR.billTo && _selR.billTo.total) || _selR.total || _selR._price || 0) : 0;
@@ -14873,6 +14918,14 @@ async function aiConverse(userText) {
       // Check for a client-side tool call
       const toolUse = content.find(b => b.type === 'tool_use' && (b.name === 'update_quote' || b.name === 'read_rates' || b.name === 'book_shipment' || b.name === 'dispatch_shipment' || b.name === 'update_booking' || b.name === 'save_shipment' || b.name === 'requote_shipment'));
 
+      // [TRACE] instrumentation — which tool the model actually chose each loop, and whether it
+      // paired text with it (the text half is discarded below, which is its own failure mode).
+      try {
+        console.log('[TRACE] agent turn — stop_reason:', data.stop_reason,
+          '| tool:', toolUse ? toolUse.name : '(none)',
+          '| toolInput:', toolUse ? JSON.stringify(toolUse.input || {}).slice(0, 300) : '-',
+          '| textAlongside:', textOut ? JSON.stringify(textOut.slice(0, 120)) : '(none)');
+      } catch (e) {}
       if (data.stop_reason === 'tool_use' && toolUse) {
         // Show any text Claude said alongside the tool call
         removeTyping();
@@ -15074,6 +15127,12 @@ async function aiConverse(userText) {
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
         if (result && result._turnHandled && (result.residentialHold || result.rateDiverged)) {
+          // [TRACE] instrumentation — this return ends the turn, so the tool result's instructions
+          // are NOT delivered to the model. Log exactly what the model therefore never saw.
+          try {
+            console.log('[TRACE] turn ENDED by tool —', result.residentialHold ? 'residentialHold' : 'rateDiverged',
+              '| the model never received this tool_result:', JSON.stringify(String(result.message || '').slice(0, 200)));
+          } catch (e) {}
           removeTyping();
           window._lastTurnFailed = false;
           if (typeof waybHistory !== 'undefined') {
