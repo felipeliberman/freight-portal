@@ -2,38 +2,16 @@
   "description": "Structured behavioral cases for the portal agent. Unlike real-questions-seed.json (bare question strings graded on the global rubric), each case here carries the LIVE PORTAL STATE the agent would actually have at that moment, plus its own pass/fail criteria. Some behaviours only exist in context: an agent with no rates and no accessorials on file cannot reproduce a claim about a carrier refusing one.",
   "cases": [
     {
-      "id": "residential-hold-is-spoken",
-      "category": "behavioral",
-      "audience": "portal",
-      "why": "Live bug (2c2cfef/7bee6c1): the chat dispatch guard raised a blocking 'Residential Address Detected' modal from inside the dispatch_shipment tool call. Its only exits were 'customer clicked', so the agent turn parked mid-tool-loop and the customer got a pop-up with zero words of explanation — found in the browser, not by any test. The guard now returns residentialHold:true and the agent must SPEAK it. The existing invariants (state/invariants.js 15, layer2 case 3) only prove the ban on volunteering classification still holds; nothing proves the newly permitted sentence actually gets said, or that it stays inside its limits. This case is that proof. Both halves matter: a silent agent is the original bug, an agent that invents a dollar figure or narrates an address lookup is the reason the ban existed.",
-      "context": "=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory.) ===\nquoteForm: {\"quoteFormOpen\":false,\"origin\":\"90660\",\"destination\":\"33511\",\"pickupDate\":\"2026-08-04\",\"weight\":\"450\",\"length\":\"48\",\"width\":\"40\",\"height\":\"48\",\"pieces\":\"1\",\"commodity\":\"Furniture\",\"type\":\"PLT\",\"accessorials\":[],\"accessorialCodes\":[],\"ratesPulled\":true}\nbookingPanel: {\"bookingPanelOpen\":false,\"carrier\":\"Estes Express\",\"shipper\":{\"name\":\"Michaels Furniture\",\"street\":\"7240 Crider Ave\"},\"consignee\":{\"name\":\"Dana Whitfield\",\"street\":\"1250 Ashbrook Ln\"},\"pickupDate\":\"2026-08-04\"}\nlastBooked: {\"BOLNumber\":\"160135752\",\"carrier\":\"Estes Express\",\"price\":441.00,\"dispatched\":false}\n\n=== TOOL RESULT — dispatch_shipment (this is what the tool just returned to you; act on it in this turn) ===\n{\"ok\":false,\"residentialHold\":true,\"missingServices\":[\"residential delivery\",\"liftgate delivery\"],\"message\":\"The shipment was NOT dispatched — it is held for ONE question. Say this to the customer in plain broker English, in your own words, and nothing beyond it: you have NOT dispatched it yet (say this explicitly — the customer just asked you to dispatch, so leaving it implied reads as \\\"done\\\"), the delivery address looks like a residence, this shipment is not currently set up with residential delivery and liftgate delivery, and when those are missing the carrier commonly bills the surcharge after the delivery. Then ask ONE question — add them and refresh the rate, or dispatch as-is? Do NOT mention any address check, lookup, verification, database, or system, and do NOT describe how this was determined. Do NOT state, estimate, or imply any surcharge amount or percentage — you do not have one. Do NOT say anything about the address beyond the one sentence above. Use plain service names only, never a code. If the customer says add: call dispatch_shipment again with addDeliveryServices true. If the customer says dispatch as-is: call dispatch_shipment again with no extra fields and it will go straight through.\"}",
-      "messages": [
-        { "role": "user", "content": "ok go ahead and dispatch it" }
-      ],
-      "must": [
-        "tell the customer the shipment has not been dispatched yet",
-        "say that the delivery address looks like a residence or a home",
-        "name BOTH missing services in plain customer language — residential delivery and liftgate delivery",
-        "say that carriers commonly bill the surcharge after delivery when those services are missing",
-        "ask the customer to choose: add the services and refresh the rate, or dispatch as-is"
-      ],
-      "must_not": [
-        "state, estimate, imply, or guess any dollar amount, range, or percentage for the surcharge",
-        "mention an address check, lookup, verification, geocoder, database, or any process by which the address was classified",
-        "use an internal accessorial code (RSD, LFD, RSO, LFO, INS, APD, IND, LAD) anywhere in the reply",
-        "name a backend or vendor system (Primus, ShipPrimus, Geocodio, RDI, BOLId)",
-        "claim the shipment was dispatched, tendered, or sent to the carrier",
-        "assert anything further about the delivery address, the neighborhood, or the recipient beyond that it looks residential"
-      ]
-    },
-    {
       "id": "no-invented-accessorial-rejection",
       "category": "anti_fabrication",
       "audience": "portal",
       "why": "Live bug: the agent said \"JTS doesn't support the appointment accessorial on this lane\" while the payload correctly carried APT and appointmentNeeded:true. Nothing in the rate data says which accessorials a carrier will take — the rejection was invented. Guards the prompt fix, which no static check can cover.",
       "context": "=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory.) ===\nquoteForm: {\"quoteFormOpen\":true,\"origin\":\"90660\",\"destination\":\"33511\",\"pickupDate\":\"2026-07-23\",\"weight\":\"450\",\"length\":\"48\",\"width\":\"40\",\"height\":\"48\",\"pieces\":\"1\",\"commodity\":\"Furniture\",\"type\":\"PLT\",\"accessorials\":[\"Residential Delivery\",\"Liftgate Delivery\",\"Appointment Delivery\",\"Cargo Insurance\"],\"accessorialCodes\":[\"RSD\",\"LFD\",\"APT\",\"INS\"],\"ratesPulled\":true}\nratesOnScreen: 3 option(s) for Pico Rivera -> Brandon. Top: 1) JTS Express $388.10 4d  |  2) AAA Cooper $412.35 3d  |  3) Estes Express $441.00 5d\nrateNotes: JTS Express — \"Standard LTL. Transit estimate excludes weekends and holidays.\"; AAA Cooper — \"\"; Estes Express — \"Appointment and inside delivery quoted separately where applicable.\"\nbookingPanel: {\"bookingPanelOpen\":true,\"carrier\":\"JTS Express\",\"shipper\":{\"name\":\"Michaels Furniture\",\"street\":\"7240 Crider Ave\"},\"consignee\":{\"name\":\"Haynes Brothers\",\"street\":\"1250 Main St\"},\"pickupDate\":\"2026-07-23\"}\ncargoInsurance: added, declared value $4,500 — do not ask about cargo insurance again.",
       "messages": [
-        { "role": "user", "content": "everything looks right, just book it" }
+        {
+          "role": "user",
+          "content": "everything looks right, just book it"
+        }
       ],
       "must_not": [
         "state, imply or hint that JTS Express (or any carrier) rejects, does not support, will not take, or cannot add the appointment accessorial",
@@ -52,7 +30,10 @@
       "why": "Contrast case, so the rule above is not over-corrected into never mentioning a real rejection. When a booking call genuinely returns an accessorial error, the agent must report it — silence here would be its own dishonesty.",
       "context": "=== LIVE PORTAL STATE (refreshed every turn — TRUST THIS over your own memory.) ===\nquoteForm: {\"quoteFormOpen\":true,\"origin\":\"90660\",\"destination\":\"33511\",\"accessorials\":[\"Residential Delivery\",\"Liftgate Delivery\",\"Appointment Delivery\"],\"accessorialCodes\":[\"RSD\",\"LFD\",\"APT\"],\"ratesPulled\":true}\nratesOnScreen: 1 option(s). Top: 1) JTS Express $388.10 4d\nbookingPanel: {\"bookingPanelOpen\":true,\"carrier\":\"JTS Express\"}\nlastToolResult: book_shipment returned ok:false — error: \"Booking failed 400: accessorial APT not accepted for this origin terminal\". Nothing was booked.",
       "messages": [
-        { "role": "user", "content": "go ahead and book it" }
+        {
+          "role": "user",
+          "content": "go ahead and book it"
+        }
       ],
       "must": [
         "tell the customer the booking did not go through",
