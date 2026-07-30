@@ -7282,6 +7282,7 @@ async function editSavedShipment(s, BOLId, BOLNumber) {
                   // Parcel: show handling picker instead of auto-dispatching
                   showShipmentSavedModal({ BOLId:_bolId, BOLNumber:(window._lastBooked&&window._lastBooked.BOLNumber)||'', docs:[], carrierName:(window._lastBooked&&window._lastBooked.carrier)||'', carrierPrice:(window._lastBooked&&window._lastBooked.price)||0, pickupDate:_rtdPickup, rateType:_rtdRateType, iconUrl:_rtdIcon });
                 } else {
+                  window._rdiAnsweredBOL = _bolId; // the form-level RDI check above already ran and was answered — the shared guard in _execDispatchShipment must not re-prompt
                   if (typeof _execDispatchShipment === 'function') await _execDispatchShipment({ BOLId: _bolId });
                 }
               } catch(e) { dspBtn.disabled = false; dspBtn.textContent = 'Ready to Dispatch'; appendMessage('bot', 'Could not dispatch: ' + (e && e.message ? e.message : e)); }
@@ -13804,14 +13805,23 @@ async function _execDispatchShipment(input) {
     // Calls the SAME canonical checkRDIBeforeDispatch (read-only reuse — the form paths are
     // untouched). The geocoder speaks ONLY through the overlay, never through agent prose
     // (PRODUCT RULE, 9a30185: chat never mentions residential/commercial classification).
-    // Address + accessorials come from the saved BOL itself (fetchBookingByBOL) — the one source
-    // of truth no matter which path wrote it. FAILS OPEN: any error here, or a Geocodio outage,
+    // Address + accessorials come from the saved BOL itself via GET /applet/v1/book/{BOLId} —
+    // the same by-id read _preChargeInfo and the detail modal use (fetchBookingByBOL is keyed by
+    // BOL NUMBER and 404s on a BOLId — live-diagnosed on BOL 160135752). One source of truth
+    // no matter which path wrote it. FAILS OPEN: any error here, or a Geocodio outage,
     // proceeds to dispatch exactly as before — the guard can never block a legitimate dispatch.
     // Skipped on the prepaid chargeConfirmed second call and on a BOL already checked this
     // session (_rdiAnsweredBOL), so the overlay never shows twice for one shipment.
     if (!input.chargeConfirmed && window._rdiAnsweredBOL !== BOLId && typeof checkRDIBeforeDispatch === 'function') {
       let _rdiShip = null;
-      try { _rdiShip = await fetchBookingByBOL(BOLId); } catch (e) {}
+      try {
+        const _rdiTk = await getToken();
+        const _rdiR = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + _rdiTk } });
+        if (_rdiR.ok) {
+          const _rdiD = await _rdiR.json();
+          _rdiShip = (_rdiD.data && _rdiD.data.results) || _rdiD.data || null;
+        }
+      } catch (e) {}
       if (_rdiShip) {
         const _rdiCon = _rdiShip.consignee || {};
         const _rdiAcc = _rdiShip.accessorials || _rdiShip.accessorialsList || [];
