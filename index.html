@@ -815,7 +815,7 @@ html[data-embed] .rp-close{display:none !important;}
 
 <script>
 const CLOUDFLARE_WORKER = 'https://freight-email.freightandlogistics.workers.dev';
-const TRACK_WORKER = 'https://track-proxy.felipe-b80.workers.dev'; // public-safe tracking (PII stripped server-side)
+const TRACK_WORKER = 'https://fl-tracking.felipe-b80.workers.dev'; // public-safe tracking, ?q= route (PII stripped server-side)
 
 let chatHistory = [];
 let formData = {};
@@ -892,6 +892,29 @@ function _detectTrackingNumber(msg){
   return null;
 }
 
+// True when the lookup failed on OUR side (backend down, or we throttled them) rather than
+// the number genuinely not being found. Drives both the copy and whether we pitch an account.
+function _trackOurFault(r, d){
+  const e = d && d.error;
+  return (r && (r.status===503 || r.status===429)) || e==='upstream_error' || e==='rate_limited' || !d;
+}
+
+// Failure copy. An upstream outage must NEVER read to a customer as an unknown number —
+// that conflation is what let a dead backend blame customers for weeks. The not-found line
+// is driven by the Worker's searched[] so it states what was actually searched, never more.
+function _trackFailLine(r, d, num){
+  if(_trackOurFault(r, d)){
+    if((r && r.status===429) || (d && d.error==='rate_limited'))
+      return "I've hit my lookup limit for the moment — give it a few minutes and try again, or email support@freightandlogistics.ai and we'll pull it up for you.";
+    return "I can't reach live tracking right now — that's on our end, not your number. Try again shortly, or email support@freightandlogistics.ai and we'll look it up for you.";
+  }
+  if(d.error==='invalid_number')
+    return num + " doesn't look like a BOL or carrier PRO number, so there's nothing for me to search. Those are on your shipping paperwork — send me either one and I'll pull the status.";
+  const searched = Array.isArray(d.searched) ? d.searched : [];
+  const what = searched.includes('pro') ? "BOL number and carrier PRO" : "BOL number";
+  return "I searched by " + what + " and nothing came back for " + num + ". Shipper and order reference numbers aren't searchable here, so if that's what you have, the BOL or PRO from your shipping paperwork is what I need.";
+}
+
 // One short, factual chat line (no editorializing). appendBot uses textContent, so it's safe.
 function _trackChatLine(d){
   let line = "Here's the latest on BOL " + (d.bol||'') + " — currently " + (d.currentStatus||'unknown status');
@@ -905,7 +928,7 @@ async function _trackShipment(num){
   showTyping();
   try{
     const r = await fetch(TRACK_WORKER + '/?q=' + encodeURIComponent(num));
-    const d = await r.json();
+    const d = await r.json().catch(()=>null);
     removeTyping();
     if(d && d.ok){
       const line=_trackChatLine(d);
@@ -913,9 +936,10 @@ async function _trackShipment(num){
       openRightPanel('Tracking ' + (d.bol||num), renderLiveTrackingCard(d));
       chatHistory.push({role:'assistant', content:line});
     } else {
-      const line="I'm not able to get a status for that number right now.";
+      const line=_trackFailLine(r, d, num);
       appendBot(line);
-      _appendTrackSignup();
+      // Only pitch an account after a genuine miss. Pitching on our own outage is tone-deaf.
+      if(!_trackOurFault(r, d)) _appendTrackSignup();
       chatHistory.push({role:'assistant', content:line});
     }
   }catch(e){
