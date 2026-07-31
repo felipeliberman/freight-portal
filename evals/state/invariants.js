@@ -401,8 +401,8 @@ const invariants = [
   // ── 15 ──────────────────────────────────────────────────────────────────────
   {
     id: 15, name: 'the geocoder verdict never reaches the chat agent',
-    property: 'with a residential verdict cached, no agent-facing surface (live state block, system prompt) carries the classification; only the RDI overlays/dispatch check may speak it',
-    catches: 'product-rule regression born 80dd91f/9afbca9/834ec3c — chat challenged the customer with "comes back residential"',
+    property: 'with a residential verdict cached, no agent-facing surface (live state block, system prompt) carries the classification. SCOPE, stated so this is not over-read: the assertions below touch EXACTLY TWO surfaces — _liveStateBlock() and _convoSysPrompt. That is the whole invariant. It says the AGENT is never handed the classification and never told to raise it; it does NOT say the system may not check the address. Deterministic code that geocodes, holds a write, and renders FIXED COPY via appendMessage + a _turnHandled:true tool return does not touch either surface and does not violate this — it is the sanctioned shape (CLAUDE.md, "who may speak it", narrowed 2026-07-30). Do NOT delete a code-side residential guard to keep this green: it was already green with those guards in place, and deleting them (9a30185) is what left every chat booking to a residential address unprotected.',
+    catches: 'product-rule regression born 80dd91f/9afbca9/834ec3c — chat challenged the customer with "comes back residential". Does NOT catch, and is not intended to: the absence of a residential check on the chat book/save/dispatch paths.',
     run(ctx) {
       const w = ctx.win;
       w.showQuoteForm({ originZip: '90660', destZip: '33511' }, true);

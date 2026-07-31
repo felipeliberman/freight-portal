@@ -11010,9 +11010,15 @@ async function submitBooking() {
       return;
     }
 
-    // (Chat-side residential guard removed — PRODUCT RULE: chat never mentions residential/
-    // commercial classification. The geocoder's verdict speaks only via checkRDIBeforeDispatch
-    // and the two RDI overlays, which still protect this shipment before the irreversible step.)
+    // NO RESIDENTIAL GUARD HERE — AN ACKNOWLEDGED GAP, NOT A DESIGN.
+    // 9a30185 removed one from this spot, reading the product rule as "chat never checks." That
+    // reading is wrong and has been narrowed (CLAUDE.md, "who may speak it"): the rule governs what
+    // the AGENT says, not whether CODE checks. Deterministic code may geocode, hold the write, and
+    // render fixed copy — see the required shape in CLAUDE.md. It is only agent-authored prose about
+    // classification, and the classification reaching agent-facing surfaces, that stay banned.
+    // Two callers reach this function: showBookingPanel's Book & Dispatch button (which runs its own
+    // inline RDI check first, so it is covered) and the legacy chat text-wizard confirm (~10535,
+    // "type confirm to book"), which is NOT covered. Restoring a guard here is legitimate.
 
     // Auto-save rate to get official quoteNumber — this assigns the carrier to the BOL
     // Without quoteNumber, dispatch fails with "shipment does not have a carrier assigned"
@@ -12692,10 +12698,15 @@ function _liveStateBlock() {
     if (window._lockDropped && window._lockDropped.carrier) {
       lines.push('carrierNoLongerAvailable: ' + window._lockDropped.carrier + ' was the selected carrier but did not come back on the refreshed rates. Tell the customer that plainly and ask which of the current options they want. Do NOT pick one for them.');
     }
-    // PRODUCT RULE: chat never mentions residential/commercial classification. The geocoder's
-    // verdict is deliberately NOT surfaced to the agent (no residentialStatus JSON, no conflict
-    // instructions) — it speaks ONLY through checkRDIBeforeDispatch and the two RDI overlays.
-    // The customer's intake answer (the accessorial chips) is the agent's only residential truth.
+    // PRODUCT RULE — the classification never reaches the AGENT. Deliberate and load-bearing, and
+    // this is the surface invariant 15 actually asserts on: no residentialStatus JSON, no conflict
+    // instructions, no mention of classification anywhere in this block. Left alone, the agent fused
+    // the geocoder verdict with the chip set into a self-contradiction shown to a real customer
+    // ("it's commercial, so residential delivery is already on the quote").
+    // KEEP THIS EMPTY. But note the scope, narrowed 2026-07-30 (CLAUDE.md, "who may speak it"): the
+    // ban is on the AGENT raising classification, not on the SYSTEM checking it. Deterministic code
+    // may geocode, hold a write, and render fixed copy — that path never routes through here and
+    // does not weaken this. The customer's intake answer (the chips) stays the agent's only truth.
     // Cargo insurance — plain broker language, no internal field names or codes. Surfacing this here
     // (under the "Never re-ask for anything shown here" directive above) is what stops the agent
     // re-asking for a value it already has. 'declined' allows a later customer-initiated re-request.
@@ -13705,10 +13716,20 @@ async function _execBookShipment(input) {
     const cn = Object.assign({}, _qc.consignee || {}, input.consignee || {});
     const items = (s.items && s.items.length) ? s.items : [];
 
-    // (Agent-path residential safeguard removed — PRODUCT RULE: chat never mentions residential/
-    // commercial classification, and this tool result instructed the agent to do exactly that.
-    // The geocoder's verdict speaks only via checkRDIBeforeDispatch and the two RDI overlays;
-    // the customer's intake answer, reflected in the accessorial chips, rides the booking as-is.)
+    // NO RESIDENTIAL GUARD HERE — AN ACKNOWLEDGED GAP, NOT A DESIGN.
+    // 9a30185 removed one from this spot. Its objection was correct as far as it went: the old guard
+    // returned a tool-result MESSAGE telling the agent to explain the classification, which is the
+    // agent raising it. But it then over-generalised to "chat never checks" and left the chat book
+    // path with no residential detection at all — a real carrier rebill on every chat booking to a
+    // residential address. The rule has been narrowed (CLAUDE.md, "who may speak it"): the AGENT
+    // never raises it; deterministic CODE may geocode, hold the write, and render FIXED COPY, with
+    // the tool returning _turnHandled:true so the agent cannot rephrase the hold or pull onto it.
+    // A guard restored in that shape is correct here. One returning steering prose to the agent is not.
+    //
+    // PREREQUISITE before any guard lands here: the re-rate must actually reach the BOL. The
+    // duplicate-booking guard at the top of this function returns alreadyBooked with the OLD price
+    // after a requote, and _selectedRateForPayload can serialize a stale rate — so a hold that asks
+    // "add residential and re-rate?" would quote the new price and tender the old one. Fix that first.
 
     // Freeze rate+shipment AFTER the residential guard — only when we are actually proceeding to book.
     // If we entered via the _bookingLock reuse path at the top of this function, skip (already frozen).

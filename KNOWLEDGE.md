@@ -268,7 +268,7 @@ Use this to tell a logged-in customer exactly where to click. Quote labels verba
 **Booking is two steps — this is the key distinction:**
 - "Save" (or "Save Shipment") creates the shipment as a saved BOL but does NOT notify the carrier. Nothing is dispatched. The shipment then appears under "My Shipments".
 - "Ready to Dispatch" is the second, separate step: it sends the pickup request to the carrier and makes the BOL valid for tendering. Until then a saved BOL is marked "NOT VALID FOR TENDERING". Dispatch is irreversible; saving is not. A customer can save now and come back to dispatch later.
-- If the delivery address looks residential, a check appears before saving with "Update & Requote" or "Save Without Changes".
+- When saving from the quote form, if the delivery address looks residential a check appears before saving with "Update & Requote" or "Save Without Changes". This check is part of the booking form; do not describe it as something that happens on every shipment however it was created.
 
 **My Shipments.** Opening a saved (not-yet-dispatched) shipment shows "Ready to Dispatch", "Edit", and "Cancel Shipment"; once dispatched it shows "Track" and "Rebook". "Requote" re-pulls rates on a saved shipment. Selected shipments can be exported ("Excel") or their BOLs downloaded.
 
