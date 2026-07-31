@@ -831,6 +831,59 @@ const cases = [
     },
   },
 
+  // ── 32 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 32, name: 'every price crossing into the model carries an exact two-decimal priceStr, and the numeric price survives for the guards',
+    catches: 'live 2026-07-30: the agent said "$368" for a rate whose exact figure carried cents. A raw JS float is what reaches the model — 368.10 arrives as 368.1, trailing zero already gone — and no prompt rule required exactness. The customer consents to one number and is billed another, and NO guard catches it: the staleness and divergence checks compare state against state and never see the spoken number. Same class as prose-with-no-state-backing, in the READ direction.',
+    async run(h) {
+      const w = h.win;
+      const two = /^\$[\d,]+\.\d{2}$/;
+
+      // ── fmtMoney is the canonical formatter these all route through.
+      A.eq(w.fmtMoney(368.1), '$368.10', 'fmtMoney dropped the trailing zero — the exact bug this guards');
+      A.eq(w.fmtMoney(1234.5), '$1,234.50', 'fmtMoney lost the thousands separator or a decimal');
+
+      // ── 1. read_rates / _lastRates options — the main crossing point.
+      w._publishRatesForAI(
+        [{ id: 'R1', name: 'JTS Express', total: 368.1, rateBreakdown: [{ name: 'FREIGHT CHARGE', total: 368.1 }] },
+         { id: 'R2', name: 'WARP', total: 1234.5, rateBreakdown: [{ name: 'FREIGHT CHARGE', total: 1234.5 }] }],
+        { originZip: '90660', destinationZip: '90035' });
+      const opts = (w._lastRates && w._lastRates.options) || [];
+      A.eq(opts.length, 2, '_publishRatesForAI did not publish both options');
+      opts.forEach((o, i) => {
+        A.ok(o.priceStr, 'option ' + i + ' has no priceStr — the model would receive a raw float: ' + JSON.stringify(o));
+        A.ok(two.test(o.priceStr), 'option ' + i + ' priceStr is not exact two-decimal: ' + o.priceStr);
+        A.eq(o.priceStr, w.fmtMoney(o.price), 'option ' + i + ' priceStr disagrees with its own numeric price');
+        A.eq(typeof o.price, 'number', 'option ' + i + ' lost its NUMERIC price — the guards compare on it');
+      });
+      A.eq(opts[0].priceStr, '$368.10', 'the live case: 368.1 must be spoken as $368.10, not $368');
+      A.eq(opts[1].priceStr, '$1,234.50', 'thousands separator lost on the second option');
+
+      // ── 2. The live state block the agent reads EVERY turn must not print a raw float.
+      const ls = w._liveStateBlock();
+      A.ok(/\$368\.10/.test(ls), 'the live state block does not carry the exact price: ' + (ls.match(/ratesOnScreen:.*/) || [''])[0]);
+      A.ok(!/\$368\.1(?!0)/.test(ls), 'a one-decimal price survives in the live state block: ' + (ls.match(/ratesOnScreen:.*/) || [''])[0]);
+
+      // ── 3. Tool results that carry a price.
+      const ub = await w._execUpdateBooking({ carrier: 'JTS Express' });
+      await sleep(200);
+      A.ok(ub && ub.priceStr && two.test(ub.priceStr), 'update_booking returned no exact priceStr: ' + JSON.stringify(ub).slice(0, 200));
+      A.eq(typeof ub.price, 'number', 'update_booking lost its numeric price');
+
+      w._lastBooked = { BOLId: 'BOLID-1', BOLNumber: '160000001', carrier: 'JTS Express', price: 368.1, dispatched: false };
+      const already = await w._execBookShipment({});
+      A.ok(already && already.alreadyBooked, 'setup: expected the duplicate-booking guard to answer');
+      A.ok(already.priceStr && two.test(already.priceStr), 'the alreadyBooked result returned no exact priceStr: ' + JSON.stringify(already).slice(0, 200));
+      A.eq(already.priceStr, '$368.10', 'alreadyBooked spoke a rounded price: ' + already.priceStr);
+      A.eq(typeof already.price, 'number', 'alreadyBooked lost its numeric price');
+
+      // ── 4. The prompt requires verbatim relay, same contract as the prepaid disclosure.
+      const sys = h.g('_convoSysPrompt');
+      A.ok(/priceStr/.test(sys), 'the system prompt never mentions priceStr, so nothing tells the model to use it');
+      A.ok(/NEVER ROUNDED|never round/i.test(sys), 'the system prompt has no anti-rounding rule');
+    },
+  },
+
   // ── 31 ───────────────────────────────────────────────────────────────────────
   {
     id: 31, name: 'hold -> requote -> save UPDATES the existing BOL even when the fetched shipment omits its own id',

@@ -12778,7 +12778,7 @@ function _liveStateBlock() {
     lines.push('quoteForm: ' + JSON.stringify(q));
     var _avail = _rateAvailability();
     if (_avail.state === 'settled_with_rates') {
-      lines.push('ratesOnScreen: ' + r.count + ' option(s)' + (r.lane ? (' for ' + r.lane) : '') + '. Top: ' + (r.options||[]).slice(0,3).map(function(o){ return o.rank + ') ' + o.carrier + ' $' + o.price + (o.transitDays ? (' ' + o.transitDays + 'd') : ''); }).join('  |  '));
+      lines.push('ratesOnScreen: ' + r.count + ' option(s)' + (r.lane ? (' for ' + r.lane) : '') + '. Top: ' + (r.options||[]).slice(0,3).map(function(o){ return o.rank + ') ' + o.carrier + ' ' + (o.priceStr || fmtMoney(o.price)) + (o.transitDays ? (' ' + o.transitDays + 'd') : ''); }).join('  |  '));
     } else if (_avail.state === 'settled_rejected') {
       var _clsLS = _classifyRateError({ _rate: window._lastRatePullError });
       lines.push('ratesOnScreen: the last rate request was REJECTED before pricing — a service the customer requested cannot be priced on this account. This is NOT an empty lane and NOT a carrier-availability problem. Do NOT say no carriers came back, do NOT blame the lane, the carriers, the freight, or an accessorial combination, and do NOT name any code. Tell the customer only this: "' + _clsLS.message + '"');
@@ -12916,14 +12916,29 @@ function _publishRatesForAI(rates, shipment) {
     window._lastRates = {
       lane: shipment ? ((shipment.originCity||shipment.originZip||'') + ' -> ' + (shipment.destinationCity||shipment.destinationZip||'')) : '',
       count: rates.length,
-      options: rates.map((r, i) => ({
-        rank: i + 1,
-        carrier: (r.name || r.carrier || r.SCAC || 'Carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D'),
-        price: Number((r.billTo && r.billTo.total) || r.total || r.cost || 0),
-        transitDays: r.transitDays || r.transitTime || null,
-        service: r.serviceLevel || r.service || '',
-        note: rateRemarkText(r) || r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
-      }))
+      // priceStr rides ALONGSIDE the numeric price, never replacing it: the guards
+      // (_execDispatchShipment's staleness + divergence checks, _selectedRateForPayload) compare on
+      // the number, and the model speaks the string.
+      // WHY the string is here and not left to the prompt: a raw JS float is what reaches the model,
+      // and 368.10 arrives as 368.1 with the trailing zero already gone. Live 2026-07-30 the agent
+      // said "$368" for a rate the invoice would bill at the exact figure — the customer consents to
+      // one number and is billed another, and NO guard catches it because none of them ever sees the
+      // spoken number. Same class as tonight's root cause (prose with no state backing) in the READ
+      // direction. Precedent is the prepaid charge disclosure: code computes the exact string, the
+      // prompt requires verbatim relay. A prompt rule alone is probabilistic; a pre-formatted string
+      // makes the correct output the path of least resistance.
+      options: rates.map((r, i) => {
+        const _p = Number((r.billTo && r.billTo.total) || r.total || r.cost || 0);
+        return {
+          rank: i + 1,
+          carrier: (r.name || r.carrier || r.SCAC || 'Carrier').replace('Metropolitan Warehouse & Delivery Corp','Metro W&D'),
+          price: _p,
+          priceStr: fmtMoney(_p),
+          transitDays: r.transitDays || r.transitTime || null,
+          service: r.serviceLevel || r.service || '',
+          note: rateRemarkText(r) || r.serviceLevelMessage || r.message || r.notes || r.remarks || r.carrierMessage || ''
+        };
+      })
     };
     // Carry the selected carrier's identity onto this fresh list, or drop it if that carrier did not
     // come back. Enforces the invariant: after any publish, _bookingLock.rate is either an object in
@@ -13430,7 +13445,7 @@ async function _execUpdateBooking(input) {
       if (!sel.ok) return { ok: false, code: sel.code, error: sel.message, candidates: sel.candidates };
       await _settle();
       _applyBookingFields(input);
-      return { ok:true, carrier: sel.carrier, price: sel.price,
+      return { ok:true, carrier: sel.carrier, price: sel.price, priceStr: fmtMoney(sel.price),
         summary:'Booking panel is now open for ' + sel.carrier + ' at ' + fmtMoney(sel.price) + '. The Pickup and Delivery sections are visible.',
         bookingState: _bookingPanelState() };
     }
@@ -13759,6 +13774,7 @@ async function _execBookShipment(input) {
           return { ok:true, updatedExisting:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId,
             carrier: (window._lastBooked && window._lastBooked.carrier) || lb.carrier,
             price: (window._lastBooked && window._lastBooked.price) || lb.price,
+            priceStr: fmtMoney((window._lastBooked && window._lastBooked.price) || lb.price),
             message:'The existing shipment was updated with the newly quoted rate and services — no second shipment was created. Confirm the updated rate to the customer, then dispatch this same BOL when they are ready.' };
         }
         // The update FAILED. Never fall through to "already booked" — that would hand the agent a
@@ -13767,7 +13783,7 @@ async function _execBookShipment(input) {
         return { ok:false, kind:(_upd && _upd.kind) || 'save',
           message:(_upd && _upd.message) || 'I could not update this shipment with the new rate. Nothing was changed and it has not been dispatched — email support@freightandlogistics.ai and the team will get it sorted.' };
       }
-      return { ok:true, alreadyBooked:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price,
+      return { ok:true, alreadyBooked:true, BOLNumber: lb.BOLNumber, BOLId: lb.BOLId, carrier: lb.carrier, price: lb.price, priceStr: fmtMoney(lb.price),
         message:'This shipment is already booked as BOL ' + lb.BOLNumber + '. It has not been dispatched yet — do NOT book again. To send it to the carrier, dispatch this existing BOL.' };
     }
 
@@ -13945,7 +13961,7 @@ async function _execBookShipment(input) {
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
 
-    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, message:'Shipment booked and set up in our system, ready to dispatch.' };
+    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, priceStr: fmtMoney(price), message:'Shipment booked and set up in our system, ready to dispatch.' };
   } catch (e) {
     console.error('book_shipment error:', e);
     const _c = _classifyWriteError(e, 'book');
@@ -14392,6 +14408,8 @@ FILL THE FORM FIRST, PULL RATES ONCE. As you gather details, call update_quote t
 Only call update_quote when the customer actually wants a quote or is adjusting one; a general question like "can I ship furniture to California" is just a conversation, not a quote.
 
 READING RATES BACK — you have a read_rates tool:
+PRICES ARE SPOKEN EXACTLY AS GIVEN — NEVER ROUNDED. Every rate carries a priceStr (e.g. "$368.10") alongside its numeric price. State priceStr character-for-character in anything the customer sees, and never re-derive, round, truncate, or drop cents from it — not "$368", not "about $368", not "$368 or so". The numeric price is for tools and internal comparison ONLY; it is a raw number and may reach you as 368.1 when the real figure is $368.10. This is the same rule as the prepaid charge disclosure and it exists for the same reason: the price you say is the price the customer agrees to, and it must match the price the shipment is written and billed at to the cent. A rounded quote followed by an exact charge is a dispute, and no internal check can catch it because none of them sees what you said. If a price has no priceStr, format it yourself to two decimals.
+
 IMMEDIATELY AFTER YOU PULL RATES: as soon as your own getRates:true pull completes, call read_rates once and read back the result in one line — how many carriers came back and the cheapest option (carrier, price, transit days) — without waiting for the customer to ask. No value judgments.
 Once rates are pulled, you can SEE them. When the customer asks anything about the rates — "what's the cheapest," "who's fastest," "what's next," "how long is the Estes one," "compare the top three," "what are my options" — call read_rates to get the live list (sorted cheapest-first with carrier, price, transit days, service, and any note). Then answer concisely: give what they asked plus the natural next step. Example: "Cheapest is Estes at $441, 4 days. Want me to book it?" For a follow-up like "what's next," give the next option: "TForce at $467, 3 days." You have the full list, so you can answer any follow-up about price, speed, carrier, or service. Never invent a price or transit time — only state what read_rates returns. Never add a value judgment ("that's a great rate," "tough to beat," "right fit") — just report the facts. For info that isn't in the rate data — like a carrier's terminal address or phone — use web_search. If read_rates comes back empty, tell them you need to pull rates first.
 
