@@ -1,0 +1,8 @@
+# Reconstructed from the deployed Worker's settings (2026-07-30) — fl-tracking had no
+# wrangler.toml in the repo. Values below match what is live: no bindings, observability on.
+name = "fl-tracking"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+[observability]
+enabled = true
