@@ -913,14 +913,14 @@ async function _trackShipment(num){
       openRightPanel('Tracking ' + (d.bol||num), renderLiveTrackingCard(d));
       chatHistory.push({role:'assistant', content:line});
     } else {
-      const line="I couldn't find a shipment for that number. Double-check the BOL, PRO, or reference and try again.";
+      const line="I'm not able to get a status for that number right now.";
       appendBot(line);
       _appendTrackSignup();
       chatHistory.push({role:'assistant', content:line});
     }
   }catch(e){
     removeTyping();
-    appendBot('Tracking is having a moment — please try again, or call (800) 687-3713.');
+    appendBot('Tracking is having a moment — please try again shortly, or email support@freightandlogistics.ai.');
   }
 }
 

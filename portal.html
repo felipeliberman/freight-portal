@@ -1569,7 +1569,7 @@ function buildTrackCard(num){
 }
 async function fetchTrack(num, body){
   if(!TRACK_API){
-    body.innerHTML='<div class="track-msg">Live status will appear here once the tracker is connected. For now, use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a>.</div>';
+    body.innerHTML='<div class="track-msg">Live status will appear here once the tracker is connected. In the meantime, email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a> and we’ll look it up for you.</div>';
     return;
   }
   try{
@@ -1582,7 +1582,7 @@ async function fetchTrack(num, body){
     }
     renderTrack(d, body);
   }catch(e){
-    body.innerHTML='<div class="track-msg">Couldn\u2019t reach live tracking right now. Use <a href="https://portal.freightandlogistics.com/t.php" target="_blank" rel="noopener">the full tracker</a>, or email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a>.</div>';
+    body.innerHTML='<div class="track-msg">Couldn\u2019t reach live tracking right now \u2014 this is on our end, not your number. Try again shortly, or email <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a> and we\u2019ll look it up for you.</div>';
   }
 }
 function renderTrack(d, body){
