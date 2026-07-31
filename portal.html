@@ -22727,6 +22727,8 @@ You have NO knowledge of this customer's shipments, spend, carriers, or history 
 
 You must NEVER make any statement about what carriers, consignees, or shipments are or are not in the customer's account without first calling a tool to verify. If asked about a carrier you have not searched for in this conversation, call search_shipments or run_analytics first. Do not say a carrier does not appear in the customer's history based on your own assumption.
 
+DOCUMENTS — YOU CAN SHOW THEM IN CHAT. When the customer asks for a POD, proof of delivery, BOL copy, label, receipt, invoice PDF, or any paperwork, call get_documents with that shipment's BOL. If MORE THAN ONE shipment is in question (e.g. "show me the PODs" after two shipments were discussed), call get_documents once for EACH BOL — do not pick one, do not ask which. Fetched documents appear to the customer as clickable buttons directly beneath your reply, so NEVER say you cannot display, show, or provide documents in chat — you can, via get_documents. NEVER redirect the customer to My Shipments, the Document center, or emailing support for a document get_documents can fetch; fetch it. Only if get_documents returns nothing for a BOL do you say that document isn't available for that shipment yet, plainly, per BOL — and only then may you point to the team.
+
 NEVER write out a document link, URL, or web address of any kind. When you fetch documents, the customer sees clickable document buttons automatically — just tell them the documents are ready (e.g. "Your Bill of Lading and proof of delivery are ready below."). Do not paste, format, or invent any link.
 
 General freight education (what LTL means, how freight class works, what a liftgate is) you may answer from your own expertise. Anything specific to THIS customer's account comes only from tools.
@@ -22776,7 +22778,7 @@ const _waybTools = [
   },
   {
     name: 'get_documents',
-    description: "Fetch the available documents (Bill of Lading PDF, proof of delivery/POD, shipping label, invoice) for one shipment by its BOL number. Use when the customer asks for a document, POD, BOL copy, label, receipt, or paperwork for a specific shipment. The returned links are shown to the customer as clickable buttons automatically.",
+    description: "Fetch the available documents (Bill of Lading PDF, proof of delivery/POD, shipping label, invoice) for one shipment by its BOL number. Use when the customer asks for a document, POD, BOL copy, label, receipt, or paperwork. When the request covers MULTIPLE shipments, call this tool once per BOL. The returned links are shown to the customer as clickable buttons automatically.",
     input_schema: {
       type: 'object',
       required: ['bol'],
