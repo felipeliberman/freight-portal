@@ -831,6 +831,72 @@ const cases = [
     },
   },
 
+  // ── 35 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 35, name: 'a price hold closes the loop: steering reaches the agent, updateToCurrentRate writes and reports without dispatching, and the hold line clears itself',
+    catches: 'the live dead end. Both price guards blocked correctly and then nothing happened — the customer said "well?" and got the identical copy again, because the tool result\'s steering never reaches the model (convo is rebuilt from history every turn) and no code performed the recovery. A guard that blocks forever is an outage with good manners.',
+    async run(h) {
+      const w = h.win;
+      const mk = (id, name, total) => ({ id, name, total, rateBreakdown: [{ name: 'FREIGHT CHARGE', total }] });
+      const pull1 = [mk('R-p1-jts', 'JTS Express', 161)];
+      const pull3 = [mk('R-p3-jts', 'JTS Express', 396.75), mk('R-p3-warp', 'WARP', 120.19)];
+      h.routes.unshift({ match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'), reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }) });
+
+      // Divergence: the written price and the selected price disagree — the case guard 2 makes live.
+      w._lastRatesRaw = pull3;
+      w._lastRatesShipment = { accessorials: ['RSD', 'LFD'], items: L2FX_REQUOTE_SHIP.freightInfo, originZip: '90660', destinationZip: '90035' };
+      // Party data via _quotedContacts, which IS a window global. lastQuotedShipment is a
+      // script-scope `let`, so assigning w.lastQuotedShipment would only make an unrelated property
+      // and the save would fail ZIP validation — the same trap that bit case 29's setup.
+      w._quotedContacts = {
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zip: '90660', contact: 'Jo', phone: '5625550100' },
+        consignee: { name: 'Dana Whitfield', address: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zip: '90035', contact: 'Dana', phone: '3105550101' },
+      };
+      w.selectRate(pull3[0], { shipment: w._lastRatesShipment, list: pull3, open: false, source: 'test' });
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._rdiAnsweredBOL = 'BOLID-778899';
+
+      // ── 1. The hold fires, and the STEERING reaches the agent via the live state block.
+      h.reset();
+      const blocked = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(blocked && blocked.rateDiverged === true, 'setup: expected the divergence hold: ' + JSON.stringify(blocked).slice(0, 200));
+      const ls1 = w._liveStateBlock();
+      A.ok(/priceHold:/.test(ls1), 'the agent is told NOTHING about the hold — this is the dead end: ' + ls1.slice(0, 200));
+      A.ok(/updateToCurrentRate/.test(ls1), 'the steering does not name the tool that resolves it');
+      A.ok(/do not repeat the question/i.test(ls1), 'the steering does not stop the agent re-asking what code already asked');
+
+      // ── 2. updateToCurrentRate WRITES and REPORTS, and does NOT dispatch.
+      h.reset();
+      const upd = await w._execDispatchShipment({ BOLId: 'BOLID-778899', updateToCurrentRate: true });
+      await sleep(300);
+      A.ok(upd && upd.ok === true, 'the resolution call failed: ' + JSON.stringify(upd).slice(0, 250));
+      A.ok(upd.updatedToCurrentRate === true, 'the result does not report that it updated');
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 0, 'it DISPATCHED — the price changed, so consent must be re-obtained first');
+      A.ok(h.requests.some(q => /\/applet\/v1\/book\//.test(q.url) && q.method === 'PUT'), 'no PUT — the new rate never reached the shipment: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.eq(h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length, 0, 'it created a duplicate instead of updating');
+      A.ok(/^\$[\d,]+\.\d{2}$/.test(upd.priceStr || ''), 'the new price came back without an exact priceStr: ' + upd.priceStr);
+      A.eq(upd.priceStr, '$396.75', 'the reported price is not the current rate: ' + upd.priceStr);
+
+      // ── 3. THE HOLD LINE CLEARS ITSELF. Nothing clears it — it is recomputed, so it cannot linger
+      // and steer the agent to re-fix what is already fixed.
+      const ls2 = w._liveStateBlock();
+      A.ok(!/priceHold:/.test(ls2), 'the hold line SURVIVED the write — stale steering would push the agent to redo a completed fix: ' + (ls2.match(/priceHold:.*/) || [''])[0]);
+
+      // ── 4. And dispatch now goes through.
+      h.reset();
+      const ok = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(!ok.rateDiverged && !ok.rateStale, 'still held after the write: ' + JSON.stringify(ok).slice(0, 200));
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 1, 'the confirmed dispatch did not reach the carrier');
+
+      // ── 5. The residential hold carries NO steering — it never arrived and the flow works without
+      // it, and invariant 15 forbids that classification on the live-state surface.
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      const resReturn = src.slice(src.indexOf('return { ok: false, residentialHold: true'));
+      A.ok(!/message:/.test(resReturn.slice(0, 200)), 'the residential hold still carries steering text nobody reads');
+      A.ok(!/residential/i.test(w._liveStateBlock()), 'invariant 15 broken: the live state block now mentions residential classification');
+    },
+  },
+
   // ── 33 ───────────────────────────────────────────────────────────────────────
   {
     id: 33, name: 'the requote-write pair has ONE writer and is cleared on EVERY completion path — a stale intent flag can never refuse a legitimate booking',

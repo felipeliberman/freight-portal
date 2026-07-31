@@ -7107,6 +7107,53 @@ function _rateStaleMessage() {
   return "I haven't dispatched this yet. The rates were refreshed after this shipment was set up, so what's on it isn't the pricing I just went over with you — and I won't send it to the carrier at a price you didn't agree to. Which carrier would you like from the current rates? I'll update the shipment and read you the new price before anything goes out.";
 }
 
+// ── ONE EVALUATOR for both price holds — RECOMPUTED, never stored ────────────────────────────
+// _execDispatchShipment BLOCKS on this verdict; _liveStateBlock REPORTS it to the agent. Two
+// surfaces, one owner — a second copy of this logic is how the two would drift apart and start
+// disagreeing about whether a shipment is safe to tender.
+//
+// DELIBERATELY STATELESS. The obvious shape is a _priceHoldPending flag set when a guard fires and
+// cleared when it is resolved, and that shape is a staleness bug waiting to happen — a hold line
+// left in the agent's context after the save landed would steer it to "fix" something already
+// fixed, which is the exact class of defect this whole session has been chasing. Recomputing from
+// live state on every read means the line CANNOT outlive the condition: the moment the write lands,
+// the selection is back in the current list and the prices agree, this returns null, and the line
+// disappears on its own. Nothing to clear, so nothing to forget to clear.
+//
+// Precedence matches the guards: staleness first. A selection that is not in the current list is the
+// more accurate diagnosis, and prices can coincidentally agree while the rate identity is wrong.
+// Returns { kind: 'stale' | 'diverged' | null, ... }.
+function _priceHoldState(BOLId) {
+  const out = { kind: null };
+  try {
+    const sel = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+    const raw = window._lastRatesRaw;
+    const selId = sel ? String(sel.id || sel.rateId || '') : '';
+    // STALE — the selection predates the list currently on screen. Fails OPEN with no list to judge
+    // against (a saved shipment dispatched in a fresh session) or with nothing selected.
+    if (raw && raw.length && selId) {
+      const inList = raw.some(function (r) { return String((r && (r.id || r.rateId)) || '') === selId; });
+      if (!inList) {
+        out.kind = 'stale'; out.selectedId = selId; out.listSize = raw.length;
+        out.selectedPrice = Number((sel.billTo && sel.billTo.total) || sel.total || sel._price || 0);
+        return out;
+      }
+    }
+    // DIVERGED — the written price and the selected price disagree. Whole cents, so float noise
+    // cannot trip it. Only meaningful for a BOL this conversation booked and has not dispatched.
+    const lb = window._lastBooked;
+    if (lb && BOLId && lb.BOLId === BOLId && !lb.dispatched && sel) {
+      const selP = Number((sel.billTo && sel.billTo.total) || sel.total || sel._price || 0);
+      const bookP = Number(lb.price || 0);
+      if (selP > 0 && bookP > 0 && Math.round(selP * 100) !== Math.round(bookP * 100)) {
+        out.kind = 'diverged'; out.selectedPrice = selP; out.writtenPrice = bookP;
+        out.BOLNumber = lb.BOLNumber; return out;
+      }
+    }
+  } catch (e) {}  // an evaluator that throws must never block a dispatch or break a turn
+  return out;
+}
+
 // ── CANONICAL residential/liftgate classifier for the dispatch guard ─────────────────────────
 // ONE owner of the Geocodio call and the RSD/LFD read for EVERY dispatch path. checkRDIBeforeDispatch
 // (the two form dispatch buttons) renders its overlay from this verdict; _execDispatchShipment (chat)
@@ -12854,6 +12901,19 @@ function _liveStateBlock() {
     if (b && b.bookingInFlight && !b.panelRendered) {
       lines.push('bookingInFlight: a booking IS in progress for the carrier and fields shown above, even though its panel tab is not the one currently displayed. Never say there is no booking, never re-ask which carrier, and never re-ask for any field shown non-empty above.');
     }
+    // PRICE HOLD — the one piece of guard steering the agent can actually receive. The tool result's
+    // own `message` never arrives (convo is rebuilt from history every turn), so this surface is how
+    // a blocked dispatch tells the agent what to do next. Recomputed by _priceHoldState on every
+    // read, so it disappears by itself the moment the write lands — it cannot linger and steer the
+    // agent to re-fix something already fixed.
+    try {
+      var _phLS = _priceHoldState((window._lastBooked || {}).BOLId);
+      if (_phLS.kind === 'stale') {
+        lines.push('priceHold: this shipment was NOT dispatched. The carrier selected on it is not from the rate list currently on screen, so its price and services are not what the customer was last shown. They have already been asked on screen which carrier they want from the current rates — do not repeat the question. When they name one, call dispatch_shipment with updateToCurrentRate true: that re-selects it from the CURRENT rates and writes it to this shipment, then returns the new price for you to read back. Dispatch only after they confirm that price. Never state a price for this shipment until that call returns one.');
+      } else if (_phLS.kind === 'diverged') {
+        lines.push('priceHold: this shipment was NOT dispatched. The rate written on it does not match the rate last quoted, so the customer has been asked on screen whether to update it — do not repeat the question. If they say yes, call dispatch_shipment with updateToCurrentRate true: it writes the quoted rate to this shipment and returns the new price for you to read back. Dispatch only after they confirm that price. Never state a price for this shipment until that call returns one.');
+      }
+    } catch (e) {}
     if (window._lockDropped && window._lockDropped.carrier) {
       lines.push('carrierNoLongerAvailable: ' + window._lockDropped.carrier + ' was the selected carrier but did not come back on the refreshed rates. Tell the customer that plainly and ask which of the current options they want. Do NOT pick one for them.');
     }
@@ -14120,22 +14180,52 @@ async function _execDispatchShipment(input) {
     //     _lastRatesRaw, and with no list to judge against this fails OPEN by design. Guard 2 holds
     //     then, because the selection was already re-keyed before the throw.
     // One prevents the state going stale; this refuses to tender if it did anyway.
-    try {
-      const _raw = window._lastRatesRaw;
-      const _selS = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
-      const _selSId = _selS ? String(_selS.id || _selS.rateId || '') : '';
-      if (_raw && _raw.length && _selSId) {
-        const _inList = _raw.some(function (r) { return String((r && (r.id || r.rateId)) || '') === _selSId; });
-        if (!_inList) {
-          console.warn('[FP] DISPATCH BLOCKED — selected rate is not in the current rate list on BOL', BOLId,
-            '| selected id:', _selSId, '| selected $', (_selS.billTo && _selS.billTo.total) || _selS.total || _selS._price,
-            '| current list size:', _raw.length, '— the selection predates the latest pull');
-          if (typeof appendMessage === 'function') appendMessage('bot', _rateStaleMessage());
-          return { ok: false, rateStale: true, _turnHandled: true,
-            message: 'NOT dispatched. The rate selected on this shipment is not from the rate list currently on screen — rates were re-pulled after it was chosen, so the shipment does not carry the pricing or the services the customer was just shown. The customer has already been told on screen and this turn is over — say nothing further. To resolve it: call update_booking with the carrier the customer wants so it is re-selected from the CURRENT rates, then save_shipment with this bol_id to write it, confirm the new price to the customer, and only then dispatch.' };
-        }
+    // ── RESOLVE A PRICE HOLD — re-select from the CURRENT rates, write it, report, and STOP ─────
+    // The customer has heard the hold and said yes. This does the mechanical half deterministically
+    // — the half the agent kept getting wrong — and then hands the price back for confirmation.
+    // It DELIBERATELY DOES NOT DISPATCH. The price is the thing that changed, so consent has to be
+    // re-obtained after they hear the new number; a guard that resolved a consent problem by acting
+    // without consent would be the failure it exists to prevent. Same shape as the residential
+    // hold's addDeliveryServices: code does the work, the customer keeps the decision.
+    if (input.updateToCurrentRate) {
+      const _raw = window._lastRatesRaw || [];
+      const _curSel = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+      const _wantName = (_curSel && typeof _rateDisplayName === 'function' ? _rateDisplayName(_curSel) : '')
+                     || ((window._lastBooked && window._lastBooked.carrier) || '');
+      if (!_raw.length || !_wantName) {
+        return { ok: false, error: 'There are no current rates to update this shipment to. Pull rates first, then try again.' };
       }
-    } catch (e) {}  // a guard that throws must never block a dispatch on its own
+      // Exact/alias only — resolving a carrier by name here may never drift to a different one.
+      const _res = _resolveRateRef({ carrier: _wantName }, _raw, { maxTier: 2 });
+      if (!_res.ok) {
+        return { ok: false, code: _res.code,
+          error: 'That carrier is not in the current rates any more. Tell the customer plainly and ask which of the current options they want; do not pick one for them.' };
+      }
+      // lock: !!window._bookingLock — same no-re-arming rule as the publish-time re-key. Post-book
+      // there is no lock, and re-arming one here would let a later book_shipment ignore the carrier
+      // the customer actually asks for.
+      selectRate(_res.rate, { shipment: window._lastRatesShipment, list: _raw, open: false,
+        source: 'update-to-current', lock: !!window._bookingLock });
+      const _sv = await _execSaveShipment({ bol_id: BOLId });
+      if (!_sv || !_sv.ok) {
+        return { ok: false, kind: (_sv && _sv.kind) || 'save',
+          message: (_sv && _sv.message) || 'I could not update this shipment with the current rate. Nothing was changed and it has not been dispatched — email support@freightandlogistics.ai and the team will get it sorted.' };
+      }
+      const _newP = (window._lastBooked && Number(window._lastBooked.price)) || _ratePrice(_res.rate);
+      return { ok: true, updatedToCurrentRate: true, BOLId: BOLId, carrier: _rateDisplayName(_res.rate),
+        price: _newP, priceStr: fmtMoney(_newP),
+        message: 'The shipment now carries the current rate and services — nothing has been dispatched. State the carrier and priceStr to the customer exactly as given and ask them to confirm before you dispatch. Do NOT call dispatch_shipment until they confirm this price.' };
+    }
+
+    const _ph = _priceHoldState(BOLId);
+    if (_ph.kind === 'stale') {
+      console.warn('[FP] DISPATCH BLOCKED — selected rate is not in the current rate list on BOL', BOLId,
+        '| selected id:', _ph.selectedId, '| selected $', _ph.selectedPrice,
+        '| current list size:', _ph.listSize, '— the selection predates the latest pull');
+      if (typeof appendMessage === 'function') appendMessage('bot', _rateStaleMessage());
+      return { ok: false, rateStale: true, _turnHandled: true,
+        message: 'NOT dispatched — the selection predates the current rate list. See priceHold in the live state for what to do.' };
+    }
 
     // ── DIVERGENCE BACKSTOP — chat and the BOL must agree on price before anything is tendered ──
     // Independent of the requote fix in _execBookShipment, deliberately: this is the check that
@@ -14155,20 +14245,13 @@ async function _execDispatchShipment(input) {
     // — the requote marker is what covers that, which is why both exist.
     // Positioned AFTER the in-flight/already-dispatched guards and BEFORE the parcel picker and
     // _canonicalDispatch, so no tender and no charge can precede it.
-    try {
-      const _lbP = window._lastBooked;
-      if (_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && typeof _selectedRateForPayload === 'function') {
-        const _selR = _selectedRateForPayload().rate;
-        const _selP = _selR ? Number((_selR.billTo && _selR.billTo.total) || _selR.total || _selR._price || 0) : 0;
-        const _bookP = Number(_lbP.price || 0);
-        if (_selP > 0 && _bookP > 0 && Math.round(_selP * 100) !== Math.round(_bookP * 100)) {
-          console.warn('[FP] DISPATCH BLOCKED — quoted/booked rate divergence on BOL', _lbP.BOLNumber, '| selected:', _selP, '| written:', _bookP);
-          if (typeof appendMessage === 'function') appendMessage('bot', _rateDivergedMessage());
-          return { ok: false, rateDiverged: true, _turnHandled: true,
-            message: 'NOT dispatched. The rate written on this shipment does not match the rate last quoted, so dispatch was blocked and the customer has already been told on screen — say nothing further this turn. To resolve it, save the shipment with the currently quoted rate (save_shipment with this bol_id), confirm the updated price to the customer, and only then dispatch.' };
-        }
-      }
-    } catch (e) {}  // a backstop that throws must never block a dispatch on its own
+    if (_ph.kind === 'diverged') {
+      console.warn('[FP] DISPATCH BLOCKED — quoted/booked rate divergence on BOL', _ph.BOLNumber,
+        '| selected:', _ph.selectedPrice, '| written:', _ph.writtenPrice);
+      if (typeof appendMessage === 'function') appendMessage('bot', _rateDivergedMessage());
+      return { ok: false, rateDiverged: true, _turnHandled: true,
+        message: 'NOT dispatched — the written and quoted rates disagree. See priceHold in the live state for what to do.' };
+    }
 
     // ── Residential (RDI) guard — CHAT path ───────────────────────────────────────────────────
     // Same canonical verdict as the two form dispatch buttons (classifyDeliveryForDispatch — one
@@ -14269,8 +14352,13 @@ async function _execDispatchShipment(input) {
           // what the customer saw. Note an empty model reply is NOT a usable alternative: the loop
           // treats an empty completion as a failed turn and renders AGENT_FAIL_MSG (~14976).
           if (typeof appendMessage === 'function') appendMessage('bot', _rdiHoldMessage(_names));
-          return { ok: false, residentialHold: true, _turnHandled: true, missingServices: _names,
-            message: 'The shipment was NOT dispatched. The customer has already been shown the question on screen and this turn is over — nothing further is said or done until they answer. If they say to add the services: call dispatch_shipment again with addDeliveryServices true. If they say dispatch as-is: call dispatch_shipment again with no extra fields and it will go straight through.' };
+          // NO steering message. It never reached the model — see the TOOL-OWNED TURN note in
+          // aiConverse — and this flow does not need it: the copy above asks the customer directly,
+          // they answer in chat, and addDeliveryServices carries it. Steering nobody reads is worse
+          // than none: it reads as a working contract. Deliberately NOT surfaced via _liveStateBlock
+          // either — invariant 15 forbids the classification on that surface, and dodging the word
+          // to sneak it past would be defeating the contract rather than honouring it.
+          return { ok: false, residentialHold: true, _turnHandled: true, missingServices: _names };
         }
       }
     }
@@ -15076,7 +15164,7 @@ async function aiConverse(userText) {
             {
               name: 'dispatch_shipment',
               description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
-              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' }, chargeConfirmed: { type: 'boolean', description: 'Prepaid (PRE) accounts only. Leave UNSET on your FIRST dispatch_shipment call — the tool returns needsChargeConfirm with the exact amount, brand, and last4 you must disclose to the customer. Only after you have stated that exact charge verbatim and the customer explicitly agrees, call again with chargeConfirmed:true to complete the charge and dispatch.' }, addDeliveryServices: { type: 'boolean', description: 'Set ONLY after a dispatch_shipment call came back with residentialHold:true and the customer answered that they want the missing delivery services added. Passing true reopens the quote form on that same shipment with the services applied so rates can be re-pulled — it does NOT dispatch. If the customer instead said to dispatch as-is, leave this unset and call dispatch_shipment again with no extra fields.' } } }
+              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' }, chargeConfirmed: { type: 'boolean', description: 'Prepaid (PRE) accounts only. Leave UNSET on your FIRST dispatch_shipment call — the tool returns needsChargeConfirm with the exact amount, brand, and last4 you must disclose to the customer. Only after you have stated that exact charge verbatim and the customer explicitly agrees, call again with chargeConfirmed:true to complete the charge and dispatch.' }, updateToCurrentRate: { type: 'boolean', description: 'Set ONLY after a dispatch_shipment call came back with rateStale:true or rateDiverged:true AND the customer has agreed to update the shipment. Re-selects the carrier from the CURRENT rates, writes it to this shipment, and returns the new price — it does NOT dispatch. Read the returned priceStr back and dispatch only after the customer confirms it.' }, addDeliveryServices: { type: 'boolean', description: 'Set ONLY after a dispatch_shipment call came back with residentialHold:true and the customer answered that they want the missing delivery services added. Passing true reopens the quote form on that same shipment with the services applied so rates can be re-pulled — it does NOT dispatch. If the customer instead said to dispatch as-is, leave this unset and call dispatch_shipment again with no extra fields.' } } }
             },
             {
               name: 'save_shipment',
@@ -15323,6 +15411,12 @@ async function aiConverse(userText) {
         // get the shipment updated", each otherwise invite an update_quote whose pull posts a stray
         // rate summary onto an unanswered question). The deterministic collectors already work this
         // way; this is the same contract for a tool-rendered turn.
+        // WHY THE `message` ON THESE RESULTS DOES NOT REACH THE MODEL, and why pushing it here does
+        // not fix that: `convo` is `msgs.slice()`, rebuilt from history on EVERY turn, so anything
+        // pushed onto it before this return is discarded with the turn. Agent-facing steering that
+        // must survive belongs in _liveStateBlock, which IS reconstructed and sent each turn — that
+        // is where the price holds now report (priceHold), and why the residential hold carries no
+        // steering at all. Do not try to deliver it by pushing convo; it has already been tried.
         // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
