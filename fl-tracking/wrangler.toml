@@ -1,8 +1,14 @@
 # Reconstructed from the deployed Worker's settings (2026-07-30) — fl-tracking had no
-# wrangler.toml in the repo. Values below match what is live: no bindings, observability on.
+# wrangler.toml in the repo. Matches live except for the RL binding added below.
 name = "fl-tracking"
 main = "worker.js"
 compatibility_date = "2026-06-01"
+
+# Rate-limit counters for the PUBLIC (?q=) route only. This namespace already existed
+# but was never bound to any Worker, which is why track-proxy's limiter never ran.
+[[kv_namespaces]]
+binding = "RL"
+id = "1b458c6225f44b39ab92f95ec12f216f"
 
 [observability]
 enabled = true
