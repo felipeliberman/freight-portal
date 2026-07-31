@@ -17616,7 +17616,7 @@ async function handleInput(text, _opts) {
             ' — the booking form is open on the right. ' +
             (_missC.length
               ? 'I still need the ' + _missC.join(', ') + '.'
-              : 'Everything required is filled in — review it and hit Save Shipment when ready.'));
+              : 'Everything required is filled in — tell me when you want it saved and I\'ll take care of it from here.'));
           return;
         }
         // Capture BEFORE selectRate: if the Book Shipment tab already exists, the panel's own
@@ -17723,7 +17723,7 @@ async function handleInput(text, _opts) {
         const _cw = _w2.written.filter(k => k.indexOf('consignee.') === 0).length;
         appendMessage('bot', 'Got it — I\'ve filled ' + _w2.written.length + ' field' + (_w2.written.length !== 1 ? 's' : '') +
           (_sw && _cw ? ' across the pickup and delivery sections' : _cw ? ' in the delivery section' : ' in the pickup section') +
-          ' of the booking form. Review it and hit Save Shipment when ready.');
+          ' of the booking form. Tell me when you want it saved and I\'ll take care of it from here.');
         return;
       }
       // Nothing landed: say nothing and let the agent handle it rather than claim a fill.
@@ -17732,13 +17732,19 @@ async function handleInput(text, _opts) {
       // delivery-labeled block fills the consignee, everything else fills the shipper (pickup
       // details usually arrive first). Ref/PO and pickup window apply either way.
       const bd = parseBookingBlock(t, '');
+      // CHAT OWNS THE WRITE. These interceptors already wrote the fields and then return, ending
+      // the turn before the agent runs — so whatever they say IS the reply, and pointing at the
+      // panel's Save button was the system doing the work and then handing the customer a button.
+      // Live twice in one flow. They deliberately do NOT auto-save: nobody asked for a write at
+      // this point, and an unrequested write is the failure mode the rest of tonight removed. They
+      // offer, and save_shipment does it when the customer says so.
       if (bd.name || bd.address || bd.phone || bd.date) {
         const _isDel = /\b(deliver|consignee|ship\s*to|destination)\b/i.test(t);
         const _parsed1 = { referenceNumber: bd.ref, pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo } };
         _parsed1[_isDel ? 'consignee' : 'shipper'] = { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone };
         const _w = applyPartyData(_parsed1, { source: 'chat-party-block' });
         if (_w.written.length) {
-          appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form\'s ' + (_isDel ? 'delivery' : 'pickup') + ' section. Review it and hit Save Shipment when ready.');
+          appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form\'s ' + (_isDel ? 'delivery' : 'pickup') + ' section. Tell me when you want it saved and I\'ll take care of it from here.');
           return;
         }
         // Nothing landed: say nothing and let the agent handle it rather than claim a fill.
