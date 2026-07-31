@@ -2331,7 +2331,7 @@ function resetShipmentState(wipeConversation) {
     // customer's answer clears both flags, so a later addDeliveryServices:true falls through to a
     // fresh guard run instead of the requote. The failure mode is a re-ask, never a silent dispatch.
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null; window._rdiPending = null;
-    window._requoteContext = null; window._rewriteFailedBOL = null;
+    window._requoteContext = null; window._requoteWriteBOL = null;
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
@@ -7158,59 +7158,6 @@ function _rdiHoldMessage(names) {
 function _rateDivergedMessage() {
   return "I haven't dispatched this yet. The rate saved on this shipment doesn't match the one I just quoted you, and I won't send it to the carrier at a price you didn't agree to. Let me get the shipment updated to the quoted rate first, then we can dispatch.";
 }
-// Terminal copy: the update was attempted (or could not be attempted) and did not go through.
-// Said ONCE, then the turn ends. Never a second block — the customer always has an exit.
-function _rewriteFailedMessage() {
-  return "I couldn't get this shipment updated to the rate I quoted you, so I haven't dispatched it — nothing has gone to the carrier. Email support@freightandlogistics.ai and the team will finish it for you.";
-}
-
-// ── DOES THIS BOL OWE A WRITE? — ONE route-independent predicate ─────────────────────────────
-// Compares the SHIPMENT AS SAVED against what the customer was last quoted. It asks "do these
-// disagree", never "how did they come to disagree", so it cannot be walked around: update_quote,
-// requote_shipment, requoteSavedShipment, the form overlay and the residential hold all land here
-// identically. This replaces the _requoteWriteBOL marker outright — a marker has to be ATTACHED to
-// a route, and every attachment point we added just moved the next hole to the route we hadn't
-// thought of (three found in one day: the hold, requote_shipment, and update_quote).
-//
-// TWO signals, deliberately:
-//   * ACCESSORIALS (from the BOL — source of truth, normalized through accessorialSet). This is the
-//     signal that matters. A price-only check is BLIND to the case this whole feature exists for:
-//     on parcel, adding residential routinely leaves the price identical (the agent prompt documents
-//     exactly that for UPS Ground), so RSD would silently never reach the BOL.
-//   * PRICE (_lastBooked.price vs the selected rate). Proven to fire live on BOL 160135782.
-// The BOL's own price is deliberately NOT compared: reading it means walking a fallback chain
-// (invoiceAmount || customerQuoteAmount || totalDue || vendor.cost ...) and if that picks a
-// different field than the one we wrote we would manufacture divergence and block healthy
-// dispatches. A stated gap beats phantom divergence.
-// Returns { needs, reason, missingCodes }. Any error → { needs:false } (never block on a bug here).
-function _bolNeedsRewrite(BOLId, bolShip) {
-  const out = { needs: false, reason: null, missingCodes: [] };
-  try {
-    // 1. Accessorial gap: codes the customer's quote carries that the saved shipment does not.
-    if (bolShip) {
-      const bolCodes = (typeof accessorialSet === 'function')
-        ? accessorialSet(bolShip.accessorials || bolShip.accessorialsList || []) : [];
-      let formCodes = [];
-      try {
-        const _qf = (typeof _quoteFormState === 'function') ? _quoteFormState() : null;
-        formCodes = (_qf && _qf.accessorialCodes) ? _qf.accessorialCodes.slice() : [];
-      } catch (e) {}
-      const missing = formCodes.filter(c => c && bolCodes.indexOf(c) < 0);
-      if (missing.length) { out.needs = true; out.reason = 'accessorials'; out.missingCodes = missing; return out; }
-    }
-    // 2. Price gap: what we last wrote vs what is selected now.
-    const lb = window._lastBooked;
-    if (lb && lb.BOLId === BOLId && !lb.dispatched && typeof _selectedRateForPayload === 'function') {
-      const r = _selectedRateForPayload().rate;
-      const selP = r ? Number((r.billTo && r.billTo.total) || r.total || r._price || 0) : 0;
-      const bookP = Number(lb.price || 0);
-      if (selP > 0 && bookP > 0 && Math.round(selP * 100) !== Math.round(bookP * 100)) {
-        out.needs = true; out.reason = 'price'; return out;
-      }
-    }
-  } catch (e) {}
-  return out;
-}
 
 async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
   // OVERLAY surface — the two FORM dispatch buttons (7267/7548) only. Signature, markup, and both
@@ -7851,13 +7798,11 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   // requote_shipment tool, and the residential hold all call it. Cleared ONLY by a successful
   // write to this BOL (submitBookingOnly / _execBookShipment) and by resetShipmentState.
   // Read by the duplicate-booking guard so a requote is written instead of being swallowed.
-  // NO requote marker here, deliberately. A marker must be ATTACHED to a route, and every route we
-  // attached one to got walked around by the next one — three found in a single day: the residential
-  // hold, requote_shipment, and the one the customer actually walks, update_quote. _bolNeedsRewrite
-  // compares the saved shipment against the quote instead, which is route-independent by construction.
+  window._requoteWriteBOL = (s.BOLId || s.bolId || '') || null;
+  // [TRACE] instrumentation — who opened this requote, and did the marker actually take?
   try {
     const _st = (new Error().stack || '').split('\n').slice(2, 5).map(l => l.trim()).join(' <- ');
-    console.log('[TRACE] requoteSavedShipment CALLED — caller:', _st);
+    console.log('[TRACE] requoteSavedShipment CALLED — marker now:', window._requoteWriteBOL, '| caller:', _st);
   } catch (e) {}
   const accCodes = accessorialSet(s.accessorials||s.accessorialsList||[]);
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
@@ -11092,9 +11037,10 @@ async function submitBookingOnly(opts) {
     try { const _mb = document.getElementById('bk-submit-btn'); if (_mb) { _mb.textContent = 'Saved!'; _mb.disabled = true; _mb.style.background = '#f0ede6'; _mb.style.opacity = '0.7'; _mb.style.cursor = 'default'; } } catch(e) {}
     window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', price:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, dispatched:false };
-    // A successful write refreshes _lastBooked.price above, which is what stands the divergence
-    // backstop down on the next dispatch. No marker to clear — the check reads state, not a flag.
-    window._rewriteFailedBOL = null; // a successful write clears any terminal state for this BOL
+    // The requote (if any) is now written to this BOL — clear the marker and note that _lastBooked
+    // above has just been refreshed to the NEW price, which is what stands the divergence backstop
+    // down. This is the write-success chokepoint for BOTH the form panel's Save and _execSaveShipment.
+    if (window._requoteWriteBOL && (!BOLId || window._requoteWriteBOL === BOLId)) window._requoteWriteBOL = null;
     // Show save-confirmed modal
     if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
@@ -13490,31 +13436,10 @@ async function _execUpdateBooking(input) {
   }
 }
 
-// Street fields that must never be silently clobbered by a mis-parsed fragment.
-const _BK_STREET_IDS = { 'bk-pu-street': 1, 'bk-dl-street': 1 };
-// A value that plausibly IS a street: a house number followed by something, a PO box, or a named
-// road. Deliberately permissive — this only has to reject obvious debris, not validate addresses.
-const _STREET_LIKE = /(^\s*\d+\s+\S+)|(\bp\.?\s?o\.?\s+box\b)|\b(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pl|place|cir|circle|hwy|highway|pkwy|parkway|ste|suite|unit|fl|floor)\b/i;
 function _setBkField(id, val, evt) {
   if (val === undefined || val === null || val === '') return false;
   const el = document.getElementById(id);
   if (!el) return false;
-  // ── ADDRESS-CLOBBER GUARD ──────────────────────────────────────────────────────────────────
-  // Live on BOL 160135782: the customer typed "pickup on 8/3/26 po #12345" as one message and the
-  // tail of it — "26 po #12345" — was written into the pickup street, destroying "7240 Crider Ave"
-  // both on screen and in the POST payload. There was no validation here at all: any non-empty
-  // string won. Overwriting a good address is unrecoverable for the customer; declining a bad one
-  // costs one clarifying question, so a non-empty street is only replaced by something street-like.
-  try {
-    if (_BK_STREET_IDS[id]) {
-      const _cur = String(el.value || '').trim();
-      const _new = String(val).trim();
-      if (_cur && _cur !== _new && !_STREET_LIKE.test(_new)) {
-        console.warn('[FP] ADDRESS GUARD — refused to overwrite ' + id + ' (' + JSON.stringify(_cur) + ') with a value that does not read as a street: ' + JSON.stringify(_new) + '. Keeping the existing address.');
-        return false;
-      }
-    }
-  } catch (e) {}
   el.value = String(val);
   el.dispatchEvent(new Event(evt || 'input', { bubbles:true }));
   if (typeof flashField === 'function') flashField(el);
@@ -13780,10 +13705,9 @@ async function _execBookShipment(input) {
       const lb = window._lastBooked;
       // [TRACE] instrumentation — did the duplicate guard route to the PUT, or swallow it again?
       try {
-        const _bg = _bolNeedsRewrite(lb.BOLId, null);   // price signal only — no BOL read on this path
-        console.log('[TRACE] book guard — lb.BOLId:', lb.BOLId, '| lb.price:', lb.price,
-          '| needsRewrite:', _bg.needs, '| reason:', _bg.reason,
-          '| route:', _bg.needs ? 'PUT via _execSaveShipment' : 'RETURN alreadyBooked (dispatch backstop still checks accessorials)');
+        console.log('[TRACE] book guard — _requoteWriteBOL:', window._requoteWriteBOL, '| lb.BOLId:', lb.BOLId,
+          '| lb.price:', lb.price, '| markerMatches:', window._requoteWriteBOL === lb.BOLId,
+          '| route:', (window._requoteWriteBOL === lb.BOLId) ? 'PUT via _execSaveShipment' : 'RETURN alreadyBooked (no write)');
       } catch (e) {}
       // ── REQUOTE IS AN UPDATE, NOT A DUPLICATE ───────────────────────────────────────────────
       // "Already booked" is the WRONG answer when this BOL has been re-quoted and the new rate has
@@ -13796,7 +13720,7 @@ async function _execBookShipment(input) {
       // Route it to the SAME PUT the form panel's Save uses (_execSaveShipment → setEditingBOLId →
       // submitBookingOnly → bookShipment with editBolId). Gated on the marker matching THIS BOL so a
       // stale marker from another shipment can never turn a genuine new booking into an edit.
-      if (_bolNeedsRewrite(lb.BOLId, null).needs && typeof _execSaveShipment === 'function') {
+      if (window._requoteWriteBOL && window._requoteWriteBOL === lb.BOLId && typeof _execSaveShipment === 'function') {
         console.warn('[FP] book after requote — writing the new rate to BOL', lb.BOLNumber, 'via PUT instead of reporting already-booked');
         // Fold any party details the agent passed on THIS call into the panel first — the
         // panel-harvest block below is skipped on this path, and submitBookingOnly reads the panel.
@@ -13979,7 +13903,7 @@ async function _execBookShipment(input) {
     // Stash for the dispatch step
     window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false, isParcel: typeof isParcelRate === 'function' && isParcelRate(rate) };
-    window._rewriteFailedBOL = null; // a fresh create clears any terminal state
+    window._requoteWriteBOL = null; // a create supersedes any pending requote marker
     window._bookingLock = null; // booking complete — release the frozen rate
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
@@ -14002,7 +13926,7 @@ async function _execDispatchShipment(input) {
     console.log('[TRACE] dispatch_shipment IN', JSON.stringify(input),
       '| _rdiPending:', window._rdiPending ? window._rdiPending.BOLId + ':' + JSON.stringify(window._rdiPending.codes) : null,
       '| _rdiAnsweredBOL:', window._rdiAnsweredBOL,
-      '| _rewriteFailedBOL:', window._rewriteFailedBOL,
+      '| _requoteWriteBOL:', window._requoteWriteBOL,
       '| _lastBooked:', _lbT ? (_lbT.BOLId + ' $' + _lbT.price + ' dispatched=' + _lbT.dispatched) : null);
   } catch (e) {}
   try {
@@ -14013,84 +13937,49 @@ async function _execDispatchShipment(input) {
     if (window._dispatchingBOLId === BOLId)
       return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
 
-    if (window._rewriteFailedBOL === BOLId) {
-      // Already told them once. Do NOT re-render, do NOT retry the write, do NOT end the turn —
-      // let the agent converse so the customer is never boxed in.
-      return { ok: false, rewriteFailed: true,
-        message: 'This shipment still could not be updated to the quoted rate, so it has NOT been dispatched and nothing went to the carrier. Do not try to dispatch it again. Tell the customer plainly and point them to support@freightandlogistics.ai; answer any other question they have normally.' };
-    }
-    // ── ONE BOL read, two consumers ─────────────────────────────────────────────────────────────
-    // The saved shipment is the source of truth for both the divergence check below and the
-    // residential guard further down. Read once via the by-id GET (_preChargeInfo and the detail
-    // modal use the same shape). FAILS OPEN on any error: _bolShip stays null, the divergence check
-    // falls back to the price signal alone, and the RDI guard skips exactly as it did before.
-    let _bolShip = null;
-    if (!input.chargeConfirmed) {
-      try {
-        const _tk = await getToken();
-        const _r = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + _tk } });
-        if (_r.ok) { const _d = await _r.json(); _bolShip = (_d.data && _d.data.results) || _d.data || null; }
-      } catch (e) {}
-    }
-
-    // ── DIVERGENCE BACKSTOP — the saved shipment must match what the customer was quoted ─────────
-    // Route-independent by construction (see _bolNeedsRewrite). When it finds a gap it PERFORMS the
-    // write itself rather than asking the agent to: on BOL 160135782 the agent was told to call
-    // save_shipment and instead called update_booking then book_shipment then dispatch, spinning
-    // forever. The agent cannot be relied on to pick the tool, so code does it — same principle as
-    // rendering the hold copy instead of asking for it.
-    // TERMINAL, never a spin: write succeeds → dispatch proceeds; write fails or cannot be attempted
-    // → one plain message and the turn ends; any later attempt on the same BOL reports plainly and
-    // never re-blocks or re-tries.
-    const _gap = _bolNeedsRewrite(BOLId, _bolShip);
+    // ── DIVERGENCE BACKSTOP — chat and the BOL must agree on price before anything is tendered ──
+    // Independent of the requote fix above, deliberately: this is the check that would have caught
+    // BOL 160135778 at the moment of dispatch instead of in a transcript afterwards. FAILS CLOSED —
+    // on divergence nothing is dispatched.
+    // The distinguishing condition, and why it cannot fire on a healthy flow:
+    //   * _lastBooked exists and is THIS BOL  → this conversation booked it, so _lastBooked.price is
+    //     this shipment's written price. resetShipmentState nulls _lastBooked on EVERY reset (2325),
+    //     so a fresh quote in the same chat cannot leave a foreign price behind to compare against.
+    //   * a rate is currently selected      → book→dispatch with no requote selects the very rate it
+    //     booked, so the two agree to the cent and this is a no-op.
+    //   * requote + successful write        → submitBookingOnly refreshes _lastBooked.price to the
+    //     new price, so they agree again and this stands down.
+    //   * requote + swallowed write         → the ONLY case where they differ. That is the bug.
+    // Compared in whole cents so float noise cannot trip it. Known blind spot, stated rather than
+    // papered over: a requote that lands on a DIFFERENT carrier at the SAME price is invisible here
+    // — the requote marker above is what covers that, which is why both exist.
     try {
-      console.log('[TRACE] backstop — needsRewrite:', _gap.needs, '| reason:', _gap.reason,
-        '| missingCodes:', JSON.stringify(_gap.missingCodes),
-        '| bolRead:', !!_bolShip,
-        '| bolAccessorials:', _bolShip ? JSON.stringify((typeof accessorialSet === 'function') ? accessorialSet(_bolShip.accessorials || _bolShip.accessorialsList || []) : []) : 'n/a');
-    } catch (e) {}
-    if (_gap.needs) {
-      // Can a payload even be built? collectBookingForm falls back DOM → bookingData →
-      // _quotedContacts → lastQuotedShipment, and validateBookingPayload requires ONLY the two ZIPs,
-      // so the panel does NOT have to be open. If the ZIPs cannot be resolved the write must not be
-      // attempted at all — an unbuildable payload would 400 and read as a backend failure.
-      let _canWrite = false;
+      const _lbP = window._lastBooked;
+      // [TRACE] instrumentation — logs on EVERY dispatch, including when the comparison is skipped,
+      // so a silent backstop is distinguishable from a backstop that compared and found them equal.
       try {
-        const _f = (typeof collectBookingForm === 'function') ? collectBookingForm() : null;
-        _canWrite = !!(_f && _f.shipper && _f.shipper.zip && _f.consignee && _f.consignee.zip);
-        console.log('[TRACE] backstop write-gate — panelOpen:', _f && _f.panelOpen, '| shipperZip:', _f && _f.shipper.zip, '| consigneeZip:', _f && _f.consignee.zip, '| canWrite:', _canWrite);
+        const _sr = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+        const _sp = _sr ? Number((_sr.billTo && _sr.billTo.total) || _sr.total || _sr._price || 0) : 0;
+        console.log('[TRACE] backstop —',
+          'lastBooked:', _lbP ? (_lbP.BOLId + ' $' + _lbP.price + ' dispatched=' + _lbP.dispatched) : 'NULL',
+          '| thisBOLId:', BOLId,
+          '| selectedRate:', _sr ? ((_sr.name || _sr._name || _sr.carrierName || '?') + ' $' + _sp) : 'NONE (bookingRate and _bookingLock both empty)',
+          '| bookingRate:', (typeof bookingRate !== 'undefined' && bookingRate) ? 'set' : 'null',
+          '| _bookingLock:', window._bookingLock ? 'set' : 'null',
+          '| willCompare:', !!(_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && _sp > 0 && Number(_lbP.price || 0) > 0));
       } catch (e) {}
-      // The write payload reads lastQuotedShipment.accessorials, NOT the chips the customer sees.
-      // Verified in the harness: after update_quote{addAccessorials,getRates} the form carries RSD
-      // while lastQuotedShipment.accessorials is undefined — so writing without this sync would fire
-      // a PUT that reports success and silently carries no residential, which is the original bug
-      // wearing a different hat. Sync the quoted set from the form (the customer-visible truth)
-      // before writing. Labels or codes both work; accessorialSet normalizes either.
-      try {
-        const _qf2 = (typeof _quoteFormState === 'function') ? _quoteFormState() : null;
-        const _codes2 = (_qf2 && _qf2.accessorialCodes) ? _qf2.accessorialCodes : [];
-        if (_codes2.length && typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) {
-          lastQuotedShipment.accessorials = _codes2.map(c => (typeof ACC_LABEL !== 'undefined' && ACC_LABEL[c]) || c);
-          console.log('[TRACE] backstop — synced lastQuotedShipment.accessorials from the form:', JSON.stringify(lastQuotedShipment.accessorials));
+      if (_lbP && _lbP.BOLId === BOLId && !_lbP.dispatched && typeof _selectedRateForPayload === 'function') {
+        const _selR = _selectedRateForPayload().rate;
+        const _selP = _selR ? Number((_selR.billTo && _selR.billTo.total) || _selR.total || _selR._price || 0) : 0;
+        const _bookP = Number(_lbP.price || 0);
+        if (_selP > 0 && _bookP > 0 && Math.round(_selP * 100) !== Math.round(_bookP * 100)) {
+          console.warn('[FP] DISPATCH BLOCKED — quoted/booked rate divergence on BOL', _lbP.BOLNumber, '| selected:', _selP, '| written:', _bookP);
+          if (typeof appendMessage === 'function') appendMessage('bot', _rateDivergedMessage());
+          return { ok: false, rateDiverged: true, _turnHandled: true,
+            message: 'NOT dispatched. The rate written on this shipment does not match the rate last quoted, so dispatch was blocked and the customer has already been told on screen — say nothing further this turn. To resolve it, save the shipment with the currently quoted rate (save_shipment with this bol_id), confirm the updated price to the customer, and only then dispatch.' };
         }
-      } catch (e) {}
-      let _wrote = false;
-      if (_canWrite && typeof _execSaveShipment === 'function') {
-        console.warn('[FP] DISPATCH HELD — writing the quoted rate/services to BOL', BOLId, 'before tendering. reason:', _gap.reason, _gap.missingCodes.join(','));
-        try {
-          const _res = await _execSaveShipment({ bol_id: BOLId });
-          _wrote = !!(_res && _res.ok);
-          console.log('[TRACE] backstop write →', _wrote ? 'OK' : 'FAILED', _res ? JSON.stringify(_res).slice(0, 200) : '');
-        } catch (e) { console.warn('[FP] backstop write threw', e); }
       }
-      if (!_wrote) {
-        window._rewriteFailedBOL = BOLId;      // terminal for this BOL — never block twice
-        if (typeof appendMessage === 'function') appendMessage('bot', _rewriteFailedMessage());
-        return { ok: false, rewriteFailed: true, _turnHandled: true,
-          message: 'NOT dispatched. The shipment could not be updated to the quoted rate and the customer has already been told on screen, including how to reach support — say nothing further this turn and do not retry the dispatch.' };
-      }
-      // Written. Fall through and dispatch what is now genuinely on the shipment.
-    }
+    } catch (e) {}  // a backstop that throws must never block a dispatch on its own
 
     // ── Residential (RDI) guard — CHAT path ───────────────────────────────────────────────────
     // Same canonical verdict as the two form dispatch buttons (classifyDeliveryForDispatch — one
@@ -14109,19 +13998,6 @@ async function _execDispatchShipment(input) {
       // Same on-screen behavior as the form path (7549) and as the overlay's Update & Requote:
       // reopen the quote form on THIS BOL with the chosen services applied. Consumed once.
       const _rp = window._rdiPending; window._rdiPending = null;
-      // BUG 4 — the codes stored at HOLD time are a guess about what is missing, computed before the
-      // customer answered. On BOL 160135782 the snapshot held ["RSD","LFD"] while the customer had
-      // said "just add residential but not lift gate"; applying the snapshot would have added a
-      // liftgate they explicitly declined — the silent over-quote class. The customer's answer is
-      // the truth, so prefer the codes actually on the quote form at THIS moment and fall back to
-      // the snapshot only when the form has nothing to say.
-      let _applyCodes = (_rp.codes || []).slice();
-      try {
-        const _qf = (typeof _quoteFormState === 'function') ? _quoteFormState() : null;
-        const _live = (_qf && _qf.accessorialCodes) ? _qf.accessorialCodes.filter(c => (_rp.codes || []).indexOf(c) >= 0) : [];
-        if (_qf && _qf.quoteFormOpen && _live.length) _applyCodes = _live;
-        console.log('[TRACE] addDeliveryServices — snapshot:', JSON.stringify(_rp.codes), '| formNow:', JSON.stringify(_qf && _qf.accessorialCodes), '| applying:', JSON.stringify(_applyCodes));
-      } catch (e) {}
       try {
         const _rdiShip = _rp.ship || {};
         const _rdiCon = _rdiShip.consignee || {};
@@ -14131,8 +14007,8 @@ async function _execDispatchShipment(input) {
         const _rdiPI = _rdiShip.pickupInformation || {};
         const _rdiPD = _rdiPI.date || _rdiShip.estimatedPickupDate || '';
         if (typeof requoteSavedShipment === 'function') requoteSavedShipment(_rdiShip, _rdiOZ, _rdiDZ, _rdiPD);
-        if (_applyCodes && _applyCodes.length && typeof applyRequoteAccessorials === 'function')
-          setTimeout(() => applyRequoteAccessorials(_applyCodes), 600);
+        if (_rp.codes && _rp.codes.length && typeof applyRequoteAccessorials === 'function')
+          setTimeout(() => applyRequoteAccessorials(_rp.codes), 600);
       } catch (e) { console.warn('[RDI] requote reopen failed:', e); }
       return { ok: false, requoteRequested: true,
         message: 'The shipment was NOT dispatched. The customer asked to add the delivery services, and the quote form is now open for this shipment with those services applied. Tell the customer you are refreshing the rate with the added services, call update_quote with getRates:true to pull fresh rates, then read_rates, and read the new rate back. Do NOT mention any address check, lookup, or verification. If a pickup date and window were already confirmed earlier in this conversation, carry them forward — do not re-ask. After the customer confirms the new rate and carrier, complete the booking on this same shipment and dispatch again.' };
@@ -14145,7 +14021,15 @@ async function _execDispatchShipment(input) {
     // Skipped on the prepaid chargeConfirmed second call and on a BOL already asked this session
     // (_rdiAnsweredBOL, also set by the edit panel at 7285), so it is raised at most once per BOL.
     if (!input.chargeConfirmed && window._rdiAnsweredBOL !== BOLId && typeof classifyDeliveryForDispatch === 'function') {
-      const _rdiShip = _bolShip;   // the ONE read above — no second GET
+      let _rdiShip = null;
+      try {
+        const _rdiTk = await getToken();
+        const _rdiR = await fetch(PRIMUS_BASE + '/applet/v1/book/' + BOLId, { headers: { 'Authorization': 'Bearer ' + _rdiTk } });
+        if (_rdiR.ok) {
+          const _rdiD = await _rdiR.json();
+          _rdiShip = (_rdiD.data && _rdiD.data.results) || _rdiD.data || null;
+        }
+      } catch (e) {}
       if (_rdiShip) {
         const _rdiCon = _rdiShip.consignee || {};
         const _rdiAcc = _rdiShip.accessorials || _rdiShip.accessorialsList || [];
@@ -15242,7 +15126,7 @@ async function aiConverse(userText) {
         // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
-        if (result && result._turnHandled && (result.residentialHold || result.rewriteFailed)) {
+        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged)) {
           // [TRACE] instrumentation — this return ends the turn, so the tool result's instructions
           // are NOT delivered to the model. Log exactly what the model therefore never saw.
           try {
