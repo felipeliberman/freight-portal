@@ -54,6 +54,19 @@ function boot(opts) {
     for (const r of ctx.routes) {
       if (r.match(u, method)) {
         const res = r.reply(u, method, init);
+        // A route may reply { hang: true } to simulate a socket that accepts the request and never
+        // answers — the one outage shape a try/catch cannot see. Honors init.signal so an
+        // AbortController timeout under test rejects exactly as it does in a browser; without this
+        // the stub resolves instantly and a "fails open on timeout" assertion proves nothing.
+        if (res && res.hang) {
+          return new Promise((_, reject) => {
+            const sig = init && init.signal;
+            const err = () => { const e = new Error('The operation was aborted.'); e.name = 'AbortError'; return e; };
+            if (!sig) return;                       // no signal → hangs forever, as a real socket would
+            if (sig.aborted) return reject(err());
+            sig.addEventListener('abort', () => reject(err()));
+          });
+        }
         return Promise.resolve(mkResponse(res));
       }
     }

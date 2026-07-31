@@ -692,16 +692,61 @@ const cases = [
     },
   },
 
-  // ── 25 ───────────────────────────────────────────────────────────────────────
-  // NUMBERING: ids 23/24 are deliberately reserved, not missing. In ddb66ea these were the
-  // residential-hold cases (23: the hold speaks; 24: the requote written via the HOLD door), and the
-  // hold does not exist on this branch — it is Phase 2. 25/26 keep their original ids so they map
-  // 1:1 onto that commit. When the hold lands, 24 joins 25 under one parameterised body: both chat
-  // entrances to a requote funnel through requoteSavedShipment and must be held to these same
-  // assertions.
+  // ── 23 ───────────────────────────────────────────────────────────────────────
   {
-    id: 25, name: 'requote via the requote_shipment tool is WRITTEN to the BOL (PUT), never swallowed as "already booked"',
-    catches: 'the BOL 160135778 money bug — the duplicate-booking guard returned alreadyBooked with the OLD price the moment _lastBooked was set and undispatched, so a requote that re-rated at $304.75 with residential never reached the BOL and dispatch went to the carrier at the original $161 with no residential. Pre-existing in requote_shipment; the residential hold (Phase 2) adds a second, high-traffic door to the same hole.',
+    id: 23, name: 'the residential hold SPEAKS fixed copy from code, ends the turn, and dispatches nothing',
+    catches: 'two live failures. 2c2cfef raised checkRDIBeforeDispatch\'s overlay from inside the dispatch_shipment tool call — its only exits are click callbacks, so the tool never returned and the customer got a pop-up with zero words. ef5f751/BOL 160135771: when the AGENT was left to word the hold, aiConverse dropped the text half of the assistant message that also carried a tool call, so the customer saw no "not dispatched", no residence, no service names — just a stray rate summary from the pull that tool fired.',
+    async run(h) {
+      const w = h.win;
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'),
+        reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }),
+      });
+      // Geocodio says residential; the BOL carries no accessorials (see L2FX_REQUOTE_SHIP).
+      h.routes.unshift({
+        match: (u) => /geocodio-proxy/.test(u),
+        reply: () => ({ status: 200, body: { results: [{ formatted_address: '1145 S Clark Dr, Los Angeles, CA 90035', fields: { zip4: { residential: true } } }] } }),
+      });
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
+      h.reset();
+      const r = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+
+      // ── Held, not dispatched, and the turn is owned by the tool.
+      A.ok(r && r.residentialHold === true, 'the hold did not fire on a residential address with no RSD: ' + JSON.stringify(r).slice(0, 300));
+      A.eq(r.ok, false, 'a held dispatch did not fail closed');
+      A.ok(r._turnHandled === true, 'the hold did not claim the turn — the agent could restate or truncate it');
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 0, 'the shipment was dispatched despite the hold');
+      // ── NO overlay. This is the 2c2cfef regression: a modal from inside a tool call.
+      A.eq(w.document.querySelectorAll('#rdi-proceed, #rdi-requote').length, 0, 'the hold raised the blocking RDI overlay from inside the tool call');
+      // ── The copy is the ONE definition, rendered verbatim by code.
+      const said = h.bots().find(t => t === w._rdiHoldMessage(['residential delivery', 'liftgate delivery']));
+      A.ok(said, 'the hold copy did not render verbatim from _rdiHoldMessage: ' + JSON.stringify(h.bots()));
+      A.ok(/haven't dispatched this yet/i.test(said), 'the copy does not say it was not dispatched: ' + said);
+      A.ok(/residential delivery/.test(said) && /liftgate delivery/.test(said), 'the copy does not name both missing services: ' + said);
+      // ── The narrowed rule: states what is missing, never how we know.
+      A.ok(!/comes back|lookup|look ?up|verif|check(ed)? the address|geocod/i.test(said), 'the copy mentions an address lookup/check: ' + said);
+      A.ok(!/\b(RSD|LFD|RSO|LFO|residentialStatus|zip4)\b/.test(said), 'the copy leaks an internal code or field name: ' + said);
+    },
+  },
+
+  // ── 24 / 25 — shared body: a booked-undispatched shipment with a requote pending ─────────────
+  // Both chat entrances to a requote (the residential hold and the requote_shipment tool) funnel
+  // through requoteSavedShipment, so both arrive at book_shipment in the same state and are held to
+  // identical assertions. Ids preserved from ddb66ea so they map 1:1 onto that commit.
+  ...[
+    { id: 24, door: 'the residential hold', open: async (w) => {
+        // The hold answered "add them": dispatch_shipment{addDeliveryServices:true} runs the reopen.
+        w._rdiPending = { BOLId: 'BOLID-778899', codes: ['RSD'], ship: L2FX_REQUOTE_SHIP };
+        await w._execDispatchShipment({ BOLId: 'BOLID-778899', addDeliveryServices: true });
+      } },
+    { id: 25, door: 'the requote_shipment tool', open: async (w) => {
+        // The pre-existing door: "requote BOL 160135778" on a booked, undispatched shipment.
+        await w._execRequoteShipment({ bol_id: '160135778' });
+      } },
+  ].map(v => ({
+    id: v.id,
+    name: 'requote via ' + v.door + ' is WRITTEN to the BOL (PUT), never swallowed as "already booked"',
+    catches: 'the BOL 160135778 money bug — the duplicate-booking guard returned alreadyBooked with the OLD price the moment _lastBooked was set and undispatched, so a requote that re-rated at $304.75 with residential never reached the BOL and dispatch went to the carrier at the original $161 with no residential. Pre-existing in requote_shipment; the residential hold is the second, high-traffic door to the same hole.',
     async run(h) {
       const w = h.win;
       h.routes.unshift({
@@ -709,7 +754,8 @@ const cases = [
         reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }),
       });
       w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
-      await w._execRequoteShipment({ bol_id: '160135778' });
+      w._rdiAnsweredBOL = 'BOLID-778899'; // hold already answered — not what this case is about
+      await v.open(w);
       await sleep(900);                    // requoteSavedShipment applies fields on a 500ms timer
       // The requote marker is the thing that makes the guard treat this as an update, not a dupe.
       A.eq(w._requoteWriteBOL, 'BOLID-778899', 'requoteSavedShipment did not arm the requote marker');
@@ -727,6 +773,61 @@ const cases = [
       A.ok(/BOLID-778899/.test(writes[0].url), 'the PUT went to the wrong BOL: ' + writes[0].url);
       // ── The marker is consumed by the successful write, so it cannot leak into a later booking.
       A.eq(w._requoteWriteBOL, null, 'the requote marker survived a successful write');
+    },
+  })),
+
+  // ── 27 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 27, name: 'the hold asks ONCE, honors a decline as-is, and fails OPEN on a geocoder outage',
+    catches: 'the three ways a dispatch guard turns into a hard block on live freight: re-asking forever so the customer can never dispatch (the flag written below the return); a decline that silently adds services anyway or re-asks; and a Geocodio outage that blocks a legitimate dispatch instead of proceeding.',
+    async run(h) {
+      const w = h.win;
+      const bookRoute = {
+        match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'),
+        reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }),
+      };
+      const resiRoute = {
+        match: (u) => /geocodio-proxy/.test(u),
+        reply: () => ({ status: 200, body: { results: [{ fields: { zip4: { residential: true } } }] } }),
+      };
+      const booked = () => ({ BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false });
+
+      // ── A. ASKED ONCE. Second dispatch on the same BOL must go through, not re-ask.
+      h.routes.unshift(bookRoute); h.routes.unshift(resiRoute);
+      w._rdiAnsweredBOL = null; w._rdiPending = null; w._lastBooked = booked();
+      h.reset();
+      const first = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(first && first.residentialHold === true, 'the first dispatch did not hold: ' + JSON.stringify(first).slice(0, 200));
+      A.eq(w._rdiAnsweredBOL, 'BOLID-778899', 'the answered flag was not set BEFORE the hold returned — the customer would be re-asked forever and could never dispatch');
+      h.reset();
+      const second = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(!second.residentialHold, 'the hold fired TWICE for the same shipment: ' + JSON.stringify(second).slice(0, 200));
+      A.ok(!h.bots().some(t => /haven't dispatched this yet — one thing to flag/.test(t)), 'the hold copy was rendered a second time');
+
+      // ── B. DECLINE HONORED. "dispatch as-is" reaches the real dispatch and adds nothing.
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 1, 'a declined hold did not proceed to a real dispatch: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.eq(w._rdiPending, null, 'the pending hold survived a decline — a later call could apply services the customer refused');
+      const declineWrites = h.requests.filter(q => /\/applet\/v1\/book/.test(q.url) && (q.method === 'PUT' || q.method === 'POST'));
+      A.eq(declineWrites.length, 0, 'a decline silently WROTE accessorials the customer refused: ' + JSON.stringify(declineWrites.map(q => q.method + ' ' + q.url)));
+
+      // ── C. FAIL OPEN. A Geocodio outage must never hold a dispatch — in ANY of its shapes.
+      // 'hang' is the one a try/catch alone cannot see: the socket accepts and never answers, so
+      // without the AbortController the dispatch stalls behind a spinner instead of proceeding.
+      // That is the same outage as an error from the customer's side, so it takes the same exit.
+      for (const outage of [
+        { name: '500', reply: () => ({ status: 500, body: {} }) },
+        { name: 'throw', reply: () => { throw new Error('network down'); } },
+        { name: 'malformed', reply: () => ({ status: 200, body: { results: null } }) },
+        { name: 'hang (abort)', reply: () => ({ hang: true }) },
+      ]) {
+        h.routes.unshift(bookRoute);
+        h.routes.unshift({ match: (u) => /geocodio-proxy/.test(u), reply: outage.reply });
+        w._rdiAnsweredBOL = null; w._rdiPending = null; w._lastBooked = booked();
+        h.reset();
+        const r = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+        A.ok(!r.residentialHold, 'geocoder ' + outage.name + ' BLOCKED the dispatch instead of failing open: ' + JSON.stringify(r).slice(0, 200));
+        A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 1, 'geocoder ' + outage.name + ' did not reach a real dispatch');
+      }
     },
   },
 
