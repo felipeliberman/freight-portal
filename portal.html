@@ -13358,7 +13358,17 @@ function selectRate(rateOrRef, opts) {
       bookingRate = withMeta;
     }
 
-    window._bookingLock = { rate: withMeta, shipment: shipment };
+    // opts.lock === false selects WITHOUT arming the lock. The only caller is _rekeyLockOnPublish
+    // carrying a selection across a re-pull that happened AFTER the booking was written, where
+    // _execBookShipment had deliberately released the lock ("booking complete — release the frozen
+    // rate"). Re-arming it there is not a tidiness issue, it changes behaviour in three places:
+    // _execBookShipment's reuse branch takes the lock BEFORE it reads input.rank/input.carrier, so a
+    // later "book Estes instead" would silently book the locked carrier; _gateFinalText's _lockOk
+    // would flip true and let a bare "I'll save that" fire a real write; and _liveStateBlock would
+    // report a booking panel that isn't there. Selection and lock are coupled by convention here,
+    // not by construction — this keeps selectRate the ONE writer of both while letting them move
+    // independently, which is what the coupling was hiding.
+    if (opts.lock !== false) window._bookingLock = { rate: withMeta, shipment: shipment };
     window._lockDropped = null;
     window._relockCarrier = null;
     console.log('[FP] selectRate — carrier:', name, '| $' + price, '| rank:', res.rank, '| source:', opts.source || 'unknown', '| panel:', opts.open !== false);
@@ -13391,34 +13401,80 @@ function _releaseLockForRepull() {
 // Half 2. Also the INVARIANT enforcer: after any publish, window._bookingLock.rate is either an
 // object present in the current window._lastRatesRaw, or null. That is what makes a stale lock from
 // a prior turn structurally unable to hijack a later selection.
+// GUARD 2 — the invariant covers bookingRate too, not just the lock.
+// BOL 160135789: booked JTS at $161, rates re-pulled twice with RSD+LFD then +APD, and the tender
+// went out at $161 with an EMPTY accessorial list. _execBookShipment nulls _bookingLock on success,
+// so this function hit its !wantName exit on both later publishes and bookingRate stayed frozen on
+// the pull-1 object. bookingRate is what _selectedRateForPayload reads FIRST, so it is what every
+// write serializes — the lock is only its fallback. Re-keying the lock alone would have fixed
+// nothing: a non-null bookingRate shadows it.
+//
+// Proven, not assumed: an agent obeying every surviving prompt instruction perfectly — re-pull,
+// read the new rate back, then write — still produced {"id":"R-pull1-jts","price":161}, because
+// reading a price is not selecting it and no instruction moves bookingRate. Prose cannot reach this.
+//
+// R6 — GUARD 1 AND GUARD 2 ARE INDEPENDENT IN ONE DIRECTION, AND IT CUTS BOTH WAYS. NEITHER IS A
+// SUPERSET. DO NOT DELETE THE STALE-SELECTION GUARD IN _execDispatchShipment AS REDUNDANT.
+//   * This runs on every publish and can be bypassed silently: _publishRatesForAI can throw before
+//     it is reached, a future path could set bookingRate outside selectRate, or a list could be
+//     published without routing here. Guard 1 still refuses the tender in all of those.
+//   * Guard 1 is not a superset either: that same _publishRatesForAI catch nulls _lastRatesRaw, and
+//     with no list to judge against guard 1 fails OPEN by design. This is what holds then.
+// One prevents the state going stale; the other refuses to tender if it did anyway. Same pattern as
+// the requote marker and the divergence backstop, which ddb66ea kept independent for this reason.
+//
+// R1 — DOES NOT REBUILD THE PANEL (open:false). 17286 and the showBookingPanel merge comment both
+// record that a rebuild wipes the customer's typed party fields; losing someone's address entries to
+// correct a displayed number is a bad trade. The panel price is rendered inline with no stable
+// selector, so there is no clean in-place update either. ACCEPTED CONSEQUENCE: with the panel
+// mounted across a re-pull the on-screen price can lag bookingRate until the next rebuild. Guard 1
+// backstops the money; the stale figure is cosmetic and must never be what a write serializes.
 function _rekeyLockOnPublish(rates, shipment) {
   try {
     if (!rates || !rates.length) return;
     var parked = window._relockCarrier;
     var lock = window._bookingLock;
-    var wantName = (parked && parked.name) || (lock && lock.rate ? _rateDisplayName(lock.rate) : '');
+    var hadLock = !!(lock && lock.rate);
+    // Identity can come from a parked carrier, the lock, or — the case this guard adds — a
+    // bookingRate that outlived its lock because the booking was already written.
+    var wantName = (parked && parked.name)
+                || (hadLock ? _rateDisplayName(lock.rate) : '')
+                || ((typeof bookingRate !== 'undefined' && bookingRate) ? _rateDisplayName(bookingRate) : '');
     window._relockCarrier = null;
     if (!wantName) return; // nothing was selected — nothing to carry forward
 
-    // Already bound into THIS list: keep the rate, refresh the shipment it was rated against.
-    if (lock && lock.rate && rates.indexOf(lock.rate) >= 0) {
-      lock.shipment = shipment || lock.shipment;
+    // Already bound into THIS list — nothing to do. Compared by backend id, NOT object identity:
+    // selectRate stores an Object.assign COPY (withMeta), so the old rates.indexOf(lock.rate) test
+    // could never match and this fast path never fired, re-resolving on every publish. Id works,
+    // and skipping the needless re-select keeps a hot path quiet.
+    var curSel = (typeof bookingRate !== 'undefined' && bookingRate) || (hadLock ? lock.rate : null);
+    var curId = curSel ? String(curSel.id || curSel.rateId || '') : '';
+    if (curId && rates.some(function (r) { return String((r && (r.id || r.rateId)) || '') === curId; })) {
+      if (hadLock) lock.shipment = shipment || lock.shipment;
       return;
     }
     // Carry the carrier's identity forward onto the fresh rate object (new price, new rateId).
     // maxTier 2 = exact or alias only: identity carry-forward may never drift to a different carrier.
     var res = _resolveRateRef({ carrier: wantName }, rates, { maxTier: 2 });
     if (res.ok) {
-      selectRate(res.rate, { shipment: shipment, list: rates, open: false, source: 'rekey' });
-      console.log('[FP] lock re-keyed on publish —', wantName, '-> $' + _ratePrice(res.rate));
+      // lock: hadLock is the whole of the no-re-arming rule. Post-book there is no lock, so the
+      // selection tracks the new list while _bookingLock stays null and every consumer of "is a
+      // booking in flight" keeps reading false.
+      selectRate(res.rate, { shipment: shipment, list: rates, open: false, source: 'rekey', lock: hadLock });
+      console.log('[FP] selection re-keyed on publish —', wantName, '-> $' + _ratePrice(res.rate), '| lock re-armed:', hadLock);
     } else {
-      window._bookingLock = null;
+      // Carrier is gone from the refreshed list. Drop the selection rather than leave a rate that is
+      // not on offer: a write would serialize a rateId this list cannot honour. Fails CLOSED — the
+      // next save refuses with NO_RATE_SELECTED and _lockDropped tells the agent which carrier went.
+      if (hadLock) window._bookingLock = null;
+      bookingRate = null;
       window._lockDropped = { carrier: wantName, reason: res.code };
-      console.log('[FP] lock dropped on publish — ' + wantName + ' not in refreshed rates (' + res.code + ')');
+      console.log('[FP] selection dropped on publish — ' + wantName + ' not in refreshed rates (' + res.code + ')');
     }
   } catch (e) {
-    console.warn('[FP] rekey failed — clearing lock to preserve the invariant', e);
+    console.warn('[FP] rekey failed — clearing selection to preserve the invariant', e);
     window._bookingLock = null;
+    bookingRate = null;
   }
 }
 
@@ -14007,10 +14063,16 @@ async function _execDispatchShipment(input) {
     // submitBookingOnly before dispatching), or any throw. It only ever blocks on a POSITIVE
     // mismatch — a selection that demonstrably is not in the list the customer is looking at.
     //
-    // This is the money guard, not the structural fix. The structural fix is to maintain the
-    // publish-time invariant _rekeyLockOnPublish already documents for _bookingLock ("either an
-    // object present in the current list, or null") for bookingRate as well, so the selection tracks
-    // re-pulls instead of freezing. That touches a hot path on every pull and lands separately.
+    // R6 — DO NOT DELETE THIS AS REDUNDANT NOW THAT GUARD 2 EXISTS. _rekeyLockOnPublish now keeps
+    // bookingRate in the current list, so in the common case this guard is silent. The two are
+    // independent in one direction and it cuts both ways, so neither is a superset:
+    //   * Guard 2 runs on every publish and can be bypassed silently — _publishRatesForAI can throw
+    //     before reaching it, or a future path could set bookingRate outside selectRate. This still
+    //     refuses the tender in those cases.
+    //   * This guard is not a superset either: that same _publishRatesForAI catch nulls
+    //     _lastRatesRaw, and with no list to judge against this fails OPEN by design. Guard 2 holds
+    //     then, because the selection was already re-keyed before the throw.
+    // One prevents the state going stale; this refuses to tender if it did anyway.
     try {
       const _raw = window._lastRatesRaw;
       const _selS = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;

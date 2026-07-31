@@ -927,6 +927,104 @@ const cases = [
     },
   },
 
+  // ── 29 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 29, name: 'guard 2: the selection tracks every publish — re-keyed onto the fresh rate, dropped when the carrier is gone, and the lock is never re-armed',
+    catches: 'the root cause under BOL 160135789. _execBookShipment nulls _bookingLock on success, so _rekeyLockOnPublish hit its !wantName exit on every later publish and bookingRate stayed frozen on the pull-1 object — which is exactly what _selectedRateForPayload reads FIRST and what every write serializes. Re-keying the lock alone fixes nothing: a non-null bookingRate shadows it.',
+    async run(h) {
+      const w = h.win;
+      const mk = (id, name, total) => ({ id, name, total, rateBreakdown: [{ name: 'FREIGHT CHARGE', total }] });
+      const pull1 = [mk('R-p1-jts', 'JTS Express', 161)];
+      const pull3 = [mk('R-p3-jts', 'JTS Express', 396.75), mk('R-p3-warp', 'WARP', 120.19)];
+      const priceOf = r => r ? Number((r.billTo && r.billTo.total) || r.total || r._price || 0) : null;
+
+      // ── A. THE LIVE CASE — booked, so NO lock; a later publish must still move bookingRate.
+      w._lastRatesRaw = pull1;
+      w.selectRate(pull1[0], { shipment: {}, list: pull1, open: false, source: 'test' });
+      w._bookingLock = null;                       // exactly what _execBookShipment does on success
+      A.eq(priceOf(w._selectedRateForPayload().rate), 161, 'setup: the selection should start at the booked rate');
+      w._lastRatesRaw = pull3;
+      w._rekeyLockOnPublish(pull3, {});
+      const after = w._selectedRateForPayload().rate;
+      A.eq(String(after && (after.id || after.rateId)), 'R-p3-jts', 'bookingRate was NOT re-keyed onto the fresh rate — this is the BOL 160135789 defect');
+      A.eq(priceOf(after), 396.75, 'the re-keyed selection did not carry the new price');
+      // R5 — the lock must NOT be re-armed by a post-book re-key.
+      A.ok(!w._bookingLock, '_bookingLock was RE-ARMED post-book — _execBookShipment\'s reuse branch would then ignore input.carrier, and _gateFinalText could fire an unrequested save');
+
+      // ── B. R2 — CARRIER DRIFT. The carrier is gone; a similarly-named one must NOT be substituted.
+      w._lastRatesRaw = pull1;
+      w.selectRate(pull1[0], { shipment: {}, list: pull1, open: false, source: 'test' });
+      w._bookingLock = null;
+      const noJts = [mk('R-p4-jtsx', 'JTS Logistics', 200), mk('R-p4-warp', 'WARP', 130)];
+      w._lastRatesRaw = noJts;
+      w._rekeyLockOnPublish(noJts, {});
+      const dropped = w._selectedRateForPayload().rate;
+      A.ok(!dropped, 'the selection survived a publish that did not contain its carrier — a write would serialize a rateId this list cannot honour');
+      A.ok(w._lockDropped && /JTS Express/.test(w._lockDropped.carrier || ''), '_lockDropped was not set, so the agent cannot tell the customer which carrier went');
+
+      // ── E. NOTHING SELECTED — a further publish must not invent one. Runs HERE, continuing from
+      // the real null B just produced: bookingRate is a script-scope `let`, so a test cannot clear
+      // it by assigning w.bookingRate (that only makes an unrelated window property).
+      w._rekeyLockOnPublish(pull3, {});
+      A.ok(!w._selectedRateForPayload().rate, 'a publish invented a selection out of nothing');
+      A.ok(!w._bookingLock, 'a publish armed a lock with nothing selected');
+
+      // ── C. LOCK PRESERVED when there WAS one (mid-booking re-pull, pre-book).
+      w._lastRatesRaw = pull1;
+      w.selectRate(pull1[0], { shipment: {}, list: pull1, open: false, source: 'test' });   // arms the lock
+      A.ok(!!w._bookingLock, 'setup: a normal selectRate should arm the lock');
+      w._lastRatesRaw = pull3;
+      w._rekeyLockOnPublish(pull3, {});
+      A.ok(!!(w._bookingLock && w._bookingLock.rate), 'a pre-book re-key wrongly DROPPED the lock — mid-booking continuation would break');
+      A.eq(String(w._bookingLock.rate.id), 'R-p3-jts', 'the lock was not re-keyed onto the fresh rate');
+      A.eq(priceOf(w._selectedRateForPayload().rate), 396.75, 'bookingRate did not follow the lock on a pre-book re-key');
+
+      // ── D. NO-OP when the selection is already in the published list (hot path stays quiet).
+      const before = w._selectedRateForPayload().rate;
+      w._rekeyLockOnPublish(pull3, {});
+      A.eq(String(w._selectedRateForPayload().rate.id), 'R-p3-jts', 'a re-publish of the SAME list changed the selection');
+      A.eq(priceOf(w._selectedRateForPayload().rate), priceOf(before), 'a no-op re-key altered the price');
+
+    },
+  },
+
+  // ── 30 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 30, name: 'guard 2 restores the divergence backstop, and R5: selectRate stays the ONE writer of a non-null bookingRate',
+    catches: 'two ways this could rot. The divergence backstop went blind once bookingRate froze — both its inputs derived from the same object and agreed to the cent; with the selection tracking publishes it must detect the residential case on its own again. And a future edit assigning bookingRate directly from the re-key would re-break the single-writer contract selectRate documents.',
+    async run(h) {
+      const w = h.win;
+      const mk = (id, name, total) => ({ id, name, total, rateBreakdown: [{ name: 'FREIGHT CHARGE', total }] });
+      const pull1 = [mk('R-p1-jts', 'JTS Express', 161)];
+      const pull3 = [mk('R-p3-jts', 'JTS Express', 396.75)];
+
+      // ── DIVERGENCE BACKSTOP FIRES ON ITS OWN for the residential path ($396.75 vs $161).
+      w._lastRatesRaw = pull1;
+      w.selectRate(pull1[0], { shipment: {}, list: pull1, open: false, source: 'test' });
+      w._bookingLock = null;
+      w._lastBooked = { BOLId: 'BOLID-789', BOLNumber: '160135789', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._rdiAnsweredBOL = 'BOLID-789';
+      w._lastRatesRaw = pull3;
+      w._rekeyLockOnPublish(pull3, {});           // guard 2 moves the selection to $396.75
+      h.reset();
+      const r = await w._execDispatchShipment({ BOLId: 'BOLID-789' });
+      A.ok(r && (r.rateDiverged === true || r.rateStale === true), 'neither price guard fired after a re-key: ' + JSON.stringify(r).slice(0, 250));
+      A.ok(r.rateDiverged === true, 'the DIVERGENCE backstop did not fire on its own once the selection tracked the publish — it should now see $396.75 vs the written $161: ' + JSON.stringify(r).slice(0, 250));
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 0, 'the shipment was tendered despite the divergence');
+
+      // ── R5 — SOURCE ASSERTION. _rekeyLockOnPublish may null bookingRate (fail-closed) but must
+      // never ASSIGN it a rate directly; every non-null assignment stays inside selectRate.
+      const src = w.__APP_SRC__ || require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      const fn = src.slice(src.indexOf('function _rekeyLockOnPublish'));
+      const body = fn.slice(0, fn.indexOf('\n}\n'));
+      // Lookahead placed immediately after '=' so \s* cannot backtrack to empty and let ' null'
+      // slip through as a non-null assignment (it did, and reported the two fail-closed nulls).
+      const assigns = (body.match(/bookingRate\s*=(?!\s*null)/g) || []);
+      A.eq(assigns.length, 0, '_rekeyLockOnPublish assigns bookingRate directly (' + assigns.length + ' non-null assignment(s)) — route it through selectRate so it stays the ONE writer');
+      A.ok(/lock:\s*hadLock/.test(body), 'the re-key no longer passes lock:hadLock — it would re-arm _bookingLock post-book');
+    },
+  },
+
   // ── 28 ───────────────────────────────────────────────────────────────────────
   {
     id: 28, name: 'stale selection cannot be tendered: a rate not in the CURRENT list blocks dispatch; a fresh one does not',
