@@ -11239,18 +11239,23 @@ async function submitBookingOnly(opts) {
       // depend on the agent relaying the tool result — that is the pattern that failed repeatedly
       // tonight. Render it from code, the same way "Saving shipment..." above already is, so the
       // customer is told the BOL number whatever the model does with its turn.
+      // Wording is the ESTABLISHED contract, asserted by acceptance step R4: points to My Shipments,
+      // keeps "when you're ready to dispatch", no phone, and no dispatch-by-asking. It moved surface
+      // (tool result -> rendered here) but must not change words as a side effect of that move.
       appendMessage('bot', BOLNumber
-        ? ('Saved as BOL ' + BOLNumber + " — it's in My Shipments. Tell me when you want it dispatched.")
-        : "Saved — it's in My Shipments. Tell me when you want it dispatched.");
+        ? ('Saved as BOL ' + BOLNumber + " — it's saved in My Shipments; open it there when you're ready to dispatch.")
+        : "Saved — it's in My Shipments; open it there when you're ready to dispatch.");
     }
     if (!opts.thenDispatch && !_suppressSavedModal) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
+    // confirmationRendered: this call ALREADY told the customer the outcome in chat. The caller uses
+    // it to end the turn, so the agent does not say it a second time in different words.
     return _editAck
-      ? { ok: true, editAcknowledged: true, bolId: null, bolNumber: null,
+      ? { ok: true, editAcknowledged: true, bolId: null, bolNumber: null, confirmationRendered: _suppressSavedModal,
           editedBolId:     _editBolId  ? String(_editBolId)  : null,
           editedBolNumber: _editBolNum ? String(_editBolNum) : null }
-      : { ok: true, editAcknowledged: false,
+      : { ok: true, editAcknowledged: false, confirmationRendered: _suppressSavedModal,
           bolId: String(_bk.BOLId), bolNumber: _bk.BOLNumber != null ? String(_bk.BOLNumber) : null };
   } catch(e) {
     removeTyping();
@@ -14578,11 +14583,25 @@ async function _execSaveShipment(input) {
       return { ok: false, kind: _c.kind, message: _c.message };
     }
     if (!_res.bolId) {
+      if (_res.confirmationRendered) return { ok: true, editAcknowledged: true, saveConfirmed: true, _turnHandled: true };
       return { ok: true, editAcknowledged: true, BOLId: null, BOLNumber: null,
         message: 'Saved — check My Shipments.',
         note: 'The update went through, but this call returned no BOL number. Tell the customer it saved and to check My Shipments. Do NOT state any BOL number — you do not have a confirmed one for this save — and do not reuse one from earlier in the conversation.' };
     }
     const _bolShown = _res.bolNumber || _res.bolId;
+    // ── CODE SPOKE, SO THE AGENT DOES NOT ────────────────────────────────────────────────────────
+    // Live: code rendered "Saved as BOL 160135795 — it's in My Shipments. Tell me when you want it
+    // dispatched." and the agent then said the same thing again in OLDER wording, including "hit
+    // Ready to Dispatch" — copy removed in d21d861 and reproduced from the model's memory. On an
+    // edit the two outright contradicted each other. Two confirmations for one save is confusing at
+    // best; two that disagree are worse than either alone.
+    // Same treatment as the holds: the tool owns the turn. Only when the save SUCCEEDED and this
+    // code path actually rendered the line — a failure must still reach the agent so it can relay
+    // the real message, and the parcel/prepaid paths show a modal instead and are untouched.
+    // The customer-facing line is in chatHistory, so the next turn still sees that it saved.
+    if (_res.confirmationRendered) {
+      return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber, saveConfirmed: true, _turnHandled: true };
+    }
     return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
       message: 'Saved as BOL ' + _bolShown + " — it's saved in My Shipments; open it there when you're ready to dispatch." };
   } catch(e) {
@@ -15579,7 +15598,7 @@ async function aiConverse(userText) {
         // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
-        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged || result.rateStale)) {
+        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged || result.rateStale || result.saveConfirmed)) {
           removeTyping();
           window._lastTurnFailed = false;
           if (typeof waybHistory !== 'undefined') {

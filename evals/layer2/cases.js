@@ -831,6 +831,56 @@ const cases = [
     },
   },
 
+  // ── 41 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 41, name: 'one confirmation per save: when code speaks, the tool owns the turn and the agent does not say it again',
+    catches: 'live on BOL 160135795: code rendered "Saved as BOL 160135795 — it\'s in My Shipments. Tell me when you want it dispatched." and the agent then said the same thing again in OLDER wording, including "hit Ready to Dispatch" — copy removed in d21d861 and reproduced from the model\'s memory. On an edit the two outright contradicted each other. Two confirmations for one save is confusing; two that disagree are worse than either alone.',
+    async run(h) {
+      const w = h.win;
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+        reply: () => ({ status: 200, body: { data: { results: [{ BOLId: 'BOLID-SAVE2', BOLNumber: '160000002' }] } } }),
+      });
+      w._quotedContacts = {
+        shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zip: '90660', contact: 'Jo', phone: '5625550100' },
+        consignee: { name: 'Dana Whitfield', address: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zip: '90035', contact: 'Dana', phone: '3105550101' },
+      };
+      w._lastRatesRaw = [{ id: 'R1', name: 'JTS Express', total: 161 }];
+      w.selectRate(w._lastRatesRaw[0], { shipment: { originZip: '90660', destinationZip: '90035' }, list: w._lastRatesRaw, open: false, source: 'test' });
+
+      h.reset();
+      const r = await w._execSaveShipment({});
+      await sleep(400);
+      A.ok(r && r.ok === true, 'setup: the chat save did not succeed: ' + JSON.stringify(r).slice(0, 200));
+
+      // ── The tool owns the turn, so the agent gets no completion to restate it in.
+      A.ok(r._turnHandled === true, 'the save did not claim the turn — the agent is free to say it again in its own words');
+      A.ok(r.saveConfirmed === true, 'the result does not mark itself as already-confirmed');
+
+      // ── And the customer WAS told, exactly once, by code.
+      const said = h.bots().filter(t => /Saved as BOL/i.test(t));
+      A.eq(said.length, 1, 'the save confirmation appeared ' + said.length + ' times: ' + JSON.stringify(h.bots()));
+      // The BUTTON INSTRUCTION, not the phrase: the sanctioned R4 copy legitimately contains
+      // "when you're ready to dispatch". What must never come back is "hit Ready to Dispatch".
+      A.ok(!h.bots().some(t => /hit Ready to Dispatch|My Shipments and hit/i.test(t)), 'the removed button instruction is back in a confirmation: ' + JSON.stringify(h.bots()));
+
+      // ── A FAILED save must NOT own the turn — the agent has to relay the real message.
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+        reply: () => ({ status: 500, body: {} }),
+      });
+      h.reset();
+      const bad = await w._execSaveShipment({});
+      await sleep(300);
+      A.ok(bad && bad.ok === false, 'setup: expected the save to fail');
+      A.ok(!bad._turnHandled, 'a FAILED save silenced the agent — the customer would never hear why it failed');
+
+      // ── The allow-list carries it, so the turn genuinely ends in aiConverse.
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      A.ok(/result\.saveConfirmed/.test(src), 'saveConfirmed is not in the _turnHandled allow-list — the flag would be set but never honoured');
+    },
+  },
+
   // ── 40 ───────────────────────────────────────────────────────────────────────
   {
     id: 40, name: 'a validated address is never overwritten by a low-confidence parse, and "PO #123" is not a street',

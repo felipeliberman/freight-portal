@@ -380,10 +380,19 @@ const resilienceSteps = [
         );
         const r = await w._execSaveShipment({});
         A.ok(r && r.ok === true && r.BOLNumber === '160188888', 'the save did not return the backend BOL: ' + JSON.stringify(r));
-        A.ok(/My Shipments/.test(r.message), 'save copy does not point to My Shipments: ' + r.message);
-        A.ok(/when you'?re ready to dispatch/i.test(r.message), 'save copy lost the dispatch instruction: ' + r.message);
-        A.ok(!/come back and let me know|just come back/i.test(r.message), 'save copy still implies dispatch-by-asking: ' + r.message);
-        A.ok(!PHONE_RE.test(r.message), 'save copy contains a phone number: ' + r.message);
+        // SURFACE MOVED, CONTRACT UNCHANGED. A chat-initiated save is now confirmed by CODE rather
+        // than by the agent relaying result.message, because two confirmations for one save
+        // contradicted each other live. The wording rules below are identical — they just read the
+        // copy where it is actually shown. On the paths that still hand the agent a message
+        // (parcel, prepaid) result.message remains and is checked the same way.
+        const _saveCopy = (r.message != null && r.message !== '')
+          ? r.message
+          : ctx.messages.filter(m => m.role === 'bot').map(m => m.text).find(t => /Saved/i.test(t)) || '';
+        A.ok(_saveCopy, 'the save produced NO customer-facing confirmation at all');
+        A.ok(/My Shipments/.test(_saveCopy), 'save copy does not point to My Shipments: ' + _saveCopy);
+        A.ok(/when you'?re ready to dispatch/i.test(_saveCopy), 'save copy lost the dispatch instruction: ' + _saveCopy);
+        A.ok(!/come back and let me know|just come back/i.test(_saveCopy), 'save copy still implies dispatch-by-asking: ' + _saveCopy);
+        A.ok(!PHONE_RE.test(_saveCopy), 'save copy contains a phone number: ' + _saveCopy);
       } finally { ctx.dom.window.close(); }
     },
   },
