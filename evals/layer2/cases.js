@@ -1680,21 +1680,36 @@ const cases = [
       A.ok(h.bots().some(t => t === COPY), 'the prose route did not render the consent copy: ' + JSON.stringify(h.bots()));
       A.ok(!h.bots().some(t => /I'll save it for you now/i.test(t)), 'the unbacked promise was delivered to the customer: ' + JSON.stringify(h.bots()));
 
-      // ── 6. AMBIGUOUS REPHRASE while the question is pending. Found by the pre/post repro: the two
-      // enforcement sites each computed their own answer, so "pending" made the tool route refuse
-      // while the prose route sailed through and WROTE. One evaluator, one verdict — re-ask, never write.
+      // ── 6. AMBIGUOUS REPHRASE while the question is pending → THAT IS THE YES.
+      // WHAT THIS STEP USED TO ASSERT, AND WHY IT CHANGED. It originally required the rephrase to
+      // RE-ASK and write nothing. That was over-specified: the requirement was "do not write without
+      // consent", and "re-ask" was one remedy for it — the wrong one. Live on 59b60b3 it produced
+      // "save" → question → "save" → the IDENTICAL question → "save" → identical again, trapping the
+      // customer until they happened to use a phrasing in the affirmative list. This is NOT a
+      // loosened rule: the write still requires the customer to ask for it, and a decline or a
+      // subject change still blocks (steps 3 and 4). What changed is that asking to save again,
+      // right after being asked "Want me to save it?", is now read as the yes it plainly is.
       A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending after step 5');
-      h.scriptAI([turn([text("Of course — I'll save it for you now.")])]);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
       h.reset();
       w.appendMessage('user', 'yeah just save the quote');
       await w.handleInput('yeah just save the quote');
       await sleep(600);
-      A.eq(bookPosts(), 0, 'an ambiguous REPHRASE while the question was pending wrote a BOL');
-      A.ok(h.bots().some(t => t === COPY), 'the rephrase did not re-ask: ' + JSON.stringify(h.bots()));
+      A.eq(bookPosts(), 1, 'the repeated save request did NOT save — the customer is still trapped');
+      A.ok(h.bots().some(t => /^Saved as BOL/.test(t)), 'the repeat produced no canonical confirmation: ' + JSON.stringify(h.bots()));
+      A.eq(h.bots().filter(t => t === COPY).length, 0, 'the canonical question was rendered a SECOND time — this is the verbatim-repeat trap: ' + JSON.stringify(h.bots()));
 
       // ── 7. EXPLICIT UPGRADE while the question is pending is CONSENT, not a decline. A refusal here
       // would strand the customer: they answered in the clearest possible terms and got nothing.
-      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending after step 6');
+      // Re-armed from scratch — step 6 now COMPLETES the save, so it leaves no pending question and
+      // no open panel behind it.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save the quote');
+      await w.handleInput('save the quote');
+      await sleep(400);
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending after re-arming');
       h.scriptAI([turn([toolUse('save_shipment', {})])]);
       h.reset();
       w.appendMessage('user', 'yes, save it as a shipment');
@@ -1863,6 +1878,91 @@ const cases = [
       A.eq(viaBook[0], viaSave[0], 'the two write routes describe the SAME save in DIFFERENT words:\n  save: ' + viaSave[0] + '\n  book: ' + viaBook[0]);
       A.ok(!h.bots().some(t => /want me to dispatch|dispatch it now|ready to dispatch/i.test(t)),
         'the book route offered dispatch unprompted: ' + JSON.stringify(h.bots()));
+    },
+  },
+
+  // ── 46 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 46, name: 'the consent question is rendered ONCE — a repeated save request is the yes, a decline or subject change still blocks',
+    catches: 'live on 59b60b3: "save" -> the consent question -> "save" -> the IDENTICAL question, verbatim -> "save" -> identical again. Bare "save" is not in the save-consent affirmative list, so it fell through to the agent, and both enforcement sites obeyed a verdict of "ask" every time and re-rendered the same sentence. The customer was trapped until they happened to land on a listed phrase ("save it"), and a verbatim repeat reads as broken software. The fix is a STATE TRANSITION, not another keyword: widening the affirmative list would fix one phrasing and leave the shape intact — the next customer says "sure do it" and loops again. Asserts the RENDERED transcript, because the defect was entirely in what the customer read.',
+    async run(h) {
+      const w = h.win;
+      const COPY = h.g('SAVE_DRAFT_CONFIRM');
+      const bookPosts = () => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length;
+      const asks = () => h.bots().filter(t => t === COPY).length;
+
+      // ── A. save -> save : the question renders ONCE and the repeat completes the save.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save quote for now');
+      await w.handleInput('save quote for now');
+      await sleep(400);
+      A.eq(asks(), 1, 'turn 1 did not ask exactly once: ' + JSON.stringify(h.bots()));
+      A.eq(bookPosts(), 0, 'turn 1 wrote a BOL before any answer');
+
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save the quote');
+      await w.handleInput('save the quote');
+      await sleep(600);
+      A.eq(asks(), 0, 'THE TRAP: the canonical question was rendered a second time, verbatim: ' + JSON.stringify(h.bots()));
+      A.eq(bookPosts(), 1, 'the repeated save request did not save — the customer is still stuck');
+      A.ok(h.bots().some(t => /^Saved as BOL/.test(t)), 'no canonical confirmation on the repeat: ' + JSON.stringify(h.bots()));
+
+      // TURNS 3 AND 4 CANNOT ARISE. The save completed, so the panel is closed and the question is
+      // no longer pending — there is nothing left to repeat into. That is the sequence
+      // save -> save -> save -> "yes" from the live transcript, terminating at turn 2.
+      A.ok(w._pendingDraftSaveConsent() === false, 'the question is somehow still pending after the save completed');
+      A.eq(w._draftSaveVerdict(), null, 'a further turn could still be held after the save completed');
+
+      // ── B. save -> DECLINE : Option 2 must not collapse "refuse" into "proceed".
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save it');
+      await w.handleInput('save it');
+      await sleep(400);
+      A.eq(asks(), 1, 'setup: turn 1 did not ask once');
+      w.appendMessage('user', 'no, I meant my saved quotes');
+      A.eq(w._draftSaveVerdict(), 'refuse', 'a DECLINE while the question was pending no longer blocks the write');
+      h.scriptAI([turn([toolUse('save_shipment', {})]), turn([text('Understood — opening your saved quotes.')])]);
+      h.reset();
+      await w.handleInput('no, I meant my saved quotes');
+      await sleep(500);
+      A.eq(bookPosts(), 0, 'a declined save wrote a BOL');
+      A.eq(asks(), 0, 'the decline was answered by re-asking the same question: ' + JSON.stringify(h.bots()));
+
+      // ── C. save -> SUBJECT CHANGE : also blocks, also never re-asks.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save the quote for now');
+      await w.handleInput('save the quote for now');
+      await sleep(400);
+      A.eq(asks(), 1, 'setup: turn 1 did not ask once');
+      w.appendMessage('user', 'remind me what day the pickup is on');
+      A.eq(w._draftSaveVerdict(), 'refuse', 'a SUBJECT CHANGE while the question was pending no longer blocks the write');
+      h.scriptAI([turn([text('The pickup is set for Tuesday.')])]);
+      h.reset();
+      await w.handleInput('remind me what day the pickup is on');
+      await sleep(500);
+      A.eq(bookPosts(), 0, 'a subject change wrote a BOL');
+      A.eq(asks(), 0, 'a subject change was answered by re-asking the same question: ' + JSON.stringify(h.bots()));
+
+      // ── D. NO KEYWORDS. None of these is matched as an affirmative; they resolve identically
+      // because the STATE says the question is pending and the turn reads as a save request.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save it');
+      await w.handleInput('save it');
+      await sleep(400);
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending');
+      ['save', 'save the quote', 'just save it', 'save for now', 'save this'].forEach(phrase => {
+        w.appendMessage('user', phrase);
+        A.eq(w._draftSaveVerdict(), null, 'a repeated save request in different words did not resolve to a save: ' + phrase);
+      });
     },
   },
 ];

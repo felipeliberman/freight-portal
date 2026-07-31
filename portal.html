@@ -7378,13 +7378,27 @@ function _draftSaveVerdict() {
       if (h[i] && h[i].role === 'user') { t = String(h[i].content == null ? '' : h[i].content); break; }
     }
     if (_pendingDraftSaveConsent()) {
-      // The question is on screen and unanswered. An explicit shipment save is the customer UPGRADING
-      // their request, not declining it — writing is what they asked for, so it proceeds. Anything
-      // still ambiguous re-asks rather than guessing. Anything else is a decline or a change of
-      // subject: consent does not exist, so nothing may be written on this turn.
-      if (_isExplicitShipmentSave(t)) return null;
-      return _isAmbiguousSaveIntent(t) ? 'ask' : 'refuse';
+      // ── THE QUESTION IS ON SCREEN. ASKING TO SAVE AGAIN IS A YES. ────────────────────────────
+      // This branch used to return 'ask' for an ambiguous repeat, which re-rendered the SAME
+      // sentence. Live: "save" → question → "save" → the IDENTICAL question → "save" → identical
+      // again. The customer was trapped until they happened to use a phrasing in the affirmative
+      // list, and a verbatim repeat reads as broken software.
+      // The fix is NOT another keyword. Widening the list fixes one phrasing and leaves the shape:
+      // the next customer says "sure do it" or "go for it" and loops again. This is a STATE
+      // TRANSITION — they were asked "Want me to save it?" and answered with a save request, which
+      // is how a person reads a yes. Because nothing is being matched as an affirmative, "sure do
+      // it", "go for it" and "save the quote" all resolve identically.
+      // DISCLOSED CONSENT, not a silent write: the sentence they just read says the save creates a
+      // draft shipment under My Shipments. Owner's call 2026-07-31, on the same reversible-open /
+      // irreversible-closed line as a37ea40 — a save is cancellable; a dispatch is not.
+      if (_isExplicitShipmentSave(t) || _isAmbiguousSaveIntent(t)) return null;
+      // …but a DECLINE or a CHANGE OF SUBJECT still blocks. Option 2 does not collapse 'refuse'
+      // into 'proceed': consent exists only where the customer actually asked for the save.
+      return 'refuse';
     }
+    // 'ask' IS REACHABLE ONLY HERE, which is what makes the question render at most once: the moment
+    // it is rendered _pendingDraftSaveConsent() goes true and every later turn takes the branch
+    // above. It can ask again only after that state has genuinely lapsed — a new request, not a repeat.
     return _isAmbiguousSaveIntent(t) ? 'ask' : null;
   } catch (e) { return null; }  // an evaluator that throws must never block a legitimate save
 }
