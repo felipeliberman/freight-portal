@@ -12990,34 +12990,6 @@ function _liveStateBlock() {
       lines.push('hazmat: the freight is already flagged hazardous on the form — do not ask whether it is hazmat. Collect the UN number and 24-hour emergency contact at BOOKING.');
     }
     lines.push('bookingPanel: ' + JSON.stringify(b));
-    // ── stillToAsk — BOOKING PHASE ONLY, recomputed, no stored state ──────────────────────────────
-    // The PO/reference and special-instructions asks are prose-only rules (system prompt item 3),
-    // while cargo insurance has a real code gate (_insGateBeforeRates). Tonight showed repeatedly
-    // that an unenforced instruction is the one that gets skipped, so this surfaces the FACT to the
-    // agent every turn — the same mechanism that closed the price-hold dead end.
-    //
-    // It states that the fields are EMPTY, never that the question was not asked: those are not
-    // distinguishable from form state, and claiming the stronger one would push the agent to re-ask
-    // something the customer already answered — the exact defect class the insurance gate's
-    // in-turn-decline invariant exists to prevent. Deliberately NOT a gate: insurance is priced, so
-    // unasked coverage is a money error; a missing PO is not, and blocking a booking over one would
-    // be disproportionate.
-    //
-    // Booking phase only. During quoting these questions are FORBIDDEN (see the intake rule), so
-    // the line must never appear before a carrier is chosen. Recomputed from the live DOM, so it
-    // disappears by itself the moment either field is filled — nothing to clear, nothing to go stale.
-    try {
-      if (b && b.bookingPanelOpen !== false) {
-        var _gv = function (id) { var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
-        var _missAsk = [];
-        if (!_gv('bk-pu-ref')) _missAsk.push('PO/reference number');
-        if (!_gv('bk-special-instructions')) _missAsk.push('special instructions');
-        if (_missAsk.length) {
-          lines.push('stillToAsk: the ' + _missAsk.join(' and ') + ' field' + (_missAsk.length > 1 ? 's are' : ' is') +
-            ' empty. Ask before the booking read-back — it is required and easy to skip. If the customer has ALREADY answered (including "no PO" or "no special instructions"), do NOT ask again: note it in the read-back and move on.');
-        }
-      }
-    } catch (e) {}
     if (b && b.bookingInFlight && !b.panelRendered) {
       lines.push('bookingInFlight: a booking IS in progress for the carrier and fields shown above, even though its panel tab is not the one currently displayed. Never say there is no booking, never re-ask which carrier, and never re-ask for any field shown non-empty above.');
     }
