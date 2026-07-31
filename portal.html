@@ -7129,27 +7129,6 @@ async function classifyDeliveryForDispatch(street, suite, city, state, zip, acce
   return out;
 }
 
-// ── THE residential-hold copy — ONE definition, rendered by code, never composed by the agent ──
-// This is a surcharge warning on an irreversible step, so it is fixed copy on the same principle as
-// the deterministic cargo-insurance ask (_insGateBeforeRates renders its question directly too).
-// WHY it is not the agent's to write (live failure, BOL 160135771, 2026-07-30): aiConverse discards
-// the text half of any assistant message that also carries a tool call (the deliberate "pre-tool
-// narration" drop at ~14764), the model paired this answer with an update_quote, and the customer
-// saw only the second half — no "not dispatched", no residence, no service names — followed by a
-// stray rate summary from the pull that tool fired. Fixed copy plus a turn that ends in code takes
-// the model off the path entirely: nothing to split, nothing to restate, no tool to fire.
-// The layer-2 eval calls THIS function — there is no second copy of the wording to keep in sync.
-function _rdiHoldMessage(names) {
-  const n = (names && names.length) ? names : ['residential delivery'];
-  const list  = n.length > 1 ? n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1] : n[0];
-  const those = n.length > 1 ? 'those' : 'that';
-  const they  = n.length > 1 ? "they're" : "it's";
-  const them  = n.length > 1 ? 'them' : 'it';
-  return "I haven't dispatched this yet — one thing to flag first. The delivery address looks like a residence, and this shipment isn't set up with "
-    + list + '. Carriers usually bill ' + those + ' after the fact when ' + they + ' missing. Want me to add '
-    + them + ' and refresh the rate, or dispatch as-is?';
-}
-
 async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
   // OVERLAY surface — the two FORM dispatch buttons (7267/7548) only. Signature, markup, and both
   // callbacks are unchanged; only the verdict now comes from the shared classifier above.
@@ -13928,15 +13907,8 @@ async function _execDispatchShipment(input) {
           const _names = ['residential delivery'];
           if (_rdi.needsLFD && !_rdiParcel) { _codes.push('LFD'); _names.push('liftgate delivery'); }
           window._rdiPending = { BOLId: BOLId, codes: _codes, ship: _rdiShip };
-          // Render the question HERE, from code, and end the turn. _turnHandled tells the aiConverse
-          // tool loop to stop instead of looping for a follow-up completion — so the model never gets
-          // a turn to truncate this, restate it, contradict it, or fire a rate pull the customer has
-          // not agreed to. appendMessage is the one transcript writer, so the next turn sees exactly
-          // what the customer saw. Note an empty model reply is NOT a usable alternative: the loop
-          // treats an empty completion as a failed turn and renders AGENT_FAIL_MSG (~14976).
-          if (typeof appendMessage === 'function') appendMessage('bot', _rdiHoldMessage(_names));
-          return { ok: false, residentialHold: true, _turnHandled: true, missingServices: _names,
-            message: 'The shipment was NOT dispatched. The customer has already been shown the question on screen and this turn is over — nothing further is said or done until they answer. If they say to add the services: call dispatch_shipment again with addDeliveryServices true. If they say dispatch as-is: call dispatch_shipment again with no extra fields and it will go straight through.' };
+          return { ok: false, residentialHold: true, missingServices: _names,
+            message: 'The shipment was NOT dispatched — it is held for ONE question. Say this to the customer in plain broker English, in your own words, and nothing beyond it: you have NOT dispatched it yet (say this explicitly — the customer just asked you to dispatch, so leaving it implied reads as "done"), the delivery address looks like a residence, this shipment is not currently set up with ' + _names.join(' and ') + ', and when ' + (_names.length > 1 ? 'those are' : 'that is') + ' missing the carrier commonly bills the surcharge after the delivery. Then ask ONE question — add ' + (_names.length > 1 ? 'them' : 'it') + ' and refresh the rate, or dispatch as-is? Do NOT mention any address check, lookup, verification, database, or system, and do NOT describe how this was determined. Do NOT state, estimate, or imply any surcharge amount or percentage — you do not have one. Do NOT say anything about the address beyond the one sentence above. Use plain service names only, never a code. If the customer says add: call dispatch_shipment again with addDeliveryServices true. If the customer says dispatch as-is: call dispatch_shipment again with no extra fields and it will go straight through.' };
         }
       }
     }
@@ -14199,7 +14171,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 3b. HAZMAT AT BOOKING — if formState shows the line item is hazmat, you MUST proactively ask the customer for the UN number and a 24-hour emergency contact name and phone BEFORE you read the booking back — do not wait for the customer to volunteer it. Pass these to update_booking as unNumber, emergencyContactName, and emergencyPhone. The hazmat class and packing group are looked up automatically from the UN number — never ask the customer for them. NEVER put the UN number or emergency contact in specialInstructions — they have dedicated fields. Include the UN number and emergency contact in the booking read-back.
-4. RESIDENTIAL CLASSIFICATION IS NEVER YOURS TO RAISE. The customer is asked ONCE, at quote intake, whether the delivery is a residence or a business — and their answer is final for the whole conversation. Never state, imply, or ask about an address "coming back" residential or commercial, never mention an address lookup, check, or verification, and never challenge, confirm, or second-guess the customer's stated answer at any phase — quoting, saving, or dispatching. THE ONE EXCEPTION IS THE DISPATCH HOLD, AND IT IS NOT YOURS TO WRITE: when a delivery address is residential at dispatch, the system itself renders that question to the customer and ends the turn. You are never asked to compose, relay, restate, summarize, or follow up on it — you will simply find it in the transcript as a message already sent. Treat it as sent and add nothing to it. When the customer answers, act on the answer and say nothing about classification: if they want the services added, call dispatch_shipment with addDeliveryServices true; if they say dispatch as-is, call dispatch_shipment again with no extra fields. Never re-raise it yourself, never mention a check, lookup, or verification, and never state or estimate a surcharge amount.If the customer THEMSELVES later says the delivery is a home or residence, treat that as their intake answer: add residential delivery (and offer liftgate for heavier LTL freight unless they decline), re-pull per the rule below, and say nothing about classification. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. If after adding residential delivery the parcel rate does not change, say: "Residential delivery was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
+4. RESIDENTIAL CLASSIFICATION IS NEVER YOURS TO RAISE. The customer is asked ONCE, at quote intake, whether the delivery is a residence or a business — and their answer is final for the whole conversation. Never state, imply, or ask about an address "coming back" residential or commercial, never mention an address lookup, check, or verification, and never challenge, confirm, or second-guess the customer's stated answer at any phase — quoting, saving, or dispatching. THE ONE EXCEPTION IS A TOOL RESULT THAT HANDS YOU THE WORDS: when dispatch_shipment comes back with residentialHold:true, the system — not you — has held the shipment, and its message tells you exactly what to say. Relay that and only that: say plainly that you have not dispatched it yet, say the delivery address looks like a residence, name the missing services in plain words, note that carriers commonly bill the surcharge afterward when they are missing, and ask the single question it gives you. Even then, never mention a check, lookup, verification, or how it was determined, never state or estimate a surcharge amount, and never say anything about the address beyond what that message contains. You still never raise classification on your own initiative. If the customer THEMSELVES later says the delivery is a home or residence, treat that as their intake answer: add residential delivery (and offer liftgate for heavier LTL freight unless they decline), re-pull per the rule below, and say nothing about classification. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. If after adding residential delivery the parcel rate does not change, say: "Residential delivery was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 
 PARTY DETAILS ARE WRITTEN, NEVER JUST ACKNOWLEDGED. When the customer provides shipper or consignee details in chat — names, addresses, contacts, phones, one side or both — replying with text alone is FORBIDDEN: you MUST call update_booking in that SAME turn with every field they provided, both parties when both are present. And NEVER claim a party detail is "on file," "already filled," "captured," or "saved" unless the CURRENT bookingState or formState snapshot shows that exact field non-empty — if the snapshot shows a field blank, it is blank, no matter what was said earlier in the conversation; the only way to make it true is to call update_booking with it now. If bookingState shows bookingInFlight true with panelRendered false, the booking still exists exactly as shown (carrier, price, and fields) — never say there is no booking, and never re-ask which carrier.
@@ -14980,23 +14952,6 @@ async function aiConverse(userText) {
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
         _toolInFlight = false;
-        // ── TOOL-OWNED TURN ────────────────────────────────────────────────────────────────────
-        // A tool that already rendered the customer-facing message owns the turn and ENDS it: no
-        // follow-up completion, so the model cannot restate it, contradict it, or call a second tool
-        // (the residential hold's own "refresh the rate" wording otherwise invites an update_quote,
-        // whose pull posts a stray rate summary onto an unanswered question). The deterministic
-        // collectors already work this way; this is the same contract for a tool-rendered turn.
-        // Deliberately scoped to residentialHold, NOT to _turnHandled alone: ending a turn silently is
-        // a big hammer, and no future tool should acquire it by accident just by setting a flag.
-        if (result && result._turnHandled && result.residentialHold) {
-          removeTyping();
-          window._lastTurnFailed = false;
-          if (typeof waybHistory !== 'undefined') {
-            waybHistory.push({ role: 'user', content: userText });
-            waybHistory = _waybTrim(waybHistory);
-          }
-          return;
-        }
         // Feed the result back so Claude can continue naturally. Every tool_use block in the
         // assistant content we echo must have a matching tool_result, or the next call 400s on an
         // unpaired tool_use. We execute only the FIRST client tool (one action per turn — unlike

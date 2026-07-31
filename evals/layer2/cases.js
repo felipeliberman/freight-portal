@@ -680,69 +680,6 @@ const cases = [
       A.ok(!/insure it for/i.test(rb) && !/actually/i.test(rb), 'read-back echoed the customer\'s raw sentence: ' + rb);
     },
   },
-
-  // ── 23 ───────────────────────────────────────────────────────────────────────
-  {
-    id: 23, name: 'residential dispatch hold: the FULL fixed copy renders, the agent adds nothing, no pull fires',
-    catches: 'the live BOL 160135771 failure — the hold reached the customer truncated to its second half (no "not dispatched", no residence, no service names), followed by a stray "71 carriers came back" rate summary. Root cause: aiConverse discards the text half of any assistant message carrying a tool call (~14764) and the model paired this answer with an update_quote whose pull posted the summary. Replaces the old API-graded wording case, which could not see either failure because both happen downstream of the model.',
-    async run(h) {
-      const w = h.win;
-      // The BOL the guard reads: residential consignee, NO accessorials (so the classifier does not
-      // short-circuit), wrapped in the data.results shape the by-id GET really returns.
-      h.routes.unshift({
-        match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'),
-        reply: () => ({ status: 200, body: { data: { results: {
-          BOLId: 'BOLID-778899', BOLNumber: '160135771',
-          shipper:   { name: 'Michaels Furniture', address1: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zipCode: '90660' },
-          consignee: { name: 'Dana Whitfield', address1: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zipCode: '90035' },
-          accessorials: [], pickupInformation: { date: '2026-08-04' },
-        } } } }),
-      });
-      h.routes.unshift({
-        match: u => u.indexOf('geocodio') >= 0 && u.indexOf('zip4') >= 0,
-        reply: () => ({ status: 200, body: { results: [{ fields: { zip4: { residential: true } } }] } }),
-      });
-      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135771', carrier: 'Estes Express', price: 441, dispatched: false };
-      w._rdiAnsweredBOL = null; w._rdiPending = null;
-      // The model asks to dispatch AND — exactly as it did live — pairs a follow-up turn that would
-      // restate the message and pull rates. Neither may ever run: the tool owns the turn.
-      h.scriptAI([
-        turn([toolUse('dispatch_shipment', {})]),
-        turn([text('Just to confirm, the address looks residential — pulling fresh rates now.'), toolUse('update_quote', { getRates: true })]),
-      ]);
-      h.reset();
-      await w.aiConverse('ok go ahead and dispatch it');
-      await waitFor(() => h.bots().length > 0, 3000);
-      await sleep(400); // let any (forbidden) follow-up turn or pull land before asserting
-
-      const bots = h.bots();
-      // ── 1. The exact copy, complete, from the ONE definition the app renders. No second copy here.
-      const expected = w._rdiHoldMessage(['residential delivery', 'liftgate delivery']);
-      A.ok(bots.indexOf(expected) >= 0, 'the hold copy did not render verbatim.\n  want: ' + expected + '\n  got : ' + JSON.stringify(bots));
-      A.eq(bots.filter(t => t === expected).length, 1, 'the hold copy rendered more than once');
-      const msg = bots[bots.indexOf(expected)];
-      // ── 2. Structural content checks on the emitted string (the truncation is what these catch).
-      A.ok(/haven't dispatched this yet/i.test(msg), 'the emitted copy lost the not-dispatched-yet clause: ' + msg);
-      A.ok(/looks like a residence/i.test(msg), 'the emitted copy lost the residence clause: ' + msg);
-      A.ok(/residential delivery/i.test(msg) && /liftgate delivery/i.test(msg), 'the emitted copy did not name BOTH missing services: ' + msg);
-      A.ok(/dispatch as-is\?/i.test(msg), 'the emitted copy lost the add-or-dispatch question: ' + msg);
-      // ── 3. Never-surface checks: no money, no lookup narration, no codes, no backend names.
-      A.ok(!/[$€£]|\d+\s*%|percent/i.test(msg), 'the copy states a surcharge amount or percentage: ' + msg);
-      A.ok(!/\b(check|checked|look(ed)?[ -]?up|lookup|verif|geocod|database|system|scan)\w*\b/i.test(msg), 'the copy narrates an address check/lookup: ' + msg);
-      A.ok(!/\b(RSD|LFD|RSO|LFO|INS|APD|IND|LAD|LAO)\b/.test(msg), 'the copy leaks an internal accessorial code: ' + msg);
-      A.ok(!/\b(primus|shipprimus|geocodio|rdi|bolid)\b/i.test(msg), 'the copy leaks a backend or vendor name: ' + msg);
-      // ── 4. The agent added NOTHING. The scripted follow-up turn must never have run.
-      A.eq(bots.length, 1, 'the agent added text after the deterministic hold — extra bubble(s): ' + JSON.stringify(bots));
-      A.ok(!bots.some(t => /pulling fresh rates/i.test(t)), 'the follow-up completion ran and rendered its text');
-      // ── 5. No rate pull fired — bug 2. The stray summary is impossible if no pull ran.
-      A.eq(h.rateRequests().length, 0, 'a rate pull fired while a residential hold was pending');
-      A.ok(!bots.some(t => /carriers? came back/i.test(t)), 'a rate summary posted onto the unanswered hold: ' + JSON.stringify(bots));
-      // ── 6. Hold state armed for the answer, and asked at most once per BOL.
-      A.ok(!!(w._rdiPending && w._rdiPending.BOLId === 'BOLID-778899'), '_rdiPending was not armed for this BOL');
-      A.eq(w._rdiPending.codes, ['RSD', 'LFD'], '_rdiPending carries the wrong codes');
-      A.eq(w._rdiAnsweredBOL, 'BOLID-778899', '_rdiAnsweredBOL was not set before the hold returned');
-    },
-  },
 ];
 
 module.exports = { cases };
