@@ -10539,8 +10539,20 @@ function parseBookingBlock(text, fallbackZip) {
   const refMatch = t.match(/(?:po|ref|reference|order|p\.o\.)[#\s.:-]*([A-Za-z0-9\-]+)/i);
   if (refMatch) data.ref = (refMatch[1] || refMatch[0]).trim(); // capture the value, not the whole prefix
 
-  // Address: look for street number + street name pattern, or full address line
-  const addrMatch = t.match(/\b\d+\s+[A-Za-z][A-Za-z0-9\s.'-]{2,35}(?:ave|avenue|st|street|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pl|place|cir|circle|hwy|highway|pkwy|parkway|suite|ste|unit|#)(?:[^,\n]{0,30})?/i);
+  // Address: street number + street name + a REAL street suffix.
+  // '#' USED TO BE IN THIS ALTERNATION AND IT DESTROYED A DISPATCHED SHIPMENT. On 2026-07-30 the
+  // message "pickup 8/3/26 PO #123" parsed as an address: number 26 (from the DATE), name "PO ",
+  // "suffix" #, trailer 123 — yielding "26 PO #123", which overwrote the validated shipper address
+  // 7240 Crider Ave on BOL 160135795 and went to the carrier that way. '#' is not a street suffix;
+  // it is the most common PO/reference marker in freight. suite/ste/unit are designators that may
+  // FOLLOW a street, never stand as one, so they no longer qualify a match on their own either.
+  // Precision over recall, deliberately: a missed address costs one clarifying question, a wrong one
+  // reached a carrier.
+  const _STREET_SUFFIX = '(?:ave|avenue|st|street|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pl|place|cir|circle|hwy|highway|pkwy|parkway|ter|terrace|trl|trail)';
+  const addrMatch = t.match(new RegExp('\\b\\d+\\s+[A-Za-z][A-Za-z0-9\\s.\'-]{2,35}' + _STREET_SUFFIX + '\\b(?:[^,\\n]{0,30})?', 'i'));
+  if (!addrMatch && /\b\d+\s/.test(t)) {
+    try { console.warn('[FP] parseBookingBlock — digits present but no street-suffixed address; taking NO address from:', JSON.stringify(String(t).slice(0, 120))); } catch (e) {}
+  }
   if (addrMatch) {
     let addr = addrMatch[0].trim().replace(/,\s*$/, '');
     if (fallbackZip) addr = addr.replace(new RegExp('\\b' + fallbackZip + '\\b'), '').trim().replace(/,\s*$/, '');
@@ -13879,11 +13891,40 @@ function applyPartyData(parsed, opts) {
     shipper:   { name: 'bk-pu-name', address: 'bk-pu-street', suite: 'bk-pu-suite', city: 'bk-pu-city', state: 'bk-pu-state', zip: 'bk-pu-zip', contact: 'bk-pu-contact', phone: 'bk-pu-phone' },
     consignee: { name: 'bk-dl-name', address: 'bk-dl-street', suite: 'bk-dl-suite', city: 'bk-dl-city', state: 'bk-dl-state', zip: 'bk-dl-zip', contact: 'bk-dl-contact', phone: 'bk-dl-phone' },
   };
+  // An ADDRESS is the one field where a wrong value is worse than no value: it is validated, it is
+  // what the carrier drives to, and once written it replaces the only copy. On 2026-07-30 a parse of
+  // "pickup 8/3/26 PO #123" overwrote a validated shipper address and the shipment DISPATCHED that
+  // way. The parser has been tightened, but a parser is always beatable — so the write is guarded
+  // too, and this layer does not care how the value was produced.
+  //
+  // RULE: never REPLACE a non-empty address unless the customer said, in this message, that they are
+  // giving an address. Filling an EMPTY address is unaffected; correcting one still works when asked
+  // for plainly. Silence is not an option on a refusal — an instruction that is ignored without a
+  // word is the same defect class as the overwrite it prevents.
+  const _addrIntent = /\b(address|street|located at|pick ?up (?:at|from)|deliver(?:y)? (?:to|at)|ship (?:to|from)|new address|correct(?:ed)? address|change the address)\b/i;
+  const _msgForIntent = String(opts.sourceText || (typeof window !== 'undefined' && window._lastUserText) || '');
+  const _addrIds = ['bk-pu-street', 'bk-dl-street'];
   const put = (id, val) => {
     if (val === undefined || val === null || String(val).trim() === '') return false;
     const el = document.getElementById(id);
     if (!el) return false;                       // never count a write to an element that isn't there
     if (opts.fillEmptyOnly && String(el.value || '').trim() !== '') return false;
+    if (_addrIds.indexOf(id) >= 0) {
+      const _cur = String(el.value || '').trim();
+      const _next = String(val).trim();
+      if (_cur && _cur.toLowerCase() !== _next.toLowerCase() && !_addrIntent.test(_msgForIntent)) {
+        try {
+          console.warn('[FP] applyPartyData — REFUSED to overwrite a non-empty address without an explicit address instruction.',
+            '| field:', id, '| kept:', JSON.stringify(_cur), '| rejected:', JSON.stringify(_next),
+            '| source:', opts.source || 'unknown', '| message:', JSON.stringify(_msgForIntent.slice(0, 120)));
+        } catch (e) {}
+        if (typeof appendMessage === 'function') {
+          appendMessage('bot', 'I left the ' + (id === 'bk-pu-street' ? 'pickup' : 'delivery') +
+            ' address as it was — I was not confident that was meant as a new one. If you do want to change it, give me the full street address and I\'ll update it.');
+        }
+        return false;
+      }
+    }
     el.value = String(val).trim();
     try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
     if (typeof flashField === 'function') flashField(el);
@@ -17746,7 +17787,7 @@ async function handleInput(text, _opts) {
         consignee: { name: bc.name, address: bc.address, contact: bc.contact, phone: bc.phone },
         referenceNumber: bs.ref || bc.ref,
         pickup: { date: bs.date || bc.date, open: bs.timeFrom || bc.timeFrom, close: bs.timeTo || bc.timeTo },
-      }, { source: 'chat-party-block' });
+      }, { source: 'chat-party-block', sourceText: t });
       if (_w2.written.length) {
         const _sw = _w2.written.filter(k => k.indexOf('shipper.') === 0).length;
         const _cw = _w2.written.filter(k => k.indexOf('consignee.') === 0).length;
@@ -17771,7 +17812,7 @@ async function handleInput(text, _opts) {
         const _isDel = /\b(deliver|consignee|ship\s*to|destination)\b/i.test(t);
         const _parsed1 = { referenceNumber: bd.ref, pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo } };
         _parsed1[_isDel ? 'consignee' : 'shipper'] = { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone };
-        const _w = applyPartyData(_parsed1, { source: 'chat-party-block' });
+        const _w = applyPartyData(_parsed1, { source: 'chat-party-block', sourceText: t });
         if (_w.written.length) {
           appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form\'s ' + (_isDel ? 'delivery' : 'pickup') + ' section. Tell me when you want it saved and I\'ll take care of it from here.');
           return;

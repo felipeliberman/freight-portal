@@ -831,6 +831,49 @@ const cases = [
     },
   },
 
+  // ── 40 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 40, name: 'a validated address is never overwritten by a low-confidence parse, and "PO #123" is not a street',
+    catches: 'the worst defect of the session and the only one that reached a carrier. On BOL 160135795 the message "pickup 8/3/26 PO #123" parsed as an address — number 26 from the DATE, name "PO ", suffix "#", trailer 123 — overwriting the validated shipper address 7240 Crider Ave with "26 PO #123". The shipment DISPATCHED to JTS that way. Two independent causes: "#" was in the street-suffix alternation, and applyPartyData overwrote a non-empty address unconditionally.',
+    async run(h) {
+      const w = h.win;
+
+      // ── LAYER 1: the parser. "#" and bare unit designators are not street suffixes.
+      const p = (t) => (w.parseBookingBlock(t, '') || {}).address;
+      A.ok(!p('pickup 8/3/26 PO #123'), 'the exact live message STILL parses as an address: ' + JSON.stringify(p('pickup 8/3/26 PO #123')));
+      A.ok(!p('PO #123'), '"PO #123" still parses as an address: ' + JSON.stringify(p('PO #123')));
+      A.ok(!p('ref 26 PO'), '"ref 26 PO" still parses as an address: ' + JSON.stringify(p('ref 26 PO')));
+      // Recall must survive — precision is worthless if real addresses stop landing.
+      ['7240 Crider Ave', '1145 S Clark Drive', '100 Beville Rd', '200 Commerce Blvd'].forEach(a => {
+        A.ok(p(a), 'a REAL address no longer parses — the tightening went too far: ' + a);
+      });
+
+      // ── LAYER 2: the write. Independent of how the value was produced, because a parser is
+      // always beatable and this is the layer that has to hold when it is.
+      const street = () => { const el = w.document.getElementById('bk-pu-street'); return el ? el.value : null; };
+      w.showBookingPanel({ id: 'R1', name: 'JTS Express', total: 161, _name: 'JTS Express', _price: 161 },
+        { originZip: '90660', destZip: '90035', accessorials: [] });
+      await sleep(300);
+      if (!w.document.getElementById('bk-pu-street')) { A.ok(false, 'setup: the booking panel did not render'); return; }
+      w.document.getElementById('bk-pu-street').value = '7240 Crider Ave';
+
+      // No address instruction in the message → the validated address must survive.
+      h.reset();
+      w.applyPartyData({ shipper: { address: '26 PO #123' } }, { source: 'test', sourceText: 'pickup 8/3/26 PO #123' });
+      A.eq(street(), '7240 Crider Ave', 'the validated pickup address was OVERWRITTEN — this is what reached the carrier');
+      A.ok(h.bots().some(t => /left the pickup address as it was/i.test(t)), 'the refusal was SILENT — an ignored instruction is the same class as the overwrite: ' + JSON.stringify(h.bots()));
+
+      // An EXPLICIT address instruction still updates it — the guard must not block real corrections.
+      w.applyPartyData({ shipper: { address: '999 Newport Blvd' } }, { source: 'test', sourceText: 'change the address to 999 Newport Blvd' });
+      A.eq(street(), '999 Newport Blvd', 'an explicit address change was refused — the guard is now blocking legitimate corrections');
+
+      // An EMPTY address still fills with no instruction needed.
+      w.document.getElementById('bk-pu-street').value = '';
+      w.applyPartyData({ shipper: { address: '7240 Crider Ave' } }, { source: 'test', sourceText: 'Michaels Furniture 7240 Crider Ave' });
+      A.eq(street(), '7240 Crider Ave', 'filling an EMPTY address now requires an instruction — first-time fill is broken');
+    },
+  },
+
   // ── 39 ───────────────────────────────────────────────────────────────────────
   {
     id: 39, name: 'a chat-initiated save is answered in chat — no modal to dismiss — but the parcel picker and the prepaid disclosure still appear',
