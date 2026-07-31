@@ -831,6 +831,69 @@ const cases = [
     },
   },
 
+  // ── 28 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 28, name: 'stale selection cannot be tendered: a rate not in the CURRENT list blocks dispatch; a fresh one does not',
+    catches: 'the BOL 160135789 money loss — booked JTS at $161 with zero accessorials, the residential hold was answered yes, rates re-pulled twice (RSD+LFD then +APD), the agent said "confirmed at $396.75", and the tender went out at $161 with an EMPTY accessorial list. The divergence backstop was structurally blind: after a book _bookingLock is null so nothing updates bookingRate on a publish, both of its inputs stayed the same frozen object, and $161 == $161. The only thing that moved was the price the agent SPOKE, which has no representation in state.',
+    async run(h) {
+      const w = h.win;
+      const mkRate = (id, name, total) => ({ id, name, total, rateBreakdown: [{ name: 'FREIGHT CHARGE', total }] });
+      // Pull 1 — no accessorials. This is the rate that gets selected and booked.
+      const pull1 = [mkRate('R-pull1-jts', 'JTS Express', 161)];
+      // Pull 3 — after RSD+LFD+APD. Primus mints FRESH ids per pull, so the booked rate's id is gone.
+      const pull3 = [mkRate('R-pull3-jts', 'JTS Express', 396.75), mkRate('R-pull3-warp', 'WARP', 120.19)];
+
+      // ── A. FRESH SELECTION — the selected rate IS in the current list. Must not fire.
+      w._lastRatesRaw = pull1;
+      w._lastBooked = { BOLId: 'BOLID-789', BOLNumber: '160135789', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._bookingLock = { rate: pull1[0], shipment: {} };
+      w._rdiAnsweredBOL = 'BOLID-789';   // isolate from the residential hold
+      h.reset();
+      const clean = await w._execDispatchShipment({ BOLId: 'BOLID-789' });
+      A.ok(!clean.rateStale, 'the guard fired on a selection that IS in the current list: ' + JSON.stringify(clean).slice(0, 200));
+      A.ok(!h.bots().some(t => /rates were refreshed after this shipment/.test(t)), 'stale copy rendered on a healthy flow');
+
+      // ── B. THE LIVE BUG — rates re-pulled after the book; the selection predates the new list.
+      // Prices deliberately AGREE (161 vs 161) so this proves the guard catches what the divergence
+      // backstop cannot: it is the identity of the rate that is wrong, not the number.
+      w._lastRatesRaw = pull3;
+      w._lastBooked = { BOLId: 'BOLID-789', BOLNumber: '160135789', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._bookingLock = { rate: pull1[0], shipment: {} };   // still the pull-1 object, exactly as live
+      h.reset();
+      const bad = await w._execDispatchShipment({ BOLId: 'BOLID-789' });
+      A.ok(bad && bad.rateStale === true, 'the guard did NOT fire on a selection from a superseded pull: ' + JSON.stringify(bad).slice(0, 300));
+      A.eq(bad.ok, false, 'a stale dispatch did not fail closed');
+      A.ok(bad._turnHandled === true, 'the stale guard did not claim the turn');
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 0, 'the shipment was TENDERED on a stale rate');
+      // Proof it is not the divergence backstop firing under another name.
+      A.ok(!bad.rateDiverged, 'this was caught as divergence, not staleness — the prices agree, so divergence must be silent here');
+      // Customer-safe copy from the one definition: no figure, no carrier, no internals.
+      const said = h.bots().find(t => t === w._rateStaleMessage());
+      A.ok(said, 'the stale copy did not render verbatim: ' + JSON.stringify(h.bots()));
+      A.ok(!/[$€£]|\d/.test(said), 'the stale copy leaks a raw number: ' + said);
+      A.ok(!/\b(RSD|LFD|APD|BOL|BOLId|rate ?id|bookingRate|primus|geocod)\b/i.test(said), 'the stale copy leaks an internal name: ' + said);
+      A.ok(/haven't dispatched this yet/i.test(said), 'the stale copy does not say it was not dispatched: ' + said);
+
+      // ── C. FAIL OPEN where it cannot know: no rates pulled this session (saved shipment dispatch).
+      w._lastRatesRaw = null;
+      w._lastBooked = { BOLId: 'BOLID-789', BOLNumber: '160135789', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._bookingLock = { rate: pull1[0], shipment: {} };
+      h.reset();
+      const noRates = await w._execDispatchShipment({ BOLId: 'BOLID-789' });
+      A.ok(!noRates.rateStale, 'the guard blocked a dispatch with no rate list to judge against — it must fail open');
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 1, 'the no-rates path did not reach a real dispatch');
+
+      // ── D. FAIL OPEN with no selection at all (the edit-panel path nulls bookingRate before dispatch).
+      w._lastRatesRaw = pull3;
+      w._lastBooked = { BOLId: 'BOLID-789', BOLNumber: '160135789', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._bookingLock = null; w.bookingRate = null;
+      h.reset();
+      const noSel = await w._execDispatchShipment({ BOLId: 'BOLID-789' });
+      A.ok(!noSel.rateStale, 'the guard blocked a dispatch with no rate selected — it must fail open');
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 1, 'the no-selection path did not reach a real dispatch');
+    },
+  },
+
   // ── 26 ───────────────────────────────────────────────────────────────────────
   {
     id: 26, name: 'divergence backstop: blocks dispatch when the written rate disagrees with the quoted one, and is silent on a clean flow',

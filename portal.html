@@ -7099,6 +7099,14 @@ function _rateDivergedMessage() {
   return "I haven't dispatched this yet. The rate saved on this shipment doesn't match the one I just quoted you, and I won't send it to the carrier at a price you didn't agree to. Let me get the shipment updated to the quoted rate first, then we can dispatch.";
 }
 
+// ── Stale-selection copy — ONE definition, same never-surface rules as the two holds above ──────
+// Carries NO price and NO carrier: at the moment this fires we do not trust the selection to
+// represent anything the customer agreed to, so naming a figure would assert exactly the thing in
+// doubt. Says what happened, that nothing went out, and what happens next.
+function _rateStaleMessage() {
+  return "I haven't dispatched this yet. The rates were refreshed after this shipment was set up, so what's on it isn't the pricing I just went over with you — and I won't send it to the carrier at a price you didn't agree to. Let me put the carrier back on at the current rates and update the shipment, then we can dispatch.";
+}
+
 // ── CANONICAL residential/liftgate classifier for the dispatch guard ─────────────────────────
 // ONE owner of the Geocodio call and the RSD/LFD read for EVERY dispatch path. checkRDIBeforeDispatch
 // (the two form dispatch buttons) renders its overlay from this verdict; _execDispatchShipment (chat)
@@ -13957,6 +13965,53 @@ async function _execDispatchShipment(input) {
     if (window._dispatchingBOLId === BOLId)
       return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
 
+    // ── STALE-SELECTION GUARD — the tendered rate must come from the CURRENT rate list ──────────
+    // Live money loss, BOL 160135789 (2026-07-30): booked JTS at $161 with zero accessorials; the
+    // residential hold fired; the customer said yes; rates re-pulled TWICE (RSD+LFD, then +APD); the
+    // agent read a JTS price off the new list and said "confirmed at $396.75" — and the tender went
+    // out at $161 with an EMPTY accessorial list (verified on the BOL: accessorials Array(0)).
+    //
+    // The divergence backstop below could not see it, and that is structural, not a tuning miss.
+    // It compares _lastBooked.price against _selectedRateForPayload(); after a book, _bookingLock is
+    // null, so _rekeyLockOnPublish returns at its !wantName exit and NOTHING updates bookingRate on
+    // a later publish. Both of the backstop's inputs therefore derive from the same frozen object
+    // and agree to the cent — $161 vs $161 — while the only thing that moved was the price the agent
+    // SPOKE, which has no representation in state at all. A guard whose two inputs cannot diverge
+    // cannot detect divergence.
+    //
+    // So this asks a different question: is the selected rate even FROM the list currently on
+    // screen? Compared by rate ID, never object identity — selectRate stores a COPY (withMeta), so
+    // it is never indexOf-findable in _lastRatesRaw. Primus mints fresh ids per pull (live-confirmed
+    // across the three pulls in that session), so an id absent from the current list means the
+    // selection predates it: the customer has been shown pricing that the shipment does not carry.
+    // Catches what the price comparison cannot, including a re-pull that lands on the same number.
+    //
+    // FAILS OPEN where it cannot know: no rates pulled this session (dispatching a saved shipment
+    // from My Shipments), no rate selected (the edit-panel path nulls bookingRate in
+    // submitBookingOnly before dispatching), or any throw. It only ever blocks on a POSITIVE
+    // mismatch — a selection that demonstrably is not in the list the customer is looking at.
+    //
+    // This is the money guard, not the structural fix. The structural fix is to maintain the
+    // publish-time invariant _rekeyLockOnPublish already documents for _bookingLock ("either an
+    // object present in the current list, or null") for bookingRate as well, so the selection tracks
+    // re-pulls instead of freezing. That touches a hot path on every pull and lands separately.
+    try {
+      const _raw = window._lastRatesRaw;
+      const _selS = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+      const _selSId = _selS ? String(_selS.id || _selS.rateId || '') : '';
+      if (_raw && _raw.length && _selSId) {
+        const _inList = _raw.some(function (r) { return String((r && (r.id || r.rateId)) || '') === _selSId; });
+        if (!_inList) {
+          console.warn('[FP] DISPATCH BLOCKED — selected rate is not in the current rate list on BOL', BOLId,
+            '| selected id:', _selSId, '| selected $', (_selS.billTo && _selS.billTo.total) || _selS.total || _selS._price,
+            '| current list size:', _raw.length, '— the selection predates the latest pull');
+          if (typeof appendMessage === 'function') appendMessage('bot', _rateStaleMessage());
+          return { ok: false, rateStale: true, _turnHandled: true,
+            message: 'NOT dispatched. The rate selected on this shipment is not from the rate list currently on screen — rates were re-pulled after it was chosen, so the shipment does not carry the pricing or the services the customer was just shown. The customer has already been told on screen and this turn is over — say nothing further. To resolve it: call update_booking with the carrier the customer wants so it is re-selected from the CURRENT rates, then save_shipment with this bol_id to write it, confirm the new price to the customer, and only then dispatch.' };
+        }
+      }
+    } catch (e) {}  // a guard that throws must never block a dispatch on its own
+
     // ── DIVERGENCE BACKSTOP — chat and the BOL must agree on price before anything is tendered ──
     // Independent of the requote fix in _execBookShipment, deliberately: this is the check that
     // would have caught BOL 160135778 at the moment of dispatch instead of in a transcript
@@ -15136,7 +15191,7 @@ async function aiConverse(userText) {
         // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
-        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged)) {
+        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged || result.rateStale)) {
           removeTyping();
           window._lastTurnFailed = false;
           if (typeof waybHistory !== 'undefined') {
