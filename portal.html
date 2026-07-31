@@ -14064,6 +14064,14 @@ async function _execDispatchShipment(input) {
       const _rp = window._rdiPending; window._rdiPending = null;
       try {
         const _rdiShip = _rp.ship || {};
+        // THE BOL ID IS AUTHORITATIVE HERE — it is what built the GET URL above and what _rdiPending
+        // carries. Never depend on the response body echoing it back. requoteSavedShipment derives
+        // BOTH the requote marker AND _requoteContext.bolId from s.BOLId, so a response that omits
+        // that key takes out both at once: the marker never arms, and _requoteOverrides skips
+        // setEditingBOLId (`if (_rqCtx && _rqCtx.bolId)`) so the save degrades from a PUT to a POST.
+        // Live on 2026-07-30: BOL 160135790 left orphaned at $161 and 160135791 created at $368 —
+        // two BOLs for one chair, either of which can be dispatched or invoiced on its own.
+        if (!_rdiShip.BOLId && !_rdiShip.bolId && _rp.BOLId) _rdiShip.BOLId = _rp.BOLId;
         const _rdiCon = _rdiShip.consignee || {};
         const _rdiShp = _rdiShip.shipper || {};
         const _rdiOZ = _rdiShip.originZip || _rdiShip.originZipcode || _rdiShp.zipCode || _rdiShp.zipcode || '';

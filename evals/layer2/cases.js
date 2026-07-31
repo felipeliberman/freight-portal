@@ -831,6 +831,49 @@ const cases = [
     },
   },
 
+  // ── 31 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 31, name: 'hold -> requote -> save UPDATES the existing BOL even when the fetched shipment omits its own id',
+    catches: 'the duplicate-BOL defect, live 2026-07-30: 160135790 orphaned at $161 and 160135791 created at $368 — two BOLs for one chair, either dispatchable or invoiceable on its own. The hold branch had the authoritative BOLId in _rdiPending and passed only the fetched object, so if the Primus response omits BOLId then requoteSavedShipment derives an EMPTY id for both the requote marker and _requoteContext.bolId, _requoteOverrides skips setEditingBOLId, and the save silently degrades from PUT to POST.',
+    async run(h) {
+      const w = h.win;
+      // The response body deliberately has NO BOLId / bolId — the shape that caused the duplicate.
+      const SHIP_NO_ID = {
+        BOLNumber: '160135790',
+        shipper:   { name: 'Michaels Furniture', address1: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zipCode: '90660' },
+        consignee: { name: 'Dana Whitfield', address1: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zipCode: '90035' },
+        freightInfo: [{ qty: 1, weight: 10, length: 48, width: 40, height: 48, class: '175', commodity: 'Furniture', dimType: 'PLT' }],
+        accessorials: [], pickupInformation: { date: '2026-08-04' },
+      };
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'),
+        reply: () => ({ status: 200, body: { data: { results: SHIP_NO_ID } } }),
+      });
+      w._lastBooked = { BOLId: 'BOLID-790', BOLNumber: '160135790', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._rdiAnsweredBOL = 'BOLID-790';
+      // The hold is pending on this BOL; _rdiPending carries the id the GET URL was built from.
+      w._rdiPending = { BOLId: 'BOLID-790', codes: ['RSD', 'LFD'], ship: SHIP_NO_ID };
+      h.reset();
+      await w._execDispatchShipment({ BOLId: 'BOLID-790', addDeliveryServices: true });
+      await sleep(900);   // requoteSavedShipment applies fields on a 500ms timer
+
+      // ── The id survived the handoff, so BOTH derived values are real.
+      A.eq(w._requoteWriteBOL, 'BOLID-790', 'the requote marker did not arm — the authoritative BOLId was dropped in the handoff, so a later book/save cannot route to a PUT');
+
+      // ── And the write lands on the EXISTING BOL, not a new one.
+      w._bookingPanelOpen = true;
+      h.reset();
+      const r = await w._execBookShipment({});
+      await sleep(300);
+      const puts = h.requests.filter(q => /\/applet\/v1\/book\//.test(q.url) && q.method === 'PUT');
+      const posts = h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST');
+      A.eq(posts.length, 0, 'a SECOND BOL was created (POST) — this is the duplicate: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.ok(puts.length >= 1, 'no PUT was issued — nothing reached the existing BOL. requests: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.ok(/BOLID-790/.test(puts[0].url), 'the PUT went to the wrong BOL: ' + puts[0].url);
+      A.ok(!r.alreadyBooked, 'the requote was swallowed as "already booked": ' + JSON.stringify(r).slice(0, 200));
+    },
+  },
+
   // ── 28 ───────────────────────────────────────────────────────────────────────
   {
     id: 28, name: 'stale selection cannot be tendered: a rate not in the CURRENT list blocks dispatch; a fresh one does not',
