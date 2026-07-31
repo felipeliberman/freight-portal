@@ -122,7 +122,16 @@ Key globals: `_lastRates`, `_lastRatesRaw`, `_lastRatesShipment`, `_lastBooked`,
 
 ## Test account
 
-**Haynes Brothers Furniture** — Primus customer ID `1123086640`. All testing before any customer-facing launch goes through this account.
+**Haynes Brothers Furniture** — Primus customer ID `1123086640`. The designated **write-test** account: book, edit, save, dispatch, appointment. All testing before any customer-facing launch goes through it.
+
+**Why it is safe, which is the part that keeps getting lost:** Haynes books **exclusively by email** — they ask for quotes and we create them on their behalf. They have **no portal access and do not know the login**. Nothing created on that account is ever customer-visible, so a saved BOL there cannot surface to them. This is a fact about their access, not an assumption that they "probably won't look."
+
+**Rules:**
+- **Cancel test BOLs when you are finished** — My Shipments → open the shipment → Cancel Shipment. Do this even though they are invisible; do not leave phantom freight on a real customer's account.
+- **Never Simply Nursery.** They are live in the portal, they log in, and they would see it. Same for any other account with portal access.
+- A dispatch that succeeds is real regardless of account: it tenders freight, notifies a carrier, and on a prepaid account charges a card. Being on Haynes makes the BOL invisible, not the tender reversible.
+
+**History, so this is not re-litigated a third time:** on 2026-07-27 this was reversed to "no test writes on Haynes," on the reasoning that they are a real customer and "they never look at the portal" was an unsafe assumption. Reinstated 2026-07-30 by Felipe with the fact that assumption was missing — they have no portal access at all. If you are about to move this again, the question to answer is "can this account's users see it?", not "is this a real customer?"
 
 ---
 
