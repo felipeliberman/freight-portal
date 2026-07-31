@@ -831,6 +831,42 @@ const cases = [
     },
   },
 
+  // ── 42 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 42, name: 'stillToAsk surfaces the empty PO and special-instructions fields during booking only, and clears itself',
+    catches: 'the PO/reference and special-instructions asks are prose-only (system prompt item 3) while cargo insurance has a real code gate — and an unenforced instruction is the one that gets skipped. Live, the agent stopped asking. Two things must NOT happen while fixing it: the line must never appear during QUOTING (those questions are forbidden before a carrier is chosen) and it must never claim the question was not ASKED, since empty and unanswered are indistinguishable from form state and the stronger claim would push a re-ask.',
+    async run(h) {
+      const w = h.win;
+
+      // ── QUOTING: no booking panel → the line must be absent. Asking here is forbidden.
+      w.showQuoteForm({ originZip: '90660', destZip: '33511', weight: 250, pieces: 1 }, true);
+      await sleep(200);
+      A.ok(!/stillToAsk:/.test(w._liveStateBlock()), 'stillToAsk appeared during QUOTING, where these questions are forbidden');
+
+      // ── BOOKING with both fields empty → the line appears and names both.
+      w.showBookingPanel({ id: 'R1', name: 'JTS Express', total: 161, _name: 'JTS Express', _price: 161 },
+        { originZip: '90660', destZip: '33511', accessorials: [] });
+      await sleep(300);
+      if (!w.document.getElementById('bk-pu-ref')) { A.ok(false, 'setup: the booking panel did not render'); return; }
+      const ls1 = w._liveStateBlock();
+      A.ok(/stillToAsk:/.test(ls1), 'the agent is told nothing about the unasked booking questions: ' + ls1.slice(-300));
+      A.ok(/PO\/reference number and special instructions/.test(ls1), 'the line does not name both empty fields: ' + (ls1.match(/stillToAsk:.*/) || [''])[0]);
+      // It must state the FIELDS are empty, never that the question was not asked.
+      A.ok(/empty/.test(ls1) && !/not been asked|you have not asked|never asked/i.test(ls1), 'the line claims the question was not ASKED — that is not knowable from form state and would push a re-ask');
+      A.ok(/do NOT ask again/i.test(ls1), 'the line does not protect against re-asking something already answered');
+
+      // ── One filled → only the other is named.
+      w.document.getElementById('bk-pu-ref').value = 'PO-4471';
+      const ls2 = w._liveStateBlock();
+      A.ok(/stillToAsk:/.test(ls2), 'the line vanished while special instructions were still empty');
+      A.ok(!/PO\/reference/.test((ls2.match(/stillToAsk:.*/) || [''])[0]), 'a FILLED PO is still being reported as empty: ' + (ls2.match(/stillToAsk:.*/) || [''])[0]);
+
+      // ── BOTH filled → it clears ITSELF. Recomputed, so it cannot linger.
+      w.document.getElementById('bk-special-instructions').value = 'Call ahead, dock in the rear.';
+      A.ok(!/stillToAsk:/.test(w._liveStateBlock()), 'the line SURVIVED both fields being filled — stale steering would push the agent to re-ask');
+    },
+  },
+
   // ── 41 ───────────────────────────────────────────────────────────────────────
   {
     id: 41, name: 'one confirmation per save: when code speaks, the tool owns the turn and the agent does not say it again',
