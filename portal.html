@@ -2327,10 +2327,7 @@ function resetShipmentState(wipeConversation) {
     window._relockCarrier = null; window._lockDropped = null; // carrier-selection state travels with the lock
     window._shipCtxStale = true; // force one fresh history load after any reset
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
-    // KNOWN, ACCEPTED SEAM: a reset landing between a residential hold being issued and the
-    // customer's answer clears both flags, so a later addDeliveryServices:true falls through to a
-    // fresh guard run instead of the requote. The failure mode is a re-ask, never a silent dispatch.
-    window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null; window._rdiPending = null;
+    window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
@@ -7090,80 +7087,53 @@ function showShipmentSavedModal(bc) {
 
 
 
-// ── CANONICAL residential/liftgate classifier for the dispatch guard ─────────────────────────
-// ONE owner of the Geocodio call and the RSD/LFD read for EVERY dispatch path. checkRDIBeforeDispatch
-// (the two form dispatch buttons) renders its overlay from this verdict; _execDispatchShipment (chat)
-// turns the SAME verdict into a spoken tool result. Neither duplicates the lookup or the accessorial
-// logic — a second copy of this is exactly how a residential over-quote gets born.
-//
-// Deliberately does NOT write window._residentialStatus. checkRDIBeforeDispatch never did, and if it
-// started, the doGetRates under-quote guard (~20381) would silently force RSD onto a later rate pull
-// for a customer who had just chosen "dispatch as-is" — an accessorial added behind their back.
-//
-// FAILS OPEN ON EVERY BRANCH. already-flagged RSD / no street / fetch throws / non-ok status / empty
-// results array / missing zip4 field / residential not exactly true — all return residential:false,
-// and every caller treats residential:false as "proceed to dispatch". There is no branch on which a
-// Geocodio outage, a rejection, or a malformed body can hold or block a legitimate dispatch.
-// Returns { residential, hasRSD, hasLFD, needsRSD, needsLFD }.
-async function classifyDeliveryForDispatch(street, suite, city, state, zip, accessorials) {
-  const _acc = accessorials || [];
-  const out = {
-    residential: false,
-    hasRSD: _acc.some(a => /rsd|residential/i.test(a)),
-    hasLFD: _acc.some(a => /lfd|liftgate/i.test(a)),
-    needsRSD: false, needsLFD: false,
-  };
-  if (out.hasRSD || !street) return out;  // already flagged, or no street address to check
+async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
+  // Same residential/liftgate check as booking panel
+  const hasRSD = (accessorials||[]).some(a => /rsd|residential/i.test(a));
+  if (hasRSD || !consigneeStreet) { onProceed(); return; }  // skip geocodio if already flagged or no address to check
+  const fullAddr = [consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip].filter(Boolean).join(' ');
   try {
-    const fullAddr = [street, suite, city, state, zip].filter(Boolean).join(' ');
     const gUrl = 'https://geocodio-proxy.felipe-b80.workers.dev/v1.12/geocode?q=' + encodeURIComponent(fullAddr) + '&fields=zip4&limit=1';
     const gr = await fetch(gUrl);
-    if (!gr.ok) return out;
-    const gd = await gr.json();
-    const res0 = gd.results && gd.results[0];
-    if (!(res0 && res0.fields && res0.fields.zip4 && res0.fields.zip4.residential === true)) return out;
-  } catch(e) { return out; }  // geocodio unreachable / malformed — proceed
-  out.residential = true;
-  out.needsRSD = !out.hasRSD;  // always true here — hasRSD short-circuits above
-  out.needsLFD = !out.hasLFD;
-  return out;
-}
-
-async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
-  // OVERLAY surface — the two FORM dispatch buttons (7267/7548) only. Signature, markup, and both
-  // callbacks are unchanged; only the verdict now comes from the shared classifier above.
-  const _rdi = await classifyDeliveryForDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials);
-  // Not residential, already flagged, no street, or the lookup failed — identical proceed to before.
-  if (!_rdi.residential) { onProceed(); return; }
-  const hasRSD = _rdi.hasRSD, hasLFD = _rdi.hasLFD;
-  const warnOv = document.createElement('div');
-  warnOv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-  const warnBox = document.createElement('div');
-  warnBox.style.cssText = 'background:var(--card);border-radius:14px;padding:24px;max-width:360px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);';
-  let issuesHtml = '';
-  if (!hasRSD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-rsd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Required for home/apartment deliveries.</div></div></label>';
-  if (!hasLFD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-lfd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Most residential addresses need a liftgate.</div></div></label>';
-  warnBox.innerHTML =
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
-      '<div style="width:36px;height:36px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>' +
-      '<div style="font-size:14px;font-weight:700;color:var(--tx);">Residential Address Detected</div>' +
-    '</div>' +
-    '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">The delivery address appears to be residential. Missing accessorials may result in carrier surcharges.</div>' +
-    issuesHtml +
-    '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">' +
-      '<button id="rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>' +
-      '<button id="rdi-proceed" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Dispatch Anyway — I Understand</button>' +
-    '</div>';
-  warnOv.appendChild(warnBox);
-  document.body.appendChild(warnOv);
-  warnBox.querySelector('#rdi-proceed').onclick = () => { warnOv.remove(); onProceed(); };
-  warnBox.querySelector('#rdi-requote').onclick = () => {
-    const toAdd = [];
-    const cRsd = warnBox.querySelector('#rdi-chk-rsd'); if (cRsd && cRsd.checked) toAdd.push('RSD');
-    const cLfd = warnBox.querySelector('#rdi-chk-lfd'); if (cLfd && cLfd.checked) toAdd.push('LFD');
-    warnOv.remove();
-    if (onRequote) onRequote(toAdd);
-  };
+    if (gr.ok) {
+      const gd = await gr.json();
+      const res0 = gd.results && gd.results[0];
+      const isResidential = res0 && res0.fields && res0.fields.zip4 && res0.fields.zip4.residential === true;
+      if (isResidential) {
+        const hasLFD = (accessorials||[]).some(a => /lfd|liftgate/i.test(a));
+        const warnOv = document.createElement('div');
+        warnOv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+        const warnBox = document.createElement('div');
+        warnBox.style.cssText = 'background:var(--card);border-radius:14px;padding:24px;max-width:360px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);';
+        let issuesHtml = '';
+        if (!hasRSD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-rsd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Required for home/apartment deliveries.</div></div></label>';
+        if (!hasLFD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-lfd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Most residential addresses need a liftgate.</div></div></label>';
+        warnBox.innerHTML =
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
+            '<div style="width:36px;height:36px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>' +
+            '<div style="font-size:14px;font-weight:700;color:var(--tx);">Residential Address Detected</div>' +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">The delivery address appears to be residential. Missing accessorials may result in carrier surcharges.</div>' +
+          issuesHtml +
+          '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">' +
+            '<button id="rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>' +
+            '<button id="rdi-proceed" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Dispatch Anyway — I Understand</button>' +
+          '</div>';
+        warnOv.appendChild(warnBox);
+        document.body.appendChild(warnOv);
+        warnBox.querySelector('#rdi-proceed').onclick = () => { warnOv.remove(); onProceed(); };
+        warnBox.querySelector('#rdi-requote').onclick = () => {
+          const toAdd = [];
+          const cRsd = warnBox.querySelector('#rdi-chk-rsd'); if (cRsd && cRsd.checked) toAdd.push('RSD');
+          const cLfd = warnBox.querySelector('#rdi-chk-lfd'); if (cLfd && cLfd.checked) toAdd.push('LFD');
+          warnOv.remove();
+          if (onRequote) onRequote(toAdd);
+        };
+        return;
+      }
+    }
+  } catch(e) { /* geocodio failed silently — proceed */ }
+  onProceed();
 }
 
 // Reopen the FULL booking form pre-filled from a saved shipment so the customer can complete/edit
@@ -13831,46 +13801,18 @@ async function _execDispatchShipment(input) {
     if (window._dispatchingBOLId === BOLId)
       return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
 
-    // ── Residential (RDI) guard — CHAT path ───────────────────────────────────────────────────
-    // Same canonical verdict as the two form dispatch buttons (classifyDeliveryForDispatch — one
-    // Geocodio call, one RSD/LFD read, shared with checkRDIBeforeDispatch), but the chat path
-    // SPEAKS instead of raising a modal. 2c2cfef put the blocking overlay inside this tool call:
-    // its only two exits were "customer clicked", so while the modal sat on screen the agent turn
-    // was parked mid-tool-loop and the customer got a pop-up with zero words of explanation. A
-    // typed tool result has an exit that does not require a click, so the agent can explain and
-    // the customer answers in chat.
-    //
-    // Answering the hold: "add them" → dispatch_shipment again with addDeliveryServices:true (the
-    // branch below reopens the quote form exactly as the overlay's Update & Requote button does).
-    // "dispatch as-is" → dispatch_shipment again with nothing extra; _rdiAnsweredBOL is already
-    // set, so the guard is skipped and it goes straight through.
-    if (input.addDeliveryServices && window._rdiPending && window._rdiPending.BOLId === BOLId) {
-      // Same on-screen behavior as the form path (7549) and as the overlay's Update & Requote:
-      // reopen the quote form on THIS BOL with the chosen services applied. Consumed once.
-      const _rp = window._rdiPending; window._rdiPending = null;
-      try {
-        const _rdiShip = _rp.ship || {};
-        const _rdiCon = _rdiShip.consignee || {};
-        const _rdiShp = _rdiShip.shipper || {};
-        const _rdiOZ = _rdiShip.originZip || _rdiShip.originZipcode || _rdiShp.zipCode || _rdiShp.zipcode || '';
-        const _rdiDZ = _rdiShip.destinationZip || _rdiShip.destinationZipcode || _rdiCon.zipCode || _rdiCon.zipcode || '';
-        const _rdiPI = _rdiShip.pickupInformation || {};
-        const _rdiPD = _rdiPI.date || _rdiShip.estimatedPickupDate || '';
-        if (typeof requoteSavedShipment === 'function') requoteSavedShipment(_rdiShip, _rdiOZ, _rdiDZ, _rdiPD);
-        if (_rp.codes && _rp.codes.length && typeof applyRequoteAccessorials === 'function')
-          setTimeout(() => applyRequoteAccessorials(_rp.codes), 600);
-      } catch (e) { console.warn('[RDI] requote reopen failed:', e); }
-      return { ok: false, requoteRequested: true,
-        message: 'The shipment was NOT dispatched. The customer asked to add the delivery services, and the quote form is now open for this shipment with those services applied. Tell the customer you are refreshing the rate with the added services, call update_quote with getRates:true to pull fresh rates, then read_rates, and read the new rate back. Do NOT mention any address check, lookup, or verification. If a pickup date and window were already confirmed earlier in this conversation, carry them forward — do not re-ask. After the customer confirms the new rate and carrier, complete the booking on this same shipment and dispatch again.' };
-    }
+    // ── Residential (RDI) guard — chat-path parity with the two form dispatch buttons ─────────
+    // Calls the SAME canonical checkRDIBeforeDispatch (read-only reuse — the form paths are
+    // untouched). The geocoder speaks ONLY through the overlay, never through agent prose
+    // (PRODUCT RULE, 9a30185: chat never mentions residential/commercial classification).
     // Address + accessorials come from the saved BOL itself via GET /applet/v1/book/{BOLId} —
     // the same by-id read _preChargeInfo and the detail modal use (fetchBookingByBOL is keyed by
     // BOL NUMBER and 404s on a BOLId — live-diagnosed on BOL 160135752). One source of truth
-    // no matter which path wrote it. FAILS OPEN: a failed/404 BOL read, a Geocodio outage, or any
-    // throw dispatches exactly as before — the guard can never block a legitimate dispatch.
-    // Skipped on the prepaid chargeConfirmed second call and on a BOL already asked this session
-    // (_rdiAnsweredBOL, also set by the edit panel at 7285), so it is raised at most once per BOL.
-    if (!input.chargeConfirmed && window._rdiAnsweredBOL !== BOLId && typeof classifyDeliveryForDispatch === 'function') {
+    // no matter which path wrote it. FAILS OPEN: any error here, or a Geocodio outage,
+    // proceeds to dispatch exactly as before — the guard can never block a legitimate dispatch.
+    // Skipped on the prepaid chargeConfirmed second call and on a BOL already checked this
+    // session (_rdiAnsweredBOL), so the overlay never shows twice for one shipment.
+    if (!input.chargeConfirmed && window._rdiAnsweredBOL !== BOLId && typeof checkRDIBeforeDispatch === 'function') {
       let _rdiShip = null;
       try {
         const _rdiTk = await getToken();
@@ -13883,32 +13825,36 @@ async function _execDispatchShipment(input) {
       if (_rdiShip) {
         const _rdiCon = _rdiShip.consignee || {};
         const _rdiAcc = _rdiShip.accessorials || _rdiShip.accessorialsList || [];
-        let _rdi = { residential: false };
-        try {
-          _rdi = await classifyDeliveryForDispatch(
-            _rdiCon.address1 || _rdiCon.address || '',
-            _rdiCon.address2 || '',
-            _rdiCon.city || _rdiShip.destinationCity || '',
-            _rdiCon.state || _rdiShip.destinationState || '',
-            _rdiCon.zipCode || _rdiCon.zipcode || _rdiShip.destinationZip || _rdiShip.destinationZipcode || '',
-            _rdiAcc
-          );
-        } catch (e) { _rdi = { residential: false }; }  // belt-and-braces fail-open
-        // Set BEFORE the hold returns. If this sat below the return, the flag would never be
-        // written, the customer would be asked again on every dispatch attempt, and they could
-        // never dispatch the shipment at all — a hard block on live freight.
-        window._rdiAnsweredBOL = BOLId;
-        if (_rdi.residential) {
-          // Parcel carriers do not use liftgates — the same exception the form Save overlay applies
-          // (needsLFD_sb) and that the agent prompt's PARCEL EXCEPTION requires. Residential stands.
-          const _rdiParcel = (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.isParcel)
-            || (typeof isParcelRate === 'function' && isParcelRate({ carrierName: (window._lastBooked && window._lastBooked.carrier) || '' }));
-          const _codes = ['RSD'];
-          const _names = ['residential delivery'];
-          if (_rdi.needsLFD && !_rdiParcel) { _codes.push('LFD'); _names.push('liftgate delivery'); }
-          window._rdiPending = { BOLId: BOLId, codes: _codes, ship: _rdiShip };
-          return { ok: false, residentialHold: true, missingServices: _names,
-            message: 'The shipment was NOT dispatched — it is held for ONE question. Say this to the customer in plain broker English, in your own words, and nothing beyond it: you have NOT dispatched it yet (say this explicitly — the customer just asked you to dispatch, so leaving it implied reads as "done"), the delivery address looks like a residence, this shipment is not currently set up with ' + _names.join(' and ') + ', and when ' + (_names.length > 1 ? 'those are' : 'that is') + ' missing the carrier commonly bills the surcharge after the delivery. Then ask ONE question — add ' + (_names.length > 1 ? 'them' : 'it') + ' and refresh the rate, or dispatch as-is? Do NOT mention any address check, lookup, verification, database, or system, and do NOT describe how this was determined. Do NOT state, estimate, or imply any surcharge amount or percentage — you do not have one. Do NOT say anything about the address beyond the one sentence above. Use plain service names only, never a code. If the customer says add: call dispatch_shipment again with addDeliveryServices true. If the customer says dispatch as-is: call dispatch_shipment again with no extra fields and it will go straight through.' };
+        const _rdiChoice = await new Promise(res => {
+          try {
+            checkRDIBeforeDispatch(
+              _rdiCon.address1 || _rdiCon.address || '',
+              _rdiCon.address2 || '',
+              _rdiCon.city || _rdiShip.destinationCity || '',
+              _rdiCon.state || _rdiShip.destinationState || '',
+              _rdiCon.zipCode || _rdiCon.zipcode || _rdiShip.destinationZip || _rdiShip.destinationZipcode || '',
+              _rdiAcc,
+              () => res({ proceed: true }),
+              (toAdd) => res({ requote: toAdd || [] })
+            ).catch(() => res({ proceed: true }));
+          } catch (e) { res({ proceed: true }); }
+        });
+        window._rdiAnsweredBOL = BOLId; // checked (or answered) — never re-show for this BOL
+        if (_rdiChoice.requote) {
+          // Customer clicked Update & Requote on the overlay — same on-screen behavior as the
+          // form path (7549): reopen the quote form on THIS BOL with the chosen services applied.
+          try {
+            const _rdiShp = _rdiShip.shipper || {};
+            const _rdiOZ = _rdiShip.originZip || _rdiShip.originZipcode || _rdiShp.zipCode || _rdiShp.zipcode || '';
+            const _rdiDZ = _rdiShip.destinationZip || _rdiShip.destinationZipcode || _rdiCon.zipCode || _rdiCon.zipcode || '';
+            const _rdiPI = _rdiShip.pickupInformation || {};
+            const _rdiPD = _rdiPI.date || _rdiShip.estimatedPickupDate || '';
+            if (typeof requoteSavedShipment === 'function') requoteSavedShipment(_rdiShip, _rdiOZ, _rdiDZ, _rdiPD);
+            if (_rdiChoice.requote.length && typeof applyRequoteAccessorials === 'function')
+              setTimeout(() => applyRequoteAccessorials(_rdiChoice.requote), 600);
+          } catch (e) { console.warn('[RDI] requote reopen failed:', e); }
+          return { ok: false, requoteRequested: true,
+            message: 'The shipment was NOT dispatched. The customer chose on screen to add delivery services before dispatching, and the quote form is now open for this shipment with those services applied. Do NOT mention any address check, lookup, or classification — the customer made this choice themselves on screen. Tell the customer you are refreshing the rate with the added services, call update_quote with getRates:true to pull fresh rates, then read_rates, and read the new rate back. If a pickup date and window were already confirmed earlier in this conversation, carry them forward — do not re-ask. After the customer confirms the new rate and carrier, complete the booking on this same shipment and dispatch again.' };
         }
       }
     }
@@ -14171,7 +14117,7 @@ When the customer picks a carrier ("go with WARP," "book the cheapest," "lock in
    Ask in a natural, grouped way — not a rigid checklist. City/state/zip are already known from the quote, so you mainly need street address, name, contact, and phone for each end. Watch the panel fill as you go.
 3. ALWAYS ask for a PO/reference number and special instructions before you read back and book — don't skip it, and if the conversation branches (e.g. the customer corrects a contact name), come back to it. Ask: "Got a PO or reference number for this one? And anything the driver should know — call ahead, dock in the rear, etc.?" If they say they don't have a PO or have no special instructions, that's fine — note it and move on. But you must ASK and get an answer; never silently proceed to read-back without having asked. Pass referenceNumber and specialInstructions to book_shipment.
 3b. HAZMAT AT BOOKING — if formState shows the line item is hazmat, you MUST proactively ask the customer for the UN number and a 24-hour emergency contact name and phone BEFORE you read the booking back — do not wait for the customer to volunteer it. Pass these to update_booking as unNumber, emergencyContactName, and emergencyPhone. The hazmat class and packing group are looked up automatically from the UN number — never ask the customer for them. NEVER put the UN number or emergency contact in specialInstructions — they have dedicated fields. Include the UN number and emergency contact in the booking read-back.
-4. RESIDENTIAL CLASSIFICATION IS NEVER YOURS TO RAISE. The customer is asked ONCE, at quote intake, whether the delivery is a residence or a business — and their answer is final for the whole conversation. Never state, imply, or ask about an address "coming back" residential or commercial, never mention an address lookup, check, or verification, and never challenge, confirm, or second-guess the customer's stated answer at any phase — quoting, saving, or dispatching. THE ONE EXCEPTION IS A TOOL RESULT THAT HANDS YOU THE WORDS: when dispatch_shipment comes back with residentialHold:true, the system — not you — has held the shipment, and its message tells you exactly what to say. Relay that and only that: say plainly that you have not dispatched it yet, say the delivery address looks like a residence, name the missing services in plain words, note that carriers commonly bill the surcharge afterward when they are missing, and ask the single question it gives you. Even then, never mention a check, lookup, verification, or how it was determined, never state or estimate a surcharge amount, and never say anything about the address beyond what that message contains. You still never raise classification on your own initiative. If the customer THEMSELVES later says the delivery is a home or residence, treat that as their intake answer: add residential delivery (and offer liftgate for heavier LTL freight unless they decline), re-pull per the rule below, and say nothing about classification. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. If after adding residential delivery the parcel rate does not change, say: "Residential delivery was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
+4. RESIDENTIAL CLASSIFICATION IS NEVER YOURS TO RAISE. The customer is asked ONCE, at quote intake, whether the delivery is a residence or a business — and their answer is final for the whole conversation. Never state, imply, or ask about an address "coming back" residential or commercial, never mention an address lookup, check, or verification, and never challenge, confirm, or second-guess the customer's stated answer at any phase — quoting, saving, or dispatching. If the customer THEMSELVES later says the delivery is a home or residence, treat that as their intake answer: add residential delivery (and offer liftgate for heavier LTL freight unless they decline), re-pull per the rule below, and say nothing about classification. PARCEL EXCEPTION: if the chosen carrier is a small parcel service (FedEx Ground, UPS Ground, or rateType SMALL PACKAGE), skip the liftgate question entirely — parcel carriers do not use liftgates. If after adding residential delivery the parcel rate does not change, say: "Residential delivery was applied to the rate request. UPS Ground assesses residential at delivery, so it may not appear in the quoted rate." Do NOT say "the surcharge didn't apply." ACCESSORIAL RE-PULL RULE — applies to ALL carrier types including SMALL PACKAGE: any time the customer agrees to add an accessorial (RSD, LFD, or any other code) after rates have already been shown, you MUST re-pull rates before booking. Residential delivery is a surcharge on parcel rates exactly as it is on LTL — booking on the pre-accessorial rate guarantees a rebill. Correct sequence: call update_quote with addAccessorials (the new codes) AND getRates:true in a single call → await the pull → call read_rates to confirm the new pricing → read the new rate back → only then proceed to booking. Never present or book on a rate that was pulled before the current accessorial set was confirmed. Always use plain accessorial NAMES with customers — residential delivery, liftgate delivery (or pickup), limited access, inside delivery, appointment. NEVER say an internal code (RSD, LFD, LAO, IND, APD, INS) in a customer-facing message. Codes are only for tool calls.
 5. READ IT BACK before booking, with the panel already filled in front of them: "Booking WARP at $496, picking up [date] from [shipper address], delivering to [consignee address], reference [PO], instructions [x] — good to lock it in?" Make sure every field is in the panel via update_booking before you read back.
 
 PARTY DETAILS ARE WRITTEN, NEVER JUST ACKNOWLEDGED. When the customer provides shipper or consignee details in chat — names, addresses, contacts, phones, one side or both — replying with text alone is FORBIDDEN: you MUST call update_booking in that SAME turn with every field they provided, both parties when both are present. And NEVER claim a party detail is "on file," "already filled," "captured," or "saved" unless the CURRENT bookingState or formState snapshot shows that exact field non-empty — if the snapshot shows a field blank, it is blank, no matter what was said earlier in the conversation; the only way to make it true is to call update_booking with it now. If bookingState shows bookingInFlight true with panelRendered false, the booking still exists exactly as shown (carrier, price, and fields) — never say there is no booking, and never re-ask which carrier.
@@ -14712,7 +14658,7 @@ async function aiConverse(userText) {
             {
               name: 'dispatch_shipment',
               description: 'Dispatch a booked shipment to the carrier so pickup is scheduled. Call this after the customer confirms they want to dispatch (after booking). Uses the last booked shipment automatically. Returns the carrier pickup confirmation number and downloadable shipping documents (BOL, label).',
-              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' }, chargeConfirmed: { type: 'boolean', description: 'Prepaid (PRE) accounts only. Leave UNSET on your FIRST dispatch_shipment call — the tool returns needsChargeConfirm with the exact amount, brand, and last4 you must disclose to the customer. Only after you have stated that exact charge verbatim and the customer explicitly agrees, call again with chargeConfirmed:true to complete the charge and dispatch.' }, addDeliveryServices: { type: 'boolean', description: 'Set ONLY after a dispatch_shipment call came back with residentialHold:true and the customer answered that they want the missing delivery services added. Passing true reopens the quote form on that same shipment with the services applied so rates can be re-pulled — it does NOT dispatch. If the customer instead said to dispatch as-is, leave this unset and call dispatch_shipment again with no extra fields.' } } }
+              input_schema: { type: 'object', properties: { BOLId: { type: 'string', description: 'Optional BOLId; defaults to the last booked shipment' }, smallPackageHandling: { type: 'string', enum: ['SCHEDULE PICKUP', 'DROP TO CARRIER', 'PICKUP ALREADY SCHEDULED'], description: 'For parcel shipments only. Pass when the customer states their pickup method: "schedule a pickup" → SCHEDULE PICKUP, "I\'ll drop it off" / "dropping it off" → DROP TO CARRIER, "pickup is already scheduled" / "already set" → PICKUP ALREADY SCHEDULED. Omit if the customer has not stated a preference yet (a picker popup will appear and you should ask in chat too).' }, chargeConfirmed: { type: 'boolean', description: 'Prepaid (PRE) accounts only. Leave UNSET on your FIRST dispatch_shipment call — the tool returns needsChargeConfirm with the exact amount, brand, and last4 you must disclose to the customer. Only after you have stated that exact charge verbatim and the customer explicitly agrees, call again with chargeConfirmed:true to complete the charge and dispatch.' } } }
             },
             {
               name: 'save_shipment',
