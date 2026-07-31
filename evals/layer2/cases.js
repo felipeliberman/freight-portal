@@ -831,6 +831,103 @@ const cases = [
     },
   },
 
+  // ── 33 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 33, name: 'the requote-write pair has ONE writer and is cleared on EVERY completion path — a stale intent flag can never refuse a legitimate booking',
+    catches: 'new state on the write path is exactly how tonight\'s defects were born — globals with more than one writer and no staleness invariant. _requoteIntent fails CLOSED, so an intent flag left set after a reset, a save, or a create would turn the next legitimate booking into a refusal. That is a self-inflicted outage, not a guard.',
+    async run(h) {
+      const w = h.win;
+      const SHIP = { BOLId: 'BOLID-900', BOLNumber: '160000900', consignee: { zipCode: '90035' }, shipper: { zipCode: '90660' }, freightInfo: [{ qty: 1, weight: 10 }], accessorials: [], pickupInformation: { date: '2026-08-04' } };
+      h.routes.unshift({ match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'), reply: () => ({ status: 200, body: { data: { results: SHIP } } }) });
+
+      // ── ARM with an id: both halves of the pair set together.
+      w._setRequotePending('BOLID-900');
+      A.eq(w._requoteIntent, true, 'arming did not set the intent flag');
+      A.eq(w._requoteWriteBOL, 'BOLID-900', 'arming did not record which BOL');
+
+      // ── ARM with NO id: intent still arms. This is the whole point — the marker cannot.
+      w._setRequotePending('');
+      A.eq(w._requoteIntent, true, 'intent did not arm when the id was missing — the refusal it feeds would be fiction');
+      A.eq(w._requoteWriteBOL, null, 'a missing id must leave no marker');
+
+      // ── CLEARED BY resetShipmentState (new chat / fresh quote).
+      w._setRequotePending('BOLID-900');
+      w.resetShipmentState(false);
+      A.eq(w._requoteIntent, false, 'resetShipmentState left the intent flag SET — the next fresh booking would be refused');
+      A.eq(w._requoteWriteBOL, null, 'resetShipmentState left the marker set');
+
+      // ── CLEARED BY a successful save (submitBookingOnly's write-success chokepoint). Driven the
+      // way the real flow does it — requoteSavedShipment arms, then the booked-shipment path writes
+      // — because a save that never completes would clear nothing and prove nothing.
+      h.routes.unshift({ match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'), reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }) });
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._rdiAnsweredBOL = 'BOLID-778899';
+      await w._execRequoteShipment({ bol_id: '160135778' });
+      await sleep(900);
+      A.eq(w._requoteIntent, true, 'setup: requoteSavedShipment did not arm the pending state');
+      w._bookingPanelOpen = true;
+      h.reset();
+      await w._execBookShipment({});
+      await sleep(300);
+      A.ok(h.requests.some(q => /\/applet\/v1\/book\//.test(q.url) && q.method === 'PUT'), 'setup: the save never completed, so clearing proves nothing');
+      A.eq(w._requoteIntent, false, 'a successful save left the intent flag SET — every later booking in this chat would be refused');
+      A.eq(w._requoteWriteBOL, null, 'a successful save left the marker set');
+
+      // ── CLEARED BY a create (a fresh POST supersedes any pending requote).
+      w._setRequotePending('BOLID-900');
+      w._clearRequotePending();
+      A.eq(w._requoteIntent, false, 'the clear writer did not clear intent');
+
+      // ── ONE WRITER, asserted at source: nothing outside the two helpers assigns either global.
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      const setter = src.slice(src.indexOf('function _setRequotePending'), src.indexOf('function requoteSavedShipment'));
+      const outside = src.split('function _setRequotePending')[0] + src.split('function requoteSavedShipment')[1];
+      // (?!=) so an equality COMPARISON (=== / ==) is not counted as an assignment — the same
+      // backtracking/first-char trap that made an earlier source assertion report false positives.
+      const strayIntent = (outside.match(/window\._requoteIntent\s*=(?!=)/g) || []).length;
+      const strayMarker = (outside.match(/window\._requoteWriteBOL\s*=(?!=)/g) || []).length;
+      A.eq(strayIntent, 0, 'window._requoteIntent is assigned outside the one writer (' + strayIntent + ' site(s)) — the pair can drift');
+      A.eq(strayMarker, 0, 'window._requoteWriteBOL is assigned outside the one writer (' + strayMarker + ' site(s)) — the pair can drift');
+      A.ok(/_requoteIntent\s*=\s*true/.test(setter) && /_requoteWriteBOL\s*=/.test(setter), 'the setter no longer writes both halves together');
+    },
+  },
+
+  // ── 34 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 34, name: 'a save meant to UPDATE refuses when it has no target instead of POSTing a duplicate, and both price guards ASK rather than promise',
+    catches: 'two silent failures. bookShipment picks PUT vs POST purely on editBolId, so a lost target became a CREATE — a second BOL for freight that already had one (live: 160135790/160135791). And both price-guard messages promised an action nothing performed — "Let me put the carrier back on...", "Let me get the shipment updated..." — so the customer said "well?" and got the identical copy again. Promise-without-action in FIXED COPY is worse than the agent doing it, because the copy is the part that is supposed to be trustworthy.',
+    async run(h) {
+      const w = h.win;
+
+      // ── PART 1: neither price guard may promise an action the system does not perform.
+      const stale = w._rateStaleMessage(), div = w._rateDivergedMessage();
+      [['stale', stale], ['divergence', div]].forEach(([name, msg]) => {
+        A.ok(/haven't dispatched this yet/i.test(msg), name + ' copy no longer says it was not dispatched: ' + msg);
+        A.ok(!/\b(let me|i'll go ahead|i will now)\b[^.?!]*\b(update|put the carrier|get the shipment)\b/i.test(msg),
+          name + ' copy still PROMISES an action nothing performs: ' + msg);
+        A.ok(/\?\s*$/.test(msg.trim()) || /\?/.test(msg), name + ' copy does not ask the customer anything — it dead-ends: ' + msg);
+        A.ok(!/[$€£]|\d/.test(msg), name + ' copy leaks a raw number: ' + msg);
+      });
+      // ── HALF A: intent armed, no edit target → refuse, write NOTHING.
+      w._setRequotePending('');            // the no-id case: marker null, intent true
+      w._editingBOLId = null;
+      h.reset();
+      const r = await w._execSaveShipment({});
+      await sleep(200);
+      A.ok(r && r.ok === false, 'the save did not fail closed: ' + JSON.stringify(r).slice(0, 200));
+      const posts = h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST');
+      const puts = h.requests.filter(q => /\/applet\/v1\/book\//.test(q.url) && q.method === 'PUT');
+      A.eq(posts.length, 0, 'a DUPLICATE BOL was created despite having no edit target: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.eq(puts.length, 0, 'a PUT was issued with no target');
+      const said = h.bots().find(t => /won't create a second shipment/.test(t));
+      A.ok(said, 'the refusal was silent — the customer saw nothing: ' + JSON.stringify(h.bots()));
+      A.ok(!/\b(BOLId|_requoteWriteBOL|_editingBOLId|PUT|POST|primus)\b/i.test(said), 'the refusal copy leaks an internal name: ' + said);
+      // The pending state SURVIVES a refusal, so retrying after the race resolves still works.
+      A.eq(w._requoteIntent, true, 'the refusal cleared the pending intent — a legitimate retry would then POST a duplicate');
+
+    },
+  },
+
   // ── 32 ───────────────────────────────────────────────────────────────────────
   {
     id: 32, name: 'every price crossing into the model carries an exact two-decimal priceStr, and the numeric price survives for the guards',

@@ -2331,7 +2331,7 @@ function resetShipmentState(wipeConversation) {
     // customer's answer clears both flags, so a later addDeliveryServices:true falls through to a
     // fresh guard run instead of the requote. The failure mode is a re-ask, never a silent dispatch.
     window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null; window._rdiPending = null;
-    window._requoteContext = null; window._requoteWriteBOL = null;
+    window._requoteContext = null; _clearRequotePending();
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
     window._quoteFormOpen = false;
@@ -7096,7 +7096,7 @@ function showShipmentSavedModal(bc) {
 // the two figures in play are precisely the ones we do not trust to agree, so quoting either at the
 // customer would be asserting a number the system cannot stand behind.
 function _rateDivergedMessage() {
-  return "I haven't dispatched this yet. The rate saved on this shipment doesn't match the one I just quoted you, and I won't send it to the carrier at a price you didn't agree to. Let me get the shipment updated to the quoted rate first, then we can dispatch.";
+  return "I haven't dispatched this yet. The rate saved on this shipment doesn't match the one I just quoted you, and I won't send it to the carrier at a price you didn't agree to. Want me to update the shipment to the rate I just quoted, and read it back to you before anything goes out?";
 }
 
 // ── Stale-selection copy — ONE definition, same never-surface rules as the two holds above ──────
@@ -7104,7 +7104,7 @@ function _rateDivergedMessage() {
 // represent anything the customer agreed to, so naming a figure would assert exactly the thing in
 // doubt. Says what happened, that nothing went out, and what happens next.
 function _rateStaleMessage() {
-  return "I haven't dispatched this yet. The rates were refreshed after this shipment was set up, so what's on it isn't the pricing I just went over with you — and I won't send it to the carrier at a price you didn't agree to. Let me put the carrier back on at the current rates and update the shipment, then we can dispatch.";
+  return "I haven't dispatched this yet. The rates were refreshed after this shipment was set up, so what's on it isn't the pricing I just went over with you — and I won't send it to the carrier at a price you didn't agree to. Which carrier would you like from the current rates? I'll update the shipment and read you the new price before anything goes out.";
 }
 
 // ── CANONICAL residential/liftgate classifier for the dispatch guard ─────────────────────────
@@ -7826,6 +7826,26 @@ function fmtDate(d) {
 
 
 
+// ── THE ONE WRITER of the requote-write pair — nothing else may assign either global ──────────
+// Two globals, one fact, and they must never disagree:
+//   _requoteWriteBOL — WHICH BOL a pending requote must be written to (null when unknown)
+//   _requoteIntent   — WHETHER a requote is pending a write at all
+// The second exists because the first cannot answer the question that matters. Both are derived
+// from the same s.BOLId, so a shipment record that omits that key takes out BOTH — which is exactly
+// how BOL 160135790 was duplicated (4510640). A refusal keyed only on _requoteWriteBOL would be
+// fiction: in the very failure it is meant to catch, that global is null. _requoteIntent is set
+// unconditionally, so "this save is meant to UPDATE something" survives even when the id does not.
+// They move together through these two functions ONLY. Tonight's root cause was globals with more
+// than one writer and no staleness invariant; this pair gets one writer by construction.
+function _setRequotePending(bolId) {
+  window._requoteIntent = true;
+  window._requoteWriteBOL = bolId || null;
+}
+function _clearRequotePending() {
+  window._requoteIntent = false;
+  window._requoteWriteBOL = null;
+}
+
 function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   s = s || {};
   // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
@@ -7837,7 +7857,16 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   // tool all call it. Cleared ONLY by a successful write to this BOL (submitBookingOnly /
   // _execBookShipment) and by resetShipmentState.
   // Read by the duplicate-booking guard so a requote is written instead of being swallowed.
-  window._requoteWriteBOL = (s.BOLId || s.bolId || '') || null;
+  var _rqId = s.BOLId || s.bolId || '';
+  if (!_rqId) {
+    // HALF B of the loud-fail. Silence here is what produced a duplicate BOL: with no id the
+    // marker never arms AND _requoteOverrides skips setEditingBOLId, so the eventual save
+    // degrades from PUT to POST and mints a second shipment for the same freight. The intent
+    // flag still arms below, so that save now REFUSES instead of duplicating.
+    console.error('[FP] requote armed with NO BOL id — the shipment record carried neither BOLId nor bolId. '
+      + 'Any save will REFUSE rather than create a duplicate. shipment keys:', Object.keys(s || {}).join(','));
+  }
+  _setRequotePending(_rqId);
   const accCodes = accessorialSet(s.accessorials||s.accessorialsList||[]);
   const freightItems = (s.freightInfo||s.lineItems||s.items||[]);
   const editShipData = {
@@ -10989,6 +11018,24 @@ async function submitBookingOnly(opts) {
     // rateId RULING: required to CREATE (POST) — a create with no priced rate would ask the TMS for
     // an unpriced BOL. Optional on an EDIT (PUT), where the BOL already carries its rate; there the
     // rateId/quoteNumber keys are OMITTED from the payload rather than sent as null.
+    // HALF A of the loud-fail. bookShipment decides PUT vs POST purely on editBolId, so a missing
+    // target silently becomes a CREATE — a second BOL for freight that already has one, dispatchable
+    // and invoiceable on its own. That is not a save failing; it is a save succeeding at the wrong
+    // thing, which is the silent-omission pattern behind every defect found tonight.
+    // Keyed on _requoteIntent, NOT _requoteWriteBOL: the id and the marker are derived from the same
+    // field, so in the failure this exists to catch the marker is null too. Intent survives.
+    // Fails CLOSED and writes nothing. Placed BEFORE the no-rate check on purpose: with no target, "pick a carrier before saving" is the wrong story — it sends the customer down a path that still ends in a duplicate. Note this also catches a real race — _requoteOverrides calls
+    // setEditingBOLId(...).then(...) WITHOUT awaiting it, so a fast Save click can land before the
+    // target resolves. The pending state is deliberately NOT cleared here, so retrying after the
+    // race resolves succeeds normally.
+    if (window._requoteIntent && !window._editingBOLId) {
+      removeTyping();
+      if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
+      const _rqMsg = "I couldn't update your existing shipment — I've lost the link back to it, and I won't create a second shipment for the same freight. Nothing was saved. Open it from My Shipments and start the requote again, or email support@freightandlogistics.ai and the team will sort it.";
+      console.error('[FP] SAVE REFUSED — a requote is pending a write but there is no edit target; refusing rather than POSTing a duplicate BOL. _requoteWriteBOL:', window._requoteWriteBOL);
+      appendMessage('bot', _rqMsg);
+      return { ok: false, error: { code: 'REQUOTE_NO_TARGET', kind: 'REQUOTE_NO_TARGET', message: _rqMsg } };
+    }
     if (!rateId && !window._editingBOLId) {
       removeTyping();
       if (_savBtn) { _savBtn.textContent = 'Save Shipment'; _savBtn.disabled = false; }
@@ -11062,7 +11109,7 @@ async function submitBookingOnly(opts) {
     // The requote (if any) is now written to this BOL — clear the marker and note that _lastBooked
     // above has just been refreshed to the NEW price, which is what stands the divergence backstop
     // down. This is the write-success chokepoint for BOTH the form panel's Save and _execSaveShipment.
-    if (window._requoteWriteBOL && (!BOLId || window._requoteWriteBOL === BOLId)) window._requoteWriteBOL = null;
+    if (window._requoteWriteBOL && (!BOLId || window._requoteWriteBOL === BOLId)) _clearRequotePending();
     // Show save-confirmed modal
     if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
@@ -14012,7 +14059,7 @@ async function _execBookShipment(input) {
     // Stash for the dispatch step
     window._shipCtxStale = true; // a shipment was written — the agent's cached history is stale
     window._lastBooked = { BOLId: BOLId, BOLNumber: BOLNumber, carrier: carrierName, price: price, dispatched: false, isParcel: typeof isParcelRate === 'function' && isParcelRate(rate) };
-    window._requoteWriteBOL = null; // a create supersedes any pending requote marker
+    _clearRequotePending(); // a create supersedes any pending requote marker
     window._bookingLock = null; // booking complete — release the frozen rate
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
