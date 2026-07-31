@@ -2327,7 +2327,7 @@ function resetShipmentState(wipeConversation) {
     window._relockCarrier = null; window._lockDropped = null; // carrier-selection state travels with the lock
     window._shipCtxStale = true; // force one fresh history load after any reset
     window._resWarnShown = false; window._editingBOLId = null; window._ratePullInFlight = false; window._dispatchingBOLId = null;
-    window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null; window._rdiAnsweredBOL = null;
+    window._residentialStatus = null; window._bookingPanelOpen = false; window._bookingPanelContainer = null;
     window._requoteContext = null;
     window._smartPasteBookingData = null;
     window._mobilePendingQuoteInput = null;
@@ -13799,55 +13799,6 @@ async function _execDispatchShipment(input) {
       return { ok: true, alreadyDispatched: true, message: 'This shipment is already dispatched. Check My Shipments for your shipping documents.' };
     if (window._dispatchingBOLId === BOLId)
       return { ok: true, dispatchInFlight: true, message: 'Dispatch is already in progress — just a moment.' };
-
-    // ── Residential (RDI) guard — chat-path parity with the two form dispatch buttons ─────────
-    // Calls the SAME canonical checkRDIBeforeDispatch (read-only reuse — the form paths are
-    // untouched). The geocoder speaks ONLY through the overlay, never through agent prose
-    // (PRODUCT RULE, 9a30185: chat never mentions residential/commercial classification).
-    // Address + accessorials come from the saved BOL itself (fetchBookingByBOL) — the one source
-    // of truth no matter which path wrote it. FAILS OPEN: any error here, or a Geocodio outage,
-    // proceeds to dispatch exactly as before — the guard can never block a legitimate dispatch.
-    // Skipped on the prepaid chargeConfirmed second call and on a BOL already checked this
-    // session (_rdiAnsweredBOL), so the overlay never shows twice for one shipment.
-    if (!input.chargeConfirmed && window._rdiAnsweredBOL !== BOLId && typeof checkRDIBeforeDispatch === 'function') {
-      let _rdiShip = null;
-      try { _rdiShip = await fetchBookingByBOL(BOLId); } catch (e) {}
-      if (_rdiShip) {
-        const _rdiCon = _rdiShip.consignee || {};
-        const _rdiAcc = _rdiShip.accessorials || _rdiShip.accessorialsList || [];
-        const _rdiChoice = await new Promise(res => {
-          try {
-            checkRDIBeforeDispatch(
-              _rdiCon.address1 || _rdiCon.address || '',
-              _rdiCon.address2 || '',
-              _rdiCon.city || _rdiShip.destinationCity || '',
-              _rdiCon.state || _rdiShip.destinationState || '',
-              _rdiCon.zipCode || _rdiCon.zipcode || _rdiShip.destinationZip || _rdiShip.destinationZipcode || '',
-              _rdiAcc,
-              () => res({ proceed: true }),
-              (toAdd) => res({ requote: toAdd || [] })
-            ).catch(() => res({ proceed: true }));
-          } catch (e) { res({ proceed: true }); }
-        });
-        window._rdiAnsweredBOL = BOLId; // checked (or answered) — never re-show for this BOL
-        if (_rdiChoice.requote) {
-          // Customer clicked Update & Requote on the overlay — same on-screen behavior as the
-          // form path (7549): reopen the quote form on THIS BOL with the chosen services applied.
-          try {
-            const _rdiShp = _rdiShip.shipper || {};
-            const _rdiOZ = _rdiShip.originZip || _rdiShip.originZipcode || _rdiShp.zipCode || _rdiShp.zipcode || '';
-            const _rdiDZ = _rdiShip.destinationZip || _rdiShip.destinationZipcode || _rdiCon.zipCode || _rdiCon.zipcode || '';
-            const _rdiPI = _rdiShip.pickupInformation || {};
-            const _rdiPD = _rdiPI.date || _rdiShip.estimatedPickupDate || '';
-            if (typeof requoteSavedShipment === 'function') requoteSavedShipment(_rdiShip, _rdiOZ, _rdiDZ, _rdiPD);
-            if (_rdiChoice.requote.length && typeof applyRequoteAccessorials === 'function')
-              setTimeout(() => applyRequoteAccessorials(_rdiChoice.requote), 600);
-          } catch (e) { console.warn('[RDI] requote reopen failed:', e); }
-          return { ok: false, requoteRequested: true,
-            message: 'The shipment was NOT dispatched. The customer chose on screen to add delivery services before dispatching, and the quote form is now open for this shipment with those services applied. Do NOT mention any address check, lookup, or classification — the customer made this choice themselves on screen. Tell the customer you are refreshing the rate with the added services, call update_quote with getRates:true to pull fresh rates, then read_rates, and read the new rate back. If a pickup date and window were already confirmed earlier in this conversation, carry them forward — do not re-ask. After the customer confirms the new rate and carrier, complete the booking on this same shipment and dispatch again.' };
-        }
-      }
-    }
 
     const _lb = window._lastBooked || {};
     const _isParcel = _lb.isParcel || (typeof isParcelRate === 'function' && isParcelRate({ carrierName: _lb.carrier || '' }));
