@@ -1743,6 +1743,128 @@ const cases = [
       A.ok(h.bots().some(t => /Saved as BOL 160042042/i.test(t)), 'the explicit save produced no confirmation: ' + JSON.stringify(h.bots()));
     },
   },
+
+  // ── 44 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 44, name: 'a completed book_shipment says SAVED, in the canonical words, from code — never "Booked", never an unprompted dispatch offer',
+    catches: 'live 2026-07-31, BOL 160135825. The customer answered the draft-save question, the agent reached for book_shipment instead of save_shipment, and _execBookShipment wrote the BOL while rendering NOTHING — so the agent composed the sentence itself: "Booked — BOL 160135825, TForce Freight at $207.22, picking up August 3rd. Want me to dispatch it now and get your shipping docs?" Two defects: "Booked" tells a customer their freight is moving when nothing has gone to the carrier, and it volunteers DISPATCH — the irreversible write — one beat after a save nobody asked to dispatch. Both came out of that tool\'s own result string ("Shipment booked and set up in our system, ready to dispatch"). a37ea40 closed this on save_shipment only; book_shipment performs the same class of write and bypassed it. NOTE THE ASSERTION LAYER: this reads the RENDERED transcript, not the return value — R4 asserts _execSaveShipment\'s returned message and never sees what reached chat, which is exactly why it stayed green while the customer read "Booked".',
+    async run(h) {
+      const w = h.win;
+      const CANON = w._savedConfirmMessage('160135825');
+      const bookPosts = () => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length;
+
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+        reply: () => ({ status: 200, body: { data: { results: [{ BOLId: 'B825', BOLNumber: '160135825' }] } } }),
+      });
+      w._lastRatesRaw = [{ id: 'R1', name: 'TForce Freight', total: 207.22 }];
+      w.selectRate(w._lastRatesRaw[0], { shipment: { originZip: '90660', destinationZip: '90035' }, list: w._lastRatesRaw, open: false, source: 'test' });
+      w.showBookingPanel({ id: 'R1', name: 'TForce Freight', total: 207.22, _name: 'TForce Freight', _price: 207.22 },
+        { originZip: '90660', destZip: '90035', accessorials: [] });
+      await sleep(300);
+      const set = (id, v) => { const e = w.document.getElementById(id); if (e) e.value = v; };
+      ['bk-pu-name:Michaels Furniture', 'bk-pu-street:7240 Crider Ave', 'bk-pu-city:Pico Rivera', 'bk-pu-state:CA',
+       'bk-pu-zip:90660', 'bk-pu-contact:Jo', 'bk-pu-phone:5625550100', 'bk-dl-name:Dana Whitfield',
+       'bk-dl-street:1145 S Clark Dr', 'bk-dl-city:Los Angeles', 'bk-dl-state:CA', 'bk-dl-zip:90035',
+       'bk-dl-contact:Dana', 'bk-dl-phone:3105550101'].forEach(p => { const i = p.indexOf(':'); set(p.slice(0, i), p.slice(i + 1)); });
+      w._bookingPanelContainer = w._bookingPanelContainer || w.document.getElementById('right-panel');
+
+      h.reset();
+      const r = await w._execBookShipment({});
+      await sleep(400);
+      A.ok(r && r.ok === true, 'setup: the book did not succeed: ' + JSON.stringify(r).slice(0, 220));
+      A.eq(bookPosts(), 1, 'setup: no BOL was actually written, so this proves nothing about a completed save');
+
+      // ── THE RENDERED TRANSCRIPT — what the customer actually read.
+      A.eq(h.bots().filter(t => t === CANON).length, 1, 'the canonical save confirmation was not rendered from code exactly once: ' + JSON.stringify(h.bots()));
+      A.ok(!h.bots().some(t => /\bbooked\b/i.test(t)), 'the customer was told "booked" for a shipment that has NOT gone to the carrier: ' + JSON.stringify(h.bots()));
+      A.ok(h.bots().some(t => /nothing has gone to the carrier/i.test(t)), 'nothing told the customer the shipment has not gone to the carrier: ' + JSON.stringify(h.bots()));
+      // Bug 2 — no unsolicited offer of the irreversible write.
+      A.ok(!h.bots().some(t => /want me to dispatch|dispatch it now|shall i dispatch|ready to dispatch/i.test(t)),
+        'a dispatch offer followed a save the customer never asked to dispatch: ' + JSON.stringify(h.bots()));
+
+      // ── THE TURN ENDS, so the agent gets no completion to say it again in its own words.
+      A.ok(r._turnHandled === true, 'the book did not claim the turn — the agent is free to restate it as "Booked"');
+      A.ok(r.saveConfirmed === true, 'the result does not mark itself as already-confirmed');
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      A.ok(/result\.saveConfirmed/.test(src), 'saveConfirmed is not in the _turnHandled allow-list — the flag would be set but never honoured');
+      // The tool message may still be read on paths that do not end the turn; it must not reintroduce either defect.
+      A.ok(!/\bbooked\b/i.test(String(r.message || '')), 'the tool message still says "booked": ' + r.message);
+      A.ok(!/ready to dispatch/i.test(String(r.message || '')), 'the tool message still volunteers dispatch: ' + r.message);
+
+      // ── Fields layer-2 787/1250/1351/1396 read must survive the change.
+      A.eq(r.priceStr, '$207.22', 'the exact two-decimal priceStr was lost: ' + r.priceStr);
+      A.eq(r.BOLNumber, '160135825', 'the backend BOL number was lost');
+      A.eq(typeof r.price, 'number', 'the numeric price was lost');
+      A.ok(r.carrier, 'the carrier was lost');
+    },
+  },
+
+  // ── 45 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 45, name: 'ONE definition of the save sentence: both write routes render the identical words, and a37ea40 still holds in front of them',
+    catches: 'the split-brain that produced the defect in the first place — book_shipment and save_shipment each describing the same write in their own words, one saying "Saved ... nothing has gone to the carrier", the other "Booked ... ready to dispatch". A per-route copy is how the two drifted. Also guards the phrasing that exposed it: the consent question answered with bare "save", which is outside the affirmative list, so it reaches the agent and the agent may pick EITHER tool — the customer must read the same sentence whichever it picks.',
+    async run(h) {
+      const w = h.win;
+      const bookPosts = () => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST');
+
+      // ── ONE SOURCE. Both routes render the string this function returns, byte for byte.
+      const CANON = w._savedConfirmMessage('160042042');
+      A.ok(/^Saved as BOL 160042042 — /.test(CANON), 'the canonical sentence changed shape: ' + CANON);
+      // It must still satisfy every R4 rule, since R4 governs these exact words.
+      A.ok(/160042042/.test(CANON), 'the canonical sentence does not name the BOL: ' + CANON);
+      A.ok(/tell me when|say the word|whenever you'?re ready/i.test(CANON), 'the canonical sentence no longer invites dispatch in chat: ' + CANON);
+      A.ok(!/come back|go to my shipments|open it there|hit ready to dispatch/i.test(CANON), 'the canonical sentence hands the customer off: ' + CANON);
+      A.ok(/nothing has gone to the carrier/i.test(CANON), 'the canonical sentence no longer says the shipment has not gone out: ' + CANON);
+      A.ok(!/\b(?:has been|was|is) dispatched\b|\bon its way\b|\bpicked up\b|\bbooked\b/i.test(CANON), 'the canonical sentence implies the shipment is moving: ' + CANON);
+      A.ok(!/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(CANON), 'the canonical sentence carries a phone number: ' + CANON);
+
+      // ── a37ea40 REGRESSION: an ambiguous save still asks and still writes nothing.
+      // The ask is driven with "save quote for now" rather than the bare "save" from the live
+      // transcript: bare "save" dead-ends before the tool dispatch in this harness on unmodified
+      // HEAD too (same pre-existing artifact as "save shipment", noted in a37ea40). The predicate is
+      // asserted directly just below, so the phrasing that exposed the defect is still covered.
+      await openBookingReady(h);
+      h.reset();
+      w.appendMessage('user', 'save');
+      A.eq(w._draftSaveVerdict(), 'ask', 'bare "save" is no longer an ambiguous save request — the live phrasing would write silently');
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save quote for now');
+      await w.handleInput('save quote for now');
+      await sleep(400);
+      A.eq(bookPosts().length, 0, 'an ambiguous save wrote a BOL before any affirmative — a37ea40 regressed');
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the consent question is not pending');
+
+      // ── The save_shipment route renders exactly the canonical sentence.
+      h.reset();
+      w.appendMessage('user', 'yes');
+      await w.handleInput('yes');
+      await sleep(600);
+      const viaSave = h.bots().filter(t => /^Saved as BOL/.test(t));
+      A.eq(viaSave.length, 1, 'the save_shipment route did not render one canonical confirmation: ' + JSON.stringify(h.bots()));
+      A.eq(viaSave[0], w._savedConfirmMessage('160042042'), 'the save_shipment route no longer uses the one definition: ' + viaSave[0]);
+      A.ok(!h.bots().some(t => /\bbooked\b/i.test(t)), 'the save route said "booked": ' + JSON.stringify(h.bots()));
+
+      // ── And the book_shipment route renders the SAME sentence for the SAME BOL. Same words, or the
+      // two routes are describing one write differently again — which is the whole defect.
+      await openBookingReady(h);
+      // A DIFFERENT shipment, not a second write on the same one: _lastBooked still holds the BOL the
+      // save route just created, and the duplicate-booking guard would correctly answer alreadyBooked
+      // (no write, nothing rendered) instead of exercising the success path being compared here.
+      w._lastBooked = null;
+      h.reset();
+      w.appendMessage('user', 'save');
+      const rb = await w._execBookShipment({});
+      await sleep(400);
+      A.ok(rb && rb.ok === true, 'setup: the book route did not succeed: ' + JSON.stringify(rb).slice(0, 200));
+      const viaBook = h.bots().filter(t => /^Saved as BOL/.test(t));
+      A.eq(viaBook.length, 1, 'the book_shipment route did not render one canonical confirmation: ' + JSON.stringify(h.bots()));
+      A.eq(viaBook[0], viaSave[0], 'the two write routes describe the SAME save in DIFFERENT words:\n  save: ' + viaSave[0] + '\n  book: ' + viaBook[0]);
+      A.ok(!h.bots().some(t => /want me to dispatch|dispatch it now|ready to dispatch/i.test(t)),
+        'the book route offered dispatch unprompted: ' + JSON.stringify(h.bots()));
+    },
+  },
 ];
 
 module.exports = { cases };

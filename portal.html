@@ -7267,6 +7267,29 @@ function _rdiHoldMessage(names) {
     + them + ' and refresh the rate, or dispatch as-is?';
 }
 
+// ── THE save confirmation — ONE definition for EVERY route that completes a save ────────────────
+// Live 2026-07-31, BOL 160135825: the customer answered the draft-save question, the agent reached
+// for book_shipment instead of save_shipment, and _execBookShipment wrote the BOL and rendered
+// NOTHING — so the agent composed the sentence itself: "Booked — BOL 160135825, TForce Freight at
+// $207.22, picking up August 3rd. Want me to dispatch it now and get your shipping docs?"
+// Two defects in one line. "Booked" tells a customer their freight is moving when nothing has gone
+// to the carrier — the worst failure in this product. And it volunteers DISPATCH, the irreversible
+// write, one beat after a save nobody asked to dispatch. Both came from that tool's own result
+// string ("Shipment booked and set up in our system, ready to dispatch") — the agent was relaying
+// its instructions faithfully; the instructions were wrong.
+//
+// So the sentence lives HERE, once, and every save route renders it from code and ends the turn.
+// A per-route copy is how "Booked" and "Saved" came to describe the same write: one truth, one
+// owner. WORDING IS THE CONTRACT ASSERTED BY ACCEPTANCE STEP R4 — it names the BOL, carries no
+// phone number, says explicitly that nothing has gone to the carrier, and invites dispatch in chat
+// rather than sending the customer elsewhere. Read the rationale on R4 in
+// evals/flows/acceptance.js before changing a word of it.
+function _savedConfirmMessage(BOLNumber) {
+  return BOLNumber
+    ? ('Saved as BOL ' + BOLNumber + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.')
+    : 'Saved — nothing has gone to the carrier yet. Tell me when you want it dispatched.';
+}
+
 // ── THE draft-save consent copy — ONE definition, rendered by code, never composed by the agent ──
 // Live: with the booking panel open a customer typed "save quote for now" and the chat ran the
 // SHIPMENT save (submitBookingOnly → a real BOL under My Shipments, "Saved"). They meant Saved
@@ -11343,11 +11366,10 @@ async function submitBookingOnly(opts) {
       // Wording is the contract asserted by acceptance step R4, CHANGED DELIBERATELY 2026-07-31:
       // the confirmation now invites dispatch in CHAT instead of sending the customer to My
       // Shipments. It still names the BOL, still carries no phone number, and says explicitly that
-      // nothing has gone to the carrier — the shipment is saved, not tendered. See the rationale on
-      // R4 in evals/flows/acceptance.js before changing any of this.
-      appendMessage('bot', BOLNumber
-        ? ('Saved as BOL ' + BOLNumber + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.')
-        : 'Saved — nothing has gone to the carrier yet. Tell me when you want it dispatched.');
+      // nothing has gone to the carrier — the shipment is saved, not tendered. The sentence itself
+      // now lives in _savedConfirmMessage, shared with the book_shipment route so the two cannot
+      // drift; see the rationale there and on R4 in evals/flows/acceptance.js.
+      appendMessage('bot', _savedConfirmMessage(BOLNumber));
     }
     if (!opts.thenDispatch && !_suppressSavedModal) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
@@ -14346,7 +14368,27 @@ async function _execBookShipment(input) {
     // Lock the form panel so the customer can't click Book & Dispatch and create a duplicate shipment.
     try { const _pb = document.getElementById('bk-submit-btn'); if (_pb) { _pb.textContent = 'Booked!'; _pb.disabled = true; _pb.style.background = 'var(--ac)'; _pb.style.opacity = '0.7'; _pb.style.cursor = 'default'; } } catch(e) {}
 
-    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, priceStr: fmtMoney(price), message:'Shipment booked and set up in our system, ready to dispatch.' };
+    // ── CODE SPEAKS, SO THE AGENT DOES NOT — the same contract save_shipment has had since a37ea40 ──
+    // This return used to carry only `message:'Shipment booked and set up in our system, ready to
+    // dispatch.'` and render nothing, so the agent wrote the customer's sentence from it. On BOL
+    // 160135825 that produced "Booked — ... Want me to dispatch it now?": the word "booked" for a
+    // shipment that has NOT gone to the carrier, and an unprompted offer of the irreversible write.
+    // A book_shipment success is a completed SAVE — a BOL that is not dispatched — so it says what a
+    // save says, from the one definition, and ends the turn like the holds do.
+    // UNIVERSAL BY DESIGN (owner's call, 2026-07-31): this applies to EVERY success, including a
+    // plain "book it" with no consent question before it. Scoping it to consent-answered saves would
+    // make the confirmation depend on how the save was reached — two paths, one truth, which is the
+    // split-brain shape behind most of the defects this file has chased.
+    // WHAT IT COSTS, stated rather than discovered later: the agent gets no completion, so a request
+    // that bundles a save with an unrelated question ("book it, and when will it arrive?") is
+    // answered with the confirmation only and the customer has to ask again. Nothing that works today
+    // stops working — the tool loop already runs only the FIRST tool per turn, so a bundled
+    // book-and-dispatch never dispatched in one turn either.
+    // saveConfirmed is ALREADY in the _turnHandled allow-list; no new flag acquires turn-silencing.
+    // Every prior field is preserved — layer-2 cases read priceStr, alreadyBooked and updatedExisting.
+    if (typeof appendMessage === 'function') appendMessage('bot', _savedConfirmMessage(BOLNumber));
+    return { ok:true, BOLNumber: BOLNumber, BOLId: BOLId, carrier: carrierName, price: price, priceStr: fmtMoney(price),
+      saveConfirmed: true, _turnHandled: true, message: _savedConfirmMessage(BOLNumber) };
   } catch (e) {
     console.error('book_shipment error:', e);
     const _c = _classifyWriteError(e, 'book');
