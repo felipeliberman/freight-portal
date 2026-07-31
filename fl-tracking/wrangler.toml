@@ -4,6 +4,10 @@ name = "fl-tracking"
 main = "worker.js"
 compatibility_date = "2026-06-01"
 
+# No preview URLs. A preview hostname serves the same Worker on a different origin,
+# which would let anyone bypass the public route's per-IP rate limit.
+preview_urls = false
+
 # Rate-limit counters for the PUBLIC (?q=) route only. This namespace already existed
 # but was never bound to any Worker, which is why track-proxy's limiter never ran.
 [[kv_namespaces]]
