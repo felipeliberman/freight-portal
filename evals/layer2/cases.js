@@ -24,6 +24,28 @@ const L2FX_REQUOTE_SHIP = {
   accessorials: [], pickupInformation: { date: '2026-08-04' },
 };
 
+// Mid-booking, ready to write: a selected rate, the booking panel rendered and FILLED, and a book
+// route shaped like Primus's (data.results[0]) so submitBookingOnly reaches a real POST. Used by the
+// draft-save consent cases, which have to distinguish "did not write" from "could not write".
+async function openBookingReady(h) {
+  const w = h.win;
+  h.routes.unshift({
+    match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+    reply: () => ({ status: 200, body: { data: { results: [{ BOLId: 'BOLID-SAVE42', BOLNumber: '160042042' }] } } }),
+  });
+  w._lastRatesRaw = [{ id: 'R1', name: 'JTS Express', total: 161 }];
+  w.selectRate(w._lastRatesRaw[0], { shipment: { originZip: '90660', destinationZip: '90035' }, list: w._lastRatesRaw, open: false, source: 'test' });
+  w.showBookingPanel({ id: 'R1', name: 'JTS Express', total: 161, _name: 'JTS Express', _price: 161 },
+    { originZip: '90660', destZip: '90035', accessorials: [] });
+  await sleep(300);
+  const set = (id, v) => { const e = w.document.getElementById(id); if (e) e.value = v; };
+  set('bk-pu-name', 'Michaels Furniture'); set('bk-pu-street', '7240 Crider Ave'); set('bk-pu-city', 'Pico Rivera');
+  set('bk-pu-state', 'CA'); set('bk-pu-zip', '90660'); set('bk-pu-contact', 'Jo'); set('bk-pu-phone', '5625550100');
+  set('bk-dl-name', 'Dana Whitfield'); set('bk-dl-street', '1145 S Clark Dr'); set('bk-dl-city', 'Los Angeles');
+  set('bk-dl-state', 'CA'); set('bk-dl-zip', '90035'); set('bk-dl-contact', 'Dana'); set('bk-dl-phone', '3105550101');
+  w._bookingPanelContainer = w._bookingPanelContainer || w.document.getElementById('right-panel');
+}
+
 const cases = [
   // ── 1 ────────────────────────────────────────────────────────────────────────
   {
@@ -1572,6 +1594,153 @@ const cases = [
       A.ok(!/[$€£]|\d/.test(said), 'the divergence copy leaks a raw number: ' + said);
       A.ok(!/\b(RSD|LFD|BOL|BOLId|primus|shipprimus|geocodio|_lastBooked|rate ?id)\b/i.test(said), 'the divergence copy leaks an internal name: ' + said);
       A.ok(/haven't dispatched this yet/i.test(said), 'the divergence copy does not say it was not dispatched: ' + said);
+    },
+  },
+
+  // ── 42 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 42, name: 'an ambiguous "save" mid-booking asks before it writes, and the answer is honoured deterministically on both sides',
+    catches: 'live: with the booking panel open a customer typed "save quote for now" and the chat silently ran the SHIPMENT save — submitBookingOnly created a real BOL that appeared under My Shipments as "Saved". They meant Saved Quotes, were told nothing about a shipment, and concluded the save had failed. A draft shipment is the more useful thing to save mid-booking, so the write is not the defect; acting on an ambiguous word with no confirmation is. Covers all THREE routes into submitBookingOnly from chat — the save_shipment tool call, the _gateFinalText 2b prose enforcer (which fires the identical write off the agent merely SAYING "saving it for you now", and which a tool-layer guard cannot see), and the consent answer itself.',
+    async run(h) {
+      const w = h.win;
+      const COPY = h.g('SAVE_DRAFT_CONFIRM');
+      const bookPosts = () => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length;
+      await openBookingReady(h);
+
+      // ── 1. THE ASK. The agent reaches for save_shipment; code intercepts before submitBookingOnly.
+      h.scriptAI([turn([toolUse('save_shipment', {})]), turn([text('All set, it is saved.')])]);
+      h.reset();
+      w.appendMessage('user', 'save quote for now');
+      await w.handleInput('save quote for now');
+      await sleep(400);
+      A.eq(bookPosts(), 0, 'an ambiguous "save quote for now" WROTE a BOL — this is the live defect');
+      A.eq(h.bots().filter(t => t === COPY).length, 1, 'the consent copy did not render verbatim exactly once: ' + JSON.stringify(h.bots()));
+      // The tool owns the turn: the agent gets no completion, so it cannot restate or contradict it.
+      A.ok(!h.bots().some(t => /All set, it is saved/i.test(t)), 'the agent got a turn and spoke over the consent question: ' + JSON.stringify(h.bots()));
+      // Anti-fabrication: an INTENT, never an outcome, and never the wrong surface.
+      A.ok(!/saved as bol|saved quotes/i.test(COPY), 'the consent copy states an outcome or names Saved Quotes: ' + COPY);
+      A.ok(!/submitBookingOnly|_exec|primus|shipprimus|BOLId/i.test(COPY), 'the consent copy leaks an internal name: ' + COPY);
+      // Recomputed, not stored: derivable right now with nothing having been set on the write path.
+      A.ok(w._pendingDraftSaveConsent() === true, 'consent state is not pending after the question rendered');
+
+      // ── 2. YES → the real save runs, and the EXISTING confirmation copy is unchanged (R4 owns it).
+      h.scriptAI([turn([text('')])]);
+      h.reset();
+      w.appendMessage('user', 'yes');
+      await w.handleInput('yes');
+      await sleep(600);
+      A.eq(bookPosts(), 1, 'the affirmative did NOT run the save through submitBookingOnly');
+      A.ok(h.bots().some(t => /Saved as BOL 160042042/i.test(t)), 'the save produced no confirmation naming the backend BOL: ' + JSON.stringify(h.bots()));
+      A.ok(!h.bots().some(t => /saved quotes/i.test(t)), 'the confirmation names Saved Quotes: ' + JSON.stringify(h.bots()));
+      // submitBookingOnly nulls the panel container on success, so the consent state falsifies itself.
+      A.ok(w._pendingDraftSaveConsent() === false, 'consent state survived a completed save — it is not recomputed');
+
+      // ── 3. DECLINE → no save, and the state is false on the following turn.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save it');
+      await w.handleInput('save it');
+      await sleep(400);
+      A.eq(bookPosts(), 0, 'setup: the ask wrote a BOL');
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending');
+      h.scriptAI([turn([toolUse('save_shipment', {})]), turn([text('Okay — nothing saved.')])]);
+      h.reset();
+      w.appendMessage('user', 'no, I meant my saved quotes');
+      await w.handleInput('no, I meant my saved quotes');
+      await sleep(400);
+      A.eq(bookPosts(), 0, 'a DECLINED save still wrote a BOL — the tool refusal is not holding');
+      A.ok(w._pendingDraftSaveConsent() === false, 'consent state is still pending after a decline — it is not recomputed');
+
+      // ── 4. SUBJECT CHANGE instead of answering → no save, state false.
+      await openBookingReady(h);
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'save the quote for now');
+      await w.handleInput('save the quote for now');
+      await sleep(400);
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending');
+      h.scriptAI([turn([text('The pickup is set for Tuesday.')])]);
+      h.reset();
+      w.appendMessage('user', 'remind me what day the pickup is on');
+      await w.handleInput('remind me what day the pickup is on');
+      await sleep(400);
+      A.eq(bookPosts(), 0, 'a subject change wrote a BOL');
+      A.ok(w._pendingDraftSaveConsent() === false, 'consent state survived a subject change');
+
+      // ── 5. THE PROSE ROUTE. No tool call at all — the agent just SAYS it saved. _gateFinalText 2b
+      // would otherwise fire the identical write, which is why the guard is not tool-layer-only.
+      await openBookingReady(h);
+      h.scriptAI([turn([text("Sure — I'll save it for you now.")])]);
+      h.reset();
+      w.appendMessage('user', 'can you just save the quote for now?');
+      await w.handleInput('can you just save the quote for now?');
+      await sleep(500);
+      A.eq(bookPosts(), 0, 'the gate fired a write off agent PROSE for an ambiguous save — the second entrance is open');
+      A.ok(h.bots().some(t => t === COPY), 'the prose route did not render the consent copy: ' + JSON.stringify(h.bots()));
+      A.ok(!h.bots().some(t => /I'll save it for you now/i.test(t)), 'the unbacked promise was delivered to the customer: ' + JSON.stringify(h.bots()));
+
+      // ── 6. AMBIGUOUS REPHRASE while the question is pending. Found by the pre/post repro: the two
+      // enforcement sites each computed their own answer, so "pending" made the tool route refuse
+      // while the prose route sailed through and WROTE. One evaluator, one verdict — re-ask, never write.
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending after step 5');
+      h.scriptAI([turn([text("Of course — I'll save it for you now.")])]);
+      h.reset();
+      w.appendMessage('user', 'yeah just save the quote');
+      await w.handleInput('yeah just save the quote');
+      await sleep(600);
+      A.eq(bookPosts(), 0, 'an ambiguous REPHRASE while the question was pending wrote a BOL');
+      A.ok(h.bots().some(t => t === COPY), 'the rephrase did not re-ask: ' + JSON.stringify(h.bots()));
+
+      // ── 7. EXPLICIT UPGRADE while the question is pending is CONSENT, not a decline. A refusal here
+      // would strand the customer: they answered in the clearest possible terms and got nothing.
+      A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending after step 6');
+      h.scriptAI([turn([toolUse('save_shipment', {})])]);
+      h.reset();
+      w.appendMessage('user', 'yes, save it as a shipment');
+      await w.handleInput('yes, save it as a shipment');
+      await sleep(600);
+      A.eq(bookPosts(), 1, 'an EXPLICIT shipment save answering the question was refused — the customer is stranded');
+      A.ok(h.bots().some(t => /Saved as BOL/i.test(t)), 'the explicit upgrade produced no confirmation: ' + JSON.stringify(h.bots()));
+    },
+  },
+
+  // ── 43 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 43, name: 'an EXPLICIT shipment save still writes immediately, and the ambiguity test does not fire on working phrasings',
+    catches: 'the regression risk on the other side of case 42. A consent gate that also catches "save shipment" adds a question to the path that was always correct, and one that catches "show my saved quotes" or "save the shipper contact" breaks unrelated working flows. Both are the over-eager-parse class already recorded against parseQuoteChat matching a bare /\\bappointment\\b/.',
+    async run(h) {
+      const w = h.win;
+      const COPY = h.g('SAVE_DRAFT_CONFIRM');
+      const bookPosts = () => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length;
+
+      // ── The predicate itself, in both directions.
+      ['save quote for now', 'save the quote for now', 'save it', 'save for now', 'just save it for now',
+       'can you save the quote?', 'save this quote', 'save the rate'].forEach(s => {
+        A.ok(w._isAmbiguousSaveIntent(s) === true, 'an ambiguous save was NOT caught, so it would write silently: ' + s);
+      });
+      // FALSE POSITIVES — the phrasings most likely to regress a working path.
+      ['save shipment', 'save it as a shipment', 'save the shipment for now', 'save this as a draft shipment',
+       'save the booking', 'show my saved quotes', 'my saved quotes', 'save the shipper contact',
+       'save the shipper details', 'what did you save'].forEach(s => {
+        A.ok(w._isAmbiguousSaveIntent(s) === false, 'a working phrasing was caught by the consent gate: ' + s);
+      });
+
+      // ── And the explicit shipment save: the guard stands down and the write goes straight through.
+      // Asserted at the WRITE layer (the layer R4 and case 39 use), not by driving "save shipment"
+      // through handleInput, because that phrasing dead-ends in this harness on UNMODIFIED HEAD too
+      // — 0 book POSTs and the agent-fail line, identical before and after this change. That is a
+      // pre-existing routing/scripting artifact, not something this case should encode or chase.
+      await openBookingReady(h);
+      h.reset();
+      w.appendMessage('user', 'save shipment');
+      A.ok(w._chatSaveNeedsConsent() === false, 'the consent guard claimed an EXPLICIT shipment save — it is over-firing');
+      const r = await w._execSaveShipment({});
+      await sleep(500);
+      A.ok(r && r.ok === true, 'the explicit save did not succeed: ' + JSON.stringify(r).slice(0, 200));
+      A.eq(bookPosts(), 1, 'an EXPLICIT "save shipment" no longer writes — the guard is over-firing');
+      A.ok(!h.bots().some(t => t === COPY), 'an explicit shipment save was made to ask for consent: ' + JSON.stringify(h.bots()));
+      A.ok(h.bots().some(t => /Saved as BOL 160042042/i.test(t)), 'the explicit save produced no confirmation: ' + JSON.stringify(h.bots()));
     },
   },
 ];

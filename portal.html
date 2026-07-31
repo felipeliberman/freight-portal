@@ -7267,6 +7267,107 @@ function _rdiHoldMessage(names) {
     + them + ' and refresh the rate, or dispatch as-is?';
 }
 
+// ── THE draft-save consent copy — ONE definition, rendered by code, never composed by the agent ──
+// Live: with the booking panel open a customer typed "save quote for now" and the chat ran the
+// SHIPMENT save (submitBookingOnly → a real BOL under My Shipments, "Saved"). They meant Saved
+// Quotes, saw nothing about a shipment, and concluded the save had failed. A draft shipment IS the
+// more useful thing to save mid-booking, so the write is not the bug — acting on an ambiguous word
+// without asking is. Same fixed-copy treatment as _rdiHoldMessage: the model never gets a turn to
+// restate it, soften it, or contradict it, so what the next turn reads is what the customer saw.
+// It states an INTENT and asks one question — no BOL, no "saved", nothing an outcome could be read
+// into (the anti-fabrication rule), and it names My Shipments so the surface is never a surprise.
+const SAVE_DRAFT_CONFIRM = "Since we're mid-booking, I'll save everything — the rate and the details you've entered — as a draft shipment under My Shipments, ready to dispatch whenever you are. Want me to save it?";
+
+// Is THIS turn a save request whose target is ambiguous? Ambiguous = the quote, the rate, a bare
+// pronoun, or nothing at all. An explicit shipment/BOL/booking/load target is NOT ambiguous and is
+// deliberately left alone — "save shipment" and "save it as a shipment" still write immediately with
+// no question, exactly as before. Matches sav(e|ing) only, never "saved", so "show my saved quotes"
+// cannot trip it; and the object must be quote-ish or bare, so "save the shipper contact" cannot.
+function _isAmbiguousSaveIntent(text) {
+  const s = String(text == null ? '' : text).toLowerCase();
+  if (!/\bsav(?:e|ing)\b/.test(s)) return false;
+  if (/\bsav(?:e|ing)\b[^.?!]{0,30}\b(?:shipment|bol|b\.o\.l|booking|load)\b/.test(s)) return false;
+  return /\bsav(?:e|ing)\s+(?:it|this|that|everything|all of it)\b/.test(s)
+      || /\bsav(?:e|ing)\s+(?:the\s+|my\s+|this\s+|that\s+)?(?:quote|rate|rates|price|pricing)\b/.test(s)
+      || /\bsav(?:e|ing)\s*(?:it\s*)?(?:for\s+(?:now|later)|and\s+come\s+back)\b/.test(s)
+      || /^\s*(?:please\s+|just\s+|can\s+you\s+|could\s+you\s+|could\s+we\s+|let'?s\s+)*sav(?:e|ing)\b\s*(?:it|this|that)?\s*(?:for\s+now|for\s+later|please|then)?\s*[.!?]*$/.test(s);
+}
+
+// ── AWAITING CONSENT IS RECOMPUTED, NEVER STORED ─────────────────────────────────────────────
+// Same principle as _priceHoldState, and for the same reason: a _saveConsentPending flag set on the
+// write path and cleared "at every boundary" is the multi-writer staleness shape that produced four
+// defects last session. Derived from live state on every read, this CANNOT outlive its condition —
+// nothing to clear, so nothing to forget to clear. submitBookingOnly nulls _bookingPanelContainer on
+// a successful save, so a completed save falsifies it on its own.
+// The three terms, and why they are sufficient:
+//   * panel still open        — the question was asked mid-booking; a closed panel ends that context.
+//   * last bot turn IS the copy — appendMessage is the ONE transcript writer, so ANY intervening bot
+//     turn (agent reply, insurance collector, party-paste ack) displaces it. That is what makes a
+//     decline and a subject change fall to false without anything clearing them.
+//   * rate still selected and the price hold clean — the one way the rate can move with no bot turn
+//     is the form's own Get Rates button, and _priceHoldState's stale branch is exactly the check
+//     for "the selection is no longer in the list on screen".
+function _pendingDraftSaveConsent() {
+  try {
+    if (!window._bookingPanelContainer) return false;
+    const h = (typeof chatHistory !== 'undefined' && chatHistory) || [];
+    let lastBot = null;
+    for (let i = h.length - 1; i >= 0; i--) {
+      if (h[i] && h[i].role === 'assistant') { lastBot = String(h[i].content == null ? '' : h[i].content); break; }
+    }
+    if (lastBot !== SAVE_DRAFT_CONFIRM) return false;
+    const sel = (typeof _selectedRateForPayload === 'function') ? _selectedRateForPayload().rate : null;
+    if (!sel) return false;
+    if (typeof _priceHoldState === 'function' && _priceHoldState(null).kind !== null) return false;
+    return true;
+  } catch (e) { return false; }  // an evaluator that throws must never block or fabricate consent
+}
+
+// An EXPLICIT shipment save — the phrasing that has always written immediately and still must, even
+// as the answer to the consent question ("yes, save it as a shipment" is consent, not a decline).
+function _isExplicitShipmentSave(text) {
+  return /\bsav(?:e|ing)\b[^.?!]{0,30}\b(?:shipment|bol|b\.o\.l|booking|load)\b/i.test(String(text == null ? '' : text));
+}
+
+// ── ONE EVALUATOR for the draft-save consent gate — same shape as _priceHoldState ────────────────
+// Both enforcement sites read this ONE verdict. A second copy of the logic is how the tool route and
+// the prose route would drift apart and start disagreeing about whether a write has consent — which
+// is not hypothetical: an earlier cut of this had the tool route refusing a case the prose route
+// happily wrote, because each computed its own answer.
+// The customer's turn comes from chatHistory rather than an argument, because _gateFinalText has no
+// userText in scope and must share the predicate.
+// Returns 'ask' (render the question, write nothing), 'refuse' (write nothing, no consent exists),
+// or null (proceed — this is not an ambiguous save, or it never needed asking).
+//
+// IT FAILS OPEN, DELIBERATELY. The catch returns null, and null means PROCEED WITH THE WRITE — so an
+// evaluator that throws degrades to the original silent-save behavior rather than blocking a save the
+// customer legitimately asked for. Do NOT read a null as "no save intent": it is "no reason found to
+// stop", which is a different claim. The tradeoff is chosen — a save is reversible (nothing reaches a
+// carrier until dispatch), so wrongly writing costs a cancellable draft BOL, while wrongly blocking
+// costs a customer who cannot save their work at all. The same reasoning as classifyDeliveryForDispatch,
+// and the OPPOSITE of the dispatch guards, which fail CLOSED because a tender is irreversible.
+function _draftSaveVerdict() {
+  try {
+    if (!window._bookingPanelContainer) return null;
+    const h = (typeof chatHistory !== 'undefined' && chatHistory) || [];
+    let t = '';
+    for (let i = h.length - 1; i >= 0; i--) {
+      if (h[i] && h[i].role === 'user') { t = String(h[i].content == null ? '' : h[i].content); break; }
+    }
+    if (_pendingDraftSaveConsent()) {
+      // The question is on screen and unanswered. An explicit shipment save is the customer UPGRADING
+      // their request, not declining it — writing is what they asked for, so it proceeds. Anything
+      // still ambiguous re-asks rather than guessing. Anything else is a decline or a change of
+      // subject: consent does not exist, so nothing may be written on this turn.
+      if (_isExplicitShipmentSave(t)) return null;
+      return _isAmbiguousSaveIntent(t) ? 'ask' : 'refuse';
+    }
+    return _isAmbiguousSaveIntent(t) ? 'ask' : null;
+  } catch (e) { return null; }  // an evaluator that throws must never block a legitimate save
+}
+// Kept as a named predicate because it reads better at the call sites and in the evals.
+function _chatSaveNeedsConsent() { return _draftSaveVerdict() === 'ask'; }
+
 async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consigneeCity, consigneeState, consigneeZip, accessorials, onProceed, onRequote) {
   // OVERLAY surface — the two FORM dispatch buttons (7267/7548) only. Signature, markup, and both
   // callbacks are unchanged; only the verdict now comes from the shared classifier above.
@@ -14955,7 +15056,25 @@ function _gateFinalText(finalText, ctx) {
     var _tc = window._turnToolCalls || {};
     var _savePromiseRe = /\b(?:sav(?:e|ing)\s+(?:it|that|this|the shipment|your shipment)(?:\s+(?:now|for you|right now))?|i'?ll\s+(?:save\s+(?:it|that|this|the shipment)|get\s+(?:it|that|this)\s+saved)|getting\s+(?:it|that|this)\s+saved)\b/i;
     var _saveSentences = _sentences(text).filter(function (s) { return !/\?/.test(s) && _savePromiseRe.test(s); });
-    if (_saveSentences.length && !_tc.save) {
+    // ── DRAFT-SAVE CONSENT OUTRANKS THE PROMISE ENFORCER ─────────────────────────────────────────
+    // This block is the SECOND of three routes into submitBookingOnly, and the one a tool-layer
+    // guard cannot see: block save_shipment and the model can still fire the identical write just by
+    // SAYING "saving it for you now" — the gate backs the promise below by calling _execSaveShipment
+    // itself. A guard the model defeats in one turn is not a guard, so the consent check sits above
+    // the fire branch. The unbacked promise is REPLACED by the canonical question rather than
+    // backed: nothing is written, and the reply the customer sees is the same fixed copy the other
+    // two sites render, so the recomputed consent state reads identically whichever route got here.
+    // Both non-null verdicts stop the write here. 'ask' is the ambiguous request; 'refuse' is the
+    // question already on screen and unanswered — an agent promising a save on either has no consent
+    // to act on, and the canonical question is the truthful thing to say in both.
+    var _saveNeedsConsent = !!(_saveSentences.length && !_tc.save
+      && typeof _draftSaveVerdict === 'function' && _draftSaveVerdict() !== null);
+    if (_saveNeedsConsent) {
+      console.log('[FP] gate: save promised without consent — asking instead of gate-firing a write');
+      text = SAVE_DRAFT_CONFIRM;
+      out.enforced = true; // a real message rendered; never-silence must not resurrect the promise
+    }
+    if (_saveSentences.length && !_tc.save && !_saveNeedsConsent) {
       var _lockOk = !!(window._bookingLock && window._bookingLock.rate);
       var _fZips = null;
       try { _fZips = (typeof collectBookingForm === 'function') ? collectBookingForm() : null; } catch (e) {}
@@ -15565,7 +15684,26 @@ async function aiConverse(userText) {
           } else if (toolUse.name === 'dispatch_shipment') {
             result = await _execDispatchShipment(toolUse.input);
           } else if (toolUse.name === 'save_shipment') {
-            result = await _execSaveShipment(toolUse.input);
+            // ── DRAFT-SAVE CONSENT — ask before writing an ambiguous "save" ──────────────────────
+            // Route 1 of three into submitBookingOnly. Live: "save quote for now" with the panel open
+            // silently created a BOL; the customer meant Saved Quotes and thought the save failed.
+            // Fixed copy from CODE + a turn that ends here, the same shape as the residential hold —
+            // so the model cannot restate it, soften it, or contradict it. NOTHING is written.
+            const _dsv = (typeof _draftSaveVerdict === 'function') ? _draftSaveVerdict() : null;
+            if (_dsv === 'ask') {
+              if (typeof appendMessage === 'function') appendMessage('bot', SAVE_DRAFT_CONFIRM);
+              result = { ok: false, saveConsentPrompt: true, _turnHandled: true,
+                message: 'NOT saved — the customer was asked to confirm saving a draft shipment. Say nothing further this turn.' };
+            } else if (_dsv === 'refuse') {
+              // The question is on screen and THIS turn did not answer it affirmatively — the
+              // deterministic save-consent route would have claimed the turn if it had. So this is a
+              // decline, or a change of subject, and consent for the write does not exist. Refuse
+              // WITHOUT rendering: re-asking a customer who just declined is its own defect, and the
+              // agent still needs a turn to answer whatever they actually said.
+              result = { ok: false, message: 'The customer has not confirmed the save, so nothing was saved. Do not say anything was saved and do not state a BOL number. Answer what they actually asked.' };
+            } else {
+              result = await _execSaveShipment(toolUse.input);
+            }
           } else if (toolUse.name === 'requote_shipment') {
             result = await _execRequoteShipment(toolUse.input);
           } else if (toolUse.name === 'update_booking') {
@@ -15600,7 +15738,7 @@ async function aiConverse(userText) {
         // Deliberately scoped to an explicit allow-list, NOT to _turnHandled alone: ending a turn
         // silently is a big hammer, and no future tool should acquire it by accident just by setting
         // a flag. Both members render their own customer-facing copy and must not be restated.
-        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged || result.rateStale || result.saveConfirmed)) {
+        if (result && result._turnHandled && (result.residentialHold || result.rateDiverged || result.rateStale || result.saveConfirmed || result.saveConsentPrompt)) {
           removeTyping();
           window._lastTurnFailed = false;
           if (typeof waybHistory !== 'undefined') {
@@ -17353,6 +17491,15 @@ function classifyChatTurn(text, ctx) {
   if (/\b(how does .* work|what happens if|what if|is it possible|do you (offer|cover|handle)|difference between)\b/i.test(lc))
     return verdict('question', null, {}, 'explanatory frame');
 
+  // ── save-consent — a short affirmative answering the draft-save question ───
+  // Placed AFTER R1 so "should I save the quote?" stays a question, and typed as a command because a
+  // save is a WRITE: the contract above forbids the interceptor from acting without a verdict saying
+  // this turn is that command. ctx.saveConsentPending is recomputed by _pendingDraftSaveConsent, so
+  // this rule is unreachable unless the question is genuinely on screen and unanswered.
+  if (ctx.saveConsentPending &&
+      /^\s*(?:yes|yeah|yep|yup|sure|ok|okay|please\s+do|do\s+it|go\s+ahead|save\s+it|sounds\s+good|do\s+that|perfect)\b[\s\S]{0,15}$/i.test(lc))
+    return verdict('command', 'save-consent', {}, 'affirmative answer to the draft-save question');
+
   // ── R4 — a pasted document is DATA ─────────────────────────────────────────
   const _docMarkers = [/total\s+weight/i, /freight\s+class/i, /dimensions:/i, /pallet\s*#/i, /nmfc/i,
     /total\s+boxes/i, /total\s+pallet/i, /product\s+description/i, /weight\s*:/i,
@@ -17429,6 +17576,7 @@ async function handleInput(text, _opts) {
     collectingField: (typeof bookingStep === 'string' && /name/i.test(bookingStep)) ? bookingStep : null,
     ratesOnScreen: !!(window._lastRatesRaw && window._lastRatesRaw.length),
     insuranceStatus: (window._insCollecting || (window._insDecided ? 'declined' : 'not-addressed')),
+    saveConsentPending: (typeof _pendingDraftSaveConsent === 'function') ? _pendingDraftSaveConsent() : false,
   });
   window._lastTurnVerdict = _turn; // read by the state harness (invariant 7)
   if (t) { if (!currentSession) ensureSession(t); else updateSessionTitle(t.slice(0, 60)); }
@@ -17673,6 +17821,22 @@ async function handleInput(text, _opts) {
     || (!!(window._lastAnalyticsResult && window._lastAnalyticsResult.list && window._lastAnalyticsResult.list.length)
         && t.trim().split(/\s+/).length <= 8
         && /\b(what about|how about|both of them|those ones?|list them|name them|the two|why (only|just)|their (bols?|consignees?|carriers?|costs?))\b/i.test(lower));
+
+  // ── DRAFT-SAVE CONSENT ANSWERED — the customer said yes, so save ─────────────
+  // Deterministic on BOTH sides of the question. The ask is fixed copy rendered by code, so the
+  // answer is honoured by code too rather than depending on the model choosing save_shipment on
+  // "yes" — a consent gate whose yes-path is model-mediated is only half a gate.
+  // Guarded by the classifier verdict (contract at classifyChatTurn), which is itself gated on the
+  // recomputed _pendingDraftSaveConsent, so this cannot fire unless the question is on screen and
+  // still live. Routes through the ONE canonical save (_execSaveShipment → submitBookingOnly), which
+  // renders its own confirmation from the backend's real BOL — nothing here states an outcome.
+  // A DECLINE deliberately has no branch: it falls through to the agent, the next bot turn displaces
+  // the confirm copy, and the consent state goes false on its own with nothing to clear.
+  if (_turn.kind === 'command' && _turn.intent === 'save-consent') {
+    removeTyping();
+    await _execSaveShipment({});
+    return;
+  }
 
   // ── BARE CARRIER NAME = A SELECTION, NOT A NEW QUOTE ─────────────────────────
   // A short message that is just a carrier name ("JTS", "go with Estes") used to fall through to
