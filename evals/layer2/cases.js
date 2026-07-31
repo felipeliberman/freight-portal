@@ -13,6 +13,17 @@ async function waitFor(fn, ms) {
 }
 const READY = { originZip: '90660', destZip: '33511', weight: 450, pieces: 1, length: 48, width: 40, height: 48 };
 
+// The BOL behind case 25 — booked at $161 with NO accessorials, i.e. BOL 160135778 as it stood when
+// the customer answered the residential hold. Shared so both requote doors start identically once
+// the second door (the hold) exists; see the numbering note at case 25.
+const L2FX_REQUOTE_SHIP = {
+  BOLId: 'BOLID-778899', BOLNumber: '160135778',
+  shipper:   { name: 'Michaels Furniture', address1: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zipCode: '90660' },
+  consignee: { name: 'Dana Whitfield', address1: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zipCode: '90035' },
+  freightInfo: [{ qty: 1, weight: 450, length: 48, width: 40, height: 48, class: '175', commodity: 'Furniture', dimType: 'PLT' }],
+  accessorials: [], pickupInformation: { date: '2026-08-04' },
+};
+
 const cases = [
   // ── 1 ────────────────────────────────────────────────────────────────────────
   {
@@ -678,6 +689,76 @@ const cases = [
       // The parenthetical carries the matched commodity word, NOT the raw sentence.
       A.ok(/\(furniture\)/.test(rb), 'read-back parenthetical did not show the matched commodity "(furniture)": ' + rb);
       A.ok(!/insure it for/i.test(rb) && !/actually/i.test(rb), 'read-back echoed the customer\'s raw sentence: ' + rb);
+    },
+  },
+
+  // ── 25 ───────────────────────────────────────────────────────────────────────
+  // NUMBERING: ids 23/24 are deliberately reserved, not missing. In ddb66ea these were the
+  // residential-hold cases (23: the hold speaks; 24: the requote written via the HOLD door), and the
+  // hold does not exist on this branch — it is Phase 2. 25/26 keep their original ids so they map
+  // 1:1 onto that commit. When the hold lands, 24 joins 25 under one parameterised body: both chat
+  // entrances to a requote funnel through requoteSavedShipment and must be held to these same
+  // assertions.
+  {
+    id: 25, name: 'requote via the requote_shipment tool is WRITTEN to the BOL (PUT), never swallowed as "already booked"',
+    catches: 'the BOL 160135778 money bug — the duplicate-booking guard returned alreadyBooked with the OLD price the moment _lastBooked was set and undispatched, so a requote that re-rated at $304.75 with residential never reached the BOL and dispatch went to the carrier at the original $161 with no residential. Pre-existing in requote_shipment; the residential hold (Phase 2) adds a second, high-traffic door to the same hole.',
+    async run(h) {
+      const w = h.win;
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book\//.test(u) && (!m || m === 'GET'),
+        reply: () => ({ status: 200, body: { data: { results: L2FX_REQUOTE_SHIP } } }),
+      });
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
+      await w._execRequoteShipment({ bol_id: '160135778' });
+      await sleep(900);                    // requoteSavedShipment applies fields on a 500ms timer
+      // The requote marker is the thing that makes the guard treat this as an update, not a dupe.
+      A.eq(w._requoteWriteBOL, 'BOLID-778899', 'requoteSavedShipment did not arm the requote marker');
+      // Booking panel open on the new rate, as it is when the customer picks a carrier post-requote.
+      w._bookingPanelOpen = true;
+      h.reset();
+      const r = await w._execBookShipment({});
+      await sleep(300);
+      // ── The write actually happened, as a PUT to THIS BOL — not a POST, not a no-op.
+      const writes = h.requests.filter(q => /\/applet\/v1\/book\//.test(q.url) && q.method === 'PUT');
+      const creates = h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST');
+      A.ok(!r.alreadyBooked, 'the guard still swallowed the requote as "already booked": ' + JSON.stringify(r).slice(0, 300));
+      A.ok(writes.length >= 1, 'no PUT was issued for the requote — nothing reached the BOL. requests: ' + JSON.stringify(h.requests.map(q => q.method + ' ' + q.url)));
+      A.eq(creates.length, 0, 'a duplicate shipment was created (POST) instead of updating the existing BOL');
+      A.ok(/BOLID-778899/.test(writes[0].url), 'the PUT went to the wrong BOL: ' + writes[0].url);
+      // ── The marker is consumed by the successful write, so it cannot leak into a later booking.
+      A.eq(w._requoteWriteBOL, null, 'the requote marker survived a successful write');
+    },
+  },
+
+  // ── 26 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 26, name: 'divergence backstop: blocks dispatch when the written rate disagrees with the quoted one, and is silent on a clean flow',
+    catches: 'the failure mode that let BOL 160135778 reach a carrier — chat said $304.75 with residential, the BOL said $161 without, and dispatch fired anyway. Also guards the other direction: a normal book-then-dispatch must never trip this.',
+    async run(h) {
+      const w = h.win;
+      // ── A. CLEAN FLOW — booked price and selected rate agree. The backstop must not fire.
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 388.10, dispatched: false };
+      w._bookingLock = { rate: { id: 'R1', name: 'JTS Express', total: 388.10 }, shipment: {} };
+      h.reset();
+      const clean = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(!clean.rateDiverged, 'the backstop fired on a healthy book-then-dispatch: ' + JSON.stringify(clean).slice(0, 200));
+      A.ok(!h.bots().some(t => /doesn't match the one I just quoted/.test(t)), 'divergence copy rendered on a clean flow: ' + JSON.stringify(h.bots()));
+
+      // ── B. DIVERGENCE — the quoted rate moved, the BOL never did. Must block and speak.
+      w._lastBooked = { BOLId: 'BOLID-778899', BOLNumber: '160135778', carrier: 'JTS Express', price: 161, dispatched: false };
+      w._bookingLock = { rate: { id: 'R2', name: 'JTS Express', total: 304.75 }, shipment: {} };
+      h.reset();
+      const bad = await w._execDispatchShipment({ BOLId: 'BOLID-778899' });
+      A.ok(bad && bad.rateDiverged === true, 'the backstop did NOT fire on a real divergence: ' + JSON.stringify(bad).slice(0, 300));
+      A.ok(bad.ok === false, 'a diverged dispatch did not fail closed');
+      // Fails CLOSED: nothing tendered.
+      A.eq(h.requests.filter(q => /\/applet\/v2\/dispatch\//.test(q.url)).length, 0, 'the shipment was dispatched despite the divergence');
+      // Customer-safe copy, from the one definition, with the never-surface rules applied.
+      const said = h.bots().find(t => t === w._rateDivergedMessage());
+      A.ok(said, 'the divergence copy did not render verbatim: ' + JSON.stringify(h.bots()));
+      A.ok(!/[$€£]|\d/.test(said), 'the divergence copy leaks a raw number: ' + said);
+      A.ok(!/\b(RSD|LFD|BOL|BOLId|primus|shipprimus|geocodio|_lastBooked|rate ?id)\b/i.test(said), 'the divergence copy leaks an internal name: ' + said);
+      A.ok(/haven't dispatched this yet/i.test(said), 'the divergence copy does not say it was not dispatched: ' + said);
     },
   },
 ];
