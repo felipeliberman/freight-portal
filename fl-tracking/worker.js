@@ -14,7 +14,8 @@
  *
  *   ?q=    PUBLIC route — unauthenticated landing page (index.html). Relaxed
  *          alphanumeric input so carrier PROs work, NOTE rows filtered out, wider
- *          non-PII field set, 20/hr per-IP rate limit, and 503 on upstream failure.
+ *          non-PII field set, a per-IP rate limit (see PUBLIC_RATE_LIMIT — the only
+ *          place the number lives), and 503 on upstream failure.
  *
  * CUSTOMER is a vestigial query parameter: the upstream ignores it entirely
  * (verified — omitted, wrong, and empty values all return identical data). It is
@@ -23,8 +24,12 @@
 
 const CUSTOMER = 'Shippi';
 
-// Public route only. Enumeration is the threat model — BOL numbers are sequential.
-const PUBLIC_RATE_LIMIT = 20;      // lookups per window, per IP
+// Public route only. Enumeration is the threat model — BOL numbers are sequential — but the
+// key is a raw IP, so a NAT'd freight office counts as a single visitor. The original 20 was
+// too tight: one person testing locked out a whole location. The value below is the ONLY
+// place the limit lives; it stays high enough for normal multi-shipment use and low enough
+// that walking a sequential range is slow and noisy.
+const PUBLIC_RATE_LIMIT = 60;      // lookups per window, per IP
 const PUBLIC_RATE_WINDOW = 3600;   // seconds
 
 const UPSTREAM = 'https://shipprimus.com/tracking.php';
