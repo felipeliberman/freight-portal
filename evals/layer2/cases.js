@@ -831,6 +831,70 @@ const cases = [
     },
   },
 
+  // ── 37 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 37, name: 'an invented cause for a failed write is replaced with what the system actually said — and a TRUE cause passes untouched',
+    catches: 'third live appearance. The tool returned "No shipment matching 1908657679 is on this account. Tell the customer you could not find that shipment and ask them to double-check the BOL number" and the agent said "the system flagged that a state is needed on the delivery address" — discarding a specific, correct instruction and inventing an unrelated validation failure, attributed to "the system". The copy was already right, so this can only be enforced after generation.',
+    async run(h) {
+      const w = h.win;
+      const REAL_404 = 'No shipment matching 1908657679 is on this account. Tell the customer you could not find that shipment and ask them to double-check the BOL number.';
+      const REAL_ZIP = 'Your shipment was not saved — pickup ZIP and delivery ZIP are needed. Please add it and try again, or email support@freightandlogistics.ai.';
+      // Set through the writer where it exists, else directly — so the BEHAVIOURAL assertions below
+      // still execute against pre-fix code and the control fails on the fabrication surviving,
+      // rather than dying on a missing helper and proving nothing. Production discipline is
+      // unaffected: the one-writer rule is asserted at source further down.
+      const setFail = (op, msg) => {
+        if (typeof w._setTurnWriteFail === 'function') w._setTurnWriteFail(op, msg);
+        else w._turnWriteFail = { op: op, message: msg };
+      };
+
+      // ── THE LIVE FABRICATION — verbatim from the transcript. Must be replaced.
+      setFail('save_shipment', REAL_404);
+      // Verbatim shape from the transcript — deliberately NOT phrased as a save promise, which
+      // would be claimed by enforcer 2b first and prove nothing about this one.
+      const bad = w._gateFinalText('The system flagged that a state is needed on the delivery address.', {});
+      A.eq(bad.text, REAL_404, 'the invented cause survived — the customer is still told a validation failure that never happened: ' + bad.text);
+
+      // ── THE FALSE-POSITIVE DIRECTION. This is the one that would make the guard worse than the
+      // bug: a GENUINE validation failure makes the same sentence shape TRUE and useful.
+      setFail('save_shipment', REAL_ZIP);
+      const good = 'The system needs a delivery ZIP before it will go through.';
+      const kept = w._gateFinalText(good, {});
+      A.eq(kept.text, good, 'a TRUE cause was rewritten — the guard is now worse than the defect it fixes: ' + kept.text);
+
+      // A cause the message does not support is still caught even when another field DOES match.
+      setFail('save_shipment', REAL_ZIP);
+      const mixed = w._gateFinalText('The system needs a delivery ZIP and a state on the address.', {});
+      A.eq(mixed.text, REAL_ZIP, 'a partly-invented cause survived (state is nowhere in the message): ' + mixed.text);
+
+      // ── NO FAILED WRITE THIS TURN → the gate must not touch ordinary conversation.
+      w._turnWriteFail = null;
+      const clean = 'The system needs a delivery ZIP before this can go through.';
+      A.eq(w._gateFinalText(clean, {}).text, clean, 'the gate rewrote a reply with NO failed write this turn');
+
+      // ── CLEARED ON EVERY PATH. A stale failure must never gate a later clean turn.
+      w._setTurnWriteFail('save_shipment', REAL_404);
+      w._clearTurnWriteFail();
+      A.ok(!w._turnWriteFail, 'the clear writer did not clear the record');
+
+      // Cleared at TURN START — asserted at source, since aiConverse cannot be driven synchronously.
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      const turnInit = src.slice(src.indexOf('window._turnToolCalls = { save: false'), src.indexOf('window._turnToolCalls = { save: false') + 400);
+      A.ok(/_clearTurnWriteFail\(\)/.test(turnInit), 'the record is not cleared at turn start — a failure would gate every later turn in the chat');
+
+      // Cleared by a LATER SUCCESS in the same turn (a failed save then a successful retry).
+      const hook = src.slice(src.indexOf('Record what the SYSTEM said about a failed write'), src.indexOf('Record what the SYSTEM said about a failed write') + 900);
+      A.ok(/else _clearTurnWriteFail\(\)/.test(hook), 'a write that SUCCEEDS after a failure does not clear the record — the success would be rewritten as the failure');
+
+      // ── ONE WRITER, asserted at source.
+      // Anchor the tail on the block that FOLLOWS both helpers — splitting on the clear function's
+      // own name leaves its body inside "outside" and reports its own null assignment as a stray.
+      const outside = src.split('function _setTurnWriteFail')[0] + src.split('// ── THE ONE WRITER of the requote-write pair')[1];
+      const stray = (outside.match(/window\._turnWriteFail\s*=(?!=)/g) || []).length;
+      A.eq(stray, 0, 'window._turnWriteFail is assigned outside its one writer (' + stray + ' site(s))');
+    },
+  },
+
   // ── 36 ───────────────────────────────────────────────────────────────────────
   {
     id: 36, name: 'a shipment reference resolves whether it is a BOLId or a BOL number — no caller has to know which it holds',

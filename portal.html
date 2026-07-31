@@ -7906,6 +7906,18 @@ function fmtDate(d) {
 
 
 
+// ── THE ONE WRITER of the turn's write-failure record — nothing else may assign it ────────────
+// What the SYSTEM actually said when a write failed this turn. Read only by _gateFinalText, to stop
+// the agent inventing a different cause. Cleared at the START of every turn and on a write that
+// SUCCEEDS, so a failure can never gate a later clean turn — the staleness rule every global in
+// this file now follows.
+function _setTurnWriteFail(op, message) {
+  window._turnWriteFail = { op: String(op || ''), message: String(message || '') };
+}
+function _clearTurnWriteFail() {
+  window._turnWriteFail = null;
+}
+
 // ── THE ONE WRITER of the requote-write pair — nothing else may assign either global ──────────
 // Two globals, one fact, and they must never disagree:
 //   _requoteWriteBOL — WHICH BOL a pending requote must be written to (null when unknown)
@@ -14928,6 +14940,39 @@ function _gateFinalText(finalText, ctx) {
       }
     } catch (e) {}
 
+    // ── 3b. FABRICATED WRITE-FAILURE CAUSE — REPLACE with what the system actually said ─────────
+    // Third appearance live. On a 404 the tool returned "No shipment matching 1908657679 is on this
+    // account. Tell the customer you could not find that shipment and ask them to double-check the
+    // BOL number" — and the agent said "the system flagged that a state is needed on the delivery
+    // address." It did not embellish a vague error; it DISCARDED a specific, correct instruction and
+    // invented an unrelated validation failure, attributing it to "the system". Better copy cannot
+    // fix that: the copy was already right. So it is enforced after generation, like 2d.
+    //
+    // REPLACE rather than append, matching backstop 3 below: unlike an unbacked accessorial claim
+    // there is nothing in the sentence worth keeping — the stated cause is simply not what happened.
+    //
+    // FALSE POSITIVES ARE THE REAL RISK, and are what the substring test exists for. A GENUINE
+    // validation failure makes "the system needs a delivery ZIP" both true and useful, so a cause is
+    // only fabricated when the field it names appears NOWHERE in what the system returned. State-
+    // gated on an actual failed write this turn, so a clean turn is never touched.
+    try {
+      var _wf = window._turnWriteFail;
+      if (_wf && _wf.message) {
+        var _causeRe = /\b(?:the\s+)?(?:system|it)\s+(?:flagged|flags|says?|said|reported|requires?|needs?|is\s+asking|wants?)\b|\bmissing\s+(?:a|an|the)?\s*\w+|\bneeds?\s+(?:a|an|the)\s+\w+|\binvalid\b|\bvalidation\b/i;
+        if (_causeRe.test(text)) {
+          var _fieldRe = /\b(state|city|zip|zipcode|postal code|address|phone|contact|name|weight|dimensions?|freight class|commodity|pickup date|email)\b/gi;
+          var _claimedFields = (String(text).match(_fieldRe) || []).map(function (f) { return f.toLowerCase(); });
+          var _msgLow = _wf.message.toLowerCase();
+          var _unsupported = _claimedFields.filter(function (f) { return _msgLow.indexOf(f) < 0; });
+          if (_unsupported.length) {
+            console.warn('[FP] gate — reply invented a cause for a failed', _wf.op, ': claimed', JSON.stringify(_unsupported),
+              'which appears nowhere in what the system returned. REPLACING with the real message.');
+            text = _wf.message;
+          }
+        }
+      }
+    } catch (e) {}
+
     // ── 3. FABRICATION BACKSTOP (state-gated) ───────────────────────────────────
     if (_avail.state === 'not_settled' || _avail.state === 'settled_rejected') {
       var _fab = /(no carriers?|no rates?|didn'?t come back|did not come back|nothing came back|couldn'?t find (a |any )?(carrier|rate)|not serviceable|don'?t service|doesn'?t service|no coverage|too (large|big|heavy|oversize)|outside .{0,20}(area|lane|route|network)|carriers? (don'?t|won'?t|can'?t|do not))/i;
@@ -14997,6 +15042,7 @@ async function aiConverse(userText) {
   // Per-turn tool-call ledger for the promise-without-action enforcer: the gate may only treat a
   // promised save/book/dispatch as unbacked when the corresponding tool did NOT run this turn.
   window._turnToolCalls = { save: false, book: false, dispatch: false };
+  _clearTurnWriteFail(); // a stale write failure must never gate a later clean turn
   const _turnStartedAt = Date.now();
   let _toolInFlight = false;
   let _lastBotShown = '';
@@ -15437,6 +15483,16 @@ async function aiConverse(userText) {
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
         _toolInFlight = false;
+        // Record what the SYSTEM said about a failed write, so the gate can tell an invented cause
+        // from a real one. Central hook rather than one per return site: every write tool already
+        // routes its failure through _classifyWriteError, and this keeps a single writer. Holds
+        // (_turnHandled) are excluded — they are not write failures, and they end the turn anyway.
+        try {
+          if (/^(book|save|dispatch)_shipment$/.test(toolUse.name) && result && !result._turnHandled) {
+            if (result.ok === false) _setTurnWriteFail(toolUse.name, result.message || result.error || '');
+            else _clearTurnWriteFail(); // a later success in the same turn supersedes an earlier failure
+          }
+        } catch (e) {}
         // ── TOOL-OWNED TURN ────────────────────────────────────────────────────────────────────
         // A tool that already rendered the customer-facing message owns the turn and ENDS it: no
         // follow-up completion, so the model cannot restate it, contradict it, or call a second tool
