@@ -11239,12 +11239,14 @@ async function submitBookingOnly(opts) {
       // depend on the agent relaying the tool result — that is the pattern that failed repeatedly
       // tonight. Render it from code, the same way "Saving shipment..." above already is, so the
       // customer is told the BOL number whatever the model does with its turn.
-      // Wording is the ESTABLISHED contract, asserted by acceptance step R4: points to My Shipments,
-      // keeps "when you're ready to dispatch", no phone, and no dispatch-by-asking. It moved surface
-      // (tool result -> rendered here) but must not change words as a side effect of that move.
+      // Wording is the contract asserted by acceptance step R4, CHANGED DELIBERATELY 2026-07-31:
+      // the confirmation now invites dispatch in CHAT instead of sending the customer to My
+      // Shipments. It still names the BOL, still carries no phone number, and says explicitly that
+      // nothing has gone to the carrier — the shipment is saved, not tendered. See the rationale on
+      // R4 in evals/flows/acceptance.js before changing any of this.
       appendMessage('bot', BOLNumber
-        ? ('Saved as BOL ' + BOLNumber + " — it's saved in My Shipments; open it there when you're ready to dispatch.")
-        : "Saved — it's in My Shipments; open it there when you're ready to dispatch.");
+        ? ('Saved as BOL ' + BOLNumber + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.')
+        : 'Saved — nothing has gone to the carrier yet. Tell me when you want it dispatched.');
     }
     if (!opts.thenDispatch && !_suppressSavedModal) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
@@ -14631,7 +14633,7 @@ async function _execSaveShipment(input) {
       return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber, saveConfirmed: true, _turnHandled: true };
     }
     return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
-      message: 'Saved as BOL ' + _bolShown + " — it's saved in My Shipments; open it there when you're ready to dispatch." };
+      message: 'Saved as BOL ' + _bolShown + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.' };
   } catch(e) {
     const _c = _classifyWriteError(e, 'save');
     return { ok: false, kind: _c.kind, message: _c.message };

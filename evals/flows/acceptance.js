@@ -367,7 +367,27 @@ const resilienceSteps = [
     },
   },
   {
-    id: 'R4', name: 'save confirmation points to My Shipments for dispatch (no phone, no "just ask")',
+    // ── R4 — RULE CHANGED DELIBERATELY 2026-07-31. READ THIS BEFORE REVERTING IT. ────────────────
+    // This step used to require the OPPOSITE: that the save confirmation send the customer back to
+    // My Shipments to dispatch, and forbid inviting dispatch in chat ("no just ask"). That was the
+    // right rule when it was written — chat could not dispatch safely, so pointing at a surface
+    // where the customer could see the shipment before tendering it was the safer handoff.
+    //
+    // WHAT MADE IT SAFE TO CHANGE, all shipped 2026-07-30/31 and all covered by layer-2 cases:
+    //   bcef335  the residential hold speaks before an irreversible dispatch
+    //   207bb64  guard 1 — a stale selection can never be tendered
+    //   948833c  guard 2 — the selection tracks every rate pull
+    //   1760d10  divergence backstop — the written and quoted rates must agree
+    //   994bb8b  updateToCurrentRate — a blocked dispatch has a real way out
+    // plus a live end-to-end run that dispatched at the correct rate. d21d861 had already removed
+    // the "hit Ready to Dispatch" button instruction on exactly this reasoning; leaving the copy
+    // pointing back to My Shipments contradicted the direction of everything else shipped.
+    //
+    // WHAT DID NOT CHANGE, and must not: no phone number (the no-phone-as-fallback product rule),
+    // it must NOT imply the shipment has already gone to the carrier, and it must name the BOL when
+    // the backend returned one. A saved BOL is NOT VALID FOR TENDERING until dispatch, and telling a
+    // customer their freight is moving when it is not is the worst failure in this product.
+    id: 'R4', name: 'save confirmation invites dispatch in chat, names the BOL, and never implies it already went out',
     async run() {
       const ctx = boot(); const w = ctx.win;
       try {
@@ -389,9 +409,15 @@ const resilienceSteps = [
           ? r.message
           : ctx.messages.filter(m => m.role === 'bot').map(m => m.text).find(t => /Saved/i.test(t)) || '';
         A.ok(_saveCopy, 'the save produced NO customer-facing confirmation at all');
-        A.ok(/My Shipments/.test(_saveCopy), 'save copy does not point to My Shipments: ' + _saveCopy);
-        A.ok(/when you'?re ready to dispatch/i.test(_saveCopy), 'save copy lost the dispatch instruction: ' + _saveCopy);
-        A.ok(!/come back and let me know|just come back/i.test(_saveCopy), 'save copy still implies dispatch-by-asking: ' + _saveCopy);
+        // NAMES THE BOL the backend returned — never one carried forward or invented.
+        A.ok(/160188888/.test(_saveCopy), 'save copy does not name the BOL the backend returned: ' + _saveCopy);
+        // INVITES DISPATCH IN CHAT. This is the reversal; chat owns the write now.
+        A.ok(/tell me when|say the word|whenever you'?re ready/i.test(_saveCopy), 'save copy does not invite dispatch in chat: ' + _saveCopy);
+        // ...but never by sending them somewhere else to do it.
+        A.ok(!/come back|go to my shipments|open it there|hit ready to dispatch/i.test(_saveCopy), 'save copy still hands the customer off instead of owning the dispatch: ' + _saveCopy);
+        // NEVER implies it already went out. A saved BOL is NOT VALID FOR TENDERING.
+        A.ok(/nothing has gone to the carrier|not (?:been )?dispatched|hasn'?t gone/i.test(_saveCopy), 'save copy does not say the shipment has NOT gone to the carrier: ' + _saveCopy);
+        A.ok(!/\b(?:has been|was|is) dispatched\b|\bon its way\b|\bpicked up\b/i.test(_saveCopy), 'save copy implies the shipment is already moving: ' + _saveCopy);
         A.ok(!PHONE_RE.test(_saveCopy), 'save copy contains a phone number: ' + _saveCopy);
       } finally { ctx.dom.window.close(); }
     },
