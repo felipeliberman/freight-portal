@@ -831,6 +831,54 @@ const cases = [
     },
   },
 
+  // ── 36 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 36, name: 'a shipment reference resolves whether it is a BOLId or a BOL number — no caller has to know which it holds',
+    catches: 'the 404 that has now been fixed one call site at a time THREE times (7bee6c1, 4510640, and live on 1908657679 via _execSaveShipment -> setEditingBOLId -> resolveBOLId). fetchBookingByBOL is by-NUMBER only: /bolnumber/{ref} 404s on an id and the fallback scan matches BOLNumber first for every row, so it can never recover — it burns its full ~12s deadline and returns null. Both shapes are all-digit, so no caller can tell them apart and no heuristic can either.',
+    async run(h) {
+      const w = h.win;
+      const REC = { BOLId: '1908657679', BOLNumber: '1103613008', consignee: { zipCode: '90035' }, shipper: { zipCode: '90660' }, freightInfo: [{ qty: 1, weight: 10 }], accessorials: [] };
+      const seen = [];
+      // by-NUMBER endpoint: 404s on an id, exactly like production.
+      h.routes.unshift({
+        match: (u) => /\/applet\/v1\/book\/bolnumber\//.test(u),
+        reply: (u) => { seen.push('bynumber'); return /1103613008/.test(u) ? { status: 200, body: { data: { results: REC } } } : { status: 404, body: {} }; },
+      });
+      // by-ID endpoint: the one _preChargeInfo and the RDI guard already use live.
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book\/\d+$/.test(u) && (!m || m === 'GET'),
+        reply: (u) => { seen.push('byid'); return /1908657679/.test(u) ? { status: 200, body: { data: { results: REC } } } : { status: 404, body: {} }; },
+      });
+
+      // ── A BOLId resolves. This is the live failure: previously a 404 then a dead 12s scan.
+      const byId = await w.resolveBOLId('1908657679');
+      A.ok(byId && byId.ok === true, 'a BOLId did not resolve — the third instance of this same 404: ' + JSON.stringify(byId).slice(0, 200));
+      A.eq(byId.bolId, '1908657679', 'resolved to the wrong id');
+      A.eq(byId.bolNumber, '1103613008', 'the BOL number did not come back with it');
+
+      // ── A BOL NUMBER still resolves, through the by-number path. No regression.
+      seen.length = 0;
+      const byNum = await w.resolveBOLId('1103613008');
+      A.ok(byNum && byNum.ok === true, 'a BOL number stopped resolving — the by-number path regressed: ' + JSON.stringify(byNum).slice(0, 200));
+      A.eq(byNum.bolId, '1908657679', 'the number path returned the wrong canonical id');
+      A.ok(seen.indexOf('bynumber') >= 0, 'the by-number path was never reached for a genuine BOL number');
+
+      // ── SELF-VERIFYING: the id probe must REJECT a record whose id is not what was asked for,
+      // which is what makes trying it first safe rather than a way to grab the wrong shipment.
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book\/\d+$/.test(u) && (!m || m === 'GET'),
+        reply: () => ({ status: 200, body: { data: { results: { BOLId: '999999', BOLNumber: '888888' } } } }),
+      });
+      const mismatch = await w.resolveBOLId('1103613008');
+      A.ok(!(mismatch.ok && mismatch.bolId === '999999'), 'the id probe accepted a record whose id did NOT match the reference — it can grab the wrong shipment');
+
+      // ── Neither shape matches → a real miss, reported rather than silent.
+      const miss = await w.resolveBOLId('4040404040');
+      A.ok(miss && miss.ok === false, 'an unknown reference reported success');
+      A.ok(/BOL_NOT_FOUND|LOOKUP_TIMEOUT/.test(miss.code || ''), 'an unknown reference returned an unexpected code: ' + miss.code);
+    },
+  },
+
   // ── 35 ───────────────────────────────────────────────────────────────────────
   {
     id: 35, name: 'a price hold closes the loop: steering reaches the agent, updateToCurrentRate writes and reports without dispatching, and the hold line clears itself',
