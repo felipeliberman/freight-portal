@@ -11202,8 +11202,36 @@ async function submitBookingOnly(opts) {
     // above has just been refreshed to the NEW price, which is what stands the divergence backstop
     // down. This is the write-success chokepoint for BOTH the form panel's Save and _execSaveShipment.
     if (window._requoteWriteBOL && (!BOLId || window._requoteWriteBOL === BOLId)) _clearRequotePending();
-    // Show save-confirmed modal
-    if (!opts.thenDispatch) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
+    // ── Show save-confirmed modal — EXCEPT on a chat-initiated save ─────────────────────────────
+    // A save the customer asked for in chat should be answered in chat. Raising a modal there makes
+    // them click something away to get back to the conversation they were already having, and it
+    // costs nothing to skip: this modal renders ONLY BOL number, carrier, price and pickup date —
+    // it never displays docs (the `docs` it is handed is unused), and a save has none to show
+    // anyway. Documents are a DISPATCH artifact: an edit PUT returns docs:[] unconditionally, and
+    // _canonicalDispatch is what fetches them, into a different modal (showBookingConfirmedModal).
+    // _execSaveShipment already tells the customer the BOL number in chat.
+    //
+    // TWO CARVE-OUTS, both surfaces rather than confirmations:
+    //   * PARCEL — the same modal doubles as the pickup-handling PICKER (see _execDispatchShipment).
+    //     That is a functional input, not a restatement, so it must still appear.
+    //   * PREPAID — _renderPreChargeDisclosure renders INTO this modal, and it is where a PRE
+    //     customer sees the exact charge before it fires. Suppressing it would remove a consent
+    //     surface, the same reason the prepaid My Shipments handoff is left alone.
+    var _isParcelSave = false;
+    try { _isParcelSave = !!(bookingRate && typeof isParcelRate === 'function' && isParcelRate(bookingRate)); } catch (e) {}
+    var _isPreSave = false;
+    try { _isPreSave = !!(currentCustomer && currentCustomer.termsCode === 'PRE'); } catch (e) {}
+    var _suppressSavedModal = !!opts.fromChat && !_isParcelSave && !_isPreSave;
+    if (_suppressSavedModal && !opts.thenDispatch) {
+      // The modal WAS the visible confirmation on this path. Removing it must not make the outcome
+      // depend on the agent relaying the tool result — that is the pattern that failed repeatedly
+      // tonight. Render it from code, the same way "Saving shipment..." above already is, so the
+      // customer is told the BOL number whatever the model does with its turn.
+      appendMessage('bot', BOLNumber
+        ? ('Saved as BOL ' + BOLNumber + " — it's in My Shipments. Tell me when you want it dispatched.")
+        : "Saved — it's in My Shipments. Tell me when you want it dispatched.");
+    }
+    if (!opts.thenDispatch && !_suppressSavedModal) showShipmentSavedModal({ BOLId, BOLNumber, docs, carrierName:(bookingRate&&(bookingRate._name||bookingRate.name||bookingRate.carrierName))||'', carrierPrice:bookingRate?Number((bookingRate.billTo&&bookingRate.billTo.total)||bookingRate.total||bookingRate._price||0):0, pickupDate:_f.pickup.date||getTomorrow(), rateType:(bookingRate&&bookingRate.rateType)||'', serviceLevel:(bookingRate&&(bookingRate.serviceLevel||bookingRate.service))||'', iconUrl:(bookingRate&&(bookingRate.iconUrl||bookingRate.icon||bookingRate.logoUrl))||'' });
     bookingRate = null; bookingData = {};
     window._bookingPanelContainer = null;
     return _editAck
@@ -14497,7 +14525,8 @@ async function _execSaveShipment(input) {
     // false-confirmation bug: it holds the last SUCCESSFUL booking, so a 404'd PUT still returned
     // ok:true carrying a prior shipment's BOL — telling a live customer freight was saved when the
     // backend had rejected it. Never state a BOL that did not come back from this save.
-    const _res = await submitBookingOnly();
+    // fromChat: this save was asked for in chat, so it is answered in chat — no modal to dismiss.
+    const _res = await submitBookingOnly({ fromChat: true });
     // Saved = this call said ok AND either returned an id, or acknowledged an edit (a successful
     // Primus edit PUT answers 2xx with an empty body, which is real success carrying no id).
     if (!_res || _res.ok !== true || !(_res.bolId || _res.editAcknowledged)) {

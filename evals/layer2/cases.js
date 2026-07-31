@@ -831,6 +831,61 @@ const cases = [
     },
   },
 
+  // ── 39 ───────────────────────────────────────────────────────────────────────
+  {
+    id: 39, name: 'a chat-initiated save is answered in chat — no modal to dismiss — but the parcel picker and the prepaid disclosure still appear',
+    catches: 'a save asked for in chat raised a confirmation modal the customer had to click away before they could get back to the conversation they were already having. It costs nothing to skip — the modal renders only BOL number, carrier, price and pickup date, never docs (a save has none; documents are a DISPATCH artifact) — but two carve-outs are load-bearing: the same modal doubles as the parcel pickup PICKER, and the prepaid charge disclosure renders INTO it, which is where a PRE customer sees the exact charge before it fires.',
+    async run(h) {
+      const w = h.win;
+      const src0 = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'portal.html'), 'utf8');
+      const seenModal = () => !!w.document.getElementById('bk-saved-overlay');
+      // A create returns data.results as an ARRAY (bookShipment reads results[0]); without this the
+      // save fails and the modal assertions would pass for the wrong reason.
+      h.routes.unshift({
+        match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+        reply: () => ({ status: 200, body: { data: { results: [{ BOLId: 'BOLID-SAVE1', BOLNumber: '160000001' }] } } }),
+      });
+      const setup = () => {
+        w._quotedContacts = {
+          shipper:   { name: 'Michaels Furniture', address: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zip: '90660', contact: 'Jo', phone: '5625550100' },
+          consignee: { name: 'Dana Whitfield', address: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zip: '90035', contact: 'Dana', phone: '3105550101' },
+        };
+        w._lastRatesRaw = [{ id: 'R1', name: 'JTS Express', total: 161 }];
+        w.selectRate(w._lastRatesRaw[0], { shipment: { originZip: '90660', destinationZip: '90035' }, list: w._lastRatesRaw, open: false, source: 'test' });
+        try { const o = w.document.getElementById('bk-saved-overlay'); if (o) o.remove(); } catch (e) {}
+      };
+
+      // ── CHAT SAVE — no modal, and the customer is still told the outcome in chat.
+      setup(); h.reset();
+      const r = await w._execSaveShipment({});
+      await sleep(400);
+      A.ok(r && r.ok === true, 'setup: the chat save did not succeed: ' + JSON.stringify(r).slice(0, 200));
+      A.ok(!seenModal(), 'a chat-initiated save raised a modal the customer must dismiss to get back to chat');
+      A.ok(h.bots().some(t => /Saved as BOL/i.test(t)), 'the chat save went silent — suppressing the modal must not remove the confirmation: ' + JSON.stringify(h.bots()));
+
+      // ── FORM SAVE — unchanged. The modal is the confirmation on that surface.
+      setup(); h.reset();
+      await w.submitBookingOnly();
+      await sleep(400);
+      A.ok(seenModal(), 'the FORM save lost its confirmation modal — only chat saves were meant to change');
+
+      // ── CARVE-OUT 1: PREPAID. Asserted at SOURCE, not driven, and the reason matters: currentCustomer
+      // is a script-scope `let` (portal.html:2268), so a test cannot set termsCode from outside —
+      // assigning w.currentCustomer only makes an unrelated window property. The shared harness does
+      // exactly that, which means it has never actually given the app a logged-in customer. Reported
+      // separately rather than fixed here: repointing it would hand every existing case a real
+      // currentCustomer where it has had null, and that is not a change to make inside this commit.
+      A.ok(/_isPreSave/.test(src0) && /!_isPreSave/.test(src0), 'the prepaid carve-out is gone — a PRE customer would lose the surface where the exact charge is disclosed');
+      A.ok(/termsCode === 'PRE'/.test(src0), 'the prepaid check no longer keys off termsCode');
+
+      // ── CARVE-OUT 2: PARCEL. Asserted at source — the same modal is the pickup-handling PICKER,
+      // a functional input rather than a restatement, and must survive on that path.
+      const src = src0;
+      A.ok(/_isParcelSave/.test(src) && /!_isParcelSave/.test(src), 'the parcel carve-out is gone — the pickup picker would stop appearing on a chat save');
+      A.ok(/parcelPickerShown/.test(src), 'the parcel pickup picker path was removed');
+    },
+  },
+
   // ── 38 ───────────────────────────────────────────────────────────────────────
   {
     id: 38, name: 'chat owns the write: a deterministic party-fill offers to save instead of pointing at the panel button, and writes nothing',
