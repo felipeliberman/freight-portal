@@ -3503,6 +3503,53 @@ function _bolNumberFor(BOLId) {
 // is missing and gives the one handoff we allow (email — the no-phone-as-fallback product rule).
 // No internal id, no field name, no "check My Shipments" — the number is missing there too.
 const BOL_NUMBER_UNAVAILABLE = 'Not available — email support@freightandlogistics.ai';
+// Same rule for the documents on a dispatched shipment: shown as missing, never silently absent.
+const DOCS_UNAVAILABLE = 'Your shipping documents aren’t back from the carrier yet. Email support@freightandlogistics.ai and the team will send them over.';
+
+// ── THE ONE STORE AND THE ONE READER FOR A SHIPMENT'S DOCUMENTS ───────────────────────────────
+// Live, same session, same backend: a shipment quoted and booked through the FORM reached the
+// dispatch modal with all three buttons — Bill Of Lading, Shipping Labels, Quote — while BOL
+// 160135856, booked entirely through CHAT, reached the same modal with no DOCUMENTS row at all and
+// chat saying "Your shipping documents are ready to download". Told ready, shown nothing.
+//
+// The carrier returning nothing at dispatch was only the TRIGGER. The defect was that exactly one
+// of the four call sites survived it: submitBooking held the documents from the POST /book response
+// in a local and fell back to them (`(_cd.docs && _cd.docs.length) ? _cd.docs : docs`). Chat had
+// those same documents in hand — every booking surface goes through bookShipment, which returns
+// result.documents — and THREW THEM AWAY: _execBookShipment never reads _booked.docs,
+// submitBookingOnly hands its copy only to a modal that is suppressed on a chat save, and no
+// _lastBooked writer carries a docs key. So by dispatch time chat had nothing to fall back to.
+// Not "chat never fetches" — chat fetches at booking time, on the same call, and discards.
+//
+// One local fallback on one of four paths is the split-brain shape. So: one store keyed by the
+// backend's own BOLId, written ONLY from a backend response, and one reader every dispatch surface
+// goes through. Dispatch-returned documents win when there are any (they are the freshest and
+// include the CLBL); the documents recorded at booking are the fallback; anything without a real
+// url is not a document a customer can open and never reaches a button.
+const _bolDocuments = Object.create(null);
+// One shape for every consumer: the modal, the detail modal's Download Documents button, and the
+// tool result all used to normalize (or fail to normalize) their own way.
+function _normalizeDocs(docs) {
+  return (Array.isArray(docs) ? docs : []).filter(d => d && d.url).map(d => ({
+    type: d.type || d.fileType || 'Document',
+    name: d.name || d.type || d.fileType || 'Document',
+    url:  d.url,
+  }));
+}
+function _rememberBOLDocuments(BOLId, docs) {
+  const id = BOLId == null ? '' : String(BOLId).trim();
+  const list = _normalizeDocs(docs);
+  if (!id || !list.length) return [];   // never overwrite a good set with an empty one
+  _bolDocuments[id] = list;
+  return list;
+}
+// THE reader. Never returns undefined, so no caller needs its own `|| []`.
+function _documentsFor(BOLId, dispatchDocs) {
+  const fromDispatch = _normalizeDocs(dispatchDocs);
+  if (fromDispatch.length) return fromDispatch;
+  const id = BOLId == null ? '' : String(BOLId).trim();
+  return (id && _bolDocuments[id]) || [];
+}
 
 // Resolve a customer-supplied BOL reference (a BOLNumber, or already a BOLId) to the canonical
 // BOLId the PUT path needs. FAILS LOUDLY — there is deliberately NO fallback to the raw input.
@@ -6731,8 +6778,30 @@ function showBookingConfirmedModal(bc) {
     body.appendChild(warn);
   }
 
-  // Document buttons
+  // ── DOCUMENTS — THE ROW IS NOT OPTIONAL ON A DISPATCHED SHIPMENT ────────────────────────────
+  // Live, BOL 160135856 (STG LTL): the dispatch confirmed with a pickup confirmation but came back
+  // with no documents and no PRO, so this gate rendered NOTHING — no label, no buttons, no
+  // explanation — while chat said "Your shipping documents are ready to download". The customer was
+  // told their documents were ready and shown no way to get them. (The gate itself dates to
+  // 1414366/a6ef225 in June and is unrelated to the BOL-number work; only the symptom is new,
+  // because whether documents come back at dispatch varies by carrier and by timing.)
+  // Same rule as the BOL number tile above: a dispatched shipment always HAS documents coming, so
+  // an empty row is a defect to SHOW, not to hide. The label always renders once dispatched, and
+  // when there is nothing to link, fixed customer-safe copy says so and points at the one handoff
+  // we allow. Not a link and not copyable — there is nothing to open. No internal id, ever.
   const validDocs = (bc.docs || []).filter(d => d.url);
+  if (!validDocs.length && bc.dispatchOk) {
+    console.error('[FP] DISPATCHED WITH NO DOWNLOADABLE DOCUMENTS — BOL', bc.BOLNumber || _bolNumberFor(bc.BOLId) || '(no confirmed number)',
+      '| the dispatch returned', (bc.docs || []).length, 'document(s), none with a URL. Showing the placeholder rather than an empty row.');
+    const docLabelEmpty = document.createElement('div');
+    docLabelEmpty.style.cssText = 'font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;';
+    docLabelEmpty.textContent = 'Documents';
+    body.appendChild(docLabelEmpty);
+    const docNone = document.createElement('div');
+    docNone.style.cssText = 'background:#faf9f6;border:1px solid #e5e2d9;border-radius:9px;padding:10px 14px;margin-bottom:16px;font-size:12px;line-height:1.5;color:#1c1a17;';
+    docNone.textContent = DOCS_UNAVAILABLE;
+    body.appendChild(docNone);
+  }
   if (validDocs.length) {
     const docLabel = document.createElement('div');
     docLabel.style.cssText = 'font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;';
@@ -7149,7 +7218,9 @@ function showShipmentSavedModal(bc) {
       return;
     }
     overlay.remove();
-    showBookingConfirmedModal({ BOLNumber: bc.BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: dr.docs, carrierName: bc.carrierName, carrierPrice: bc.carrierPrice, pickupDate: bc.pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl: bc.iconUrl || '' });
+    // CALL SITE 2 of 4 (saved-modal "Dispatch Now") — same missing fallback as chat had; fixed in
+    // the same pass rather than waiting for the identical report from this surface.
+    showBookingConfirmedModal({ BOLNumber: bc.BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: _documentsFor(bc.BOLId, dr.docs), carrierName: bc.carrierName, carrierPrice: bc.carrierPrice, pickupDate: bc.pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl: bc.iconUrl || '' });
   };
   if (_isParcalSaved) {
     // Parcel: show the three pickup-method options IMMEDIATELY — no pre-click required
@@ -7896,7 +7967,9 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       appendMessage('bot', _classifyWriteError({ message: dr.error }, 'dispatch').message);
       return;
     }
-    const validDocs = (dr.docs || []).filter(d => d && d.url);
+    // CALL SITE 3 of 4 (My Shipments detail dispatch). The Download Documents button below reads
+    // the same list the modal does, so both recover the booking documents together.
+    const validDocs = _documentsFor(BOLId, dr.docs);
     if (validDocs.length) {
       _dispatchedDocs = validDocs;
       dlBtn.style.opacity = '1'; dlBtn.style.pointerEvents = 'auto'; dlBtn.style.color = 'var(--tx)';
@@ -7904,7 +7977,7 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     }
     if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Dispatched!'; activeBtn.style.background = '#16a34a'; activeBtn.disabled = true; }
     const priceAmt = parseMoney(rawTotal) || 0;
-    showBookingConfirmedModal({ BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: dr.docs, carrierName, carrierPrice: priceAmt, pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl });
+    showBookingConfirmedModal({ BOLNumber, PRO: dr.PRO, confirmation: dr.confirmation, docs: validDocs, carrierName, carrierPrice: priceAmt, pickupDate, dispatchOk: dr.dispatchOk, isParcel: !!smallPackageHandling, iconUrl });
     overlay.remove();
   };
 
@@ -11180,7 +11253,12 @@ async function bookShipment(payload, opts) {
   // facing caller now renders a placeholder for it. Recorded so the number survives a later edit
   // PUT, which answers 2xx with an empty body and can carry none of its own.
   const BOLNumber = _rememberBOLNumber(BOLId, result.BOLNmbr || result.BOLNumber);
+  // THE one write site for a shipment's documents. Every booking surface — the form's Book &
+  // Dispatch, the form's Save, chat's book_shipment, chat's save_shipment — reaches Primus through
+  // this function, so recording here is what lets a dispatch on ANY surface fall back to them.
+  // Previously only submitBooking kept them, in a local, which is why chat lost them.
   const docs = result.documents || [];
+  _rememberBOLDocuments(BOLId, docs);
   return { BOLId, BOLNumber, docs, result };
 }
 
@@ -11676,7 +11754,12 @@ async function submitBooking() {
     }
     let PRO = _cd.PRO || null;
     let confirmation = _cd.confirmation || null;
-    let dispatchedDocs = (_cd.docs && _cd.docs.length) ? _cd.docs : docs;
+    // CALL SITE 4 of 4 (form Book & Dispatch). THE AD-HOC FALLBACK THAT USED TO LIVE HERE IS GONE:
+    // `(_cd.docs && _cd.docs.length) ? _cd.docs : docs` was the ONLY thing that made this surface
+    // survive a dispatch that returned no documents, and because it was a local it could not help
+    // the other three. The shared reader does the same thing for all four, from the store
+    // bookShipment writes — which is the very same `docs` this line used to close over.
+    let dispatchedDocs = _documentsFor(BOLId, _cd.docs);
     let dispResult = (_cd.ok && (_cd.dispResult || _cd.dispatchOk)) ? (_cd.dispResult || { dispatchOk: true }) : null;
 
     removeTyping();
@@ -14767,7 +14850,10 @@ async function _execDispatchShipment(input) {
       return { ok: false, kind: _c.kind, message: _c.message };
     }
 
-    const validDocs = (dr.docs || []).filter(d => d && d.url).map(d => ({ type: d.type||d.fileType||'Document', name: d.name||d.type||d.fileType||'Document', url: d.url }));
+    // CALL SITE 1 of 4 (chat dispatch) — the one the customer reported. Reads through the shared
+    // reader, so a dispatch that returns no documents falls back to the ones recorded at booking
+    // instead of leaving this shipment with nothing.
+    const validDocs = _documentsFor(BOLId, dr.docs);
     if (!dr.dispatchOk && !dr.hasClbl) {
       return { ok: false, error: 'Dispatch did not confirm. The shipment is booked but not yet dispatched — our team can dispatch it. Email support@freightandlogistics.ai and we\'ll complete it.', BOLId: BOLId, documents: validDocs };
     }
@@ -14791,7 +14877,15 @@ async function _execDispatchShipment(input) {
         isParcel: !!_lb.isParcel,
       }), 500);
     } catch(e) {}
-    return { ok: true, confirmation: dr.confirmation || null, PRO: dr.PRO || null, documents: validDocs, docsShown: true, message: 'Dispatched to carrier. Shipping documents are now displayed for download.' };
+    // docsShown REPORTS, it does not assert. It was hardcoded true, so on the live dispatch of BOL
+    // 160135856 — which returned no documents — the agent was handed "Shipping documents are now
+    // displayed for download" and said exactly that, while the modal showed none. Never tell a
+    // customer something is ready and then show them nothing; the panel now says so too.
+    const _docsShown = validDocs.length > 0;
+    return { ok: true, confirmation: dr.confirmation || null, PRO: dr.PRO || null, documents: validDocs, docsShown: _docsShown,
+      message: _docsShown
+        ? 'Dispatched to carrier. Shipping documents are now displayed for download.'
+        : 'Dispatched to carrier. The shipping documents are NOT back from the carrier yet — do NOT tell the customer documents are ready or available to download. The confirmation panel already tells them how to get them.' };
   } catch (e) {
     window._dispatchingBOLId = null;
     console.error('dispatch_shipment error:', e);

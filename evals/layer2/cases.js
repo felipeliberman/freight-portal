@@ -2006,6 +2006,26 @@ const cases = [
           documents: [{ type: 'CLBL', name: 'Bill of Lading', url: 'https://example.invalid/clbl.pdf' }] } } } }) },
     );
 
+    // The three documents a dispatched LTL shipment comes back with, in the shapes Primus returns
+    // and with the labels the July 31 modal showed.
+    const FULL_DOCS = [
+      { type: 'BOL', name: 'Bill Of Lading',  url: 'https://example.invalid/bol.pdf' },
+      { type: 'LBL', name: 'Shipping Labels', url: 'https://example.invalid/lbl.pdf' },
+      { type: 'QUO', name: 'Quote',           url: 'https://example.invalid/quo.pdf' },
+    ];
+    // Override the dispatch reply for one run: `docs` as given, PRO optional.
+    const dispatchReturning = (h, docs, PRO) => h.routes.unshift({
+      match: u => /\/applet\/v2\/dispatch\//.test(u),
+      reply: () => ({ status: 200, body: { data: { results: {
+        confirmation: '523392', ...(PRO ? { PRO } : {}), documents: docs } } } }),
+    });
+    // _canonicalDispatch falls back to GET /applet/v1/document/{BOLId} when the dispatch returns
+    // none, so an empty-documents case has to answer that too or it is not really empty.
+    const documentsEndpointReturns = (h, results) => h.routes.unshift({
+      match: u => u.indexOf('/applet/v1/document/') >= 0,
+      reply: () => ({ status: 200, body: { data: { results } } }),
+    });
+
     // Drive the modal and hand back what the CUSTOMER actually reads. Asserting the rendered
     // overlay rather than the call site's return value is the point: R4 asserts _execSaveShipment's
     // return and stayed green while the customer read "Booked", and this defect is the same shape —
@@ -2097,6 +2117,171 @@ const cases = [
             'the edit PUT destroyed the confirmed BOL number in _lastBooked — the modal reads this');
           A.eq(w._bolNumberFor(INTERNAL_ID), REAL_BOL, 'the canonical reader does not return the customer\'s number');
           A.eq(w._bolNumberFor(NO_NUMBER_ID), null, 'the canonical reader invented a number for a BOL that has none');
+        },
+      },
+      {
+        id: 50, name: 'the WHOLE dispatch modal is asserted — every tile and all three document buttons, and an empty document set is SHOWN rather than dropped',
+        catches: 'live, BOL 160135856 (STG LTL): the modal rendered BOL NUMBER, CARRIER, QUOTED RATE, PICKUP DATE, PICKUP CONFIRMATION and Done — and no DOCUMENTS row at all, while chat said "Your shipping documents are ready to download". Told ready, shown nothing. The `if (validDocs.length)` gate is from June and is NOT a regression from the BOL-number commit (verified: showBookingConfirmedModal differs from 0a43f00 by the BOL tile alone), but it renders an empty row as silence, which our loud-failure rule forbids.\n\nTHE STANDING RULE THIS CASE EXISTS TO ENFORCE, and the reason it shipped green: cases 47-49 asserted the BOL number and NOTHING else on the same modal, so every other tile and the entire document row were free to disappear unnoticed. WHEN A CHANGE ALTERS WHAT A SURFACE DISPLAYS, THE EVAL ASSERTS THE WHOLE SURFACE, NOT ONLY THE FIELD BEING CHANGED. Part A pins the full modal for a normal dispatch; part B is the defect itself.',
+        async run(h) {
+          const w = h.win;
+
+          // ── A. NORMAL DISPATCH — the whole surface, not one field. Every tile the July 31
+          // screenshot showed, and all three document buttons, present AND wired.
+          await openBookingReady(h); installRoutes(h);
+          const r1 = await w._execSaveShipment({});
+          A.ok(r1 && r1.ok === true, 'setup: the create did not succeed: ' + JSON.stringify(r1));
+          dispatchReturning(h, FULL_DOCS, '854499343');
+          const shown = await dispatchAndRead(h, INTERNAL_ID);
+
+          ['BOL Number', 'Carrier', 'PRO Number', 'Quoted Rate', 'Pickup Date', 'Pickup Confirmation', 'Documents']
+            .forEach(label => A.ok(shown.indexOf(label) >= 0, 'the modal is missing the ' + label + ' section: ' + shown.slice(0, 500)));
+          A.ok(shown.indexOf(REAL_BOL) >= 0, 'the BOL number tile lost its value: ' + shown.slice(0, 500));
+          A.ok(shown.indexOf(INTERNAL_ID) < 0, 'the internal BOLId reached the modal: ' + shown.slice(0, 500));
+          A.ok(shown.indexOf('854499343') >= 0, 'the PRO value is missing: ' + shown.slice(0, 500));
+          A.ok(shown.indexOf('523392') >= 0, 'the pickup confirmation value is missing: ' + shown.slice(0, 500));
+
+          // WIRED, not merely present — a label with no href is the same dead end as no button.
+          const ov = w.document.getElementById('bk-confirmed-overlay');
+          const links = Array.from(ov.querySelectorAll('a[href]'));
+          FULL_DOCS.forEach(d => {
+            const a = links.find(x => x.getAttribute('href') === d.url);
+            A.ok(a, 'no document button links to the ' + d.type + ' (' + d.name + '): hrefs = ' + JSON.stringify(links.map(x => x.getAttribute('href'))));
+            A.eq(a.getAttribute('target'), '_blank', 'the ' + d.type + ' button does not open in a new tab');
+            A.ok((a.textContent || '').trim().length > 0, 'the ' + d.type + ' button has no label');
+          });
+          A.ok(links.length >= 3, 'fewer than three document buttons rendered: ' + links.length);
+          ov.remove();  // part B must read ITS OWN modal, not this one
+
+          // ── B. THE DEFECT — dispatch confirms, no documents come back.
+          await openBookingReady(h); installRoutes(h);
+          const r2 = await w._execSaveShipment({});
+          A.ok(r2 && r2.ok === true, 'setup: the second create did not succeed: ' + JSON.stringify(r2));
+          dispatchReturning(h, [], null);
+          documentsEndpointReturns(h, []);
+          h.reset();
+          const dr = await w._execDispatchShipment({ BOLId: INTERNAL_ID });
+          A.ok(dr && dr.ok, 'setup: the no-document dispatch did not complete: ' + JSON.stringify(dr));
+          await waitFor(() => w.document.getElementById('bk-confirmed-overlay'), 3000);
+          const empty = String((w.document.getElementById('bk-confirmed-overlay') || {}).textContent || '');
+          A.ok(empty, 'the modal never rendered on the no-document dispatch');
+
+          A.ok(empty.indexOf('Documents') >= 0,
+            'THE BUG: the DOCUMENTS row vanished entirely on a dispatched shipment — the customer is shown no documents and no reason: ' + empty.slice(0, 500));
+          A.ok(empty.indexOf(h.g('DOCS_UNAVAILABLE')) >= 0,
+            'THE BUG: nothing tells the customer why there are no documents or how to get them: ' + empty.slice(0, 500));
+          A.ok(empty.indexOf(INTERNAL_ID) < 0, 'the internal BOLId reached the empty-documents surface: ' + empty.slice(0, 500));
+          // The BOL number fix must survive all of this untouched.
+          A.ok(empty.indexOf(REAL_BOL) >= 0, 'the BOL number tile regressed on the no-document path: ' + empty.slice(0, 500));
+
+          // AND the other half of "told ready, shown nothing": the tool must not hand the agent a
+          // documents-are-ready line when the modal has none to show.
+          A.eq(dr.docsShown, false, 'THE BUG: docsShown was reported true with zero documents rendered');
+          // Asserted as the CLAIM, not as a substring: the corrected copy legitimately contains the
+          // words "documents are ready" inside "do NOT tell the customer documents are ready", so a
+          // naive negative match would fail the fix it is meant to prove.
+          A.ok(dr.message !== 'Dispatched to carrier. Shipping documents are now displayed for download.',
+            'THE BUG: the tool handed the agent the documents-are-ready line while the modal showed none: ' + dr.message);
+          A.ok(/do NOT tell the customer documents are ready/i.test(dr.message || ''),
+            'the tool does not explicitly stop the agent from claiming the documents are ready: ' + dr.message);
+        },
+      },
+      {
+        id: 51, name: 'a CHAT-booked shipment reaches the dispatch modal with the same documents a FORM-booked one does — on all three dispatch surfaces',
+        catches: 'live, one session, one backend: a shipment quoted and booked through the FORM rendered Bill Of Lading, Shipping Labels and Quote on the dispatch modal, while BOL 160135856 — booked entirely through CHAT — rendered no DOCUMENTS row at all and chat said "Your shipping documents are ready to download". The carrier returning nothing at dispatch was only the trigger: submitBooking held the POST /book documents in a LOCAL and fell back to them, and that local could not help the other three call sites. Chat had the identical documents in hand (every booking surface goes through bookShipment) and discarded them — _execBookShipment never reads _booked.docs, submitBookingOnly hands its copy to a modal suppressed on chat saves, and no _lastBooked writer carries docs. Case 50 asserted the FORM path only, which is exactly the gap that let this ship: same defect, different surface. Per the case 50 standing rule this asserts the WHOLE overlay, and it covers all three previously-unfixed dispatch surfaces so the next report cannot arrive from the one left out.',
+        async run(h) {
+          const w = h.win;
+          // Every dispatch in this case returns ZERO documents — the live condition. The only way a
+          // button can appear is the booking documents surviving to the modal.
+          const bookedDocs = () => h.routes.unshift(
+            { match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+              reply: () => ({ status: 200, body: { data: { results: [{ BOLId: INTERNAL_ID, BOLNmbr: REAL_BOL, documents: FULL_DOCS }] } } }) },
+          );
+          const assertWholeOverlay = (shown, ov, where) => {
+            ['BOL Number', 'Carrier', 'Quoted Rate', 'Pickup Date', 'Pickup Confirmation', 'Documents']
+              .forEach(l => A.ok(shown.indexOf(l) >= 0, where + ': the modal is missing the ' + l + ' section: ' + shown.slice(0, 500)));
+            A.ok(shown.indexOf(REAL_BOL) >= 0, where + ': the BOL number tile lost its value: ' + shown.slice(0, 500));
+            A.ok(shown.indexOf(INTERNAL_ID) < 0, where + ': the internal BOLId reached the modal: ' + shown.slice(0, 500));
+            A.ok(shown.indexOf('523392') >= 0, where + ': the pickup confirmation is missing: ' + shown.slice(0, 500));
+            A.ok(shown.indexOf(h.g('DOCS_UNAVAILABLE')) < 0,
+              where + ': THE BUG — the documents were in hand at booking and the modal still showed the nothing-available placeholder: ' + shown.slice(0, 500));
+            const links = Array.from(ov.querySelectorAll('a[href]'));
+            FULL_DOCS.forEach(d => {
+              const a = links.find(x => x.getAttribute('href') === d.url);
+              A.ok(a, where + ': THE BUG — no document button for the ' + d.type + ' (' + d.name + '). A chat-booked customer has no way to get their BOL. hrefs = ' + JSON.stringify(links.map(x => x.getAttribute('href'))));
+              A.eq(a.getAttribute('target'), '_blank', where + ': the ' + d.type + ' button does not open in a new tab');
+              A.ok((a.textContent || '').trim().length > 0, where + ': the ' + d.type + ' button has no label');
+            });
+            A.ok(links.length >= 3, where + ': fewer than three document buttons rendered: ' + links.length);
+          };
+
+          // ── A. CHAT-booked, CHAT-dispatched — the reported path (_execDispatchShipment).
+          await openBookingReady(h); installRoutes(h); bookedDocs();
+          dispatchReturning(h, [], '854499343');
+          documentsEndpointReturns(h, []);
+          const r1 = await w._execSaveShipment({});
+          A.ok(r1 && r1.ok === true, 'setup: the chat create did not succeed: ' + JSON.stringify(r1));
+          const shownA = await dispatchAndRead(h, INTERNAL_ID);
+          assertWholeOverlay(shownA, w.document.getElementById('bk-confirmed-overlay'), 'chat dispatch');
+          w.document.getElementById('bk-confirmed-overlay').remove();
+
+          // ── B. The saved-modal "Dispatch Now" button — same missing fallback, same fix.
+          await openBookingReady(h); installRoutes(h); bookedDocs();
+          dispatchReturning(h, [], '854499343');
+          documentsEndpointReturns(h, []);
+          const r2 = await w._execSaveShipment({});
+          A.ok(r2 && r2.ok === true, 'setup: the second create did not succeed: ' + JSON.stringify(r2));
+          w.showShipmentSavedModal({ BOLId: INTERNAL_ID, BOLNumber: REAL_BOL, docs: [], carrierName: 'JTS Express',
+            carrierPrice: 161, pickupDate: '2026-08-04', rateType: 'LTL', iconUrl: '' });
+          await sleep(200);
+          const savedOv = w.document.getElementById('bk-saved-overlay');
+          A.ok(savedOv, 'setup: the saved-shipment modal did not render');
+          const dispNow = Array.from(savedOv.querySelectorAll('button')).find(b => /dispatch/i.test(b.textContent || ''));
+          A.ok(dispNow, 'setup: no Dispatch Now button on the saved modal');
+          dispNow.click();
+          await waitFor(() => w.document.getElementById('bk-confirmed-overlay'), 3000);
+          const confOv = w.document.getElementById('bk-confirmed-overlay');
+          A.ok(confOv, 'the saved-modal dispatch never reached the confirmation modal');
+          assertWholeOverlay(String(confOv.textContent || ''), confOv, 'saved-modal Dispatch Now');
+          confOv.remove();
+
+          // ── C. The My Shipments detail dispatch — the third surface that had no fallback. Its
+          // Download Documents button reads the same list, so both recover together.
+          await openBookingReady(h); installRoutes(h); bookedDocs();
+          dispatchReturning(h, [], '854499343');
+          documentsEndpointReturns(h, []);
+          const r3 = await w._execSaveShipment({});
+          A.ok(r3 && r3.ok === true, 'setup: the third create did not succeed: ' + JSON.stringify(r3));
+          w.showSavedShipmentDispatchModal({
+            s: { BOLId: INTERNAL_ID, BOLNumber: REAL_BOL, vendor: { name: 'JTS Express' }, totalDue: '161.00',
+                 shipper: { name: 'Michaels Furniture', zipCode: '90660' },
+                 consignee: { name: 'Dana Whitfield', zipCode: '90035' },
+                 estimatedPickupDate: '2026-08-04' },
+            BOLId: INTERNAL_ID, BOLNumber: REAL_BOL,
+          });
+          await sleep(200);
+          const rowOv = w.document.getElementById('row-dispatch-overlay');
+          A.ok(rowOv, 'setup: the My Shipments dispatch modal did not render');
+          const rowDisp = Array.from(rowOv.querySelectorAll('button')).find(b => /dispatch shipment/i.test(b.textContent || ''));
+          A.ok(rowDisp, 'setup: no Dispatch Shipment button on the detail modal');
+          rowDisp.click();
+          await waitFor(() => w.document.getElementById('bk-confirmed-overlay'), 3000);
+          const detailOv = w.document.getElementById('bk-confirmed-overlay');
+          A.ok(detailOv, 'the My Shipments detail dispatch never reached the confirmation modal');
+          assertWholeOverlay(String(detailOv.textContent || ''), detailOv, 'My Shipments detail dispatch');
+          // The detail modal's own Download Documents button must come alive from the same list.
+          const dlBtn = w.document.getElementById('row-dl-docs-btn');
+          if (dlBtn) A.ok(dlBtn.style.pointerEvents !== 'none',
+            'the Download Documents button stayed disabled while three documents were available');
+          detailOv.remove();
+
+          // ── D. THE READER ITSELF — dispatch documents win, booking documents are the fallback,
+          // and nothing without a real url can ever become a button.
+          A.eq(w._documentsFor(INTERNAL_ID, []).length, 3, 'the reader lost the booking documents');
+          A.eq(w._documentsFor(INTERNAL_ID, [{ type: 'CLBL', name: 'Carrier Label', url: 'https://example.invalid/clbl.pdf' }])[0].type, 'CLBL',
+            'the reader preferred the booking documents over fresher dispatch documents');
+          A.eq(w._documentsFor(INTERNAL_ID, [{ type: 'BOL', name: 'No URL' }]).length, 3,
+            'a document with no url was treated as a document instead of falling through to the booking set');
+          A.eq(w._documentsFor('9999999999', []).length, 0, 'the reader invented documents for a BOL that has none');
         },
       },
     ];
