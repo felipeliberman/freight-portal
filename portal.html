@@ -15294,6 +15294,7 @@ HOW TO TALK:
 - NEVER ANNOUNCE AN ACTION YOU ARE NOT TAKING THIS TURN. Saying you are pulling rates, saving, booking, or dispatching without making the corresponding tool call in the SAME turn is forbidden. Either call the tool in this very turn, or say plainly what is still needed before you can. Never say rates are "being pulled" or promise results "in a moment" unless the tool call that produces them is part of this same turn — a promise with no action behind it is a fabrication.
 - NEVER SAY AN ACCESSORIAL WAS ADDED UNLESS YOU CALLED update_quote WITH ITS CODE THIS TURN. Every accessorial you acknowledge — residential delivery (RSD), liftgate (LFD delivery / LFO pickup), inside delivery (IND), limited access (LAD delivery / LAO pickup), appointment (APD) — must be written through update_quote addAccessorials in the SAME turn you acknowledge it. Narrating "residential delivery and liftgate added" without the tool call leaves the rate short and the customer rebilled — the single worst error you can make. Compound intake replies answer more than one question: map EACH clause to its field — "yes, not hazmat" = liftgate yes (addAccessorials LFD) AND hazmat no; "no liftgate, not hazardous" = no LFD AND hazmat no; "residence, liftgate, no hazmat" = RSD + LFD, hazmat no; "yes to both" = both accessorials you just asked about. When the customer says the delivery is a residence, add residential delivery (RSD) that turn, and offer liftgate for heavier LTL freight.
 - Never invent specific shipping rates.
+- NEVER DESCRIBE A PORTAL SETTING, TOGGLE, MENU ITEM, TAB, BUTTON, OR PANEL YOU CANNOT CONFIRM EXISTS. You do not have a map of this portal's interface, and what you remember about how apps are usually built is not evidence about this one. Never tell a customer to "go to Settings and turn on X," to "check the options under Y," or to look for any control unless it is named in this prompt or in a tool result you can see. This is the same rule as never fabricating their shipment data, applied to the interface: a confidently wrong instruction sends the customer hunting for something that is not there, and it makes every other thing you say less trustworthy. When you cannot confirm a control exists, say so plainly — "I'm not able to confirm a setting for that" — and point them to the Email Support form so a person can check. Concretely: there is NO audio, voice, sound, or spoken-response setting anywhere in this portal. If voice replies are not playing, do not explain it, do not attribute a cause, and do not invent a fix; say you're not sure why the audio didn't play and offer Email Support.
 - For truckload, oversized, or custom-pricing needs, give a short helpful answer then point them to email support@freightandlogistics.ai and the team will follow up. Hazmat is self-serve regardless of hazard class — quote and book it normally. The hazmat class is never asked: it is looked up automatically from the UN number at booking.
 
 CONTEXT: Always use the most recent topic in the conversation as context for ambiguous follow-up questions. If the customer uses pronouns like 'they', 'them', 'their', 'it', 'there' without specifying who or what, infer the referent from the last subject discussed. Example: if you just gave an ABF terminal address and the customer asks 'are they open tomorrow?', answer about ABF — do not ask who 'they' refers to. If you genuinely cannot infer the referent, make your best guess and answer it rather than asking for clarification.
@@ -23320,8 +23321,81 @@ function _speechTextFor(t) {
 }
 
 // ── Voice mode state machine — in-place in the chat input bar (no overlay) ────
-const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null, restartTimer:null, starting:false, micStream:null, echoUntil:0, bargeCandidateAt:0 };
+const _vm = { active:false, state:'idle', rec:null, listening:false, speakToken:0, watchdog:null, origPlaceholder:'', origPadLeft:'', playStartedAt:null, speakingText:'', tailTimer:null, restartTimer:null, starting:false, micStream:null, echoUntil:0, bargeCandidateAt:0, audio:null, audioObjUrl:null, audioUnlocked:false, audioFailNotified:false, skipNextSpeak:false };
 window._vm = _vm;
+
+// ── iOS AUTOPLAY UNLOCK ──────────────────────────────────────────────────────────────────────
+// Safari on iOS will only play an HTMLAudioElement programmatically if THAT SAME element has
+// already been played once inside a user-gesture handler. The TTS element used to be built with
+// `new Audio(url)` AFTER awaiting the proxy fetch and the blob read — far outside the gesture
+// window from the mic tap — so on iPhone every play() was rejected with NotAllowedError, silently
+// swallowed, and the customer heard nothing while the agent replied in text as normal.
+// Fix: ONE canonical element, created and unlocked during the tap, then reused forever by setting
+// .src. It is deliberately never nulled again (teardown and _vmStartListen now pause instead) —
+// discarding it would discard the unlock and put the bug straight back.
+// 44-byte silent WAV: a valid header with zero sample frames. Nothing audible, muted anyway.
+const VM_SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+// Shown ONCE per voice session when playback fails, so silence is never left unexplained. The
+// customer inventing their own theory is what happened here — and the agent inventing one for them
+// is what produced a portal setting that does not exist.
+const VM_AUDIO_FAIL_MSG = "I replied above but couldn't play the audio on this device — you can read the reply, or tap the mic again to retry.";
+
+// Create + unlock the ONE audio element. MUST be called synchronously from a user gesture.
+// Idempotent and cheap, so every mic tap re-arms it: iOS can drop the unlock after backgrounding,
+// and re-priming on tap costs nothing when it is already unlocked.
+function _vmPrimeAudio() {
+  try {
+    if (!_vm.audio) {
+      _vm.audio = new Audio();
+      _vm.audio.preload = 'auto';
+      // Real replies play as the element's src; nothing here should ever route to a call speaker.
+      try { _vm.audio.setAttribute('playsinline', ''); } catch (e) {}
+    }
+    const a = _vm.audio;
+    // Detach the PREVIOUS reply's handlers first. The element is reused, so without this the
+    // primer's own play/ended events would run the last turn's onplay/onended — stamping
+    // playStartedAt and kicking off a tail-resume for a turn that finished long ago.
+    a.onplay = null; a.onended = null; a.onerror = null;
+    a.muted = true;                 // unlock silently — the customer must not hear the primer
+    a.src = VM_SILENT_WAV;
+    const p = a.play();
+    if (p && typeof p.then === 'function') {
+      p.then(function () {
+        _vm.audioUnlocked = true;
+        _vmDiag('audio primed OK (unlocked inside gesture)');
+        // Only tidy up if the element is STILL on the primer. This resolves asynchronously, and a
+        // real reply can claim the element in between — pausing unconditionally here would cut off
+        // the very speech this exists to enable.
+        try { if (a.src === VM_SILENT_WAV) { a.pause(); a.currentTime = 0; a.muted = false; } } catch (e) {}
+      }).catch(function (e) {
+        // Not fatal on its own — desktop often plays fine without a successful prime — but it is
+        // the single strongest predictor of the iOS failure, so it must be visible.
+        _vmDiag('audio prime REJECTED:', (e && e.name) || e, '— iOS playback will likely fail');
+        a.muted = false;
+      });
+    } else {
+      _vm.audioUnlocked = true;
+      a.muted = false;
+    }
+  } catch (e) {
+    _vmDiag('audio prime threw:', (e && e.message) || e);
+  }
+}
+
+// ONE place where a TTS failure becomes visible. Every silent catch on the speak path routes here:
+// the reason goes to ?diag=1 ALWAYS, and the customer is told once per session. Silence with no
+// message and no log is what left both the customer and the agent guessing.
+function _vmSpeakFailed(where, err) {
+  _vmDiag('TTS FAILED at', where, '—', (err && (err.name || err.message)) || err || '(no detail)');
+  if (!_vm.audioFailNotified && typeof appendMessage === 'function') {
+    _vm.audioFailNotified = true;
+    // The appendMessage hook speaks every bot line while voice is active — without this one-shot
+    // flag this very message would be handed straight back to _vmSpeakReply, fail again, and append
+    // itself again, forever.
+    _vm.skipNextSpeak = true;
+    appendMessage('bot', VM_AUDIO_FAIL_MSG, { skipHistory: true });
+  }
+}
 _vm.startListen = function(){ _vmStartListen(); };   // exposed for the speak-back hook
 _vm.speakReply  = function(t){ _vmSpeakReply(t); };  // exposed for the appendMessage hook
 
@@ -23361,6 +23435,10 @@ function _vmSetState(state) {
 // a manual interrupt (barge-in) instead of exiting — the fallback for noisy rooms / no headphones.
 function toggleVoiceMode() {
   if (!_srSupported()) return; // needs mic input; buttons hidden anyway when unsupported
+  // FIRST, and before any branch: this function IS the user gesture, and it is the only moment iOS
+  // will let us unlock audio output. Unconditional — barge-in and exit re-arm it too, so a session
+  // that has been backgrounded and resumed still has a live element to speak through.
+  _vmPrimeAudio();
   if (_vm.active && _vm.state === 'speak') { _vmBargeIn(); return; }
   if (_vm.active) _vmExit(); else _vmEnter();
 }
@@ -23376,6 +23454,7 @@ function _vmEnter() {
   const { ta } = _vmEls();
   if (ta) { _vm.origPlaceholder = ta.placeholder; _vm.origPadLeft = ta.style.paddingLeft || ''; ta.style.paddingLeft = '78px'; }
   _vm.active = true;
+  _vm.audioFailNotified = false;  // one audio-failure notice per voice session, not per reply
   _vmAcquireMicStream();   // Layer 1: warm the constrained-AEC pipeline for this voice session (non-blocking)
   const sb = document.getElementById('vm-status-bar'); if (sb) sb.classList.add('show');
   _vmUpdateButtons();
@@ -23406,7 +23485,11 @@ function _vmTeardown() {
     try { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); } catch(e) {}
   });
   _vm.rec = null; _vm.bargeRec = null;
-  try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch(e) {}
+  // PAUSE, never null: _vm.audio is the one primed element and its iOS unlock lives on the element
+  // itself. Discarding it here would force a fresh `new Audio()` on the next reply — post-await,
+  // outside any gesture — which is exactly the bug this replaced. pause() was always the part that
+  // did the work; the null was bookkeeping.
+  try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
   _vm.playStartedAt = null; _vm.speakingText = '';
 }
 
@@ -23454,7 +23537,7 @@ function _vmStartListen() {
     if (_vm.restartTimer) { clearTimeout(_vm.restartTimer); _vm.restartTimer = null; } // this IS the restart — cancel any other pending one
     if (_vm.watchdog)     { clearTimeout(_vm.watchdog);     _vm.watchdog = null; }
     _vmStopBargeDetector();           // never leave a second recognizer alive alongside the listener
-    try { if (_vm.audio) { _vm.audio.pause(); _vm.audio = null; } } catch (e) {} // release any TTS still playing
+    try { if (_vm.audio) { _vm.audio.pause(); } } catch (e) {} // stop any TTS still playing — pause only, never null (see _vmTeardown)
     // Transitioning to genuine listening (post-tail / fresh) → normal sensitivity, no echo floor.
     _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0; _vm.bargeCandidateAt = 0;
     _vmStopListen();                  // hard-stop + unbind the prior listener before opening a new one
@@ -23764,6 +23847,10 @@ function _ttsClean(text) {
 
 async function _vmSpeakReply(text) {
   if (!_vm.active) return;
+  // The audio-failure notice is itself a bot message, and the appendMessage hook speaks every bot
+  // message while voice is active. Without this one-shot it would recurse: fail, announce, speak
+  // the announcement, fail, announce again.
+  if (_vm.skipNextSpeak) { _vm.skipNextSpeak = false; _vmDiag('speak skipped — audio-failure notice'); return; }
   if (_vm.watchdog) { clearTimeout(_vm.watchdog); _vm.watchdog = null; }
   const raw = typeof text === 'string' ? text : (text && text.text ? text.text : '');
   const tok = ++_vm.speakToken;
@@ -23801,16 +23888,31 @@ async function _vmSpeakReply(text) {
         }
       })
     });
-    if (!resp.ok || !_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    // Split from the liveness checks below. Folding a PROXY ERROR in with "voice mode exited" and
+    // "this turn was superseded" made three unrelated conditions one silent return — a 500 from the
+    // TTS worker looked exactly like a normal barge-in.
+    if (!resp.ok) { _vmSpeakFailed('proxy HTTP ' + resp.status, null); resume(); return; }
+    if (!_vm.active || _vm.speakToken !== tok) { resume(); return; }   // superseded/exited — legitimately silent
     const blob = await resp.blob();
     if (!_vm.active || _vm.speakToken !== tok) { resume(); return; }
+    if (!blob || !blob.size) { _vmSpeakFailed('empty audio blob', null); resume(); return; }
     const url = URL.createObjectURL(blob);
-    try { if (_vm.audio) { _vm.audio.pause(); } } catch(e) {}
     _vmStopListen();                 // mic OFF while the agent speaks (no self-hearing)
     _vm.state = 'speak';
     _vmUpdateButtons();
-    const audio = new Audio(url);
-    _vm.audio = audio;
+    // REUSE the primed element — never `new Audio()`. On iOS only the element unlocked inside the
+    // mic-tap gesture may play; a fresh one built here (post-await) is refused. Prime defensively
+    // in case the hook fired without a tap this session, though it cannot unlock outside a gesture.
+    if (!_vm.audio) _vmPrimeAudio();
+    const audio = _vm.audio;
+    if (!audio) { _vmSpeakFailed('no audio element', null); resume(); return; }
+    try { audio.pause(); } catch(e) {}
+    // One element means one live object URL: revoke the PREVIOUS one as we replace it, since
+    // onended can no longer be relied on to revoke the src it is about to be detached from.
+    if (_vm.audioObjUrl) { try { URL.revokeObjectURL(_vm.audioObjUrl); } catch(e) {} }
+    _vm.audioObjUrl = url;
+    audio.muted = false;             // the prime leaves it muted until unlock resolves
+    audio.src = url;
     // Echo veto reference: set synchronously so the barge detector has it even if onplay is slow.
     // playStartedAt (lead-in guard) is stamped the instant audio truly begins, not at fetch time.
     _vm.speakingText = spoken;
@@ -23818,7 +23920,8 @@ async function _vmSpeakReply(text) {
     _vm.echoUntil = Infinity;          // echo-active while we intend to play; a decay tail replaces it at onended
     audio.onplay = () => { _vm.playStartedAt = Date.now(); };
     audio.onended = () => {
-      try { URL.revokeObjectURL(url); } catch(e) {}
+      // Revoked at replace-time instead (see _vm.audioObjUrl above) — revoking here would pull the
+      // src out from under an element that is now reused rather than discarded.
       // Playback ended — KEEP the echo reference through a short decay tail (speaker/room ring-out)
       // so the final syllables bleeding in can't register as a user turn. speakingText is cleared
       // when we actually transition to listening (below / _vmStartListen).
@@ -23843,12 +23946,27 @@ async function _vmSpeakReply(text) {
     };
     audio.onerror = () => {
       _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0;
+      const _me = audio.error;
+      _vmSpeakFailed('audio element error', _me ? { name: 'MediaError ' + _me.code } : null);
       if (!_vm.active || _vm.speakToken !== tok) return;
       _vmStopBargeDetector();
       setTimeout(() => { if (_vm.active && _vm.speakToken === tok) _vmStartListen(); }, 800);
     };
-    audio.play().catch(() => { _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0; if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); } });
-  } catch(e) { resume(); }
+    // THE bug: on iOS this rejects with NotAllowedError when the element was not unlocked inside a
+    // gesture. It used to be swallowed by a bare no-arg catch — no message, no log, mic straight
+    // back to listening — so total TTS failure was indistinguishable from success, and both the
+    // customer and the agent were left to invent an explanation. Now the reason is always named.
+    audio.play().catch((e) => {
+      _vm.playStartedAt = null; _vm.speakingText = ''; _vm.echoUntil = 0;
+      _vmSpeakFailed('play() rejected' + (_vm.audioUnlocked ? '' : ' (element was never unlocked by a gesture)'), e);
+      if (_vm.active && _vm.speakToken === tok) { _vmStopBargeDetector(); _vmStartListen(); }
+    });
+  } catch(e) {
+    // Outer net: fetch/network/CORS failure, blob read failure, createObjectURL failure. `e` was
+    // bound and discarded here, which made a dead TTS proxy look identical to a working one.
+    _vmSpeakFailed('speak pipeline threw', e);
+    resume();
+  }
 }
 
 function initVoiceMode() {
