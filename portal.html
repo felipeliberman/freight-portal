@@ -14216,11 +14216,46 @@ function applyPartyData(parsed, opts) {
   const _addrIntent = /\b(address|street|located at|pick ?up (?:at|from)|deliver(?:y)? (?:to|at)|ship (?:to|from)|new address|correct(?:ed)? address|change the address)\b/i;
   const _msgForIntent = String(opts.sourceText || (typeof window !== 'undefined' && window._lastUserText) || '');
   const _addrIds = ['bk-pu-street', 'bk-dl-street'];
+  // A party NAME is the same class of field as an address, and it reached a carrier the same way.
+  // BOL 160135859, dispatched to Estes: the message "pickup on 8/6/26 PO #1233456, driver should
+  // call ahead" was split on the comma by the positional name heuristic; segment one was skipped
+  // for carrying digits; segment two was digit-free with 2+ words, so it became the SHIPPER NAME.
+  // It replaced "Michaels Furniture", and the Bill of Lading printed
+  //     SHIP FROM   Name: driver should call ahead
+  // on the legal document the driver and the carrier read.
+  //
+  // THE RULE IS NOT ANOTHER KEYWORD LIST. Matching more words is what produced both this and the
+  // "26 PO #123" address; a parser is always beatable, which is why the address guard below lives
+  // at the WRITE. This is the same idea taken one step further: it constrains what a write is
+  // ALLOWED to do, by how the value was PRODUCED rather than by what the customer typed.
+  // A write flagged `inferred` guessed the name from position in a sentence. It may FILL an empty
+  // name — that is how a first-time paste still works — and may NEVER REPLACE one already there.
+  // Every explicit source is untouched: the agent's update_booking (the customer stated a name),
+  // a labeled two-party paste, SmartPaste, and the form. Correcting a name still works.
+  const _nameIds = ['bk-pu-name', 'bk-dl-name'];
   const put = (id, val) => {
     if (val === undefined || val === null || String(val).trim() === '') return false;
     const el = document.getElementById(id);
     if (!el) return false;                       // never count a write to an element that isn't there
     if (opts.fillEmptyOnly && String(el.value || '').trim() !== '') return false;
+    // Refused BEFORE the address check so the two never both fire on one field, and refused OUT
+    // LOUD — an instruction silently ignored is the same defect class as the overwrite it prevents.
+    if (opts.inferred && _nameIds.indexOf(id) >= 0) {
+      const _curN = String(el.value || '').trim();
+      const _nextN = String(val).trim();
+      if (_curN && _curN.toLowerCase() !== _nextN.toLowerCase()) {
+        try {
+          console.warn('[FP] applyPartyData — REFUSED to overwrite a non-empty party NAME from an inferred parse.',
+            '| field:', id, '| kept:', JSON.stringify(_curN), '| rejected:', JSON.stringify(_nextN),
+            '| source:', opts.source || 'unknown', '| message:', JSON.stringify(_msgForIntent.slice(0, 120)));
+        } catch (e) {}
+        if (typeof appendMessage === 'function') {
+          appendMessage('bot', 'I left the ' + (id === 'bk-pu-name' ? 'pickup' : 'delivery') +
+            ' company name as it was — I wasn\'t sure that was meant as a new name. If you do want to change it, just tell me the company name and I\'ll update it.');
+        }
+        return false;
+      }
+    }
     if (_addrIds.indexOf(id) >= 0) {
       const _cur = String(el.value || '').trim();
       const _next = String(val).trim();
@@ -18238,7 +18273,14 @@ async function handleInput(text, _opts) {
         const _isDel = /\b(deliver|consignee|ship\s*to|destination)\b/i.test(t);
         const _parsed1 = { referenceNumber: bd.ref, pickup: { date: bd.date, open: bd.timeFrom, close: bd.timeTo } };
         _parsed1[_isDel ? 'consignee' : 'shipper'] = { name: bd.name, address: bd.address, contact: bd.contact, phone: bd.phone };
-        const _w = applyPartyData(_parsed1, { source: 'chat-party-block', sourceText: t });
+        // inferred: THIS is the path that guesses a name from position — parseBookingBlock's name
+        // rule is "the first comma/newline segment with no digits and 2+ words", which is why a
+        // trailing driver instruction after a comma became the shipper name on BOL 160135859. The
+        // labeled two-party path above is NOT flagged: it requires explicit side markers, so its
+        // names come from a block the customer deliberately supplied, and flagging it would stop a
+        // corrected packing-slip paste from fixing a name. (Deliberate scope call — see the note at
+        // _nameIds. The heuristic itself is shared, so that path is the remaining exposure.)
+        const _w = applyPartyData(_parsed1, { source: 'chat-party-block', sourceText: t, inferred: true });
         if (_w.written.length) {
           appendMessage('bot', 'Got it — I\'ve filled ' + _w.written.length + ' field' + (_w.written.length !== 1 ? 's' : '') + ' in the booking form\'s ' + (_isDel ? 'delivery' : 'pickup') + ' section. Tell me when you want it saved and I\'ll take care of it from here.');
           return;

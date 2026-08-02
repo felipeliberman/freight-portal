@@ -2284,6 +2284,75 @@ const cases = [
           A.eq(w._documentsFor('9999999999', []).length, 0, 'the reader invented documents for a BOL that has none');
         },
       },
+      {
+        id: 52, name: 'driver instructions can never become a party NAME — an inferred parse fills an empty name but never replaces one',
+        catches: 'BOL 160135859, dispatched to Estes Express. The Bill of Lading printed "SHIP FROM  Name: driver should call ahead" where "Michaels Furniture" belonged — on the legal document the driver and carrier read. The customer supplied every party field correctly in the opening message; the corruption came later, on the free-text turn "pickup on 8/6/26 PO #1233456, driver should call ahead". parseBookingBlock derives a name as "the first comma/newline segment with no digits and 2+ words": the comma split the turn, segment one was skipped for carrying digits, and segment two — the driver instruction — became the shipper name. Same over-eager-parse class as the "26 PO #123" address that reached a carrier on 2026-07-30 and as parseQuoteChat matching a bare /appointment/. PRE-EXISTING, NOT FROM TONIGHT: git log -S shows parseBookingBlock untouched since 1414366 (June 14) and applyPartyData since 19fc5a9 (July 22); none of a37ea40/59b60b3/0a43f00/b550439/6bd0180 touched either. The fix is at the WRITE, not in more keyword matching — an inferred parse may fill an empty name and may never replace one — because a parser is always beatable, which is the same reasoning that put the address guard there.',
+        async run(h) {
+          const w = h.win;
+          const NAME = 'Michaels Furniture';
+          const nameEl = () => w.document.getElementById('bk-pu-name');
+          const val = id => { const e = w.document.getElementById(id); return e ? String(e.value || '').trim() : null; };
+
+          // The opening message already set every party field — openBookingReady fills the panel
+          // exactly as applyPartyData would have from the customer's first message.
+          await openBookingReady(h);
+          A.eq(val('bk-pu-name'), NAME, 'setup: the shipper name is not populated before the free-text turn');
+
+          // ── A. THE LIVE TURN. Date + PO + a trailing driver instruction after a comma.
+          h.reset();
+          const parsedA = w.parseBookingBlock('pickup on 8/6/26 PO #1233456, driver should call ahead', '');
+          A.eq(parsedA.name, 'driver should call ahead',
+            'setup: the parser no longer produces the offending name — this case must exercise the real heuristic, not a changed one');
+          const wroteA = w.applyPartyData(
+            { shipper: { name: parsedA.name, address: parsedA.address, contact: parsedA.contact, phone: parsedA.phone },
+              referenceNumber: parsedA.ref, pickup: { date: parsedA.date, open: parsedA.timeFrom, close: parsedA.timeTo } },
+            { source: 'chat-party-block', sourceText: 'pickup on 8/6/26 PO #1233456, driver should call ahead', inferred: true });
+
+          A.eq(val('bk-pu-name'), NAME,
+            'THE BUG: driver instructions overwrote the shipper name — this is what printed on the Bill of Lading for BOL 160135859');
+          A.ok(wroteA.written.indexOf('shipper.name') < 0, 'the write was reported as landing a name it must not have written');
+          // The rest of the turn still lands in its own fields — the guard refuses ONE field, it
+          // does not throw the turn away.
+          A.eq(val('bk-pu-date'), '2026-08-06', 'the pickup date did not land: ' + val('bk-pu-date'));
+          A.eq(val('bk-pu-ref'), '1233456', 'the PO did not land in the reference field: ' + val('bk-pu-ref'));
+          // NEVER SILENT — an ignored instruction is the same defect class as the overwrite.
+          A.ok(h.bots().some(t => /left the pickup company name as it was/i.test(t)),
+            'the refusal was silent — the customer was never told the name was left alone: ' + JSON.stringify(h.bots()));
+
+          // ── B. INSTRUCTION WITH NO PO AND NO DATE — nothing structured to hide behind.
+          h.reset();
+          const parsedB = w.parseBookingBlock('please note, driver should call ahead', '');
+          w.applyPartyData({ shipper: { name: parsedB.name } },
+            { source: 'chat-party-block', sourceText: 'please note, driver should call ahead', inferred: true });
+          A.eq(val('bk-pu-name'), NAME, 'THE BUG: a bare instruction overwrote the shipper name');
+
+          // ── C. INSTRUCTION WITH A DATE ONLY.
+          h.reset();
+          const parsedC = w.parseBookingBlock('pickup 8/7/26, driver should call ahead', '');
+          w.applyPartyData({ shipper: { name: parsedC.name }, pickup: { date: parsedC.date } },
+            { source: 'chat-party-block', sourceText: 'pickup 8/7/26, driver should call ahead', inferred: true });
+          A.eq(val('bk-pu-name'), NAME, 'THE BUG: a date-plus-instruction turn overwrote the shipper name');
+          A.eq(val('bk-pu-date'), '2026-08-07', 'the pickup date did not land on the date-only variant');
+
+          // ── D. A LEGITIMATE NAME CHANGE STILL WORKS. The customer states a name, so it arrives
+          // through an EXPLICIT source (the agent's update_booking) rather than a positional guess.
+          // If this stops working the fix has tightened the chat, which it must not.
+          h.reset();
+          w.applyPartyData({ shipper: { name: 'Acme Furniture Co' } }, { source: 'agent-update_booking' });
+          A.eq(val('bk-pu-name'), 'Acme Furniture Co',
+            'THE FIX WENT TOO FAR: an explicit name change no longer works');
+
+          // ── E. AN EMPTY NAME IS STILL FILLED BY AN INFERRED PARSE — first-time pastes are
+          // untouched. The guard is about REPLACING, not about writing.
+          nameEl().value = '';
+          w.document.getElementById('bk-dl-name').value = '';
+          h.reset();
+          w.applyPartyData({ consignee: { name: 'Haynes Brothers Furniture' } }, { source: 'chat-party-block', inferred: true });
+          w.applyPartyData({ shipper: { name: 'Michaels Furniture' } }, { source: 'chat-party-block', inferred: true });
+          A.eq(val('bk-pu-name'), 'Michaels Furniture', 'an inferred parse can no longer FILL an empty name — first-time pastes are broken');
+          A.eq(val('bk-dl-name'), 'Haynes Brothers Furniture', 'the delivery side is not covered by the same rule');
+        },
+      },
     ];
   })(),
 ];
