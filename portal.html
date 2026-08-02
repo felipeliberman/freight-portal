@@ -3450,6 +3450,60 @@ async function fetchShipments() {
 }
 
 
+// ── THE ONE STORE AND THE ONE READER FOR "THE BOL" ────────────────────────────────────────────
+// A BOL NUMBER and a BOLId are two different numbers for one shipment. The BOL number is the
+// CUSTOMER's — the one they read off the confirmation and give to a carrier. The BOLId is our
+// internal routing id and must never appear in anything a customer reads.
+//
+// Live, BOL 160135827: chat said "Saved as BOL 160135827" and the dispatch modal, moments later,
+// showed BOL NUMBER 1473895784 — the BOLId. PRO and the pickup confirmation both matched chat;
+// only the BOL was wrong, which is the one number a customer acts on. Two surfaces reading two
+// fields for one fact.
+//
+// The number was never missing from the backend — the app threw it away one write earlier. A
+// Primus edit PUT acknowledges success with 2xx and an EMPTY body, so bookShipment returns no
+// number (correct, and documented there). submitBookingOnly recovered it from ONE place,
+// window._editingShipment, which is set exclusively by the My Shipments form Edit path
+// (editSavedShipment). Every CHAT-driven PUT — save_shipment with a bol_id, dispatch's
+// updateToCurrentRate, the requote write — arms the edit through setEditingBOLId instead, which
+// never set it. So _lastBooked was overwritten with BOLNumber:null, and the modal's
+// `_lb.BOLNumber || BOLId` printed the id. resolveBOLId, on every one of those paths, ALREADY had
+// the number in hand and dropped it on the floor.
+//
+// So: one store, keyed by the backend's own id, written ONLY from a backend response or a backend
+// record, and one reader that returns the customer's number or NULL. It never falls back to the
+// id, and it REFUSES to record a number equal to the id — the loud failure lives in the data
+// structure rather than being bolted onto each display. A wrong number a customer reads to a
+// carrier is worse than no number.
+//
+// DELIBERATELY NOT RESET IN resetShipmentState — DO NOT "CLEAN THIS UP" INTO IT. That chokepoint
+// owns CONVERSATION state. This is not conversation state: it holds only backend-confirmed
+// (BOLId -> BOL number) pairs, a mapping that never changes for a given id and cannot collide
+// across chats or customers, because a key that does not match returns nothing. Clearing it on a
+// new chat would only re-create the null this exists to prevent, for a shipment saved in an
+// earlier chat and dispatched in a later one.
+const _bolNumbers = Object.create(null);
+function _rememberBOLNumber(BOLId, BOLNumber) {
+  const id  = BOLId     == null ? '' : String(BOLId).trim();
+  const num = BOLNumber == null ? '' : String(BOLNumber).trim();
+  if (!id || !num) return null;
+  if (num === id) {  // the exact fallback this store exists to delete — never record it as truth
+    console.error('[FP] refused to record a BOL number identical to the BOLId', id, '— that is an internal id, not the customer\'s BOL number');
+    return null;
+  }
+  _bolNumbers[id] = num;
+  return num;
+}
+// Returns the confirmed customer-facing BOL number for a BOLId, or null. NEVER the BOLId.
+function _bolNumberFor(BOLId) {
+  const id = BOLId == null ? '' : String(BOLId).trim();
+  return (id && _bolNumbers[id]) || null;
+}
+// THE one placeholder shown where a BOL number belongs and none is confirmed. Says plainly that it
+// is missing and gives the one handoff we allow (email — the no-phone-as-fallback product rule).
+// No internal id, no field name, no "check My Shipments" — the number is missing there too.
+const BOL_NUMBER_UNAVAILABLE = 'Not available — email support@freightandlogistics.ai';
+
 // Resolve a customer-supplied BOL reference (a BOLNumber, or already a BOLId) to the canonical
 // BOLId the PUT path needs. FAILS LOUDLY — there is deliberately NO fallback to the raw input.
 // That fallback was the routing half of the save 404: the agent passes a BOL *Number*, the lookup
@@ -3461,7 +3515,10 @@ async function resolveBOLId(ref, opts) {
   // Fast path, no network: when the caller already holds the backend record, its BOLId IS the
   // canonical id — it came from /applet/v1/book. Only a reference we cannot vouch for is looked up.
   const _known = opts.shipment && (opts.shipment.BOLId || opts.shipment.bolId);
-  if (_known) return { ok: true, bolId: String(_known), bolNumber: String(opts.shipment.BOLNumber || opts.shipment.bolNumber || ref || ''), shipment: opts.shipment, fromRecord: true };
+  // `|| ref` DELETED: on the form Edit path ref IS the BOLId (editSavedShipment passes it), so that
+  // fallback handed the internal id back as the customer's BOL number. Recorded here because this
+  // is the branch every edit/requote arms through — the one place both the form and chat pass.
+  if (_known) return { ok: true, bolId: String(_known), bolNumber: _rememberBOLNumber(_known, opts.shipment.BOLNumber || opts.shipment.bolNumber) || '', shipment: opts.shipment, fromRecord: true };
   const want = String(ref == null ? '' : ref).trim().replace(/^#/, '');
   if (!want) return { ok: false, code: 'NO_REFERENCE', message: 'No shipment reference was given.' };
 
@@ -3488,7 +3545,7 @@ async function resolveBOLId(ref, opts) {
       const _recId = _rec && (_rec.BOLId || _rec.bolId);
       if (_rec && _recId && String(_recId) === want) {
         return { ok: true, bolId: String(_recId),
-          bolNumber: String(_rec.BOLNumber || _rec.bolNumber || ''), shipment: _rec };
+          bolNumber: _rememberBOLNumber(_recId, _rec.BOLNumber || _rec.bolNumber) || '', shipment: _rec };
       }
     }
   } catch (e) {}  // a probe that fails must never block the by-number path below
@@ -3497,7 +3554,9 @@ async function resolveBOLId(ref, opts) {
   const t0 = Date.now();
   try { found = await fetchBookingByBOL(want); } catch (e) { threw = e; }
   const bolId = found && (found.BOLId || found.bolId);
-  if (bolId) return { ok: true, bolId: String(bolId), bolNumber: String(found.BOLNumber || found.bolNumber || want), shipment: found };
+  // `|| want` DELETED: the reference may itself be a BOLId — the by-id probe above exists precisely
+  // because callers pass both shapes — so that fallback could return the internal id as the number.
+  if (bolId) return { ok: true, bolId: String(bolId), bolNumber: _rememberBOLNumber(bolId, found.BOLNumber || found.bolNumber) || '', shipment: found };
   // fetchBookingByBOL bounds its scan at ~12s and returns null on expiry, so a null that arrives
   // near that bound is far more likely a timeout than a real miss. Report them differently: a
   // timeout is worth retrying, a miss is not.
@@ -6622,7 +6681,15 @@ function showBookingConfirmedModal(bc) {
     grid.appendChild(cell);
   }
 
-  stat('BOL Number', bc.BOLNumber, '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/>', true);
+  // ── A MISSING BOL NUMBER IS A DEFECT, SO IT IS SHOWN, NOT HIDDEN ────────────────────────────
+  // A dispatched shipment ALWAYS has a BOL number. Letting stat() drop the tile on a falsy value
+  // would make the failure invisible — indistinguishable from a layout change, and nobody would
+  // ever report it. So the tile always renders: the real number, or fixed customer-safe copy that
+  // names no internal id and no field name, and is not offered as copyable (there is nothing to
+  // copy). Never the BOLId — a wrong number a customer reads to a carrier is worse than no number.
+  const _bolNum = bc.BOLNumber ? String(bc.BOLNumber) : '';
+  if (!_bolNum) console.error('[FP] DISPATCH CONFIRMATION HAS NO BOL NUMBER — BOLId', bc.BOLId || '(not passed)', '| no confirmed number is on record for it. A dispatched shipment always has one; showing the placeholder.');
+  stat('BOL Number', _bolNum || BOL_NUMBER_UNAVAILABLE, '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/>', !!_bolNum);
   stat('Carrier', bc.carrierName, '<rect x="1" y="3" width="15" height="13"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>');
   if (bc.iconUrl) {
     const _cc = grid.lastChild;
@@ -6792,7 +6859,7 @@ async function _chargeAtDispatch(BOLId, token) {
       // unlike /book/bolnumber/ which returns a number. Strip "* ", "$", commas before Number()
       // so the charge sees the real amount. A missing/zero/unparseable amount still => 0 => blocks.
       amount = Number(String((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0).replace(/[^\d.]/g, '')) || 0;
-      bolNumber = r.BOLNumber || r.BOLNmbr || null;
+      bolNumber = _rememberBOLNumber(BOLId, r.BOLNumber || r.BOLNmbr);
       // Same snapshot the charge is priced from — used just below to pre-validate dispatch.
       consigneeContact = String((r.consignee && r.consignee.contact) || '').trim();
       shipperContact = String((r.shipper && r.shipper.contact) || '').trim();
@@ -6825,6 +6892,9 @@ async function _chargeAtDispatch(BOLId, token) {
 // card it opens the save-card form so the customer can add one and dispatch again.
 function _dispatchChargeMessage(cd, bolNumber) {
   const code = cd && cd.code;
+  // Callers now pass the canonical reader's result, so null is reachable — it used to be masked by
+  // a `|| BOLId` fallback that printed the internal id. Name the shipment generically instead.
+  const _subj = bolNumber ? ('BOL ' + bolNumber) : 'This shipment';
   if (code === 'missing_field') {
     // Not a payment problem — a required field is missing, so we blocked BEFORE charging.
     // cd.error is the _classifyWriteError('dispatch') text naming the field + the fix path.
@@ -6838,9 +6908,9 @@ function _dispatchChargeMessage(cd, bolNumber) {
     // D4 FOLLOW-UP (TODO): build an on-session re-auth link (SetupIntent/PaymentIntent
     // with 3DS) so a legitimate card whose bank wants a step-up can complete payment and
     // dispatch, instead of falling through to this manual "call us" path. Fail-closed for v1.
-    return 'Your bank wants to verify this charge, which we can’t complete automatically. BOL ' + (bolNumber || '') + ' was not dispatched. Please email support@freightandlogistics.ai so we can take payment and release it.';
+    return 'Your bank wants to verify this charge, which we can’t complete automatically. ' + _subj + ' was not dispatched. Please email support@freightandlogistics.ai so we can take payment and release it.';
   }
-  return 'We couldn’t charge your saved card, so BOL ' + (bolNumber || '') + ' was not dispatched. Update your payment method and dispatch again, or email support@freightandlogistics.ai.';
+  return 'We couldn’t charge your saved card, so ' + (bolNumber ? ('BOL ' + bolNumber) : 'this shipment') + ' was not dispatched. Update your payment method and dispatch again, or email support@freightandlogistics.ai.';
 }
 
 async function _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed } = {}) {
@@ -6970,7 +7040,7 @@ async function _canonicalDispatch(BOLId, { smallPackageHandling, chargeDisclosed
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'dispatch', customerEmail: currentCustomer.email,
-            bolNumber: _dc.bolNumber || BOLId, amount: _dc.amount,
+            bolNumber: _dc.bolNumber || _bolNumberFor(BOLId) || '', amount: _dc.amount,
             cardBrand: _dc.brand, cardLast4: _dc.last4,
             date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
           })
@@ -7069,7 +7139,7 @@ function showShipmentSavedModal(bc) {
     if (dr.chargeFailed) {  // Phase 3: PRE charge blocked dispatch.
       overlay.remove();
       dispBtn.textContent = 'Dispatch Now'; dispBtn.disabled = false;
-      appendMessage('bot', _dispatchChargeMessage(dr, bc.BOLNumber || bc.BOLId));
+      appendMessage('bot', _dispatchChargeMessage(dr, bc.BOLNumber || _bolNumberFor(bc.BOLId)));
       return;
     }
     if (!dr.ok) {
@@ -7284,10 +7354,14 @@ function _rdiHoldMessage(names) {
 // phone number, says explicitly that nothing has gone to the carrier, and invites dispatch in chat
 // rather than sending the customer elsewhere. Read the rationale on R4 in
 // evals/flows/acceptance.js before changing a word of it.
+// The no-number branch STATES the gap rather than quietly dropping the number: a save that cannot
+// name its BOL is a defect, and a confirmation that simply omits it reads as normal. Same rule as
+// the dispatch modal's placeholder. Still email-only, still says nothing went to the carrier, and
+// still invites dispatch in chat — the three things R4 holds this sentence to.
 function _savedConfirmMessage(BOLNumber) {
   return BOLNumber
     ? ('Saved as BOL ' + BOLNumber + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.')
-    : 'Saved — nothing has gone to the carrier yet. Tell me when you want it dispatched.';
+    : 'Saved — nothing has gone to the carrier yet. I could not confirm the BOL number for it, so email support@freightandlogistics.ai and the team will get it to you. Tell me when you want it dispatched.';
 }
 
 // ── THE draft-save consent copy — ONE definition, rendered by code, never composed by the agent ──
@@ -7631,7 +7705,7 @@ async function _preChargeInfo(BOLId, token) {
       const bd = await br.json();
       const r = (bd.data && bd.data.results) || {};
       amount = Number(String((r.accountingInformation && r.accountingInformation.customerQuoteAmount) || 0).replace(/[^\d.]/g, '')) || 0;
-      bolNumber = r.BOLNumber || r.BOLNmbr || null;
+      bolNumber = _rememberBOLNumber(BOLId, r.BOLNumber || r.BOLNmbr);
     }
   } catch(e) {}
   try {
@@ -11101,7 +11175,11 @@ async function bookShipment(payload, opts) {
     _noId.code = 'NO_BOL_IN_RESPONSE';
     throw _noId;
   }
-  const BOLNumber = result.BOLNmbr || result.BOLNumber || BOLId;
+  // `|| BOLId` DELETED — a create that answers without a BOL number is rare, but substituting the
+  // internal id is the defect, not a graceful degradation. Null here is honest and every customer-
+  // facing caller now renders a placeholder for it. Recorded so the number survives a later edit
+  // PUT, which answers 2xx with an empty body and can carry none of its own.
+  const BOLNumber = _rememberBOLNumber(BOLId, result.BOLNmbr || result.BOLNumber);
   const docs = result.documents || [];
   return { BOLId, BOLNumber, docs, result };
 }
@@ -11332,16 +11410,21 @@ async function submitBookingOnly(opts) {
       return { ok: false, error: { code: _v.code, kind: _c.kind, message: _c.message } };
     }
     const _editBolId = window._editingBOLId || null;
-    const _editBolNum = (window._editingShipment && (window._editingShipment.BOLNumber || window._editingShipment.BOLNmbr || window._editingShipment.bolNumber)) || null;
     window._editingBOLId = null; // cleared even on failure, matching prior behavior
-    const _bk = await bookShipment(payload, { token, editBolId: _editBolId, editBolNumber: _editBolNum, errLabel: 'Save' });
+    const _bk = await bookShipment(payload, { token, editBolId: _editBolId, errLabel: 'Save' });
     const _editAck = !!_bk.editAcknowledged;
     // Routing identity: the response id when there is one, else — on an acknowledged edit — the BOL
     // we PUT to, which is itself a backend id resolved earlier. Used ONLY to keep _lastBooked,
     // dispatch and the saved-shipment view working exactly as before. It is deliberately NOT handed
     // back in the return value below, so no caller can state it as confirmation of this save.
-    const BOLId     = _bk.BOLId     || (_editAck ? _editBolId  : null);
-    const BOLNumber = _bk.BOLNumber || (_editAck ? _editBolNum : null);
+    const BOLId     = _bk.BOLId     || (_editAck ? _editBolId : null);
+    // THE ONE READER. This used to be `_editAck ? _editBolNum : null`, where _editBolNum came only
+    // from window._editingShipment — set exclusively by the My Shipments form Edit path. Every
+    // chat-driven PUT arms through setEditingBOLId, which never sets it, so a successful edit
+    // overwrote a known-good BOL number with null and the dispatch modal fell back to the BOLId.
+    // The store is populated by every backend response and record that carries the pair, so the
+    // form and chat now recover the identical number from the identical place.
+    const BOLNumber = _bk.BOLNumber || _bolNumberFor(BOLId);
     const docs      = _bk.docs || [];
     removeTyping();
     if (_savBtn) { _savBtn.textContent = 'Saved!'; _savBtn.disabled = true; _savBtn.style.background = '#f0ede6'; }
@@ -11392,8 +11475,10 @@ async function submitBookingOnly(opts) {
     // it to end the turn, so the agent does not say it a second time in different words.
     return _editAck
       ? { ok: true, editAcknowledged: true, bolId: null, bolNumber: null, confirmationRendered: _suppressSavedModal,
-          editedBolId:     _editBolId  ? String(_editBolId)  : null,
-          editedBolNumber: _editBolNum ? String(_editBolNum) : null }
+          editedBolId:     _editBolId ? String(_editBolId) : null,
+          // Same canonical number the confirmation above was rendered from, so the two cannot
+          // disagree. Was _editBolNum, which only the form Edit path could ever populate.
+          editedBolNumber: BOLNumber ? String(BOLNumber) : null }
       : { ok: true, editAcknowledged: false, confirmationRendered: _suppressSavedModal,
           bolId: String(_bk.BOLId), bolNumber: _bk.BOLNumber != null ? String(_bk.BOLNumber) : null };
   } catch(e) {
@@ -14649,7 +14734,7 @@ async function _execDispatchShipment(input) {
       let _pu = '';
       try { _pu = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
       if (typeof showShipmentSavedModal === 'function') setTimeout(() => showShipmentSavedModal({
-        BOLId: BOLId, BOLNumber: _lb.BOLNumber || BOLId, docs: [],
+        BOLId: BOLId, BOLNumber: _bolNumberFor(BOLId), docs: [],
         carrierName: _lb.carrier || '', carrierPrice: _lb.price || 0,
         pickupDate: _pu, rateType: 'SMALL PACKAGE', iconUrl: '',
       }), 0);
@@ -14674,7 +14759,7 @@ async function _execDispatchShipment(input) {
       return { ok: true, needsChargeConfirm: true, amount: _amtStr, brand: _brand, last4: dr.last4, message: _msg };
     }
     if (dr.chargeFailed) {  // Phase 3: PRE dispatch charge blocked dispatch — no valid BOL created.
-      return { ok: false, chargeFailed: true, error: _dispatchChargeMessage(dr, (_lb && _lb.BOLNumber) || BOLId) };
+      return { ok: false, chargeFailed: true, error: _dispatchChargeMessage(dr, _bolNumberFor(BOLId)) };
     }
     if (!dr.ok) {
       console.error('dispatch_shipment error:', dr.error);
@@ -14691,7 +14776,11 @@ async function _execDispatchShipment(input) {
       let _pickupDate = '';
       try { _pickupDate = (typeof _bookingPanelState === 'function' && _bookingPanelState().pickupDate) || (window._lastRatesShipment && window._lastRatesShipment.pickupDate) || ''; } catch(e) {}
       if (typeof showBookingConfirmedModal === 'function') setTimeout(() => showBookingConfirmedModal({
-        BOLNumber: _lb.BOLNumber || BOLId,
+        // THE reader — never `_lb.BOLNumber || BOLId`. That fallback is what printed the internal
+        // id under "BOL NUMBER" on the live dispatch of BOL 160135827. BOLId is passed for the
+        // modal's diagnostic log only; it is never rendered.
+        BOLNumber: _bolNumberFor(BOLId),
+        BOLId: BOLId,
         carrierName: _lb.carrier || '',
         PRO: dr.PRO || null,
         confirmation: dr.confirmation || null,
@@ -14747,7 +14836,6 @@ async function _execSaveShipment(input) {
         message: 'Saved — check My Shipments.',
         note: 'The update went through, but this call returned no BOL number. Tell the customer it saved and to check My Shipments. Do NOT state any BOL number — you do not have a confirmed one for this save — and do not reuse one from earlier in the conversation.' };
     }
-    const _bolShown = _res.bolNumber || _res.bolId;
     // ── CODE SPOKE, SO THE AGENT DOES NOT ────────────────────────────────────────────────────────
     // Live: code rendered "Saved as BOL 160135795 — it's in My Shipments. Tell me when you want it
     // dispatched." and the agent then said the same thing again in OLDER wording, including "hit
@@ -14761,8 +14849,11 @@ async function _execSaveShipment(input) {
     if (_res.confirmationRendered) {
       return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber, saveConfirmed: true, _turnHandled: true };
     }
+    // ONE definition of the sentence, shared with the code-rendered path above and with
+    // book_shipment. It was duplicated here, with a `|| _res.bolId` fallback of its own that would
+    // have read the internal id to the customer the moment the number was not confirmed.
     return { ok: true, BOLId: _res.bolId, BOLNumber: _res.bolNumber,
-      message: 'Saved as BOL ' + _bolShown + ' — nothing has gone to the carrier yet. Tell me when you want it dispatched.' };
+      message: _savedConfirmMessage(_res.bolNumber) };
   } catch(e) {
     const _c = _classifyWriteError(e, 'save');
     return { ok: false, kind: _c.kind, message: _c.message };

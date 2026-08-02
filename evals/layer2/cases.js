@@ -1965,6 +1965,142 @@ const cases = [
       });
     },
   },
+
+  // ── 47-49 — BOL IDENTITY ─────────────────────────────────────────────────────
+  // The live numbers from the run these three were written against. REAL_BOL is the customer's
+  // number, the one chat printed correctly and the one they would read to a carrier; INTERNAL_ID is
+  // the Primus BOLId the dispatch modal printed in its place under "BOL NUMBER".
+  ...(() => {
+    const REAL_BOL = '160135827', INTERNAL_ID = '1473895784';
+    const NO_NUMBER_ID = '1473899999';  // a BOL whose number is genuinely unknown (case 48)
+
+    // A Primus /applet/v1/book/{BOLId} record. `number:false` omits BOLNumber, which is the shape
+    // case 48 needs — nothing anywhere can confirm the customer's number for it.
+    const bolRecord = (id, number) => ({
+      BOLId: id, ...(number ? { BOLNumber: number } : {}),
+      shipper:   { name: 'Michaels Furniture', address1: '7240 Crider Ave', city: 'Pico Rivera', state: 'CA', zipCode: '90660', contact: 'Jo' },
+      consignee: { name: 'Dana Whitfield', address1: '1145 S Clark Dr', city: 'Los Angeles', state: 'CA', zipCode: '90035', contact: 'Dana' },
+      accessorials: [], accountingInformation: { customerQuoteAmount: 161 },
+      pickupInformation: { date: '2026-08-04' },
+    });
+
+    // Routes are scanned in order and unshift puts these first, ahead of both the harness defaults
+    // and openBookingReady's own POST route — so re-installing after every openBookingReady keeps
+    // this case's ids authoritative.
+    const installRoutes = h => h.routes.unshift(
+      // CREATE — Primus answers a POST with the pair. This is the only place the number is minted.
+      { match: (u, m) => /\/applet\/v1\/book(\?|$)/.test(u) && m === 'POST',
+        reply: () => ({ status: 200, body: { data: { results: [{ BOLId: INTERNAL_ID, BOLNmbr: REAL_BOL, documents: [] }] } } }) },
+      // EDIT — a successful Primus edit PUT acknowledges with 2xx and an EMPTY BODY. That is the
+      // whole defect: real success carrying no number, so the app must recover it from elsewhere.
+      { match: (u, m) => u.indexOf('/applet/v1/book/') >= 0 && m === 'PUT',
+        reply: () => ({ status: 200, body: '' }) },
+      { match: (u, m) => u.indexOf('/applet/v1/book/' + INTERNAL_ID) >= 0 && m === 'GET',
+        reply: () => ({ status: 200, body: { data: { results: bolRecord(INTERNAL_ID, REAL_BOL) } } }) },
+      { match: (u, m) => u.indexOf('/applet/v1/book/' + NO_NUMBER_ID) >= 0 && m === 'GET',
+        reply: () => ({ status: 200, body: { data: { results: bolRecord(NO_NUMBER_ID, null) } } }) },
+      // DISPATCH — confirms with a PRO and a CLBL, so _execDispatchShipment reaches the modal.
+      { match: u => /\/applet\/v2\/dispatch\//.test(u),
+        reply: () => ({ status: 200, body: { data: { results: {
+          confirmation: 'WBU74186972', PRO: '854499343',
+          documents: [{ type: 'CLBL', name: 'Bill of Lading', url: 'https://example.invalid/clbl.pdf' }] } } } }) },
+    );
+
+    // Drive the modal and hand back what the CUSTOMER actually reads. Asserting the rendered
+    // overlay rather than the call site's return value is the point: R4 asserts _execSaveShipment's
+    // return and stayed green while the customer read "Booked", and this defect is the same shape —
+    // the wrong number was never in a return value, only on screen.
+    const dispatchAndRead = async (h, BOLId) => {
+      const w = h.win;
+      const dr = await w._execDispatchShipment({ BOLId });
+      A.ok(dr && dr.ok, 'dispatch did not complete, so the modal never rendered: ' + JSON.stringify(dr));
+      await waitFor(() => w.document.getElementById('bk-confirmed-overlay'), 3000);
+      const ov = w.document.getElementById('bk-confirmed-overlay');
+      A.ok(ov, 'the dispatch confirmation modal never rendered');
+      return String(ov.textContent || '');
+    };
+
+    return [
+      {
+        id: 47, name: 'the dispatch modal shows the CUSTOMER\'s BOL number after an edit PUT — never the internal BOLId',
+        catches: 'live: chat said "Saved as BOL 160135827" and the shipment dispatched fine, but the success modal displayed BOL NUMBER 1473895784 — the internal Primus BOLId. PRO and the pickup confirmation both matched chat; only the BOL was wrong, and the BOL is the one number a customer reads to a carrier. The number was never missing from the backend: a Primus edit PUT acknowledges with 2xx and an EMPTY body, and submitBookingOnly recovered it from window._editingShipment, which ONLY the My Shipments form Edit path sets. Every chat-driven PUT arms the edit through setEditingBOLId instead, so _lastBooked was overwritten with BOLNumber:null and the modal\'s `_lb.BOLNumber || BOLId` printed the id — while resolveBOLId, on that very path, had the number in hand and dropped it. Asserts the RENDERED overlay, not the call site\'s return value.',
+        async run(h) {
+          const w = h.win;
+
+          // ── 1. CREATE in chat. The customer is told the real number; this is the run\'s baseline.
+          await openBookingReady(h); installRoutes(h);
+          const r1 = await w._execSaveShipment({});
+          A.ok(r1 && r1.ok === true, 'setup: the create did not succeed: ' + JSON.stringify(r1));
+          A.ok(h.bots().some(t => t.indexOf('Saved as BOL ' + REAL_BOL) === 0),
+            'setup: the create did not name the real BOL in chat: ' + JSON.stringify(h.bots()));
+
+          // ── 2. EDIT the same BOL from chat — the write that destroyed the number.
+          await openBookingReady(h); installRoutes(h);
+          const r2 = await w._execSaveShipment({ bol_id: INTERNAL_ID });
+          A.ok(r2 && r2.ok === true, 'setup: the edit PUT did not succeed: ' + JSON.stringify(r2));
+
+          // ── 3. DISPATCH, and read what the customer sees.
+          const shown = await dispatchAndRead(h, INTERNAL_ID);
+          A.ok(shown.indexOf(REAL_BOL) >= 0,
+            'THE BUG: the dispatch modal does not show the customer\'s BOL number ' + REAL_BOL + ' — rendered: ' + shown.slice(0, 400));
+          A.ok(shown.indexOf(INTERNAL_ID) < 0,
+            'THE BUG: the dispatch modal shows the INTERNAL BOLId ' + INTERNAL_ID + ' — a number the customer may read to a carrier. Rendered: ' + shown.slice(0, 400));
+          // The rest of the modal is unaffected — PRO and pickup confirmation matched chat live, and
+          // must still, so this is not "fixed" by rendering less.
+          A.ok(shown.indexOf('854499343') >= 0, 'the PRO no longer renders: ' + shown.slice(0, 400));
+          A.ok(shown.indexOf('WBU74186972') >= 0, 'the pickup confirmation no longer renders: ' + shown.slice(0, 400));
+        },
+      },
+      {
+        id: 48, name: 'with NO confirmed BOL number the modal says so in fixed copy — it never falls back to the internal id, and never silently drops the field',
+        catches: 'the other half of the same rule, and the reason the fix is not just "read a different field": if the number genuinely is not known, the modal must FAIL LOUDLY. Printing the BOLId is the live defect (case 47); silently omitting the tile is quieter than our loud-failure rule and indistinguishable from a layout change, so nobody would ever report it — a dispatched shipment ALWAYS has a BOL, so a missing one is a defect the owner asked to SEE. The tile therefore always renders: the real number, or customer-safe copy naming no internal id and no field name.',
+        async run(h) {
+          const w = h.win;
+          installRoutes(h);
+          // Nothing has ever confirmed a number for this BOLId — no create, no record carrying one.
+          const shown = await dispatchAndRead(h, NO_NUMBER_ID);
+          A.ok(shown.indexOf(NO_NUMBER_ID) < 0,
+            'THE BUG: with no confirmed BOL number the modal fell back to the INTERNAL BOLId ' + NO_NUMBER_ID + ' — rendered: ' + shown.slice(0, 400));
+          A.ok(/BOL Number/i.test(shown),
+            'the BOL Number field was dropped entirely — a missing BOL must be visible, not hidden: ' + shown.slice(0, 400));
+          A.ok(shown.indexOf(h.g('BOL_NUMBER_UNAVAILABLE')) >= 0,
+            'the fixed placeholder copy is not shown where the BOL number belongs: ' + shown.slice(0, 400));
+          // Customer-safe: no internal field names leak into the placeholder surface.
+          A.ok(!/BOLId|BOLNumber|_lastBooked/.test(shown), 'an internal field name reached the customer: ' + shown.slice(0, 400));
+        },
+      },
+      {
+        id: 49, name: 'the same defect in CHAT: a save on an existing BOL names the real BOL, and the edit never destroys a number already confirmed',
+        catches: 'routes 4/5, logged live alongside the modal defect and proven here to be ONE cause with two surfaces. The identical null — a Primus edit PUT acknowledging with an empty body and no way to recover the number on a chat-driven write — surfaces in chat as "Saved" with no BOL number at all, and leaves window._lastBooked.BOLNumber null, which is precisely the state the dispatch modal then reads. Asserting the rendered chat line AND the state it leaves behind is what ties the two symptoms to the one fix.',
+        async run(h) {
+          const w = h.win;
+          await openBookingReady(h); installRoutes(h);
+          const r1 = await w._execSaveShipment({});
+          A.ok(r1 && r1.ok === true, 'setup: the create did not succeed: ' + JSON.stringify(r1));
+
+          await openBookingReady(h); installRoutes(h);
+          h.reset();
+          const r2 = await w._execSaveShipment({ bol_id: INTERNAL_ID });
+          A.ok(r2 && r2.ok === true, 'the edit PUT did not succeed: ' + JSON.stringify(r2));
+
+          const saveLine = h.bots().find(t => /^Saved/.test(t)) || '';
+          A.ok(saveLine, 'the edit produced NO customer-facing confirmation at all: ' + JSON.stringify(h.bots()));
+          A.ok(saveLine.indexOf(REAL_BOL) >= 0,
+            'THE BUG: the save confirmation after an edit PUT does not name the real BOL ' + REAL_BOL + ' — read: ' + saveLine);
+          A.ok(saveLine.indexOf(INTERNAL_ID) < 0,
+            'THE BUG: the save confirmation names the INTERNAL BOLId — read: ' + saveLine);
+
+          // The state the modal reads. This is the join between the two surfaces: the edit must not
+          // overwrite a number this conversation already had confirmed for this same BOLId.
+          const lb = w._lastBooked || {};
+          A.eq(String(lb.BOLNumber || ''), REAL_BOL,
+            'the edit PUT destroyed the confirmed BOL number in _lastBooked — the modal reads this');
+          A.eq(w._bolNumberFor(INTERNAL_ID), REAL_BOL, 'the canonical reader does not return the customer\'s number');
+          A.eq(w._bolNumberFor(NO_NUMBER_ID), null, 'the canonical reader invented a number for a BOL that has none');
+        },
+      },
+    ];
+  })(),
 ];
 
 module.exports = { cases };
