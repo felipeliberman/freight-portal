@@ -44,25 +44,31 @@ export default {
         return json({ success: false, error: e.message }, 500);
       }
     }
+    // Identity for the invoice-payment path. Resolves ONCE, deterministically, and fails CLOSED.
+    // This used to list the 100 newest customers and match the email in JS: past 100 customers the
+    // match silently missed, so it minted a same-email DUPLICATE and returned a different customer
+    // on every call. /get-payment-methods then listed a bank PaymentMethod off one customer while
+    // /create-payment-intent built the PaymentIntent on another, and Stripe rejected the confirm
+    // with "The provided PaymentMethod cannot be attached." The `catch -> return null` compounded
+    // it: any API failure produced a customer-less PaymentIntent instead of an error. Stripe
+    // filters by email server-side, so ?email= is exact and unaffected by how many customers exist.
     async function getOrCreateCustomer(email) {
-      if (!email) return null;
-      try {
-        const res = await fetch("https://api.stripe.com/v1/customers?limit=100", {
-          headers: { "Authorization": `Bearer ${STRIPE_SK}` }
-        });
-        const data = await res.json();
-        const existing = (data.data || []).find((c2) => c2.email === email);
-        if (existing) return existing.id;
-        const createRes = await fetch("https://api.stripe.com/v1/customers", {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${STRIPE_SK}`, "Content-Type": "application/x-www-form-urlencoded" },
-          body: `email=${encodeURIComponent(email)}`
-        });
-        const c = await createRes.json();
-        return c.id || null;
-      } catch (e) {
-        return null;
-      }
+      if (!email) throw new Error("Cannot resolve a Stripe customer without an email");
+      const auth = { "Authorization": `Bearer ${STRIPE_SK}` };
+      const res = await fetch(`https://api.stripe.com/v1/customers?email=${encodeURIComponent(email)}&limit=1`, { headers: auth });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const existing = data.data && data.data[0];
+      if (existing && existing.id) return existing.id;
+      const createRes = await fetch("https://api.stripe.com/v1/customers", {
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/x-www-form-urlencoded" },
+        body: `email=${encodeURIComponent(email)}`
+      });
+      const c = await createRes.json();
+      if (c.error) throw new Error(c.error.message);
+      if (!c.id) throw new Error("Stripe did not return a customer id");
+      return c.id;
     }
     function skFor(mode) {
       return mode === "live" ? STRIPE_SK : env.STRIPE_SK_TEST;
@@ -124,36 +130,60 @@ export default {
     if (pathname === "/get-payment-methods" && request.method === "POST") {
       try {
         const { customerEmail } = await request.json();
+        if (!customerEmail) return json({ error: "Missing customerEmail" }, 400);
         const customerId = await getOrCreateCustomer(customerEmail);
-        if (!customerId) return json({ paymentMethods: [] });
         const pmRes = await fetch(`https://api.stripe.com/v1/payment_methods?customer=${customerId}&type=us_bank_account`, {
           headers: { "Authorization": `Bearer ${STRIPE_SK}` }
         });
         const pmData = await pmRes.json();
+        if (pmData.error) return json({ error: pmData.error.message }, 400);
         const pms = pmData.data || [];
+        // customerId rides along on BOTH shapes: the caller has to build the PaymentIntent on the
+        // same customer this PaymentMethod was listed off, or the confirm is rejected.
         if (pms.length > 0) {
           const pm = pms[0];
-          return json({ paymentMethods: [{ id: pm.id, bankName: pm.us_bank_account && pm.us_bank_account.bank_name || "Bank account", last4: pm.us_bank_account && pm.us_bank_account.last4 || "", type: "us_bank_account" }] });
+          return json({ customerId, paymentMethods: [{ id: pm.id, bankName: pm.us_bank_account && pm.us_bank_account.bank_name || "Bank account", last4: pm.us_bank_account && pm.us_bank_account.last4 || "", type: "us_bank_account" }] });
         }
-        return json({ paymentMethods: [] });
+        return json({ customerId, paymentMethods: [] });
       } catch (e) {
-        return json({ paymentMethods: [] });
+        // A resolution failure is NOT "no bank linked" — returning [] here would hide an outage as
+        // an unlinked account and walk the customer into a needless re-link.
+        return json({ error: e.message }, 502);
       }
     }
     if (pathname === "/create-payment-intent" && request.method === "POST") {
       try {
-        const { amount, paymentMethod, invoiceNums, customerEmail } = await request.json();
-        const customerId = await getOrCreateCustomer(customerEmail);
+        const body = await request.json();
+        const { amount, paymentMethod, invoiceNums, customerEmail } = body;
+        const isAch = paymentMethod === "ach";
+        // A cus_* carried over from /get-payment-methods is authoritative: it is the customer the
+        // linked PaymentMethod is actually attached to. Resolving by email again would re-open the
+        // window where the two calls disagree.
+        const passed = typeof body.customerId === "string" && /^cus_[A-Za-z0-9]+$/.test(body.customerId) ? body.customerId : null;
+        let customerId = passed;
+        if (!customerId && customerEmail) {
+          if (isAch) {
+            customerId = await getOrCreateCustomer(customerEmail);
+          } else {
+            // Card mints a fresh PaymentMethod per charge and never reuses one, so it does not need
+            // a customer to be correct. Keep an identity outage from taking card payments down with
+            // it — this is the one place the old degrade-to-null behaviour is still the right call.
+            try { customerId = await getOrCreateCustomer(customerEmail); } catch (e) { customerId = null; }
+          }
+        }
+        // ACH reuses a stored PaymentMethod, so its PaymentIntent MUST carry the owning customer.
+        // A customer-less ACH PaymentIntent is exactly the split-brain this endpoint used to ship.
+        if (isAch && !customerId) return json({ error: "Could not resolve a Stripe customer for this account" }, customerEmail ? 502 : 400);
         const amountCents = Math.round(amount * 100);
         const piParams = new URLSearchParams({
           amount: amountCents.toString(),
           currency: "usd",
           confirm: "false"
         });
-        piParams.append("payment_method_types[]", paymentMethod === "ach" ? "us_bank_account" : "card");
+        piParams.append("payment_method_types[]", isAch ? "us_bank_account" : "card");
         if (customerId) piParams.append("customer", customerId);
         if (invoiceNums) piParams.append("description", "Invoices: " + invoiceNums);
-        if (paymentMethod === "ach") piParams.append("setup_future_usage", "off_session");
+        if (isAch) piParams.append("setup_future_usage", "off_session");
         const piRes = await fetch("https://api.stripe.com/v1/payment_intents", {
           method: "POST",
           headers: { "Authorization": `Bearer ${STRIPE_SK}`, "Content-Type": "application/x-www-form-urlencoded" },
