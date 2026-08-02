@@ -2338,6 +2338,15 @@ function resetShipmentState(wipeConversation) {
     // Stale-container hygiene on EVERY reset (was wipe-only): every fresh-quote path rebuilds the
     // form right after this reset, so no ghost line-item rows or stale-container writes can survive.
     window._quoteContainer = null;
+    // The form's rate-pull entrypoint is a CLOSURE over the container built alongside it. Leaving it
+    // armed across a reset lets any later caller fire the PREVIOUS form: a detached container still
+    // holds every input value, so the pull runs on the prior shipment's lane, weight and dims while
+    // the visible form reads blank. Nulling the reference is half the fix — doGetRates also refuses
+    // a closure that is no longer the live form (see its guard).
+    window._doGetRates = null;
+    // The multi-fire dedupe window must never span a shipment boundary: a bare open landing within
+    // 600ms of the PREVIOUS shipment's open would dedupe and silently keep the old form alive.
+    window._qfLastBareOpen = null;
     window._quoteExplicitOpen = false;
     window._spAutoExtractRunning = false;
     window._onRatesReady = null;
@@ -2464,6 +2473,62 @@ function fmtMoney(n) {
   var v = (typeof n === 'string') ? parseMoney(n) : Number(n);
   if (!isFinite(v)) v = 0;
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ── [WRITE] FIELD TRACER — DIAGNOSTIC ONLY, OFF BY DEFAULT ───────────────────
+// Arm with ?fpdebug=1 or localStorage.setItem('fp_debug','1'). When armed, every assignment to a
+// value-bearing quote/booking field logs a stack trace, so a repro captures the CALLER that filled
+// a form rather than only the fact that it ended up filled. Built because the stale-state saves
+// could be seen in the logs but not attributed: the log showed a populated rate call with no record
+// of who populated it. Costs nothing when off (single boolean check, no patching).
+function _fpDebugOn() {
+  try {
+    if (window._fpDebugForced != null) return !!window._fpDebugForced;
+    var on = /[?&]fpdebug=1(?:&|$)/.test(location.search) || localStorage.getItem('fp_debug') === '1';
+    window._fpDebugForced = on;
+    if (on) console.log('%c[WRITE] tracer ARMED — quote/booking field writes will log a stack trace.',
+      'color:#bd27bc;font-weight:700');
+    return on;
+  } catch (e) { return false; }
+}
+function _fpTraceField(el, label) {
+  if (!el || el._fpTraced) return;
+  try {
+    var proto = (el.tagName === 'TEXTAREA') ? HTMLTextAreaElement.prototype
+              : (el.tagName === 'SELECT')   ? HTMLSelectElement.prototype
+              : HTMLInputElement.prototype;
+    var d = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (!d || !d.set || !d.get) return;
+    Object.defineProperty(el, 'value', {
+      configurable: true,
+      get: function () { return d.get.call(this); },
+      set: function (v) {
+        try { console.trace('[WRITE] ' + label + ' = ' + JSON.stringify(String(v))); } catch (e) {}
+        return d.set.call(this, v);
+      }
+    });
+    el._fpTraced = true;
+  } catch (e) {}
+}
+// Quote form: the lane and the freight — the values that showed up pre-populated on a cold boot.
+function _fpTraceQuoteForm(root) {
+  if (!_fpDebugOn() || !root || !root.querySelector) return;
+  ['#qt-origin', '#qt-dest', '#qt-date'].forEach(function (sel) {
+    _fpTraceField(root.querySelector(sel), 'quote ' + sel);
+  });
+  [].slice.call(root.querySelectorAll('.qt-line')).forEach(function (row, i) {
+    ['.li-weight', '.li-len', '.li-wid', '.li-hgt', '.li-class', '.li-qty'].forEach(function (sel) {
+      _fpTraceField(row.querySelector(sel), 'quote row' + i + ' ' + sel);
+    });
+  });
+}
+// Booking panel: the party fields, including the city/state/ZIP triple that produced the 400.
+function _fpTraceBookingForm() {
+  if (!_fpDebugOn()) return;
+  ['bk-pu-name', 'bk-pu-street', 'bk-pu-city', 'bk-pu-state', 'bk-pu-zip',
+   'bk-dl-name', 'bk-dl-street', 'bk-dl-city', 'bk-dl-state', 'bk-dl-zip'].forEach(function (id) {
+    _fpTraceField(document.getElementById(id), 'booking #' + id);
+  });
 }
 
 // ─── SHIPPRIMUS API CALLS ─────────────────────────────────────────────────────
@@ -8072,22 +8137,32 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
         stack: it.stackAmount > 1
       })) : [{ pieces:Number(s.pieces||1), weight:Number(s.weight||s.totalWeight||0), length:48, width:40, height:48, packageType:'PLT', freightClass:'70', description:'Freight' }]
     };
-    if(typeof showQuoteForm==='function') showQuoteForm();
+    // A REQUOTE MUST CARRY THE SHIPMENT IT IS REQUOTING. This used to open a BARE form and then
+    // write only the ZIPs through global getElementById, leaving the line items to whatever happened
+    // to still be sitting in the DOM. doGetRates reads the FORM, not lastQuotedShipment, so a requote
+    // rated the PREVIOUS shipment's weight and dims — the exact payload that reached Primus on the
+    // corrupted saves. Pass the freight through the prefill so the form is built holding it.
+    // Prefill (not bare) also means this open can never be swallowed by the multi-fire dedupe.
+    const _rqPrefill = {
+      originZip: originZip,
+      destZip: destZip,
+      pickupDate: pickupDate || getTomorrow(),
+      accessorials: accCodes,
+      lineItems: editShipData.items.map(it => ({
+        qty: it.pieces || 1, type: it.packageType || 'PLT', weight: it.weight || '',
+        length: it.length || '', width: it.width || '', height: it.height || '',
+        stack: it.stack ? 'Y' : 'N', freightClass: it.freightClass || '',
+        nmfc: it.nmfc || '', commodity: it.description || ''
+      }))
+    };
+    if(typeof showQuoteForm==='function') showQuoteForm(_rqPrefill);
+    // Downstream booking still reads the requoted dims from here.
+    lastQuotedShipment = editShipData;
+    // Rate against THIS form's closure, which showQuoteForm just re-armed. No getElementById writes:
+    // the prefill already placed every value, and no fallback .click() on a possibly-stale button.
     setTimeout(() => {
-      // Fill origin/dest ZIPs
-      const oEl = document.getElementById('qt-origin'); if(oEl) { oEl.value = originZip; oEl.dispatchEvent(new Event('input')); }
-      const dEl = document.getElementById('qt-dest');   if(dEl) { dEl.value = destZip;   dEl.dispatchEvent(new Event('input')); }
-      // Fill date
-      const dtEl = document.getElementById('qt-date'); if(dtEl) dtEl.value = pickupDate || getTomorrow();
-      // Apply accessorials
-      if(accCodes.length && typeof applyRequoteAccessorials==='function') applyRequoteAccessorials(accCodes);
-      // Set lastQuotedShipment so rates use correct dims
-      lastQuotedShipment = editShipData;
-      // Auto-run rates
-      setTimeout(() => {
-        if(window._doGetRates) window._doGetRates();
-        else { const rb = document.getElementById('qt-get-rates'); if(rb) rb.click(); }
-      }, 300);
+      if(window._doGetRates) window._doGetRates();
+      else console.warn('[FP] requote — no live quote form to rate; not pulling.');
     }, 500);
   };
   btnCol.appendChild(editBtn);
@@ -11231,8 +11306,91 @@ function validateBookingPayload(payload) {
     message: 'Missing ' + list + '. Nothing was sent. Tell the customer exactly which detail is needed and ask for it. Do NOT say the shipment was saved or booked, and do NOT state a BOL number.' };
 }
 
+// ── PRE-WRITE BACKSTOP: A CITY MUST AGREE WITH THE ZIP IT IS PAIRED WITH ──────
+// Second layer, not the primary fix. The cause of mismatched pairs (a party-restore writing a
+// previous shipment's city next to this lane's ZIP) is fixed at the source by making the ZIP the
+// only writer of city/state. This refuses to SEND one if a pair ever diverges again by some other
+// route — Primus answers a divergent pair with a 400 ("The consignee information does not match the
+// quote record"), and a 400 after the fact is a worse failure than a refusal before it.
+//
+// FAILS OPEN on a lookup outage, deliberately: blocking every save because a geocoder is down would
+// turn a provider hiccup into a customer-visible outage. Reads through lookupZip, so the common case
+// is a zipCache hit with no network call at all — including in tests that block zippopotam directly.
+const _CITY_NORM = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+// The block is only useful if the fix is a TAP. Surfaces the RATED city — the one the quote record
+// carries and the one ShipPrimus enforces against — with a button that writes it. Note this does not
+// breach "lookupZipCity is the sole writer of city/state": the value written here IS the ZIP-derived
+// canonical city from lookupZip, which is exactly what that rule protects. A USPS-acceptable
+// alternate city is still a mismatch against the quote record, so correcting to the rated city is
+// the real fix, not a formality.
+function _renderCityZipFix(sideKey, label, zip, badCity, rated) {
+  try {
+    const cityId  = sideKey === 'consignee' ? 'bk-dl-city'  : 'bk-pu-city';
+    const stateId = sideKey === 'consignee' ? 'bk-dl-state' : 'bk-pu-state';
+    const host = window._bookingPanelContainer || document.getElementById('right-panel');
+    if (!host) return;
+    const old = document.getElementById('cityzip-fix'); if (old) old.remove();
+    const box = document.createElement('div');
+    box.id = 'cityzip-fix';
+    // Hardcoded hex — CSS vars do not resolve in dynamically-set inline styles.
+    box.style.cssText = 'margin:10px 14px;padding:10px 12px;border:1px solid #c8c4bc;border-left:3px solid #bd27bc;'
+      + 'border-radius:8px;background:#fdf0fd;font-size:12px;color:#2b2825;line-height:1.5;';
+    const t1 = document.createElement('div');
+    t1.style.cssText = 'font-weight:700;margin-bottom:4px;';
+    t1.textContent = label.charAt(0).toUpperCase() + label.slice(1) + ' city does not match ZIP ' + zip;
+    const t2 = document.createElement('div');
+    t2.style.cssText = 'margin-bottom:8px;';
+    t2.textContent = 'This rate was quoted for ' + rated.city + ', ' + rated.state + ', but the form says '
+      + badCity + '. Nothing was sent.';
+    const btn = document.createElement('button');
+    btn.textContent = 'Use ' + rated.city + ', ' + rated.state;
+    btn.style.cssText = 'background:#bd27bc;color:#fff;border:none;border-radius:7px;padding:8px 12px;'
+      + 'font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
+    btn.onclick = function () {
+      const ce = document.getElementById(cityId), se = document.getElementById(stateId);
+      if (ce) { ce.value = rated.city; try { ce.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {} }
+      if (se) { se.value = rated.state; try { se.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {} }
+      console.log('[FP] city/ZIP corrected to the rated city —', rated.city + ', ' + rated.state, '| zip:', zip);
+      box.remove();
+    };
+    box.appendChild(t1); box.appendChild(t2); box.appendChild(btn);
+    host.insertBefore(box, host.firstChild);
+  } catch (e) {}
+}
+async function _assertCityMatchesZip(payload) {
+  const sides = [{ key: 'consignee', label: 'delivery' }, { key: 'shipper', label: 'pickup' }];
+  for (let i = 0; i < sides.length; i++) {
+    const side = sides[i];
+    const p = (payload && payload[side.key]) || {};
+    const zip = String(p.zipCode || '').trim();
+    const city = String(p.city || '').trim();
+    if (!zip || !city) continue;           // missing values belong to the required-field validator
+    if (_isCanadianPostal(zip)) continue;  // city data here is US-only
+    let r = null;
+    try { r = await lookupZip(zip); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.city) {
+      console.warn('[FP] city/ZIP check SKIPPED for the', side.label, 'address — could not resolve ZIP',
+        zip, '| reason:', (r && r.reason) || 'unknown', '(failing open by design)');
+      continue;
+    }
+    if (_CITY_NORM(r.city) !== _CITY_NORM(city)) {
+      console.error('[FP] city/ZIP MISMATCH on the ' + side.label + ' address — REFUSING to send.',
+        '| zip:', zip, '| zip resolves to:', r.city + ', ' + r.state, '| payload city:', city);
+      _renderCityZipFix(side.key, side.label, zip, city, r);
+      return { ok: false, code: 'CITY_ZIP_MISMATCH', side: side.key,
+        zip: zip, formCity: city, ratedCity: r.city, ratedState: r.state,
+        message: 'The ' + side.label + ' city (' + city + ') does not match ZIP ' + zip + ', which is rated as '
+          + r.city + ', ' + r.state + '. Nothing was sent. Offer the customer the rated city ('
+          + r.city + ', ' + r.state + ') — a one-tap correction is shown on the booking panel.' };
+    }
+  }
+  return { ok: true };
+}
+
 async function bookShipment(payload, opts) {
   opts = opts || {};
+  const _cz = await _assertCityMatchesZip(payload);
+  if (!_cz.ok) { const _e = new Error(_cz.message); _e.code = _cz.code; throw _e; }
   const token = opts.token || await getToken();
   const editBolId = opts.editBolId || null;
   const errLabel = opts.errLabel || 'Booking';
@@ -12893,6 +13051,7 @@ function applyLineItems(items, opts) {
     }
     touched.push(idx);
   });
+  _fpTraceQuoteForm(panel); // re-arm: a row appended above is a brand-new element (no-op unless ?fpdebug=1)
   console.log('[FP] applyLineItems — mode:', mode, '| in:', items.length, '| rows touched:', JSON.stringify(touched), '| total rows:', rowsNow().length);
   return { applied: touched.length, rows: touched };
 }
@@ -19148,10 +19307,16 @@ function showBookingPanel(rate, shipmentData) {
   const puClose = field(pu.grid, 'bk-pu-close', 'Close', '', 'time');
   puClose.style.cssText = tS; puClose.value = '16:00';
 
-  // Pre-fill ZIP and look up city for pickup
+  // Pre-fill ZIP and look up city for pickup.
+  // WRITE THROUGH THE ELEMENT REFERENCE, NOT getElementById. This section is not appended to the
+  // document until `body.appendChild(pu.wrap)` below, so the lookup returned NULL and the ZIP was
+  // NEVER SET — the field only ever showed the ZIP as grey PLACEHOLDER text (field()'s 4th argument
+  // is the placeholder, not a value). An empty bk-pu-zip makes collectBookingForm fall through to
+  // bookingData.shipperZip, i.e. the PREVIOUS shipment's ZIP, and pairs it with this lane's
+  // correctly-derived city — which is the "does not match the quote record" 400. lookupZipCity is
+  // unaffected: it is async, so by the time its fetch resolves the section IS mounted.
   if (originZip) {
-    const puZipEl = document.getElementById('bk-pu-zip');
-    if (puZipEl) puZipEl.value = originZip;
+    if (puZipFld) puZipFld.value = originZip;
     lookupZipCity(originZip, 'bk-pu-city', 'bk-pu-state');
   }
   // Pre-fill from default pickup if available
@@ -19185,10 +19350,12 @@ function showBookingPanel(rate, shipmentData) {
   field(dl.grid, 'bk-dl-contact', 'Contact Name',  'e.g. John Smith');
   field(dl.grid, 'bk-dl-phone',   'Phone',         'e.g. 555-555-5555', 'tel');
 
-  // Pre-fill ZIP and look up city for delivery
+  // Pre-fill ZIP and look up city for delivery — element reference, not getElementById.
+  // Same mount-order defect as the pickup ZIP above, and the more damaging of the two: an empty
+  // bk-dl-zip let the CONSIGNEE ZIP fall back to the previous shipment's, paired with this lane's
+  // city. See the pickup comment for the full chain.
   if (destZip) {
-    const dlZipEl = document.getElementById('bk-dl-zip');
-    if (dlZipEl) dlZipEl.value = destZip;
+    if (dlZipFld) dlZipFld.value = destZip;
     lookupZipCity(destZip, 'bk-dl-city', 'bk-dl-state');
   }
 
@@ -19814,9 +19981,19 @@ function showBookingPanel(rate, shipmentData) {
     }
     const bd0 = bookingData || {};
     if (bd0.shipperName || bd0.shipperStreet || bd0.consigneeName || bd0.consigneeStreet) {
+      // CITY AND STATE ARE DERIVED FROM THE ZIP AND ARE NOT RESTORABLE PARTY DATA. They used to be
+      // passed here, and because this restore runs SYNCHRONOUSLY while lookupZipCity's fetch is still
+      // in flight, the fields were still empty — so fillEmptyOnly happily wrote the PREVIOUS
+      // shipment's city/state next to THIS lane's ZIP. When the lookup landed it overwrote them and
+      // the bug was invisible; when the lookup was slow or failed (its rejection was swallowed), the
+      // stale city stood. That is city=PICO RIVERA against zip=90035 → Primus 400 "consignee
+      // information does not match the quote record". The ZIP field is readOnly and lane-owned, so
+      // the fix is to let the ZIP be the only source: lookupZipCity is the sole writer of city/state.
+      // (Deliberately NOT adding `zip` here either — see applyAddressToBookingSection: "Never
+      // override ZIP or city — those are locked by the rate.")
       applyPartyData({
-        shipper:   { name: bd0.shipperName, address: bd0.shipperStreet, suite: bd0.shipperSuite, city: bd0.shipperCity, state: bd0.shipperState, contact: bd0.shipperContact, phone: bd0.shipperPhone },
-        consignee: { name: bd0.consigneeName, address: bd0.consigneeStreet, suite: bd0.consigneeSuite, city: bd0.consigneeCity, state: bd0.consigneeState, contact: bd0.consigneeContact, phone: bd0.consigneePhone },
+        shipper:   { name: bd0.shipperName, address: bd0.shipperStreet, suite: bd0.shipperSuite, contact: bd0.shipperContact, phone: bd0.shipperPhone },
+        consignee: { name: bd0.consigneeName, address: bd0.consigneeStreet, suite: bd0.consigneeSuite, contact: bd0.consigneeContact, phone: bd0.consigneePhone },
         referenceNumber: bd0.shipperRef,
         pickup: { open: bd0.pickupOpen, close: bd0.pickupClose },
         specialInstructions: bd0.specialInstructions,
@@ -19825,6 +20002,7 @@ function showBookingPanel(rate, shipmentData) {
   }
 
   window._bookingPanelContainer = c;
+  _fpTraceBookingForm(); // no-op unless ?fpdebug=1 — armed after the party fields exist
 
   // Helper: show requote toast then auto-get rates
   window._showRequoteToast = function(label, accCode) {
@@ -20245,18 +20423,36 @@ function setDefaultPickup(addr) {
   saveAddressBook(book);
 }
 
-function lookupZipCity(zip, cityId, stateId) {
-  if (!zip || zip.length !== 5) return;
-  fetch('https://api.zippopotam.us/us/' + zip)
-    .then(r => r.ok ? r.json() : null)
-    .then(d => {
-      if (!d || !d.places || !d.places[0]) return;
-      const p = d.places[0];
-      const ce = document.getElementById(cityId);
-      const se = document.getElementById(stateId);
-      if (ce) { ce.value = p['place name']; ce.readOnly = true; ce.style.background = '#f7f5f2'; ce.style.color = 'var(--mu)'; }
-      if (se) { se.value = p['state abbreviation']; }
-    }).catch(() => {});
+// THE sole writer of a booking form's city/state. Both are DERIVED from the ZIP — no restore, paste
+// or party-data path may write them (see the rebuild-restore comment).
+//
+// Routed through lookupZip, the canonical resolver, rather than a second bare zippopotam call:
+// lookupZip is CACHED (zipCache), falls back to Geocodio when zippopotam misses, and distinguishes
+// notfound from a provider outage. The old private fetch had none of that and ended in `.catch(()=>{})`
+// — so a failure was silent and left whatever was already in the field standing, which is how a
+// previous shipment's city survived next to this lane's ZIP all the way to a Primus 400.
+// Returns the resolution so callers can sequence on it; never throws.
+async function lookupZipCity(zip, cityId, stateId) {
+  if (!zip) return null;
+  if (!_isCanadianPostal(zip) && String(zip).length !== 5) return null;
+  try {
+    const r = await lookupZip(zip);
+    const ce = document.getElementById(cityId);
+    const se = document.getElementById(stateId);
+    if (!r || !r.ok || !r.city) {
+      // LOUD, and it writes NOTHING. Leaving the field blank is correct: a blank city is visibly
+      // incomplete, whereas a stale city looks filled-in and reaches the carrier.
+      console.warn('[FP] lookupZipCity — could not resolve city/state for ZIP', zip,
+        '| reason:', (r && r.reason) || 'unknown', '— city/state left as-is; NOT filled from any other source.');
+      return r || null;
+    }
+    if (ce) { ce.value = r.city; ce.readOnly = true; ce.style.background = '#f7f5f2'; ce.style.color = 'var(--mu)'; }
+    if (se) { se.value = r.state; }
+    return r;
+  } catch (e) {
+    console.warn('[FP] lookupZipCity failed', e);
+    return null;
+  }
 }
 
 function applyAddressToBookingSection(addr, prefix) {
@@ -20703,7 +20899,10 @@ function refreshGetRatesEnabled() {
 
 function showQuoteForm(prefill, silent) {
   const _pf = prefill || {};
-  console.log('[FP] showQuoteForm — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| weight:', _pf.weight, '| lineItems:', !!(_pf.lineItems&&_pf.lineItems.length), '| silent:', !!silent);
+  // NOTE: the "showQuoteForm —" log lives BELOW the multi-fire dedupe, not here. Logging before the
+  // dedupe made a call that rebuilt NOTHING print "originZip: undefined | destZip: undefined |
+  // weight: undefined", which reads identically to a freshly-cleared form. That line was taken as
+  // proof the form had been wiped while the previous form was in fact still mounted and still live.
   // The "quote form is open" chat line (below) is emitted per CALL and is NOT deduped by
   // openRightPanel — that dedupes the TAB, not the chat message. So two non-silent triggers for the
   // same already-open form (e.g. restoreTabState's 2s timer landing on top of a nav/user open, or a
@@ -20723,9 +20922,11 @@ function showQuoteForm(prefill, silent) {
   // nothing — the first call already did (or is doing) the work.
   const _nowQF = Date.now();
   if (!prefill && !silent && _quoteTabAlreadyOpen && window._qfLastBareOpen && (_nowQF - window._qfLastBareOpen) < 600) {
-    console.log('[FP] showQuoteForm — deduped re-entrant open (multi-fire guard)');
+    console.warn('[FP] showQuoteForm — DEDUPED re-entrant open (multi-fire guard). Form NOT rebuilt;'
+      + ' the previously-built form and every value in it are still live.');
     return;
   }
+  console.log('[FP] showQuoteForm — originZip:', _pf.originZip, '| destZip:', _pf.destZip, '| weight:', _pf.weight, '| lineItems:', !!(_pf.lineItems&&_pf.lineItems.length), '| silent:', !!silent);
   if (!prefill && !silent) window._qfLastBareOpen = _nowQF;
   window._quoteFormOpen = true;
   window._quoteFormSilent = silent;
@@ -21539,6 +21740,17 @@ function showQuoteForm(prefill, silent) {
 
   // ── Get Rates action ─────────────────────────────────────────────────────
   async function doGetRates() {
+    // STALE-CLOSURE GUARD. This function closes over ONE container. showQuoteForm builds a new
+    // container per open and resetShipmentState nulls the pointer, but an OLD closure stays reachable
+    // through any captured reference — and a detached container keeps its input values. Firing one
+    // rates the PREVIOUS shipment's lane and freight while the customer looks at a blank form, which
+    // is how a quote was saved with a prior customer's weight. Identity, not mountedness: a quote tab
+    // that is merely inactive is legitimately detached (see _quoteRoot) and must still be rateable.
+    if (window._quoteContainer !== container) {
+      console.warn('[FP] doGetRates REFUSED — stale form closure; this is not the live quote form. No rates pulled.',
+        '| live container present:', !!window._quoteContainer);
+      return;
+    }
     const originZip = container.querySelector('#qt-origin').value.trim();
     const destZip   = container.querySelector('#qt-dest').value.trim();
     const items     = getItems();
@@ -21721,6 +21933,7 @@ function showQuoteForm(prefill, silent) {
 
   container.querySelector('#qt-get-rates').onclick = doGetRates;
   window._doGetRates = doGetRates; // expose for chat "get rates" trigger
+  _fpTraceQuoteForm(container); // no-op unless ?fpdebug=1 — re-armed per build (new elements each open)
 
   // Expose function so chat can push rates directly into this panel
   window._showRatesInPanel = function(rates) {
@@ -23832,7 +24045,11 @@ function restoreTabState() {
     const activeTitle = localStorage.getItem('rp_active_title') || '';
     if (!saved.length) return;
     const TAB_OPENERS = {
-      'Get a Quote':     () => showQuoteForm(),
+      // SILENT, and deliberately so. A bare open here greeted the customer on every cold boot and —
+      // worse — stamped _qfLastBareOpen, so a real "Get a Quote" click landing within 600ms of this
+      // 2s timer was DEDUPED: the user's click rebuilt nothing and left the restored form live.
+      // silent:true skips the greeting and (via the !silent test below) never stamps the window.
+      'Get a Quote':     () => showQuoteForm(undefined, true),
       'Saved Quotes':    () => showSavedQuotes(),
       'Address Book':    () => showAddressBook(),
       'Shipping Items':  () => showShippingItems(),

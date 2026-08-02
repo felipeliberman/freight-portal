@@ -78,5 +78,22 @@ const C = process.stdout.isTTY
     flowFails = flow.filter(r => r.status !== 'PASS').length;
     console.log('\n  FLOW: ' + C[flowFails ? 'r' : 'g']((flow.length - flowFails) + '/' + flow.length + ' steps green') + '\n');
   }
-  process.exit(n('FAIL') + n('UNEXPECTED-PASS') + flowFails > 0 ? 1 : 0);
+
+  // ── THE WIRE TESTS — assertions on CAPTURED REQUESTS, not on internals ──
+  // The stale-state defects all left every in-memory variable looking plausible and only diverged at
+  // the request boundary, so these assert on the actual outgoing rate/book payload and the mounted
+  // DOM. (Skipped when a subset of invariants was requested by id, same as the flow.)
+  let wireFails = 0;
+  if (!want.length) {
+    const { runWire } = require('./wire');
+    console.log('  WIRE TESTS — evals/state/wire.js\n');
+    const wire = await runWire();
+    for (const r of wire) {
+      const tag = r.status === 'PASS' ? C.g('  PASS') : C.r('  FAIL');
+      console.log(tag + '  ' + r.id + '. ' + r.name + (r.error ? '\n        ' + C.r(r.error.slice(0, 400)) : ''));
+    }
+    wireFails = wire.filter(r => r.status !== 'PASS').length;
+    console.log('\n  WIRE: ' + C[wireFails ? 'r' : 'g']((wire.length - wireFails) + '/' + wire.length + ' green') + '\n');
+  }
+  process.exit(n('FAIL') + n('UNEXPECTED-PASS') + flowFails + wireFails > 0 ? 1 : 0);
 })();

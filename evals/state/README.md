@@ -37,3 +37,28 @@ look. Do not add an invariant already green when its surface has not been built.
 
 Invariant 7 is the general one: it is a property of the router, so it fails on *any* future
 interceptor added without a gate — not just the four that exist today.
+
+## Wire tests — `wire.js`
+
+Run automatically by `run.js` (skipped when a subset of invariants is requested by id), or
+standalone with `node evals/state/wire.js`.
+
+Invariants assert on state. **Wire tests assert on the captured outgoing request and the mounted
+DOM.** That distinction is the whole point: the stale-state defects of Jul–Aug 2026 left every
+in-memory variable looking plausible and diverged only at the request boundary — a rate pull whose
+lane and weight belonged to the *previous* shipment, a consignee whose city and ZIP came from
+different shipments. Nothing readable from a variable would have caught either.
+
+| # | asserts | catches |
+|---|---|---|
+| 1a | a cold-boot tab restore opens the quote form silently and stamps no dedupe window | the 2s boot timer swallowing a real "Get a Quote" click, leaving the restored form live |
+| 1b | a stale `doGetRates` closure refuses to pull; a reset disarms `window._doGetRates` | rating a detached form — a detached container keeps every input value |
+| 1c | a requote rates ITS OWN freight | the requote that rated whatever was left in the DOM (weight 100 from the prior customer) |
+| 2a | a rebuild never grafts a stale city, and the ZIP field is actually populated | `city=PICO RIVERA` + `zip=90035`; and the empty-ZIP fallthrough to the prior shipment's ZIP |
+| 2b | a divergent city/ZIP pair is refused before the write; a matching pair passes | Primus 400 "consignee information does not match the quote record" |
+| 2c | a ZIP-lookup outage writes nothing, logs loudly, and the guard fails OPEN | a silent `.catch(()=>{})` leaving a stale city; and a geocoder outage blocking every save |
+| 4 | the `[WRITE]` tracer traces when armed, is silent when not | regressions in the `?fpdebug=1` field tracer |
+
+Case 2a earned its keep on first run: it failed on `zip=""` and exposed that **both** booking ZIP
+fields had been permanently empty, because `field()`'s 4th argument is a *placeholder* and the
+`getElementById` that set the value ran before the section was appended to the document.
