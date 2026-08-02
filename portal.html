@@ -6368,13 +6368,24 @@ function appendMessage(role, text, extras) {
   if (extras.quickReplies && extras.quickReplies.length) {
     const qrDiv = document.createElement('div');
     qrDiv.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;';
-    extras.quickReplies.forEach(label => {
+    // An entry is EITHER a plain string — the original behaviour, unchanged: the label is sent as
+    // the customer's next turn — OR { label, onClick } for a UI action that is not something the
+    // customer "said". A UI action must NOT go through _submitUserTurn: that renders a user bubble
+    // and records it in the transcript, so tapping "Email Support" would put words in the
+    // customer's mouth and hand the agent a turn it then has to answer. onClick is a direct
+    // function reference, never a name looked up at click time — no new string-routing surface.
+    // The pill is a real <button> and its textContent is its accessible name, exactly as before.
+    extras.quickReplies.forEach(entry => {
+      const isAction = !!entry && typeof entry === 'object';
+      const label = isAction ? entry.label : entry;
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.style.cssText = 'background:var(--card);border:1.5px solid var(--ac);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:500;color:var(--ac);cursor:pointer;font-family:var(--font);transition:all .12s;';
       btn.onmouseover = () => { btn.style.background = 'var(--ac)'; btn.style.color = '#fff'; };
       btn.onmouseout  = () => { btn.style.background = 'var(--card)'; btn.style.color = 'var(--ac)'; };
-      btn.onclick = () => { _submitUserTurn(label); };
+      btn.onclick = (isAction && typeof entry.onClick === 'function')
+        ? () => { entry.onClick(); }
+        : () => { _submitUserTurn(label); };
       qrDiv.appendChild(btn);
     });
     bubble.appendChild(qrDiv);
@@ -7669,7 +7680,7 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
     '</div>' +
     '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">The delivery address appears to be residential. Missing accessorials may result in carrier surcharges.</div>' +
     issuesHtml +
-    (_rdiMob ? '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">To add delivery services to this shipment, use the desktop portal or call us at (800) 687-3713.</div>' : '') +
+    (_rdiMob ? '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">To add delivery services to this shipment, use the desktop portal or send the details through Email Support.</div>' : '') +
     '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">' +
       (_rdiMob ? '' : '<button id="rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>') +
       '<button id="rdi-proceed" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Dispatch Anyway — I Understand</button>' +
@@ -7703,7 +7714,7 @@ async function editSavedShipment(s, BOLId, BOLNumber) {
   // That would leave a mobile session permanently in edit mode against a BOL with no panel to edit
   // it in, and _editingBOLId is what makes a later save a PUT instead of a POST.
   if (typeof isMobile === 'function' && isMobile()) {
-    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_BOOK_MSG);
+    _mobileSupportRedirect(MOBILE_BOOK_MSG);
     return;
   }
   // Close any open shipment pop-up (detail or dispatch) so the edit page isn't left under one.
@@ -8360,7 +8371,7 @@ function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   // and then refusing to open the form leaves the marker set with no requote in progress, and
   // submitBookingOnly REFUSES any later save while a requote is pending without an edit target.
   if (typeof isMobile === 'function' && isMobile()) {
-    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    _mobileSupportRedirect(MOBILE_QUOTE_MSG);
     return;
   }
   // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
@@ -15727,13 +15738,30 @@ const AGENT_FAIL_MSG_HARD = "Something went wrong on our end and our team has be
 // ── MOBILE IS INFORMATIONAL — quoting and booking are desktop-only ───────────────────────────
 // ONE definition of each line, shared by the chokepoint gates (showQuoteForm / showBookingPanel)
 // and by every tool branch below, so the redirect copy cannot drift between the form path and the
-// agent path. This is NOT failure copy — it is a capability boundary on a surface that never
-// offered the action — so the phone number here is a conversion path, not a phone-as-fallback.
-const MOBILE_QUOTE_MSG = "Quoting is available on the desktop portal — or call us at (800) 687-3713 and we'll quote it for you.";
-const MOBILE_BOOK_MSG  = "Booking is available on the desktop portal — or call us at (800) 687-3713 and we'll book it for you.";
+// agent path. NO PHONE NUMBER: a logged-in customer who wants freight rated should not be told to
+// pick up the phone — they get the Email Support form, which reaches the same team, carries
+// attachments, and leaves a record. The number still lives on the nav link, the mobile Call Us
+// tile, and the transactional documents; it is just not the answer to "I want a quote".
+// Each line reads correctly on its own — the pill below carries the destination's name, so the
+// copy does not repeat it.
+const MOBILE_QUOTE_MSG = "Quoting is available on the desktop portal. If you'd like us to rate this for you, send it over and we'll get you a rate.";
+const MOBILE_BOOK_MSG  = "Booking is available on the desktop portal. If you'd like us to handle it for you, send the details over.";
 // The tool_result every quote/book tool returns on mobile. A NORMAL result string, never a throw —
-// the tool_use/tool_result pairing must stay valid or the whole turn errors out.
-const MOBILE_TOOL_RESULT = "MOBILE DEVICE: Quoting and booking are not available on mobile. Tell the customer, in one short sentence, to use the desktop portal at freightandlogistics.ai or call (800) 687-3713. Do not attempt to quote or book further in this conversation.";
+// the tool_use/tool_result pairing must stay valid or the whole turn errors out. The message and
+// its Email Support pill are ALREADY on screen by the time the agent sees this, rendered by
+// _mobileSupportRedirect from code, so this tells the agent to acknowledge rather than re-say it.
+// Without that the customer reads the same redirect twice in one turn, the second time reworded.
+const MOBILE_TOOL_RESULT = "MOBILE DEVICE: Quoting and booking are not available on mobile. The customer has already been shown the Email Support link. Acknowledge in at most one short sentence. Do not restate contact details, do not offer a phone number, and do not attempt to quote or book.";
+
+// THE one renderer for every mobile quote/booking redirect — the message plus a tappable pill that
+// opens the Email Support form. Bare showSupportForm(), matching the mobile welcome tile: the
+// mobile openRightPanel override routes the form into the fullscreen mob-content-view and hides
+// mob-ships-view itself, and showSupportForm calls showChatArea(), so no preamble is needed.
+// Passed as a direct function reference, not a name resolved on click.
+function _mobileSupportRedirect(text) {
+  if (typeof appendMessage !== 'function') return;
+  appendMessage('bot', text, { quickReplies: [{ label: 'Email Support', onClick: showSupportForm }] });
+}
 
 // Is an error worth retrying? 5xx / 429 / network / timeout = transient; a plain JS error is not.
 function _isTransientErr(s) { return /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s)); }
@@ -15873,7 +15901,7 @@ async function aiConverse(userText) {
           kb: 'portal',
           system: [
             { type: 'text', text: _convoSysPrompt, cache_control: { type: 'ephemeral' } },
-            { type: 'text', text: _liveStateBlock() + (isMobile() ? '\n\nThe customer is on a mobile device. Quoting and booking are not available on mobile. For any quote or booking request, tell them in one short sentence to use the desktop portal or call (800) 687-3713. Everything else — tracking, shipments, invoices, reports, and questions — works normally.' : '') }
+            { type: 'text', text: _liveStateBlock() + (isMobile() ? '\n\nThe customer is on a mobile device. Quoting and booking are not available on mobile. For any quote or booking request, tell them in one short sentence to use the desktop portal or send the details through Email Support — never offer a phone number. Everything else — tracking, shipments, invoices, reports, and questions — works normally.' : '') }
           ],
           tools: [
             { type: 'web_search_20250305', name: 'web_search' },
@@ -16037,6 +16065,8 @@ async function aiConverse(userText) {
               // mobTab('quote'), and that tab is gone, so staging would have been a write with no
               // reader. ok:false, because no quote work happened: a truthful result the agent
               // cannot read as "the form is filled in and waiting."
+              // CODE speaks, then the agent only acknowledges — the tool_result says so.
+              _mobileSupportRedirect(MOBILE_QUOTE_MSG);
               result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
             const _wasOpen = window._quoteFormOpen; // capture BEFORE _execUpdateQuote: decides whether accessorial toggles are settled synchronously (form already open) or deferred ~350ms (form-open path), so the verification below never reads mid-render state
@@ -16188,6 +16218,8 @@ async function aiConverse(userText) {
             if (isMobile()) {
               // MOBILE: booking does not exist on this surface. The old copy sent the customer to
               // the Quote tab, which no longer exists.
+              // CODE speaks, then the agent only acknowledges — the tool_result says so.
+              _mobileSupportRedirect(MOBILE_BOOK_MSG);
               result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
               result = await _execBookShipment(toolUse.input);
@@ -16208,6 +16240,8 @@ async function aiConverse(userText) {
               // keep working on mobile. Without this branch the tool would reach submitBookingOnly,
               // find no selected rate (no panel can exist here) and answer "pick a carrier before
               // saving" — a dead end pointing at an action mobile does not have.
+              // CODE speaks, then the agent only acknowledges — the tool_result says so.
+              _mobileSupportRedirect(MOBILE_BOOK_MSG);
               result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
               // ── DRAFT-SAVE CONSENT — ask before writing an ambiguous "save" ────────────────────
@@ -16238,6 +16272,8 @@ async function aiConverse(userText) {
               // returns at its gate — but its result still says "Requote form opened for BOL X. The
               // original freight details are pre-filled." That would be a flat lie about a form the
               // customer cannot see, so the tool never runs here.
+              // CODE speaks, then the agent only acknowledges — the tool_result says so.
+              _mobileSupportRedirect(MOBILE_QUOTE_MSG);
               result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
               result = await _execRequoteShipment(toolUse.input);
@@ -16248,6 +16284,8 @@ async function aiConverse(userText) {
               // for <carrier>. The Pickup and Delivery sections are visible." — untrue once
               // showBookingPanel is gated. It also returns bookingState read off panel DOM that
               // does not exist. Gated for the same reason as requote.
+              // CODE speaks, then the agent only acknowledges — the tool_result says so.
+              _mobileSupportRedirect(MOBILE_BOOK_MSG);
               result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
               result = await _execUpdateBooking(toolUse.input);
@@ -17687,6 +17725,10 @@ async function clientSideSearch(t, lower) {
   // ── Requote / book again ──
   const isRequote = /\b(requote|re.?quote|quote.*again|again.*quote|rebook|re.?book|same.*shipment|shipment.*same|ship.*again|again.*ship|repeat.*shipment|last.*quote|quote.*last)\b/.test(lower);
   if (isRequote && currentCustomer) {
+    // MOBILE: the desktop copy names "Get a Quote in the left menu" and offers to pull rates in
+    // chat. On mobile the left menu is display:none, Get a Quote no longer exists, and rates cannot
+    // be pulled — every clause of it is false there. Same canonical redirect as the rest.
+    if (typeof isMobile === 'function' && isMobile()) { _mobileSupportRedirect(MOBILE_QUOTE_MSG); return true; }
     appendMessage('bot', 'To requote a shipment, go to Get a Quote in the left menu and fill in the details, or tell me the origin ZIP, destination ZIP, weight, and freight class and I will pull rates right here.');
     return true;
   }
@@ -19203,7 +19245,7 @@ function showBookingPanel(rate, shipmentData) {
   // programmatic caller to stay quiet for. If a quiet third argument is ever added, mirror the
   // `!silent` test in showQuoteForm's gate here too.
   if (typeof isMobile === 'function' && isMobile()) {
-    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_BOOK_MSG);
+    _mobileSupportRedirect(MOBILE_BOOK_MSG);
     return;
   }
   // Twin of the quote-form guard: the "Booking form is open" chat line (near the end of this
@@ -20374,7 +20416,7 @@ function showShippingItems() {
         // shipment state and then refuse, a mutation with no visible result. The chokepoint gate
         // cannot help once a caller has already written state, which is why this sits at the top.
         if (typeof isMobile === 'function' && isMobile()) {
-          if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+          _mobileSupportRedirect(MOBILE_QUOTE_MSG);
           return;
         }
         // Populate quote form line item
@@ -20994,7 +21036,7 @@ function startQuote() {
   // thrown away by showQuoteForm's gate, leaving shipment state wiped for nothing. Reachable on
   // mobile through quickAction('Get a Quote') and talkToQuote().
   if (typeof isMobile === 'function' && isMobile()) {
-    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    _mobileSupportRedirect(MOBILE_QUOTE_MSG);
     return;
   }
   try { _snapshotOpenBookingTab(); } catch (e) {}
@@ -21025,7 +21067,7 @@ function showQuoteForm(prefill, silent) {
   // unprompted bubble in reply to no question. The form is refused either way; only the message is
   // conditional. Returns without building even when chat is invisible.
   if (typeof isMobile === 'function' && isMobile()) {
-    if (!silent && typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    if (!silent) _mobileSupportRedirect(MOBILE_QUOTE_MSG);
     return;
   }
   const _pf = prefill || {};
@@ -26333,7 +26375,7 @@ async function _spAutoExtractAndRate(text) {
   // 700ms _doGetRates timer that would otherwise fire at a quote form that was never built.
   if (typeof isMobile === 'function' && isMobile()) {
     if (typeof removeTyping === 'function') removeTyping();
-    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    _mobileSupportRedirect(MOBILE_QUOTE_MSG);
     return;
   }
   window._spAutoExtractRunning = true;
