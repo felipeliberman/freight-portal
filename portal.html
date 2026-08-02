@@ -4824,6 +4824,9 @@ function showStripePaymentModal(invoices) {
     <div id="ach-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:16px;"></div>
   `;
   window._achPaymentMethod = null;
+  // The PaymentMethod and the customer it is attached to are ONE fact and always move together —
+  // a pm_ without its cus_ is what let the pay call build a PaymentIntent on a different customer.
+  window._stripeCustomerId = null;
   // Resolve customer email at modal open time so ACH link button can use it
   let customerEmail = sessionStorage.getItem('fl_email') || localStorage.getItem('fl_email') || '';
   if (!customerEmail) { try { const sess = JSON.parse(sessionStorage.getItem('fl_session') || '{}'); customerEmail = sess.email || ''; } catch(e) {} }
@@ -4844,7 +4847,10 @@ function showStripePaymentModal(invoices) {
       if (pmData.paymentMethods && pmData.paymentMethods.length > 0) {
         const pm = pmData.paymentMethods[0];
         window._achPaymentMethod = pm.id;
-        window._stripeCustomerId = null; // Will be set on confirmation
+        // The customer this PaymentMethod was listed off, straight from the call that listed it.
+        // The pay call MUST build its PaymentIntent on this same customer; resolving identity a
+        // second time is what let the two disagree and got the confirm rejected by Stripe.
+        window._stripeCustomerId = pmData.customerId || null;
         document.getElementById('ach-bank-unlinked').style.display = 'none';
         document.getElementById('ach-bank-linked').style.display = 'block';
         document.getElementById('ach-bank-name').textContent = pm.bankName + ' linked';
@@ -4917,14 +4923,15 @@ function showStripePaymentModal(invoices) {
         const piRes = await fetch(WORKER + '/create-payment-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail })
+          body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail, customerId: window._stripeCustomerId || undefined })
         });
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
-        // Confirm ACH with linked payment method and customer
+        // No customer here: the PaymentIntent already carries it, put there by the customerId sent
+        // above. Passing it a second time at confirm was always a no-op — the field was hardcoded
+        // to null at the only place that set it, so it read undefined on every payment ever made.
         const { error, paymentIntent } = await stripe.confirmUsBankAccountPayment(piData.clientSecret, {
-          payment_method: window._achPaymentMethod,
-          customer: window._stripeCustomerId || undefined
+          payment_method: window._achPaymentMethod
         });
         if (error) throw new Error(error.message);
         // Record the payment against each invoice in QuickBooks Online (best-effort).
@@ -5047,8 +5054,24 @@ function showStripePaymentModal(invoices) {
         const pm = paymentIntent && paymentIntent.payment_method;
         if (pm) {
           const pmId = pm.id || pm;
+          // Attach BEFORE the PaymentMethod is ever used. Financial Connections hands back a
+          // PaymentMethod that belongs to nobody, and an unattached one is single-use — reusing it
+          // on the next visit is the "you must attach it to a Customer first" rejection. This is
+          // the literal answer to that error and what makes the bank survive to the next payment.
+          const atRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/attach-payment-method', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentMethodId: pmId, customerEmail: window._modalCustomerEmail || customerEmail || '' })
+          });
+          const atData = await atRes.json().catch(() => ({}));
+          // Fail closed. A bank shown as linked that is not attached is exactly the half-state this
+          // is fixing, so a failed attach shows as a failed link and the customer retries the button.
+          if (!atRes.ok || atData.error || !atData.customerId) {
+            throw new Error('Could not finish linking your bank account. Please try again.');
+          }
           window._achPaymentMethod = pmId;
-          
+          window._stripeCustomerId = atData.customerId;
+
           const bankName = (pm.us_bank_account && pm.us_bank_account.bank_name) || 'Bank account';
           const last4    = (pm.us_bank_account && pm.us_bank_account.last4) || '';
           document.getElementById('ach-bank-unlinked').style.display = 'none';
@@ -5069,6 +5092,7 @@ function showStripePaymentModal(invoices) {
     if (achLinkBtn)   achLinkBtn.onclick   = linkBankAccount;
     if (achRelinkBtn) achRelinkBtn.onclick  = () => {
       window._achPaymentMethod = null;
+      window._stripeCustomerId = null;
       document.getElementById('ach-bank-linked').style.display = 'none';
       document.getElementById('ach-bank-unlinked').style.display = 'block';
       const linkBtn = document.getElementById('ach-link-btn');
