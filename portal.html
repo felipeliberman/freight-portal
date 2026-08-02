@@ -908,10 +908,6 @@ You represent Freight and Logistics, Inc. Est. 2013. Phone (800) 687-3713. Email
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>
     <span>Shipments</span>
   </button>
-  <button class="mob-tab" id="mob-tab-quote" onclick="mobTab('quote')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-    <span>Quote</span>
-  </button>
   <button class="mob-tab" id="mob-tab-invoices" onclick="mobTab('invoices')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
     <span>Invoices</span>
@@ -1975,10 +1971,10 @@ document.addEventListener('DOMContentLoaded',()=>{
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="1.5"/><circle cx="18.5" cy="18.5" r="1.5"/></svg>
           <span style="font-size:13px;font-weight:600;color:var(--tx);">My Shipments</span>
         </button>
-        <button onclick="mobTab('quote')" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:var(--card);border:1px solid var(--bdr);border-radius:14px;padding:14px;cursor:pointer;font-family:var(--font);text-align:left;">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-          <span style="font-size:13px;font-weight:600;color:var(--tx);">Get a Quote</span>
-        </button>
+        <a href="tel:+18006873713" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:var(--card);border:1px solid var(--bdr);border-radius:14px;padding:14px;cursor:pointer;font-family:var(--font);text-align:left;text-decoration:none;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.69a16 16 0 0 0 6 6l1.27-.9a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span style="font-size:13px;font-weight:600;color:var(--tx);">Call Us</span>
+        </a>
         <button onclick="welcomeAction('Track Shipment')" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:var(--card);border:1px solid var(--bdr);border-radius:14px;padding:14px;cursor:pointer;font-family:var(--font);text-align:left;">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.75"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
           <span style="font-size:13px;font-weight:600;color:var(--tx);">Track Shipment</span>
@@ -7646,13 +7642,26 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
   // Not residential, already flagged, no street, or the lookup failed — identical proceed to before.
   if (!_rdi.residential) { onProceed(); return; }
   const hasRSD = _rdi.hasRSD, hasLFD = _rdi.hasLFD;
+  // MOBILE: the "Update & Requote" option is omitted — it routed into showQuoteForm, which refuses
+  // on mobile, so choosing it dead-ended on the one money path still live here. The WARNING itself
+  // is unchanged and still names every missing service; only the dead option goes, replaced by a
+  // real route to add it (desktop or phone). The missing-service rows also lose their checkboxes on
+  // mobile: a pre-checked box is a promise that the service will be added, and nothing here can add
+  // it. Dispatch Anyway is byte-identical. Cancel is mobile-only and exists because this overlay
+  // has NO other exit — no backdrop-click handler, no Escape — so without it the sole way out of
+  // the modal would be to dispatch, which is irreversible.
+  const _rdiMob = (typeof isMobile === 'function' && isMobile());
   const warnOv = document.createElement('div');
   warnOv.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
   const warnBox = document.createElement('div');
   warnBox.style.cssText = 'background:var(--card);border-radius:14px;padding:24px;max-width:360px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2);';
   let issuesHtml = '';
-  if (!hasRSD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-rsd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Required for home/apartment deliveries.</div></div></label>';
-  if (!hasLFD) issuesHtml += '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-lfd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Most residential addresses need a liftgate.</div></div></label>';
+  if (!hasRSD) issuesHtml += _rdiMob
+    ? '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Required for home/apartment deliveries.</div></div></div>'
+    : '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-rsd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Residential Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Required for home/apartment deliveries.</div></div></label>';
+  if (!hasLFD) issuesHtml += _rdiMob
+    ? '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Most residential addresses need a liftgate.</div></div></div>'
+    : '<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="rdi-chk-lfd" checked style="margin-top:2px;accent-color:var(--ac);"><div><div style="font-size:12px;font-weight:600;color:var(--tx);">Liftgate Delivery</div><div style="font-size:11px;color:var(--mu);margin-top:2px;">Most residential addresses need a liftgate.</div></div></label>';
   warnBox.innerHTML =
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
       '<div style="width:36px;height:36px;border-radius:8px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>' +
@@ -7660,26 +7669,43 @@ async function checkRDIBeforeDispatch(consigneeStreet, consigneeSuite, consignee
     '</div>' +
     '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">The delivery address appears to be residential. Missing accessorials may result in carrier surcharges.</div>' +
     issuesHtml +
+    (_rdiMob ? '<div style="font-size:12px;color:var(--mu);margin-bottom:14px;line-height:1.5;">To add delivery services to this shipment, use the desktop portal or call us at (800) 687-3713.</div>' : '') +
     '<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">' +
-      '<button id="rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>' +
+      (_rdiMob ? '' : '<button id="rdi-requote" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Update & Requote</button>') +
       '<button id="rdi-proceed" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--tx);">Dispatch Anyway — I Understand</button>' +
+      (_rdiMob ? '<button id="rdi-cancel" style="background:transparent;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);color:var(--mu);">Cancel</button>' : '') +
     '</div>';
   warnOv.appendChild(warnBox);
   document.body.appendChild(warnOv);
   warnBox.querySelector('#rdi-proceed').onclick = () => { warnOv.remove(); onProceed(); };
-  warnBox.querySelector('#rdi-requote').onclick = () => {
+  // Both wired defensively — on mobile #rdi-requote is absent and #rdi-cancel is present; the
+  // reverse on desktop. onRequote itself is untouched, so desktop behaviour is byte-identical.
+  const _rdiRq = warnBox.querySelector('#rdi-requote');
+  if (_rdiRq) _rdiRq.onclick = () => {
     const toAdd = [];
     const cRsd = warnBox.querySelector('#rdi-chk-rsd'); if (cRsd && cRsd.checked) toAdd.push('RSD');
     const cLfd = warnBox.querySelector('#rdi-chk-lfd'); if (cLfd && cLfd.checked) toAdd.push('LFD');
     warnOv.remove();
     if (onRequote) onRequote(toAdd);
   };
+  // Closes the overlay and nothing else — no dispatch, no write, no callback.
+  const _rdiCx = warnBox.querySelector('#rdi-cancel');
+  if (_rdiCx) _rdiCx.onclick = () => { warnOv.remove(); };
 }
 
 // Reopen the FULL booking form pre-filled from a saved shipment so the customer can complete/edit
 // it and Save. While _editingBOLId is set, Save updates that existing BOL (PUT) instead of POSTing a new one.
 async function editSavedShipment(s, BOLId, BOLNumber) {
   s = s || {};
+  // MOBILE: refuse BEFORE any state moves. Further down this sets lastQuotedShipment, awaits
+  // setEditingBOLId (which writes window._editingBOLId) and sets window._editingShipment — putting
+  // the app into EDIT MODE — and only then calls showBookingPanel, which now returns at its gate.
+  // That would leave a mobile session permanently in edit mode against a BOL with no panel to edit
+  // it in, and _editingBOLId is what makes a later save a PUT instead of a POST.
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_BOOK_MSG);
+    return;
+  }
   // Close any open shipment pop-up (detail or dispatch) so the edit page isn't left under one.
   const _closeShipOverlays = () => { try { document.querySelectorAll('#ship-modal-overlay, #row-dispatch-overlay').forEach(o => o.remove()); } catch(e){} };
   _closeShipOverlays(); setTimeout(_closeShipOverlays, 120);
@@ -8165,7 +8191,11 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
       else console.warn('[FP] requote — no live quote form to rate; not pulling.');
     }, 500);
   };
-  btnCol.appendChild(editBtn);
+  // MOBILE: this modal stays reachable because dispatch does, but its Requote button does not.
+  // Its handler writes window._requoteContext and lastQuotedShipment around a showQuoteForm call
+  // that now refuses — same mutate-before-call shape as the others, plus it is a visible button
+  // promising a quote. Dispatch and Download stay; only Requote is withheld.
+  if (!(typeof isMobile === 'function' && isMobile())) btnCol.appendChild(editBtn);
 
   body.appendChild(btnCol);
   box.appendChild(body);
@@ -8324,6 +8354,15 @@ function _clearRequotePending() {
 
 function requoteSavedShipment(s, originZip, destZip, pickupDate) {
   s = s || {};
+  // MOBILE: refuse BEFORE the two markers below. This is the ONE chokepoint every requote funnels
+  // through, and its first two acts write window._requoteContext and _setRequotePending — the
+  // durable "this BOL was re-quoted and the new rate has NOT been written yet" marker. Arming that
+  // and then refusing to open the form leaves the marker set with no requote in progress, and
+  // submitBookingOnly REFUSES any later save while a requote is pending without an edit target.
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    return;
+  }
   // Preserve context so showBookingPanel can pre-fill shipper/consignee and PUT the same BOL.
   window._requoteContext = { bolId: s.BOLId || s.bolId || '', shipment: s };
   // DURABLE requote marker — "this BOL was re-quoted and the new rate has NOT been written yet".
@@ -8443,6 +8482,11 @@ function resolveShipmentProgress(shipment, events) {
 
 async function showShipmentDetail(s) {
   const bolId = s.BOLId || s.bolId || '';
+  // MOBILE: the two buttons in this modal that lead into quoting/booking are omitted — "Edit"
+  // (-> editSavedShipment -> showBookingPanel) and "Rebook" (submits a "Get me a rate for…" chat
+  // turn). Everything else in the modal stays: Dispatch, Cancel Shipment, Track, Invoice, and all
+  // the shipment data. Dispatching already-booked freight is not booking and must keep working.
+  const _smMob = (typeof isMobile === 'function' && isMobile());
 
   // Show modal immediately with list data, then enrich with detail call
   const old = document.getElementById('ship-modal-overlay');
@@ -8664,7 +8708,7 @@ async function showShipmentDetail(s) {
         ${!isShipmentDispatched(detail) ? '<button id="ship-modal-dispatch-btn" style="background:var(--ac);border:none;border-radius:8px;padding:9px 16px;color:#fff;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg> Ready to Dispatch</button>' : ''}
         <button onclick="openDocsModal('${bolId}','${bol}',${isShipmentDispatched(detail)})" style="${isShipmentDispatched(detail)?'background:var(--ac);color:#fff;border:none;':'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);'}border-radius:8px;padding:9px 16px;font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> Documents</button>
         ${!isShipmentDispatched(detail) ? '' : '<button id="ship-modal-inv-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;opacity:.4;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/></svg> View Invoice</button>'}
-        ${!isShipmentDispatched(detail) ? '<button id="ship-modal-edit-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Edit</button><button id="ship-modal-cancel-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg> Cancel Shipment</button>' : '<button id="ship-modal-rebook-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Rebook</button>'}
+        ${!isShipmentDispatched(detail) ? ((_smMob ? '' : '<button id="ship-modal-edit-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Edit</button>') + '<button id="ship-modal-cancel-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/></svg> Cancel Shipment</button>') : (_smMob ? '' : '<button id="ship-modal-rebook-btn" style="background:#f7f5f2;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"1 4 1 10 7 10\"/><path d=\"M3.51 15a9 9 0 1 0 .49-4\"/></svg> Rebook</button>')}
         <button id="ship-modal-track-btn" ${isShipmentDispatched(detail)?'':'disabled'} style="${isShipmentDispatched(detail)?'background:#ede9fe;color:#6d28d9;cursor:pointer;':'background:#f3f1ec;color:#b0aaa0;cursor:default;'}border:none;border-radius:8px;padding:9px 16px;font-weight:600;font-size:12px;font-family:var(--font);display:inline-flex;align-items:center;gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Track</button>
         <button onclick="document.getElementById('ship-modal-overlay').remove()" style="background:transparent;border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;color:var(--tx);font-weight:600;font-size:12px;cursor:pointer;font-family:var(--font);margin-left:auto;">Close</button>
       </div>
@@ -14038,7 +14082,11 @@ function selectRate(rateOrRef, opts) {
     if (opts.open !== false && typeof showBookingPanel === 'function') {
       var panelData = opts.panelShipment !== undefined ? opts.panelShipment : _panelShipDataFrom(shipment);
       showBookingPanel(withMeta, panelData); // assigns bookingRate + rebuilds the panel
-      window._bookingPanelOpen = true;
+      // On mobile showBookingPanel returns at its gate and NO panel exists — so this flag must not
+      // claim one does. _liveStateBlock and _gateFinalText's _lockOk both read it, and a flag that
+      // says "the booking panel is open" when the DOM has none is the split-brain shape: the agent
+      // would be told a panel it can fill is on screen. Desktop behaviour is byte-identical.
+      if (!(typeof isMobile === 'function' && isMobile())) window._bookingPanelOpen = true;
     } else {
       // No panel rebuild: keep bookingRate in step by hand, so the rate the save path serializes
       // is the one that is actually selected.
@@ -15675,6 +15723,18 @@ const AGENT_FAIL_MSG = "I hit a snag on my end just now — nothing you entered 
 // A DETERMINISTIC failure (a code error, not a transient hiccup) will fail identically on retry — so
 // this copy NEVER says "try again"; it routes to email support. (Product rule: email only, no phone.)
 const AGENT_FAIL_MSG_HARD = "Something went wrong on our end and our team has been alerted — nothing you entered was lost. Please email support@freightandlogistics.ai and we'll get it sorted.";
+
+// ── MOBILE IS INFORMATIONAL — quoting and booking are desktop-only ───────────────────────────
+// ONE definition of each line, shared by the chokepoint gates (showQuoteForm / showBookingPanel)
+// and by every tool branch below, so the redirect copy cannot drift between the form path and the
+// agent path. This is NOT failure copy — it is a capability boundary on a surface that never
+// offered the action — so the phone number here is a conversion path, not a phone-as-fallback.
+const MOBILE_QUOTE_MSG = "Quoting is available on the desktop portal — or call us at (800) 687-3713 and we'll quote it for you.";
+const MOBILE_BOOK_MSG  = "Booking is available on the desktop portal — or call us at (800) 687-3713 and we'll book it for you.";
+// The tool_result every quote/book tool returns on mobile. A NORMAL result string, never a throw —
+// the tool_use/tool_result pairing must stay valid or the whole turn errors out.
+const MOBILE_TOOL_RESULT = "MOBILE DEVICE: Quoting and booking are not available on mobile. Tell the customer, in one short sentence, to use the desktop portal at freightandlogistics.ai or call (800) 687-3713. Do not attempt to quote or book further in this conversation.";
+
 // Is an error worth retrying? 5xx / 429 / network / timeout = transient; a plain JS error is not.
 function _isTransientErr(s) { return /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s)); }
 
@@ -15813,7 +15873,7 @@ async function aiConverse(userText) {
           kb: 'portal',
           system: [
             { type: 'text', text: _convoSysPrompt, cache_control: { type: 'ephemeral' } },
-            { type: 'text', text: _liveStateBlock() + (isMobile() ? '\n\nThe customer is on a mobile device. Do NOT quote or book conversationally — for any quote or booking request, tell them in one sentence to tap the Quote tab at the bottom. If you extracted shipment details from a message (like a pasted BOL), they have been saved and will appear when they tap Quote.' : '') }
+            { type: 'text', text: _liveStateBlock() + (isMobile() ? '\n\nThe customer is on a mobile device. Quoting and booking are not available on mobile. For any quote or booking request, tell them in one short sentence to use the desktop portal or call (800) 687-3713. Everything else — tracking, shipments, invoices, reports, and questions — works normally.' : '') }
           ],
           tools: [
             { type: 'web_search_20250305', name: 'web_search' },
@@ -15972,21 +16032,12 @@ async function aiConverse(userText) {
         try {
           if (toolUse.name === 'update_quote') {
             if (isMobile()) {
-              // MOBILE: never open the quote form over chat. Save the agent's prefill so the
-              // Quote tab (mobTab('quote')) can apply it, then redirect the customer there.
-              const _mq = toolUse.input || {};
-              const _hasPrefill = !!(_mq.originZip || _mq.destZip || _mq.pickupDate || _mq.name ||
-                (_mq.items && _mq.items.length) ||
-                (_mq.addAccessorials && _mq.addAccessorials.length) ||
-                _mq.shipper || _mq.consignee);
-              if (_hasPrefill) {
-                const _pend = Object.assign({}, window._mobilePendingQuoteInput || {}, _mq);
-                delete _pend.getRates;
-                window._mobilePendingQuoteInput = _pend;
-                result = { ok:true, mobile:true, summary:'MOBILE: Prefill saved silently. Tell the customer in one sentence to tap the Quote tab at the bottom to review the details and get rates. Do not ask follow-up quote questions in chat on mobile.' };
-              } else {
-                result = { ok:true, mobile:true, summary:'MOBILE: No prefill. Tell the customer in one sentence to tap the Quote tab at the bottom and fill in the shipment details.' };
-              }
+              // MOBILE: quoting does not exist on this surface any more. Nothing is opened and
+              // NOTHING IS STAGED — the _mobilePendingQuoteInput writer that used to live here fed
+              // mobTab('quote'), and that tab is gone, so staging would have been a write with no
+              // reader. ok:false, because no quote work happened: a truthful result the agent
+              // cannot read as "the form is filled in and waiting."
+              result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
             const _wasOpen = window._quoteFormOpen; // capture BEFORE _execUpdateQuote: decides whether accessorial toggles are settled synchronously (form already open) or deferred ~350ms (form-open path), so the verification below never reads mid-render state
             result = _execUpdateQuote(toolUse.input);
@@ -16135,38 +16186,72 @@ async function aiConverse(userText) {
             result = _rr;
           } else if (toolUse.name === 'book_shipment') {
             if (isMobile()) {
-              // MOBILE: never open the booking panel over chat — redirect to the Quote tab.
-              result = { ok:true, mobile:true, summary:'MOBILE: Tell the customer in one sentence to tap the Quote tab, complete or open the quote, and book from there.' };
+              // MOBILE: booking does not exist on this surface. The old copy sent the customer to
+              // the Quote tab, which no longer exists.
+              result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
               result = await _execBookShipment(toolUse.input);
             }
           } else if (toolUse.name === 'dispatch_shipment') {
+            // NOT gated on mobile, deliberately. Dispatching an ALREADY-BOOKED shipment is not
+            // quoting or booking — it is the tender on freight that already has a BOL, and it is
+            // reachable from My Shipments, which stays fully available. _execDispatchShipment is
+            // also action-truthful throughout: every result reports what the server actually did,
+            // and it never opens a quote form or booking panel.
             result = await _execDispatchShipment(toolUse.input);
           } else if (toolUse.name === 'save_shipment') {
-            // ── DRAFT-SAVE CONSENT — ask before writing an ambiguous "save" ──────────────────────
-            // Route 1 of three into submitBookingOnly. Live: "save quote for now" with the panel open
-            // silently created a BOL; the customer meant Saved Quotes and thought the save failed.
-            // Fixed copy from CODE + a turn that ends here, the same shape as the residential hold —
-            // so the model cannot restate it, soften it, or contradict it. NOTHING is written.
-            const _dsv = (typeof _draftSaveVerdict === 'function') ? _draftSaveVerdict() : null;
-            if (_dsv === 'ask') {
-              if (typeof appendMessage === 'function') appendMessage('bot', SAVE_DRAFT_CONFIRM);
-              result = { ok: false, saveConsentPrompt: true, _turnHandled: true,
-                message: 'NOT saved — the customer was asked to confirm saving a draft shipment. Say nothing further this turn.' };
-            } else if (_dsv === 'refuse') {
-              // The question is on screen and THIS turn did not answer it affirmatively — the
-              // deterministic save-consent route would have claimed the turn if it had. So this is a
-              // decline, or a change of subject, and consent for the write does not exist. Refuse
-              // WITHOUT rendering: re-asking a customer who just declined is its own defect, and the
-              // agent still needs a turn to answer whatever they actually said.
-              result = { ok: false, message: 'The customer has not confirmed the save, so nothing was saved. Do not say anything was saved and do not state a BOL number. Answer what they actually asked.' };
+            if (isMobile()) {
+              // MOBILE: Save IS booking — it is step 1 of the two-step flow and it CREATES a BOL in
+              // Primus. Gated at the tool branch, NOT inside _execSaveShipment, because
+              // _execDispatchShipment's updateToCurrentRate path calls _execSaveShipment directly to
+              // rewrite the rate on an already-booked shipment; that is part of the tender and must
+              // keep working on mobile. Without this branch the tool would reach submitBookingOnly,
+              // find no selected rate (no panel can exist here) and answer "pick a carrier before
+              // saving" — a dead end pointing at an action mobile does not have.
+              result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
             } else {
-              result = await _execSaveShipment(toolUse.input);
+              // ── DRAFT-SAVE CONSENT — ask before writing an ambiguous "save" ────────────────────
+              // Route 1 of three into submitBookingOnly. Live: "save quote for now" with the panel
+              // open silently created a BOL; the customer meant Saved Quotes and thought the save
+              // failed. Fixed copy from CODE + a turn that ends here, the same shape as the
+              // residential hold — so the model cannot restate it, soften it, or contradict it.
+              // NOTHING is written.
+              const _dsv = (typeof _draftSaveVerdict === 'function') ? _draftSaveVerdict() : null;
+              if (_dsv === 'ask') {
+                if (typeof appendMessage === 'function') appendMessage('bot', SAVE_DRAFT_CONFIRM);
+                result = { ok: false, saveConsentPrompt: true, _turnHandled: true,
+                  message: 'NOT saved — the customer was asked to confirm saving a draft shipment. Say nothing further this turn.' };
+              } else if (_dsv === 'refuse') {
+                // The question is on screen and THIS turn did not answer it affirmatively — the
+                // deterministic save-consent route would have claimed the turn if it had. So this is
+                // a decline, or a change of subject, and consent for the write does not exist.
+                // Refuse WITHOUT rendering: re-asking a customer who just declined is its own
+                // defect, and the agent still needs a turn to answer whatever they actually said.
+                result = { ok: false, message: 'The customer has not confirmed the save, so nothing was saved. Do not say anything was saved and do not state a BOL number. Answer what they actually asked.' };
+              } else {
+                result = await _execSaveShipment(toolUse.input);
+              }
             }
           } else if (toolUse.name === 'requote_shipment') {
-            result = await _execRequoteShipment(toolUse.input);
+            if (isMobile()) {
+              // MOBILE: _execRequoteShipment calls requoteSavedShipment -> showQuoteForm, which now
+              // returns at its gate — but its result still says "Requote form opened for BOL X. The
+              // original freight details are pre-filled." That would be a flat lie about a form the
+              // customer cannot see, so the tool never runs here.
+              result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
+            } else {
+              result = await _execRequoteShipment(toolUse.input);
+            }
           } else if (toolUse.name === 'update_booking') {
-            result = await _execUpdateBooking(toolUse.input);
+            if (isMobile()) {
+              // MOBILE: every success path in _execUpdateBooking asserts "Booking panel is now open
+              // for <carrier>. The Pickup and Delivery sections are visible." — untrue once
+              // showBookingPanel is gated. It also returns bookingState read off panel DOM that
+              // does not exist. Gated for the same reason as requote.
+              result = { ok:false, mobile:true, message: MOBILE_TOOL_RESULT };
+            } else {
+              result = await _execUpdateBooking(toolUse.input);
+            }
           }
         }
         catch (err) { console.error(toolUse.name + ' exec error:', err); result = { ok: false, summary: 'tool execution failed' }; }
@@ -18928,6 +19013,10 @@ function deleteQuote(id) {
 function showSavedQuotes() {
   showChatArea();
   addRecent('Saved Quotes');
+  // MOBILE: the saved quotes themselves stay fully VIEWABLE — only the two action buttons that
+  // promise quoting and booking are dropped. A purple "Book This Rate" button that answers "use
+  // the desktop portal" is a worse experience than no button; Delete still works.
+  const _sqMob = (typeof isMobile === 'function' && isMobile());
   const quotes = getSavedQuotes();
   const container = document.createElement('div');
   container.style.cssText = 'display:flex;flex-direction:column;min-height:100%;';
@@ -19062,8 +19151,8 @@ function showSavedQuotes() {
         '<div><div style="color:var(--fa);margin-bottom:2px;">Accessorials</div><div style="font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+acc+'">' + acc + '</div></div>' +
       '</div>' +
       '<div style="display:flex;gap:7px;">' +
-        '<button class="sq-book-btn" data-qid="' + q.id + '" style="flex:1;box-sizing:border-box;background:'+(isStale?'#fff':'var(--ac)')+';color:'+(isStale?'var(--ac)':'#fff')+';border:'+(isStale?'1px solid var(--ac)':'none')+';border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">'+(isStale?'Book Anyway':'Book This Rate')+'</button>' +
-        '<button class="sq-requote-btn" data-qid="' + q.id + '" style="flex:1;background:'+(isStale?'var(--ac)':'var(--card)')+';;border:'+(isStale?'none':'0.5px solid var(--bdr)')+';;border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:'+(isStale?'#fff':'var(--tx)')+';">Get Fresh Rates</button>' +
+        (_sqMob ? '' : '<button class="sq-book-btn" data-qid="' + q.id + '" style="flex:1;box-sizing:border-box;background:'+(isStale?'#fff':'var(--ac)')+';color:'+(isStale?'var(--ac)':'#fff')+';border:'+(isStale?'1px solid var(--ac)':'none')+';border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">'+(isStale?'Book Anyway':'Book This Rate')+'</button>') +
+        (_sqMob ? '' : '<button class="sq-requote-btn" data-qid="' + q.id + '" style="flex:1;background:'+(isStale?'var(--ac)':'var(--card)')+';;border:'+(isStale?'none':'0.5px solid var(--bdr)')+';;border-radius:7px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);color:'+(isStale?'#fff':'var(--tx)')+';">Get Fresh Rates</button>') +
         '<button class="sq-del-btn" data-qid="' + q.id + '" data-name="'+(q.name||carrierName||q.originZip+' → '+q.destZip)+'" style="background:none;border:1px solid var(--bdr);border-radius:7px;padding:8px 10px;font-size:12px;cursor:pointer;color:var(--mu);transition:all .12s;" onmouseover="this.style.borderColor=\'#fecaca\';this.style.color=\'#dc2626\';" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.color=\'var(--mu)\';" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>' +
       '</div>';
     grid.appendChild(card);
@@ -19105,6 +19194,18 @@ function showSavedQuotes() {
 
 // ── BOOKING PANEL ─────────────────────────────────────────────────────────────
 function showBookingPanel(rate, shipmentData) {
+  // ── MOBILE CHOKEPOINT — booking is desktop-only ────────────────────────────────────────────
+  // FIRST statement, before any state is touched: this is the single funnel for all four booking
+  // entry points (edit-saved-shipment, chat book flow, selectRate, saved-quote Book), so gating
+  // here covers every one of them without a per-caller guard that could be missed by the next one.
+  // No silent/quiet argument exists on this signature — showBookingPanel(rate, shipmentData) is
+  // only ever called in response to a customer action — so unlike showQuoteForm there is no
+  // programmatic caller to stay quiet for. If a quiet third argument is ever added, mirror the
+  // `!silent` test in showQuoteForm's gate here too.
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_BOOK_MSG);
+    return;
+  }
   // Twin of the quote-form guard: the "Booking form is open" chat line (near the end of this
   // function) is emitted per CALL and is NOT deduped by openRightPanel — that dedupes the TAB, not
   // the chat message. So two triggers on the same already-open booking panel rendered two identical
@@ -20268,6 +20369,14 @@ function showShippingItems() {
       };
 
       card.querySelector('.si-use').onclick = () => {
+        // MOBILE: refuse BEFORE anything is mutated. The no-form branch below calls
+        // resetShipmentState(false) and only then showQuoteForm — so on mobile this used to wipe
+        // shipment state and then refuse, a mutation with no visible result. The chokepoint gate
+        // cannot help once a caller has already written state, which is why this sits at the top.
+        if (typeof isMobile === 'function' && isMobile()) {
+          if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+          return;
+        }
         // Populate quote form line item
         const qtLine = document.querySelector('.qt-line');
         if (qtLine) {
@@ -20880,6 +20989,14 @@ function showAddressBook() {
 // open is ALWAYS acknowledged in chat — the greet dedupe only suppresses automatic/programmatic
 // re-opens, never a real click.
 function startQuote() {
+  // MOBILE: refuse BEFORE the three mutations below. This snapshots the open booking tab, calls
+  // resetShipmentState(false) and stamps _quoteExplicitOpen — all of which would run and then be
+  // thrown away by showQuoteForm's gate, leaving shipment state wiped for nothing. Reachable on
+  // mobile through quickAction('Get a Quote') and talkToQuote().
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    return;
+  }
   try { _snapshotOpenBookingTab(); } catch (e) {}
   resetShipmentState(false);
   window._quoteExplicitOpen = true;
@@ -20898,6 +21015,19 @@ function refreshGetRatesEnabled() {
 }
 
 function showQuoteForm(prefill, silent) {
+  // ── MOBILE CHOKEPOINT — quoting is desktop-only ────────────────────────────────────────────
+  // FIRST statement, before the prefill is even read: all 13 entry points (startQuote, SmartPaste,
+  // saved-quote Requote, the insurance gate, the wizard, _execUpdateQuote, Shipping Items, the
+  // restored-tab opener) funnel through here, so one gate covers every one of them.
+  // A SILENT CALLER MUST NEVER SPEAK. silent:true means the caller is opening the form
+  // programmatically — the restored-tab opener on cold boot, the insurance gate, SmartPaste's
+  // pre-fill — and the customer asked for nothing. Announcing "quoting is on desktop" there is an
+  // unprompted bubble in reply to no question. The form is refused either way; only the message is
+  // conditional. Returns without building even when chat is invisible.
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (!silent && typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    return;
+  }
   const _pf = prefill || {};
   // NOTE: the "showQuoteForm —" log lives BELOW the multi-fire dedupe, not here. Logging before the
   // dedupe made a call that rebuilt NOTHING print "originZip: undefined | destZip: undefined |
@@ -24057,9 +24187,15 @@ function restoreTabState() {
       'Settings':        () => showSettings(),
       'Reports':         () => { appendMessage('bot','Loading your reports…'); handleInput('show me my reports'); },
     };
+    // MOBILE: never restore a quoting tab. showQuoteForm refuses on mobile, so restoring one would
+    // add a tab whose content never builds — a permanently empty "Get a Quote" pane from a previous
+    // desktop session. Dropped from the restore set entirely rather than opened-then-refused.
+    const _mob = (typeof isMobile === 'function' && isMobile());
     saved.forEach(t => {
       const key = Object.keys(TAB_OPENERS).find(k => t.title.startsWith(k));
-      if (key) TAB_OPENERS[key]();
+      if (!key) return;
+      if (_mob && key === 'Get a Quote') return;
+      TAB_OPENERS[key]();
     });
     // Restore active tab
     if (activeTitle) {
@@ -25484,22 +25620,9 @@ function mobTab(tab) {
   } else if (tab === 'shipments') {
     closeRightPanel();
     mobShowShipments();
-  } else if (tab === 'quote') {
-    closeRightPanel();
-    setTimeout(function() {
-      // Customer-initiated new quote — clear prior shipment state first. Guarded: when the agent
-      // has staged a mobile prefill the customer is opening THAT quote, not starting a new one,
-      // and resetShipmentState clears _mobilePendingQuoteInput — so skip the reset in that case.
-      if (!window._mobilePendingQuoteInput && typeof resetShipmentState === 'function') resetShipmentState(false);
-      if (typeof showQuoteForm === 'function') showQuoteForm();
-      // Apply any prefill the chat agent saved via update_quote on mobile, then clear it.
-      var _pend = window._mobilePendingQuoteInput;
-      if (_pend && typeof _applyQuoteFields === 'function') {
-        window._mobilePendingQuoteInput = null;
-        var _pi = Object.assign({}, _pend); delete _pi.getRates;
-        setTimeout(function() { try { _applyQuoteFields(_pi); } catch(e) {} }, 450);
-      }
-    }, 30);
+  // No 'quote' branch — quoting is desktop-only and the Quote tab has been removed from
+  // #mob-tab-bar. The staged-prefill apply that lived here was the only reader of
+  // window._mobilePendingQuoteInput; its writer in the update_quote handler is gone too.
   } else if (tab === 'invoices') {
     closeRightPanel();
     mobShowInvoices();
@@ -26203,6 +26326,16 @@ async function _spToBase64(file) {
 // ── SmartPaste auto-extract (chat auto-detect path — no popup) ───────────────
 async function _spAutoExtractAndRate(text) {
   if (window._spAutoExtractRunning) return;
+  // MOBILE: SmartPaste SPEAKS FOR ITSELF here rather than relying on showQuoteForm's gate. It calls
+  // showQuoteForm(_pf, true) — silent:true — and that gate now stays quiet for silent callers, so
+  // leaning on it would answer a pasted packing slip with total silence. Pasting a BOL is a real
+  // request and deserves a real answer. Returning here also skips the extraction API call and the
+  // 700ms _doGetRates timer that would otherwise fire at a quote form that was never built.
+  if (typeof isMobile === 'function' && isMobile()) {
+    if (typeof removeTyping === 'function') removeTyping();
+    if (typeof appendMessage === 'function') appendMessage('bot', MOBILE_QUOTE_MSG);
+    return;
+  }
   window._spAutoExtractRunning = true;
   const _SP_SYS = 'You are a freight data extractor. Return ONLY a valid JSON object — no markdown, no explanation.\n\nSchema (use null/false/[] for unknown):\n{"shipper":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"consignee":{"name":null,"street":null,"city":null,"state":null,"zip":null,"phone":null},"items":[{"pieces":null,"weight":null,"length":null,"width":null,"height":null,"packageType":null,"freightClass":null,"nmfc":null,"commodity":null}],"pickupDate":null,"poNumber":null,"specialInstructions":null,"accessorials":[],"noLiftgate":false,"originHasDock":false,"destHasDock":false,"unclear":[]}\n\nRules:\n- weight = total lbs (pieces x per-piece weight if given separately)\n- dims in inches; convert cm or ft\n- packageType: PLT pallet/skid, BOX box/carton, CRT crate, SKD skid, BAG bag, BND bundle, OTH other\n- state: 2-letter abbreviation; zip: 5-digit US ZIP or 6-char Canadian postal code (e.g. V5X3A6 — preserve all letters)\n- freightClass: string like "70" or "125"\n- accessorials: array of codes, populated ONLY when the document positively requires the service. Valid codes: LFD liftgate delivery, LFO liftgate pickup, RSD residential delivery, LAD limited access delivery, LAO limited access pickup, IND inside delivery, APD appointment required. CRITICAL: NEVER add LFD or LFO when the document says "no liftgate", "no liftgate required", "liftgate not required", "liftgate only if requested", "unless specifically requested", or any negated or conditional liftgate phrase — set noLiftgate:true instead and leave liftgate codes out of accessorials entirely.\n- noLiftgate: true when the document negates or conditions liftgate need — includes "no liftgate", "no liftgate required", "liftgate not required unless", "no liftgate unless specifically requested", "liftgate only if requested". When the phrase is conditional, set true (err on the side of not adding liftgate).\n- originHasDock: true when the shipper/origin explicitly has a loading dock, forklift, or lift truck — e.g. "commercial with loading dock or forklift", "has dock", "dock available", "forklift on site". A dock or forklift at the origin means liftgate pickup is not needed.\n- destHasDock: true when the consignee/destination explicitly mentions a loading dock or forklift available.\n- specialInstructions: ONLY scheduling and driver notes such as call-ahead requirements, delivery hours, gate codes, and dock location hints. Do NOT put liftgate status, facility type (residential/commercial), residential or limited-access classification, or dock/forklift facts here — those belong in the structured fields above.\n- Add to "unclear" any field name that is ambiguous or illegible, especially "weight" or "destZip"\n- Return ONLY the JSON object';
   try {
