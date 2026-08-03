@@ -2355,6 +2355,96 @@ const cases = [
       },
     ];
   })(),
+  // ── 53 ───────────────────────────────────────────────────────────────────────
+  // DURABLE FIX for the stale-KB class. KNOWLEDGE.md §12 is HAND-MAINTAINED prose that quotes
+  // portal.html button labels verbatim, and for a long time it carried a header claiming it was
+  // "GENERATED FROM portal.html — DO NOT HAND-EDIT". No such generator has ever existed, so the
+  // header suppressed the only thing that could keep it true: somebody re-reading portal.html.
+  // Three consecutive commits changed mobile navigation and none of them touched §12, so the
+  // deployed agent told mobile customers to tap a "Quote" tab, an "Edit" button, a "Rebook" button
+  // and an "Update & Requote" button — every one removed or hidden. All five answers were wrong,
+  // all five confidently phrased with verbatim labels.
+  //
+  // This makes that drift fail at SOURCE level on the next change, naming the drifted label,
+  // instead of surfacing as a wrong answer on a customer's phone.
+  {
+    id: 53,
+    name: 'KNOWLEDGE.md §12 nav labels match portal.html, and mobile-only claims stay true (kb-nav-labels-match-portal)',
+    catches: 'the §12 staleness class: a label quoted in the KB that no longer exists in portal.html, a control described as available on mobile that is withheld there, or the mobile tab count drifting from the actual tab bar. Live harm 2026-08-02: five of five portal-navigation answers wrong on iPhone.',
+    async run() {
+      const fs = require('fs'), path = require('path');
+      const root = path.join(__dirname, '..', '..');
+      const src = fs.readFileSync(path.join(root, 'portal.html'), 'utf8');
+      const mdRaw = fs.readFileSync(path.join(root, 'KNOWLEDGE.md'), 'utf8');
+      const { knowledgeFor } = require('../knowledge');
+      const kb = knowledgeFor('portal');
+
+      // ── A. Every label §12 quotes must still exist in portal.html. A label the KB names and the
+      // app does not have is the agent sending someone to a button that is gone.
+      const QUOTED = [
+        'New chat', 'My Shipments', 'Get a Quote', 'Saved Quotes', 'Track Shipment', 'Invoices',
+        'Reports', 'Claims', 'Address Book', 'Shipping Items', 'Email Support', 'Settings',
+        '1. Quote Details', '2. Select Rate', '+ Add Line', 'Get Rates',
+        'Ready to Dispatch', 'NOT VALID FOR TENDERING', 'Cancel Shipment',
+        'Update & Requote', 'Save Without Changes', 'Dispatch Anyway',
+        'Pay Invoices', 'Pay Selected', '+ Add Address', '+ Add Item', 'Call Us',
+      ];
+      for (const label of QUOTED) {
+        if (!kb.includes(label)) continue;            // only assert on labels §12 actually quotes
+        A.ok(src.includes(label),
+          'KNOWLEDGE.md §12 quotes the label "' + label + '" but portal.html no longer contains it — ' +
+          'the KB is stale. Re-read portal.html, fix §12, then run: node evals/build-worker-kb.js');
+      }
+
+      // ── B. The chat placeholders §12 quotes must be what the app renders. §12 quotes BOTH
+      // (desktop and mobile); each must appear in portal.html verbatim.
+      for (const ph of ['Ask about shipments, get a freight quote, track a BOL...',
+                        'Ask about shipments, invoices, or track a BOL...']) {
+        A.ok(kb.includes(ph), 'KNOWLEDGE.md §12 no longer quotes the placeholder: ' + JSON.stringify(ph));
+        A.ok(src.includes(ph), 'portal.html no longer renders the placeholder §12 quotes: ' + JSON.stringify(ph));
+      }
+
+      // ── C. The mobile tab bar, counted from MARKUP rather than prose, so adding or removing a tab
+      // breaks this the moment it lands.
+      const barM = src.match(/<div id="mob-tab-bar"[\s\S]*?<\/div>\s*\n/);
+      A.ok(barM, 'could not locate #mob-tab-bar in portal.html');
+      // Count the BUTTONS, not every id in the block — the container is itself id="mob-tab-bar"
+      // and matched an id-based pattern, which is how this assertion first reported five.
+      const tabIds = (barM[0].match(/<button class="mob-tab[^"]*" id="mob-tab-([a-z]+)"/g) || [])
+        .map(s => s.replace(/^[\s\S]*id="mob-tab-|"$/g, ''));
+      A.eq(tabIds.length, 4, 'the mobile tab bar has ' + tabIds.length + ' tabs (' + tabIds.join(', ') +
+        ') but §12 is written for four — update §12 and this count together');
+      A.ok(tabIds.indexOf('quote') === -1, 'a "quote" tab is back in the mobile tab bar; §12 says there is none');
+      A.ok(/FOUR tabs/i.test(kb), '§12 no longer states the mobile tab count as four');
+      A.ok(!/five tabs/i.test(kb), '§12 still claims five mobile tabs');
+
+      // ── D. Controls the mobile build withholds must NOT read as available on mobile.
+      A.ok(/DESKTOP ONLY/i.test(kb), '§12 no longer marks quoting/booking as desktop-only');
+      A.ok(/no "Quote" tab/i.test(kb), '§12 no longer states the Quote tab is absent on mobile');
+      A.ok(/NO "Update & Requote" button on mobile/i.test(kb),
+        '§12 no longer warns that the mobile residential notice has no "Update & Requote" — the exact wrong answer given live');
+
+      // ── E. The guards those claims rest on must still be in portal.html. If a future change drops
+      // a guard, mobile silently regains the control while §12 keeps calling it desktop-only — the
+      // same drift running the other way.
+      const GUARDS = [
+        ["_smMob ? '' : '<button id=\"ship-modal-edit-btn\"", 'shipment-detail Edit'],
+        ["_smMob ? '' : '<button id=\"ship-modal-rebook-btn\"", 'Rebook'],
+        ["_sqMob ? '' : '<button class=\"sq-book-btn\"", 'saved-quote Book This Rate'],
+        ["_sqMob ? '' : '<button class=\"sq-requote-btn\"", 'saved-quote Get Fresh Rates'],
+        ["_rdiMob ? '' : '<button id=\"rdi-requote\"", 'residential overlay Update & Requote'],
+      ];
+      for (const [needle, what] of GUARDS) {
+        A.ok(src.includes(needle),
+          'the mobile guard on the ' + what + ' control is gone from portal.html — mobile has regained a control §12 calls desktop-only');
+      }
+
+      // ── F. The false header must never come back. It is what stopped anyone looking.
+      A.ok(!/GENERATED FROM portal\.html/i.test(mdRaw),
+        'the "GENERATED FROM portal.html" header is back in KNOWLEDGE.md — there is no generator, and that claim suppresses the manual check this case exists to back up');
+    },
+  },
+
 ];
 
 module.exports = { cases };

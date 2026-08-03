@@ -51,6 +51,31 @@ test('scope split preserved: sales playbook is landing-only', () => {
   A.ok(!/Account-first for any quote/i.test(portal), 'the landing account-first rule leaked into the portal bundle');
 });
 
+// The MIRROR of the test above, and the one that was missing. Until 2026-08-02 includesScope read
+// `if (audience === 'landing') return true` — landing received EVERY section, portal ones included.
+// The tag protected nothing in this direction, and nothing asserted it did: CLAUDE.md recorded the
+// split as fact, everyone believed it, and the code disagreed. So portal navigation was being fed
+// to prospects who have no portal, and adding a `scope: portal` section naming our white glove
+// carriers would have served that roster to the landing agent in one `build-worker-kb.js` run —
+// the exact disclosure the product contract forbids. A contract that is believed but unasserted is
+// how that survives; this makes it fail loudly instead.
+test('scope split preserved: portal-only sections never reach the landing bundle', () => {
+  A.ok(/12\. Portal navigation/.test(portal), 'portal navigation vanished from the portal bundle');
+  A.ok(!/12\. Portal navigation/.test(landing), 'portal navigation leaked into the landing bundle — prospects have no portal to navigate');
+  A.ok(!/bottom tab bar/i.test(landing), 'mobile tab-bar instructions leaked into the landing bundle');
+  A.ok(!/Update & Requote/.test(landing), 'in-portal button labels leaked into the landing bundle');
+});
+
+// White glove roster non-disclosure (CLAUDE.md product contract). Logged-in customers get carrier
+// names freely; prospects never do, and the landing agent must not even confirm or deny one.
+test('white glove carrier names reach the PORTAL agent and never the landing agent', () => {
+  const NAMES = ['Metropolitan Warehouse', 'Werner Final Mile', 'Dickerson'];
+  for (const n of NAMES) {
+    A.ok(portal.includes(n), 'white glove carrier "' + n + '" is missing from the portal bundle — logged-in customers should get real carrier answers');
+    A.ok(!landing.includes(n), 'white glove carrier "' + n + '" leaked into the landing bundle — the product contract forbids naming any of them to prospects');
+  }
+});
+
 test('the built Worker KB matches KNOWLEDGE.md (deploy chain is in sync)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'anthropic-proxy', 'src', 'index.js'), 'utf8');
   const mL = src.match(/const KB_LANDING = ("(?:[^"\\]|\\.)*");/);

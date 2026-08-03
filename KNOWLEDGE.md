@@ -46,7 +46,7 @@ All facts confirmed by Felipe as of July 2026.
 - Every customer gets full portal access on day one at no cost. It is a complete TMS: quote, book, track, report.
 - AI freight assistant: ask anything in plain English — statuses, consignees, reports, documents, analytics.
 - Bring-your-own carrier accounts: customers can connect their direct carrier accounts into the platform. Quotes then show the customer's own contract rates next to ours — the cheaper option wins. Booking on the customer's own account costs a flat $5 BOL fee (carrier invoices the customer directly). Setup: contact the team.
-- Portal sections: Chat, My Shipments, Get a Quote, Saved Quotes, Track Shipment, Invoices, Reports, Address Book, Shipping Items (saved commodities), Check a Location, Email Support, Settings.
+- Portal sections on desktop: Chat, My Shipments, Get a Quote, Saved Quotes, Track Shipment, Invoices, Reports, Address Book, Shipping Items (saved commodities), Check a Location, Email Support, Settings. On mobile the portal is informational — the same sections are there apart from quoting and booking, which are desktop-only.
 - Reports: freight spend by carrier, lane, and date range; exportable to Excel; AI can compose charts.
 - Team access with multiple users. Do not claim role-based permissions.
 - Voice: the assistant can speak responses aloud.
@@ -255,23 +255,52 @@ Do not recite per-carrier class tables or per-pound rate tables, and do not name
 
 ## 12. Portal navigation <!-- scope: portal -->
 
-<!-- GENERATED FROM portal.html — DO NOT HAND-EDIT. Regenerate whenever portal nav or button labels change. -->
+<!-- HAND-MAINTAINED from portal.html. There is NO generator: an earlier header here claimed this
+     section was generated, and no such script has ever existed — so three consecutive commits changed
+     portal navigation and nothing updated this text, leaving the agent confidently naming buttons that
+     had been removed. Enforced by the layer2 case "kb-nav-labels-match-portal", which fails when a
+     label quoted here is missing from portal.html or when a mobile-hidden control is described as
+     available on mobile. To update: re-read portal.html, edit this section, run the layer2 suite, then
+     `node evals/build-worker-kb.js` and redeploy the anthropic-proxy worker. -->
 
 Use this to tell a logged-in customer exactly where to click. Quote labels verbatim (in "quotes"). The AI chat is the center of the portal — most data views also open from it.
 
-**Layout.** On desktop, navigation is a left sidebar. On mobile, it's a bottom tab bar with five tabs — "Chat", "Shipments", "Quote", "Invoices", "Reports" — plus a "More" sheet (the top-right menu) for everything else. The AI assistant sits in the center; the chat box reads "Ask about shipments, get a freight quote, track a BOL...".
+**DESKTOP AND MOBILE ARE TWO DIFFERENT PORTALS — read this before naming any button.** Quoting and booking exist on DESKTOP ONLY. On mobile the portal is informational: chat, My Shipments, tracking, invoices, reports, documents, and dispatching an already-saved shipment all work normally, but there is no way to build a quote, pull rates, or create a booking, and the controls that would do so are not on screen. Never tell a mobile customer to tap a quoting or booking control — none exists for them to tap. If you do not know which device they are on, either ask, or describe the desktop flow and say plainly that it is on the desktop portal.
 
-**Desktop sidebar items:** "New chat", "My Shipments", "Get a Quote", "Saved Quotes", "Track Shipment", "Invoices", "Reports", "Claims", "Address Book", "Shipping Items", "Email Support", "Settings". On mobile, "Track Shipment", "Claims", "Address Book", "Shipping Items", "Email Support", and "Saved Quotes" live under the "More" menu.
+**Desktop layout.** Navigation is a left sidebar. The chat box reads "Ask about shipments, get a freight quote, track a BOL...". Sidebar items: "New chat", "My Shipments", "Get a Quote", "Saved Quotes", "Track Shipment", "Invoices", "Reports", "Claims", "Address Book", "Shipping Items", "Email Support", "Settings".
 
-**Getting a quote.** "Get a Quote" opens a two-step form: tab "1. Quote Details" (Origin ZIP, Destination ZIP, Pickup Date, optional Quote Name, and freight line items via "+ Add Line") and tab "2. Select Rate". Fill the details, then press "Get Rates" to pull live carrier rates; pick a carrier with its "Select" button. "Get Rates" stays greyed out until both ZIPs are valid.
+**Mobile layout.** A bottom tab bar with FOUR tabs — "Chat", "Shipments", "Invoices", "Reports". There is no "Quote" tab. Everything else lives in the "More" sheet (the top-right menu): "Track Shipment", "Claims", "Address Book", "Shipping Items", "Email Support", "Saved Quotes", "New chat", and the Terms / Privacy / AI Disclosure panels. The chat box reads "Ask about shipments, invoices, or track a BOL...". The welcome screen shows six tiles: "My Shipments", "Call Us" (dials our number), "Track Shipment", "Invoices", "Reports", "Email Support".
 
-**Booking is two steps — this is the key distinction:**
+**Getting a quote — DESKTOP ONLY.** "Get a Quote" opens a two-step form: tab "1. Quote Details" (Origin ZIP, Destination ZIP, Pickup Date, optional Quote Name, and freight line items via "+ Add Line") and tab "2. Select Rate". Fill the details, then press "Get Rates" to pull live carrier rates; pick a carrier with its "Select" button. "Get Rates" stays greyed out until both ZIPs are valid.
+On MOBILE there is no quote form, no "Get Rates", and no rate list. A customer who asks to quote on mobile is answered in chat with an "Email Support" link they can tap — the team rates it and replies. Offer that; never name a tab or button.
+
+**Booking is two steps — DESKTOP ONLY. This is the key distinction:**
 - "Save" (or "Save Shipment") creates the shipment as a saved BOL but does NOT notify the carrier. Nothing is dispatched. The shipment then appears under "My Shipments".
 - "Ready to Dispatch" is the second, separate step: it sends the pickup request to the carrier and makes the BOL valid for tendering. Until then a saved BOL is marked "NOT VALID FOR TENDERING". Dispatch is irreversible; saving is not. A customer can save now and come back to dispatch later.
-- When saving from the quote form, if the delivery address looks residential a check appears before saving with "Update & Requote" or "Save Without Changes". This check is part of the booking form; do not describe it as something that happens on every shipment however it was created.
+- When saving from the booking form on desktop, if the delivery address looks residential a check appears before saving, offering "Update & Requote" or "Save Without Changes". This check is part of the booking form; do not describe it as something that happens on every shipment however it was created. It does not exist on mobile, because the booking form does not open there.
+- On MOBILE, booking is unavailable: a customer who asks to book is answered in chat with an "Email Support" link. Dispatching a shipment that is ALREADY saved still works on mobile — that is not booking.
 
-**My Shipments.** Opening a saved (not-yet-dispatched) shipment shows "Ready to Dispatch", "Edit", and "Cancel Shipment"; once dispatched it shows "Track" and "Rebook". "Requote" re-pulls rates on a saved shipment. Selected shipments can be exported ("Excel") or their BOLs downloaded.
+**Residential delivery address.** Two separate checks, and they differ by platform:
+- Before DISPATCH (both platforms): if the delivery address looks residential and the matching services are missing, a notice appears naming them (Residential Delivery, Liftgate Delivery). On desktop it offers "Update & Requote" or "Dispatch Anyway — I Understand". On MOBILE it lists the missing services, says to use the desktop portal or send the details through Email Support to add them, and offers "Dispatch Anyway — I Understand" or "Cancel" — there is NO "Update & Requote" button on mobile.
+- Before SAVE (desktop only): the booking-form check described above.
+Never tell a mobile customer to choose "Update & Requote".
 
-**Invoices.** The Invoices view lists invoices with a "Pay Invoices" button; after checking invoices it becomes "Pay Selected". Pay by ACH (free) or card (2.9% + $0.30 fee). Export with "Excel".
+**My Shipments.** Works on both platforms. Opening a saved (not-yet-dispatched) shipment shows "Ready to Dispatch" and "Cancel Shipment" on both; DESKTOP additionally shows "Edit". Once dispatched it shows "Track" on both, and "Rebook" on DESKTOP only. "Requote" re-pulls rates on a saved shipment and is DESKTOP ONLY. Selected shipments can be exported ("Excel") or their BOLs downloaded on both.
 
-**Other views.** "Reports" is a read-only dashboard of freight spend (KPI cards and charts, exportable). "Claims" shows open claims (read-only in the portal — to start a claim, ask the assistant in chat). "Address Book" — "+ Add Address" / "Save Address". "Shipping Items" (saved commodities) — "+ Add Item" / "Save Item". "Saved Quotes" holds quotes to reopen later. "Settings" and "Email Support" are in the sidebar (desktop) or "More" menu (mobile).
+**Saved Quotes.** Holds quotes to reopen later; readable on both platforms. The per-quote "Book This Rate" and "Get Fresh Rates" buttons are DESKTOP ONLY — on mobile the quotes are viewable but those buttons are not shown. Deleting works on both.
+
+**Invoices.** The Invoices view lists invoices with a "Pay Invoices" button; after checking invoices it becomes "Pay Selected". Pay by ACH (free) or card (2.9% + $0.30 fee). Export with "Excel". Works on both platforms.
+
+**Other views.** "Reports" is a read-only dashboard of freight spend (KPI cards and charts, exportable). "Claims" shows open claims (read-only in the portal — to start a claim, ask the assistant in chat). "Address Book" — "+ Add Address" / "Save Address". "Shipping Items" (saved commodities) — "+ Add Item" / "Save Item". "Settings" holds default accessorials, default commodity/NMFC, and a default pickup address — there is NO audio, voice, or spoken-response setting anywhere in the portal. "Settings" and "Email Support" are in the sidebar (desktop) or "More" menu (mobile).
+
+## 13. White glove carriers — logged-in customers <!-- scope: portal -->
+
+This customer has an account. The landing-page non-disclosure rule does not apply here.
+
+Our white glove carriers include Metropolitan Warehouse & Delivery, Pilot/Maersk, Werner Final Mile, and Dickerson, plus a robust network of nationwide white glove partners — all specializing in furniture and big-and-bulky residential delivery. Never rank or number the carriers, and never present one as preferred over another.
+
+Answer a general roster question ("who do you use for white glove?") directly with the names above. Do not deflect to "a vetted nationwide network," do not say you can't list or rank them, and never tell a logged-in customer to run a quote in order to find out who the carriers are — that is prospect-facing copy and it does not belong in the portal.
+
+When a customer asks about a carrier on their own shipment or quote — "who's carrying this one?", "is Metro on it?", "did this go Werner?" — that is their own account data. Look it up with the tools and answer from the result. Confirm or deny a named carrier plainly based on what the tools return. Never refuse this as a disclosure question; the carrier is printed on the customer's own BOL.
+
+Whether we can put a specific carrier on a future shipment is a rating question, not a roster question: the carriers that come back on a quote are whatever rates for that lane, so point them to a quote for that — without implying the roster itself is secret.

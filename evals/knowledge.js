@@ -7,9 +7,14 @@
  * agree. If you change the split here, mirror it in the Worker (see anthropic-proxy).
  *
  * Scope model (from KNOWLEDGE.md header):
- *   - Landing page agent  → ALL sections.
- *   - Portal agent        → `scope: both` sections + section 12 (`scope: portal`).
- *                           Excludes `scope: landing` (sales playbook, onboarding, etc.).
+ *   - Landing page agent  → `scope: both` + `scope: landing`. Excludes `scope: portal`.
+ *   - Portal agent        → `scope: both` + `scope: portal`. Excludes `scope: landing`.
+ *
+ * `landing` used to be `return true` — every section, portal ones included. The tag therefore
+ * protected nothing in that direction: portal-only navigation reached prospects who have no
+ * portal, and a `scope: portal` section naming our white glove carriers would have been served
+ * to the landing agent, which the product contract forbids from naming any of them. Both
+ * audiences now filter symmetrically, so the tag means what it says.
  *
  * A section header looks like:  `## 8. FAQ ... <!-- scope: both -->`
  */
@@ -20,7 +25,7 @@ const KNOWLEDGE_PATH = path.join(__dirname, '..', 'KNOWLEDGE.md');
 
 /** Which scopes each audience receives. */
 function includesScope(audience, scope) {
-  if (audience === 'landing') return true;                       // landing gets everything
+  if (audience === 'landing') return scope === 'both' || scope === 'landing';
   if (audience === 'portal') return scope === 'both' || scope === 'portal';
   throw new Error(`unknown audience: ${audience} (expected "landing" or "portal")`);
 }

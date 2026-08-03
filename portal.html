@@ -9376,6 +9376,32 @@ function showDidYouKnow() {
   setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 8000);
 }
 
+// ── CHAT PLACEHOLDER — one canonical pair, one writer ────────────────────────────────────────
+// Desktop keeps its original wording verbatim: quoting genuinely works there, and "get a freight
+// quote" is a real cue on the platform that can honour it. Mobile drops ONLY that clause — it is
+// the one thing the mobile portal cannot do, and inviting it in the input box is the first thing a
+// customer reads. Both remaining actions are true on mobile, so the mobile line never advertises
+// less than it can deliver either.
+// KNOWLEDGE.md §12 quotes BOTH strings verbatim, attributed per platform — change one, change §12.
+const CHAT_PLACEHOLDER_DESKTOP = 'Ask about shipments, get a freight quote, track a BOL...';
+const CHAT_PLACEHOLDER_MOBILE  = 'Ask about shipments, invoices, or track a BOL...';
+function _chatPlaceholder() {
+  return (typeof isMobile === 'function' && isMobile()) ? CHAT_PLACEHOLDER_MOBILE : CHAT_PLACEHOLDER_DESKTOP;
+}
+// Applied to BOTH textareas. The static HTML carries the desktop string as its default, so on a
+// phone there is a sub-second window before this runs where the desktop wording is visible. That
+// is deliberate: the alternative is a neutral static default, which degrades desktop to spare
+// mobile a flash. The mobile tab bar is display:none in markup and shown by the same JS setup, so
+// this matches how mobile chrome already behaves. Do NOT "fix" it by flattening the strings.
+function _applyChatPlaceholder() {
+  const ph = _chatPlaceholder();
+  ['welcome-textarea', 'input-textarea'].forEach(function (id) {
+    const el = document.getElementById(id);
+    // Never clobber the voice-mode "Listening…" label — _vm.origPlaceholder restores the real one.
+    if (el && el.placeholder !== 'Listening…') el.placeholder = ph;
+  });
+}
+
 const PLACEHOLDER_TIPS = [
   "...or ask 'what carriers serve Denver?'",
   "...or try 'show me all unpaid invoices'",
@@ -9417,7 +9443,7 @@ async function updatePlaceholder() {
   const personal = await getPersonalizedTip();
   const tip = personal || rotating;
   // Rotate through tips as part of the placeholder on a timer
-  ta.placeholder = 'Ask about shipments, get a freight quote, track a BOL...';
+  ta.placeholder = _chatPlaceholder();   // platform-correct; never the hardcoded desktop literal
   // Show tip as a subtle hint below the input via a tip element
   let tipEl = document.getElementById('chat-tip-hint');
   if (!tipEl) {
@@ -25717,6 +25743,14 @@ async function waybAgent(text) {
 
   showMobTabBar();
   window.addEventListener('resize', showMobTabBar);
+  // Swap the chat placeholders to the mobile wording as part of the same mobile-chrome setup that
+  // reveals the tab bar. On resize too, so a desktop window narrowed past the breakpoint (or a
+  // tablet rotated) gets the right line without a reload — _applyChatPlaceholder re-reads
+  // isMobile() every call, so it corrects in both directions.
+  if (typeof _applyChatPlaceholder === 'function') {
+    _applyChatPlaceholder();
+    window.addEventListener('resize', _applyChatPlaceholder);
+  }
 
   // Patch openRightPanel on mobile to show bottom sheet
   var _origEnsurePanel = window.ensurePanel;
