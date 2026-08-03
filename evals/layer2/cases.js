@@ -2445,6 +2445,265 @@ const cases = [
     },
   },
 
+  // ── 54-58 — THE SAVE ASKED AS A QUESTION ─────────────────────────────────────
+  // Cases 42-46 closed the save-consent contract on every route that WRITES. This block closes the
+  // route that TALKS. a37ea40's guard sits on the save_shipment tool call and on _gateFinalText's 2b
+  // declarative enforcer; neither can see the model simply ASKING ("good to save it?") and calling
+  // nothing, because 2b's sentence filter excludes every sentence carrying a '?'. The customer then
+  // reads a permission request for a REVERSIBLE write they just asked for, and — because
+  // _pendingDraftSaveConsent compares the last bot turn against SAVE_DRAFT_CONFIRM BYTE-FOR-BYTE — a
+  // model-worded question leaves that state false, so their "yes" cannot reach the deterministic
+  // save-consent route and the exchange runs 2-3 turns.
+  //
+  // ALL FIVE ASSERT THE RENDERED TRANSCRIPT AS A WHOLE SEQUENCE, per the standing rule recorded on
+  // case 50: the entire bot message list for the turn, in order, not "contains Saved". Every defect
+  // in this class was invisible to a contains-check — the save DID happen, eventually; what was
+  // wrong was the extra question the customer read on the way there.
+  //
+  // WHY EVERY CASE SETS window._inQuoteConvo = true: openBookingReady drives selectRate /
+  // showBookingPanel directly, so it never runs the handleInput carrier-select branch that sets the
+  // flag in production (portal.html ~18500/18523). Without it a message containing "shipment",
+  // "booking" or "load" falls past the quote-conversation route to waybAgent, whose query classifier
+  // eats the first scripted AI turn — the "pre-existing routing artifact" noted on case 43. Setting
+  // it reproduces the real mid-booking state (the customer has picked a carrier); it is not a fiction
+  // invented to make these pass. Case 43 is deliberately left exactly as it stands.
+  ...(() => {
+    const CANON_BOL = '160042042';
+    // The full rendered sequence of a successful chat save: submitBookingOnly's two progress lines,
+    // then the ONE canonical confirmation. Pinned as a SEQUENCE so a change to any of the three shows
+    // up here instead of being absorbed by a substring test.
+    const SAVED_SEQ = w => ['Saving shipment...', 'Reserving rate with carrier...', w._savedConfirmMessage(CANON_BOL)];
+    const posts = h => h.requests.filter(q => /\/applet\/v1\/book(\?|$)/.test(q.url) && q.method === 'POST').length;
+    const noQuestion = (h, why) => A.ok(!h.bots().some(t => /\?/.test(t)), why + ': ' + JSON.stringify(h.bots()));
+
+    return [
+      // ── 54 (E1) ──────────────────────────────────────────────────────────────
+      {
+        id: 54, name: 'an EXPLICIT save request the model answers with its own question is SAVED anyway — the question never reaches the customer',
+        catches: 'the reported defect. The customer says "save the shipment" — explicit, unambiguous, and a save is REVERSIBLE, so per the two-step rule it writes immediately with no confirmation. The model instead replies "good to save it?" and calls nothing. On HEAD that question renders verbatim: nothing in _gateFinalText inspects an interrogative save (2b filters out every sentence carrying a "?"), so one reversible save becomes save -> question -> yes -> save, and sometimes a third turn when the model asks again. Same class as the promise-without-action enforcer, in the interrogative direction: the action the customer asked for is owed, and the reply must not stall it.',
+        async run(h) {
+          const w = h.win;
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+
+          // Setup sanity — this must be the EXPLICIT arm, the phrasing that has always written
+          // immediately. If it read as ambiguous this would be case 42, not a new defect.
+          A.ok(w._isExplicitShipmentSave('save the shipment') === true, 'setup: "save the shipment" is no longer an explicit shipment save');
+          A.ok(w._isAmbiguousSaveIntent('save the shipment') === false, 'setup: "save the shipment" is now ambiguous — that is case 42 territory');
+
+          h.scriptAI([turn([text('Everything looks complete — good to save it?')])]);
+          h.reset();
+          w.appendMessage('user', 'save the shipment');
+          A.eq(w._draftSaveVerdict(), null, 'setup: the consent evaluator wants to hold an EXPLICIT shipment save');
+          await w.handleInput('save the shipment');
+          await sleep(900);
+
+          // ── THE WHOLE SURFACE. Nothing but the save, in the canonical words.
+          A.eq(h.bots(), SAVED_SEQ(w), 'the rendered turn is not exactly the canonical save sequence');
+          noQuestion(h, 'the customer was asked permission for a save they had already asked for');
+          A.ok(!h.bots().some(t => /good to save|want me to save|should i save/i.test(t)),
+            'the model save question survived to the customer: ' + JSON.stringify(h.bots()));
+          A.eq(posts(h), 1, 'the save the customer asked for did not write exactly one BOL');
+
+          // ── ONE TURN. The AI was called once; nothing looped for a follow-up completion.
+          A.eq(h.aiRequests.length, 1, 'the stalled save cost more than one model turn: ' + h.aiRequests.length);
+
+          // ── NO DANGLING CONSENT STATE. The canonical question was never rendered, so nothing is
+          // pending — the very state a model-worded question corrupts on HEAD.
+          A.ok(w._pendingDraftSaveConsent() === false, 'a consent question is somehow pending after a completed save');
+
+          // ── MUTUAL EXCLUSION with 2b. A reply carrying BOTH forms ("I'll save it for you now.
+          // Good to save it?") writes exactly ONE BOL — 2b fires off the declaration and claims the
+          // write through the synchronous _gateSaveInFlight latch — and the leftover question still
+          // goes, because a question about a save that is already running is simply false.
+          // A SECOND shipment, not a second write on the same one: _lastBooked still holds the BOL
+          // above and the duplicate-booking guard would answer for it instead of exercising this.
+          w._lastBooked = null;
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+          h.scriptAI([turn([text("I'll save it for you now. Good to save it?")])]);
+          h.reset();
+          w.appendMessage('user', 'save the shipment');
+          await w.handleInput('save the shipment');
+          await sleep(900);
+          A.eq(posts(h), 1, 'a reply carrying BOTH a declaration and a question fired the save twice');
+          noQuestion(h, 'the question survived alongside a save that had already fired');
+        },
+      },
+
+      // ── 55 (E2) ──────────────────────────────────────────────────────────────
+      {
+        id: 55, name: 'an AMBIGUOUS save the model answers in its own words renders the CANONICAL question byte-for-byte, so "yes" still lands deterministically',
+        catches: 'the second-order half of the same defect, and the reason a paraphrase is not "close enough". _pendingDraftSaveConsent compares the last bot turn to SAVE_DRAFT_CONFIRM byte-for-byte (portal.html 7582), and classifyChatTurn offers the save-consent verdict ONLY when that recomputed state is true. So when the model asks the question in ITS words, the customer reads something that looks right, the state stays FALSE, their "yes" falls through to the agent, and the agent may ask a third time. The question the customer sees and the string the state is keyed on have to be the same object.',
+        async run(h) {
+          const w = h.win;
+          const COPY = h.g('SAVE_DRAFT_CONFIRM');
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+
+          A.ok(w._isAmbiguousSaveIntent('save the quote') === true, 'setup: "save the quote" is no longer an ambiguous save');
+
+          // ── TURN 1 — the model asks in its own words; the canonical copy is what renders.
+          h.scriptAI([turn([text('Sure — want me to go ahead and save the quote for you?')])]);
+          h.reset();
+          w.appendMessage('user', 'save the quote');
+          A.eq(w._draftSaveVerdict(), 'ask', 'setup: an ambiguous save no longer asks');
+          await w.handleInput('save the quote');
+          await sleep(900);
+
+          A.eq(h.bots(), [COPY], 'turn 1 rendered something other than exactly the canonical consent question');
+          A.eq(posts(h), 0, 'an ambiguous save wrote a BOL before any answer');
+          // The byte-identity is the point: it is what re-arms the deterministic route.
+          A.ok(w._pendingDraftSaveConsent() === true, 'the consent state did not arm — a paraphrase reached the customer');
+
+          // ── TURN 2 — "yes" is honoured by CODE, with no model turn at all.
+          const aiBefore = h.aiRequests.length;
+          h.scriptAI([]); // nothing scripted: if the model is consulted at all, the turn fails loudly
+          h.reset();
+          w.appendMessage('user', 'yes');
+          await w.handleInput('yes');
+          await sleep(900);
+
+          A.eq(h.aiRequests.length - aiBefore, 0, 'the "yes" was routed to the model instead of the deterministic save-consent route');
+          A.eq(h.bots(), SAVED_SEQ(w), 'turn 2 is not exactly the canonical save sequence');
+          A.eq(posts(h), 1, 'the answered consent question did not save exactly one BOL');
+          noQuestion(h, 'a SECOND question followed the customer\'s yes');
+          A.ok(w._pendingDraftSaveConsent() === false, 'the consent question is still pending after the save completed');
+        },
+      },
+
+      // ── 56 (E3) ──────────────────────────────────────────────────────────────
+      {
+        id: 56, name: 'a DECLINED consent question is answered by code and ENDS the turn — the model never gets a turn to re-ask on',
+        catches: 'the loop the refusal path used to re-open. With the question on screen, a customer who declines or changes the subject hits the save_shipment "refuse" branch, which on HEAD renders nothing and hands the model a completion carrying "The customer has not confirmed the save ... Answer what they actually asked." What the model does with that turn is ask for the save again in its own words — and an agent-worded question DISPLACES SAVE_DRAFT_CONFIRM as the last bot turn, so _pendingDraftSaveConsent flips false and the exchange loses its deterministic yes-path. It also closes a live gate-3b exposure: on HEAD that model-facing steering string is written to window._turnWriteFail, and 3b REPLACES an invented failure cause with _wf.message verbatim — so internal instruction text could be rendered to the customer.',
+        async run(h) {
+          const w = h.win;
+          const COPY = h.g('SAVE_DRAFT_CONFIRM');
+          // Resolved SAFELY, and its contract asserted at the END of the case rather than here.
+          // A missing constant must not be what this case reports: the defect is BEHAVIOURAL — the
+          // model getting a turn it can re-ask on — and a setup-level ReferenceError would mask that
+          // with a red that proves only "the fix is not applied".
+          const DECLINED = (() => { try { return h.g('SAVE_DECLINED_MSG'); } catch (e) { return null; } })();
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+
+          // ── TURN 1 — arm the question.
+          h.scriptAI([turn([toolUse('save_shipment', {})])]);
+          h.reset();
+          w.appendMessage('user', 'save the quote');
+          await w.handleInput('save the quote');
+          await sleep(700);
+          A.eq(h.bots(), [COPY], 'setup: turn 1 did not render exactly the consent question');
+          A.ok(w._pendingDraftSaveConsent() === true, 'setup: the question is not pending');
+
+          // ── TURN 2 — the customer declines, and the model tries to take a turn on it.
+          // TWO turns are scripted: the tool call, and the follow-up completion the model would
+          // re-ask on. The second must be left UNCONSUMED — that is the proof the turn ended.
+          const aiBefore = h.aiRequests.length;
+          h.scriptAI([turn([toolUse('save_shipment', {})]), turn([text('No problem — should I still save it for you first?')])]);
+          h.reset();
+          w.appendMessage('user', 'no, I meant my saved quotes');
+          A.eq(w._draftSaveVerdict(), 'refuse', 'setup: a decline no longer reads as a refusal');
+          await w.handleInput('no, I meant my saved quotes');
+          await sleep(900);
+
+          // ── THE BEHAVIOURAL CLAIMS FIRST, none of which need the new constant to be evaluable.
+          A.eq(posts(h), 0, 'a declined save wrote a BOL');
+          A.eq(h.aiRequests.length - aiBefore, 1, 'the model was given a follow-up completion after the decline — it can re-ask on it');
+          noQuestion(h, 'the decline was answered with another question');
+          A.ok(!h.bots().some(t => t === COPY), 'the consent question was rendered again after a decline: ' + JSON.stringify(h.bots()));
+          // The model-facing steering must be unreachable by gate 3b, which REPLACES an invented
+          // failure cause with window._turnWriteFail.message verbatim.
+          A.ok(!w._turnWriteFail, 'the refusal was recorded as a write failure — gate 3b can render its steering text to the customer: ' + JSON.stringify(w._turnWriteFail));
+          A.ok(!h.bots().some(t => /do not say|answer what they actually asked|say nothing further/i.test(t)),
+            'model-facing instruction text reached the customer: ' + JSON.stringify(h.bots()));
+          A.eq(h.bots(), [DECLINED], 'the declined turn is not exactly the fixed decline copy');
+
+          // ── TURN 3 — the next turn behaves normally: the model answers, nothing is saved, and the
+          // decline left no state behind that needed clearing.
+          A.ok(w._pendingDraftSaveConsent() === false, 'the consent question is still pending after a decline');
+          h.scriptAI([turn([text('The pickup is set for Tuesday.')])]);
+          h.reset();
+          w.appendMessage('user', 'remind me what day the pickup is on');
+          await w.handleInput('remind me what day the pickup is on');
+          await sleep(700);
+          A.eq(h.bots(), ['The pickup is set for Tuesday.'], 'the turn after a decline no longer answers normally');
+          A.eq(posts(h), 0, 'the turn after a decline wrote a BOL');
+
+          // ── THE DECLINE COPY'S OWN CONTRACT, asserted last so it can never be what a pre-fix run
+          // reports: one sentence, no question (a question is what this whole change removes), no
+          // BOL and no success wording (nothing was written), and NOT the consent copy — rendering
+          // it must FALSIFY the pending state, which is exactly right after a decline. Product rule:
+          // no phone number.
+          A.ok(typeof DECLINED === 'string' && DECLINED.length > 0, 'SAVE_DECLINED_MSG is not defined');
+          A.ok(!/\?/.test(DECLINED), 'the decline copy asks a question — a question is what this removes: ' + DECLINED);
+          A.ok(DECLINED !== COPY, 'the decline copy IS the consent copy — declining would leave the question armed');
+          A.ok(!/\bsaved as\b|\bbol\b/i.test(DECLINED), 'the decline copy states a save outcome: ' + DECLINED);
+          A.ok(!/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(DECLINED), 'the decline copy carries a phone number: ' + DECLINED);
+          A.eq((DECLINED.match(/[.!?]/g) || []).length, 1, 'the decline copy is not one sentence: ' + DECLINED);
+        },
+      },
+
+      // ── 57 (E4) — NO-REGRESS ─────────────────────────────────────────────────
+      {
+        id: 57, name: 'NO-REGRESS: the model calling save_shipment directly behaves exactly as it does today',
+        catches: 'the risk that a gate-side fix changes the path that was already correct. The save_shipment tool branch is the ONE route this change does not touch, and it is the route every working save takes. Asserts the exact transcript, the single write, and the single model turn — the same three facts case 41 and acceptance R4 rest on — so drift in the untouched path cannot hide behind the new cases going green.',
+        async run(h) {
+          const w = h.win;
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+
+          h.scriptAI([turn([toolUse('save_shipment', {})])]);
+          h.reset();
+          w.appendMessage('user', 'save the shipment');
+          A.eq(w._draftSaveVerdict(), null, 'setup: the consent evaluator is holding an explicit shipment save');
+          await w.handleInput('save the shipment');
+          await sleep(900);
+
+          A.eq(h.bots(), SAVED_SEQ(w), 'the tool-route save no longer renders exactly the canonical sequence');
+          A.eq(posts(h), 1, 'the tool-route save no longer writes exactly one BOL');
+          A.eq(h.aiRequests.length, 1, 'the tool-route save no longer ends the turn — the model got a follow-up completion');
+          noQuestion(h, 'the tool-route save started asking questions');
+        },
+      },
+
+      // ── 58 (E5) — NO-REGRESS ─────────────────────────────────────────────────
+      {
+        id: 58, name: 'NO-REGRESS: 2b still backs a DECLARED save, and a reply carrying both forms still writes exactly once',
+        catches: 'the two ways a second save enforcer could break the first. 2b fires the identical write off the model merely SAYING "I\'ll save it for you now" (invariant 20, case 42) — its behaviour on a declarative reply must be unchanged, including that the declaration itself is still delivered to the customer. And where one reply carries a declaration AND a question, the two enforcers must not both fire: 2b claims the write through the synchronous window._gateSaveInFlight latch, which is a precondition of the interrogative branch, so exactly one BOL is written.',
+        async run(h) {
+          const w = h.win;
+
+          // ── A. The declarative reply: 2b fires the canonical save and the reply is still delivered.
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+          h.scriptAI([turn([text("I'll save it for you now.")])]);
+          h.reset();
+          w.appendMessage('user', 'save the shipment');
+          await w.handleInput('save the shipment');
+          await sleep(900);
+          A.eq(h.bots(), ["I'll save it for you now."].concat(SAVED_SEQ(w)),
+            '2b no longer delivers the declaration and backs it with the canonical save');
+          A.eq(posts(h), 1, '2b no longer fires exactly one canonical save behind a declared promise');
+
+          // ── B. Declaration AND question in one reply → still exactly ONE write. The transcript is
+          // deliberately NOT asserted here: dropping the leftover question is NEW behaviour and
+          // belongs to case 54's contract. What must hold before AND after is the write count.
+          w._lastBooked = null;
+          await openBookingReady(h);
+          w._inQuoteConvo = true;
+          h.scriptAI([turn([text("I'll save it for you now. Good to save it?")])]);
+          h.reset();
+          w.appendMessage('user', 'save the shipment');
+          await w.handleInput('save the shipment');
+          await sleep(900);
+          A.eq(posts(h), 1, 'a reply carrying both a declaration and a question fired the save twice');
+          A.ok(h.bots().some(t => t === w._savedConfirmMessage(CANON_BOL)), 'no canonical confirmation on the mixed reply: ' + JSON.stringify(h.bots()));
+        },
+      },
+    ];
+  })(),
+
 ];
 
 module.exports = { cases };
