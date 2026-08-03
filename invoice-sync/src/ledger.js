@@ -12,6 +12,9 @@
 // Stripe Search cannot substitute for this: it is index-backed with up to ~1min of lag, so a
 // just-created invoice is not findable and two runs 30s apart both see "no match".
 
+/** Marks exception rows that are a DATA GAP in one record, not an operational failure. */
+export const QUARANTINE_PREFIX = 'quarantine:';
+
 /** Mode-namespaced idempotency key for the Stripe create (spec §4.2 layer 2). */
 export function idempotencyKey(mode, primusInvoiceId, version) {
   return `${mode}-primus-inv-${primusInvoiceId}-v${version}`;
@@ -192,6 +195,30 @@ export class Ledger {
       )
       .bind(this.mode, kind, String(ref), detail && String(detail).slice(0, 300), now, now)
       .run();
+  }
+
+  /**
+   * Quarantine ONE invoice for a data gap, and carry on with the run.
+   *
+   * Distinct from recordException by an explicit `quarantine:` kind prefix. A data gap and a fetch
+   * failure are different problems — one is Primus's data, the other is Primus being unreachable —
+   * and reading one as the other has already cost a debugging round today (spec §0.25). The prefix
+   * makes them separable by eye and by `kind LIKE 'quarantine:%'`.
+   */
+  async quarantine(primusInvoiceId, reason, detail) {
+    return this.recordException(`${QUARANTINE_PREFIX}${reason}`, `invoice:${primusInvoiceId}`, detail);
+  }
+
+  async openQuarantines(limit = 100) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM exceptions
+          WHERE mode = ? AND resolved_at IS NULL AND kind LIKE ?
+          ORDER BY last_seen_at DESC LIMIT ?`
+      )
+      .bind(this.mode, `${QUARANTINE_PREFIX}%`, limit)
+      .all();
+    return results || [];
   }
 
   async openExceptions(limit = 100) {

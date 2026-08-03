@@ -9,6 +9,8 @@
 // silently skipped. Re-seeing an invoice must therefore be free — which it is, because the ledger
 // refuses the duplicate claim rather than erroring.
 
+import { findRows, findTotalResults } from './envelope.js';
+
 /** Rolling window, inclusive, as YYYY-MM-DD. */
 export function windowFor(nowMs, days = 7) {
   const to = new Date(nowMs);
@@ -28,48 +30,12 @@ function ymd(d) {
  * unrecognised envelope reading as "zero invoices" would look exactly like a quiet week.
  */
 export function normalizePage(body) {
-  const candidates = [
-    ['data.results', body && body.data && body.data.results],
-    ['data.data', body && body.data && body.data.data],
-    ['data', body && body.data],
-    ['results', body && body.results],
-    ['bare', body],
-  ];
-  const hit = candidates.find(([, v]) => Array.isArray(v));
-  if (!hit) throw new Error(`Unrecognised Primus invoice list envelope: ${describeShape(body)}`);
-  const [shape, rows] = hit;
-
-  // Live envelope is {data:{pagingDetails,results,message}} — the count sits inside pagingDetails,
-  // not beside `results`. Tried in order, and deliberately NOT matching a page count: totalPages
-  // read as a result count would make the shortfall guard fire on every run.
-  const paging = body && body.data && body.data.pagingDetails;
-  const total = [
-    paging && paging.totalResults,
-    paging && paging.totalRecords,
-    paging && paging.totalCount,
-    paging && paging.total,
-    body && body.data && body.data.totalResults,
-    body && body.totalResults,
-  ].map(Number).find(Number.isFinite);
-
   // `shape` and `keys` are key names only, never values — logged every run so a silent envelope
   // change (or a count field appearing under a name we don't read) is visible rather than inferred.
-  const container = shape.startsWith('data') && body && body.data ? body.data : body;
-  return {
-    rows,
-    totalResults: Number.isFinite(total) ? total : null,
-    shape,
-    keys: `${describeShape(body)}→${describeShape(container)}` + (paging ? `→paging${describeShape(paging)}` : ''),
-  };
+  const { rows, shape, keys } = findRows(body, 'invoice list');
+  return { rows, totalResults: findTotalResults(body), shape, keys };
 }
 
-/** Key names only, never values — an envelope dump would carry cost and margin data (§6.3). */
-function describeShape(body) {
-  if (body === null || body === undefined) return String(body);
-  if (Array.isArray(body)) return `array[${body.length}]`;
-  if (typeof body !== 'object') return typeof body;
-  return `{${Object.keys(body).slice(0, 12).join(',')}}`;
-}
 
 /**
  * Money → integer cents. Mirrors the portal's parseMoney rule: strip $ and commas, never produce

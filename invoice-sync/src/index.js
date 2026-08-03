@@ -10,6 +10,8 @@ import { loadConfig, checkArCode } from './config.js';
 import { PrimusClient } from './primus.js';
 import { Ledger } from './ledger.js';
 import { windowFor, pollWindow } from './invoices.js';
+import { resolveClaimedCustomers } from './customers.js';
+import { newValueSink, formatValueSink } from './detail.js';
 
 const LEASE_NAME = 'sync';
 const LEASE_TTL_MS = 10 * 60 * 1000;
@@ -64,10 +66,26 @@ export async function run(env) {
       issuedFrom, issuedTo,
     });
 
+    // Phase 4 — resolve customers for whatever is now claimed. One QBO search plus one detail
+    // call per DISTINCT customer, never per invoice (spec §3.2 subrequest budget).
+    const valueSink = newValueSink();
+    const customers = await resolveClaimedCustomers({ primus, db: cfg.db, ledger, valueSink });
+
+    const optionalNulls = formatValueSink(valueSink);
+    const quarantined = await ledger.openQuarantines(50);
+
     console.log(JSON.stringify({
-      evt: 'run.ok', mode: cfg.mode, runId, windowDays: days, ...summary,
-      note: 'phases 4+ not built; rows claimed as intent, nothing written to Stripe',
+      evt: 'run.ok', mode: cfg.mode, runId, windowDays: days, ...summary, customers,
+      recordsAudited: valueSink.records,
+      quarantined: quarantined.length,
+      optionalNulls,
+      note: 'phases 5+ not built; rows claimed as intent, nothing written to Stripe',
     }));
+
+    // A data gap is not an operational failure, but it is still an invoice nobody is billing.
+    if (quarantined.length) {
+      console.warn(`[invoice-sync] ${quarantined.length} invoice(s) quarantined on null required values`);
+    }
 
     // Conditions the summary alone would let someone scroll past. Each one means the window is
     // not covering what it is supposed to cover.

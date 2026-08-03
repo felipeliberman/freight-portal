@@ -51,14 +51,62 @@ email as a **recipient list**, not an identity key.
 on the invoice detail, and QBO `DisplayName` is `<Company>-<ARCode>` — confirmed on `Bison Office
 LLC-2395` (ARCode 2395) and `Payless Rugs-5406` (ARCode 5406, invoice 141886).
 
-The `primusCustomerId` half is **not** the same field. The likely bridge is `customerInfo.customerId`,
-which sits beside `customerCode` on the same response — confirm it matches the portal's
-`primusCustomerId` format (e.g. Haynes `1123086640`) at phase 4. One field to eyeball, not a fork.
+**DECIDED 2026-08-03, by elimination: Stripe customers are keyed on ARCode.**
+
+Two candidate spines were tested against live data and both failed:
+
+1. **`customerInfo.customerId` is not the portal's `primusCustomerId`.** Haynes returns
+   `customerId = 646664` where the portal stores `1123086640`; Payless returns `701567`. These are
+   different identifier systems. Keying on `customerId` would produce Stripe customers the rest of
+   the estate cannot join to.
+2. **The booking is not the join either.** In `portal.html`, `primusCustomerId` is only ever
+   compared against `booking.thirdParty.id` — it is a bill-to **party** id, not a customer id.
+   Across three Haynes bookings, `1123086640` appears at `$.thirdParty.id` **and** `$.shipper.id`
+   on every one, while `646664` appears on none, and no `ARCode` field exists anywhere on the
+   booking record. Consistent across the sample. The party system and the customer system do not
+   meet on the booking.
+
+So ARCode is the key, arrived at by elimination rather than preference. It is the one identifier
+that appears on both the invoice list (`ARCode`) and the invoice detail (`customerInfo.customerCode`),
+and it is what QBO `DisplayName` embeds.
+
+**Write BOTH `arCode` and `customerId` into Stripe customer metadata.** They cost nothing to store
+and they are the difference between a later surprise costing a metadata read and costing a
+migration. A Stripe customer created without them cannot be re-joined after the fact.
+
+Resolution still records a `missing_primus_customer_id` exception when `customerInfo.customerId` is
+absent — no longer because it blocks billing, but because a change in its availability is a signal
+about Primus worth seeing.
 
 **Unmatched ARCodes are an exception, not a failure.** Some QBO customers may have been created
 without the `-<ARCode>` DisplayName suffix. Log to the exception queue, skip the invoice, and **never
 guess at a match** — a wrong customer match sends one customer's freight detail and consignee
 addresses to another. A skipped invoice is recoverable; a misdelivered one is not.
+
+### 0.25 Verification discipline — STANDING RULE
+
+**Every verification step must assert a positive fact about the world after the operation, never
+merely the absence of an error.**
+
+Three failures of this in one session (2026-08-03), each producing output *indistinguishable from
+success*:
+
+| What was done | Why it looked fine | What it actually did |
+|---|---|---|
+| `wrangler d1 execute "DELETE FROM exceptions" >/dev/null 2>&1` | no error surfaced | the statement failed; a stale row was then read as a live failure |
+| `git diff --no-index` against copies taken by hand | a clean-looking diff rendered | a copy of unknown vintage silently yields an incomplete diff that looks identical to a correct one |
+| revert with relative paths from a stale shell cwd | `cp`/`rm` reported nothing wrong | nothing was reverted at all |
+
+`git status` caught the third — because it **re-read reality** instead of trusting an exit code.
+That is the pattern to generalize.
+
+In practice:
+- After a delete, count the rows. After a write, read it back. After a revert, diff against the
+  recorded baseline hash.
+- Never silence stderr on a step whose success you intend to rely on.
+- Prefer showing whole current state (`cat` the file, `git status`) over showing a delta computed
+  from an artifact you produced yourself.
+- An exit code is evidence that a command ran, not that it did what you wanted.
 
 ### 0.3 This is a separate Worker
 
@@ -96,6 +144,30 @@ Token valid 24h. Send as `Authorization: Bearer <token>`.
 **Credential note:** the `claude` user is shared with terms-proxy and the prepaid check. Do not modify
 its permissions. It has broad write access including `bookDelete` — the sync must never call a write
 endpoint. Read-only by discipline.
+
+### Response envelopes — inconsistent across endpoints (verified live 2026-08-03)
+
+The field NAMES below are documented and correct. The envelope around them is **not uniform**, and
+reading the wrong nesting level does not error — it yields an object full of `undefined`, which
+narrows to a record of nulls and reads as "a customer with no data."
+
+| Endpoint | Shape |
+|---|---|
+| `GET /invoice` (list) | `{data:{pagingDetails:{totalResults,pages,currentPage,resultsPerPage}, results:[…], message}}` |
+| `GET /invoice/{id}` (detail) | `{data:{results:{…invoice…}, message}}` — one level deeper than the list's rows |
+| `GET /quickbooks/customers` | `{data:{results:{customers:[…]}, message}}` — a container at `results`, not the array |
+
+Consequences baked into the client:
+
+- The result count is at **`data.pagingDetails.totalResults`**, not beside `results`. `pages` sits
+  next to it — reading a page count as a result count would fire the shortfall guard every run.
+- Row extraction descends into a sole array property, and falls back to treating a lone object as a
+  single record. Both fallbacks are only safe because **every caller re-verifies what it picked**
+  (the QBO lookup demands an exact DisplayName suffix; the detail locator demands an `invoiceId`).
+- **Locate records by content, not position.** A positional read of the detail endpoint silently
+  produced `customerInfo: null` and would have shipped a customer with no identity.
+
+Assume any new endpoint nests differently until observed.
 
 ### Endpoints in use (all GET)
 
@@ -175,6 +247,22 @@ actual signal that a POD exists; the file itself may arrive as `IMG`.
 
 Document URLs are **publicly fetchable, no auth header** — the `t=` query parameter is the auth.
 Returns real PDF bytes with `Content-Disposition: attachment;filename="{BOLNumber}_{TYPE}.pdf"`.
+
+### A third identifier space — observed, no conclusion drawn
+
+Every booking record carries, under `accountingInformation`:
+
+```
+customerQuoteId, customerQuoteNumber, customerQuoteAmount
+costQuoteId
+```
+
+Observed on three Haynes bookings 2026-08-03 — e.g. `customerQuoteId 375147199`,
+`customerQuoteNumber 49963388`, `customerQuoteAmount 997.20`.
+
+**The quote amounts do not match the invoice totals.** No conclusion has been drawn about what this
+space is, whether it joins to anything, or why the amounts differ. Recorded so it is not
+rediscovered from scratch, and so nobody assumes it is the customer join without checking.
 
 ### Booking join
 
@@ -287,6 +375,21 @@ not surface until phase 10 widens to `*`. Design the chunking before then: bound
 makes this safe, since work is tracked per invoice rather than per run.
 
 Verify the exact scheduled-handler limits against current Cloudflare docs before sizing the batch.
+
+### 3.3 Poll cursor — invariant, if one is ever built
+
+A cursor is **not built today** and is not needed for the poll: a 60-day window costs 36 subrequests
+of 1000 (measured on Workers Paid, 2026-08-03), and the full re-sweep every run *is* the skip
+protection.
+
+**If a cursor is ever added, it resets to page 1 on each new window and resumes only within an
+interrupted window.**
+
+A cursor that resumes mid-window stops re-sweeping the earlier pages. Since invoices are editable
+after issuance and the list may sort on a mutable field, a record that shifted *backwards* between
+runs is then never seen again — a silent skip, with no error and no shortfall signal, because the
+pages it would have appeared on were never re-read. The overlapping window is the only thing that
+catches that class of miss, and a naive cursor removes it.
 
 ### Run lock
 
@@ -436,14 +539,27 @@ state. Define it explicitly:
 | Line items | `invoiceBreakdown` (§5.1) |
 | Metadata | `primus_invoice_id`, `primus_invoice_number`, `bol_number`, `ar_code` — these four only |
 
-**`invoiceNumber` arrives float-formatted.** Observed live 2026-08-03: Primus returns the string
-`"139875.0"`, not `"139875"` — confirmed as an API artifact, not a client-side coercion (JS would
-render a numeric `139875.0` as `139875`). Rendered as-is on a Stripe invoice, the customer sees
-`139875.0`, which matches neither QBO nor their AP records and makes remittance matching fail.
+**`invoiceNumber` needs normalizing before it reaches a customer — but the cause is OURS, not
+Primus's. Corrected 2026-08-03.**
 
-**Normalize before use** — strip a trailing `.0` (and any other zero-only decimal) — and normalize
-consistently for the `primus_invoice_number` metadata key so the two never diverge. Ledger
-idempotency is unaffected either way, since it keys on `invoiceId`.
+The earlier entry here claimed Primus returns the string `"139875.0"` and called it "an API
+artifact, not a client-side coercion." **That was wrong.** The `.0` is introduced by our own
+storage: `ledger.primus_invoice_number` is a TEXT column, and SQLite TEXT affinity renders a bound
+REAL `139875.0` as the string `"139875.0"`. Reading direct from the API — Haynes invoice
+`1774934402`, no D1 in the path — returned `invoiceNumber: 139303` as a **number**.
+
+Same error class as reading the Free-plan subrequest ceiling as a design limit: **an artifact of our
+own environment attributed to the upstream system.** The tell in both cases was that the observation
+only ever came through one particular path.
+
+Still normalize, for a different reason: a JS number rendered onto a Stripe invoice must not carry a
+spurious decimal, and the value stored in `primus_invoice_number` metadata must match what the
+customer sees or remittance matching fails. Ledger idempotency is unaffected — it keys on
+`invoiceId`.
+
+**Type consistency across the API is unverified.** `invoiceNumber` is a number on the one record
+read directly; nothing establishes that every numeric field is a number on every record. See the
+§5.1 string trap.
 
 ### Custom fields (Stripe allows 4)
 
@@ -459,6 +575,24 @@ Verified: these render at the top of the PDF beneath the dates, where AP looks f
 ### 5.1 Line item rule — keyed on the LINE, not the invoice type
 
 **`total == 0` never becomes a Stripe line item. Anywhere. Primary or rebill.**
+
+> **INHERITED CONSTRAINT — two coercion doors, close both.**
+>
+> **Null.** `null == 0` is **false** but `null >= 0` is **true**, so a null total classifies as a
+> zero-dollar line under one comparison and as a priced line under the other — and **both read as
+> reasonable code**.
+>
+> **String.** Line amounts are **not confirmed to be numbers** — `invoiceBreakdown` has never been
+> observed live (as of 2026-08-03) and Primus type consistency is unverified. If a total arrives as
+> a string, `"0" == 0` and `"0.00" == 0` are true (accidentally correct), but `"$0.00" == 0` is
+> **false** — a formatted zero becomes a PRICED line on a customer's invoice.
+>
+> Required order: **reject null/undefined → type-check → normalise via `toCents()`** (the poll's,
+> which strips `$` and commas) **→ compare on integer cents.** Never `total == 0` on a raw field.
+>
+> `''` is caught upstream — an empty-string total is a REQUIRED-value violation (§6.5) and
+> quarantines the invoice before §5.1 sees it. That ordering is load-bearing: `'' == 0` is true, so
+> an empty string reaching a coercion-based rule would read as a zero-dollar line.
 
 The original rule (fold on primary, render as-is on rebill) breaks on rebills, which routinely carry $0
 lines — the original freight line restated, or the accessorial that *was* included free sitting beside
@@ -620,6 +754,53 @@ a cost field even as an intermediate — a freight line derived by subtraction m
   gates live send.
 - **Line-item `description`** comes from Primus rate/accessorial config and can echo discount structure.
   Same class of risk, lower frequency.
+
+### 6.5 Two boundary rules, deliberately separate
+
+The narrowing boundary enforces **two different things**, and conflating them was a trap worth
+recording:
+
+| | Guards | On violation |
+|---|---|---|
+| **Key set** (`assertExactKeys`) | a code regression in the narrowing itself | **THROWS**, everywhere, both directions |
+| **Values** (`auditValues`) | a data gap in Primus | **NEVER throws** |
+
+Narrowing assigns every key unconditionally with `?? null`, so a key can only go missing if someone
+edits `detail.js`. Absent Primus data never removes a key — it produces a present key with a null
+value. A key-level rule therefore cannot catch "this customer has no phone", and marking any key
+optional would only weaken the regression guard while buying nothing.
+
+**Key set: all 33 keys, strict in both directions.** An unknown key present is a leak reaching
+Stripe — irreversible, so it fails closed and halts. A required key missing is a regression.
+
+**Values: quarantine one record, continue the run.** One bad record must not stop 1,749 good ones.
+
+- **Required value null** → quarantine THIS invoice with the field name; the run continues.
+- **Optional value null** → counted, nothing else.
+
+Fields whose null value means *do not bill* — 13 of 33:
+
+| Boundary | Required values |
+|---|---|
+| detail | `invoiceId`, `invoiceNumber`, `ARCode`, `total`, `status`, `shipment`, `invoiceBreakdown` |
+| status | `generated`, `paid` |
+| shipment | `BOLNumber` |
+| customerInfo | `customerCode` (only once the object exists — `customerInfo` itself is optional, demoted by §0.2) |
+| breakdownLine | `description`, `total` |
+
+Notes that are easy to get wrong:
+
+- **`0` and `false` are values, not absences.** A $0 total and `paid: false` are real answers.
+  Missing means `null`, `undefined`, or `''` — nothing else.
+- **An empty `invoiceBreakdown` counts as missing.** Otherwise the requirement is vacuous: an
+  invoice with no lines has nothing to bill.
+- **Quarantine rows are prefixed `quarantine:`** in the exceptions table, so a data gap is never
+  read as a fetch failure. That confusion has already cost a debugging round (§0.25).
+- **Optional nulls are counted per field per run against a denominator**, so the log reads
+  `shipment.carrierPRO: 412/1750 (23.5%)`. A rate is what makes a field going from 1-in-1000 to
+  400-in-1000 obvious the same day — that is Primus changing something.
+- The counter sink is **created per run and threaded explicitly**. A module global would accumulate
+  across invocations in a warm isolate and silently inflate (§0.25).
 
 ### 6.3 Logging is the likeliest actual leak
 

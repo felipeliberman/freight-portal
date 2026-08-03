@@ -133,6 +133,27 @@ test('exceptions upsert and count repeats instead of duplicating', async () => {
   assert.equal(ar.detail, 'no QBO DisplayName suffix', 'a later bare report must not erase the detail');
 });
 
+test('a quarantine row is visibly distinct from an operational exception', async () => {
+  // Reading a data gap as a fetch failure has already cost a debugging round (spec §0.25).
+  const ledger = new Ledger(freshDb(), 'test');
+  await ledger.recordException('fetch_failed', 'invoice:1', 'HTTP 503');
+  await ledger.quarantine('2', 'null_required_value', 'null required value(s): total');
+
+  const quarantines = await ledger.openQuarantines();
+  assert.equal(quarantines.length, 1, 'only the quarantine matches the prefix');
+  assert.equal(quarantines[0].kind, 'quarantine:null_required_value');
+  assert.equal(quarantines[0].ref, 'invoice:2');
+  assert.ok(!quarantines.some(q => q.kind === 'fetch_failed'));
+
+  assert.equal((await ledger.openExceptions()).length, 2, 'both remain visible in the full list');
+});
+
+test('quarantines are per-mode like every other ledger row', async () => {
+  const db = freshDb();
+  await new Ledger(db, 'test').quarantine('1', 'null_required_value', 'x');
+  assert.equal((await new Ledger(db, 'live').openQuarantines()).length, 0);
+});
+
 test('the lease admits one holder at a time', async () => {
   const ledger = new Ledger(freshDb(), 'test');
   assert.equal(await ledger.acquireLease('sync', 'run-A', 60_000), true);
