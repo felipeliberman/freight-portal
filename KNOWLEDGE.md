@@ -61,7 +61,7 @@ All facts confirmed by Felipe as of July 2026.
 1. Open a free account — takes about 5 minutes, no obligation, no volume commitment.
 2. Get instant quotes: enter origin and destination ZIPs, pickup date, item dimensions, and weight — freight class is calculated automatically from density, never something the customer supplies. Live contract rates from 20+ carriers — 50+ rate options across standard, guaranteed, and volume service levels — come back in seconds.
 3. Accessorials supported at quoting/booking: residential pickup/delivery, liftgate pickup/delivery, limited access pickup/delivery, inside delivery, delivery appointment, insurance (third-party coverage). Hazmat is not a focus — if asked, direct to the team rather than pitching it.
-4. Book in one click. We generate the BOL — the customer must use our system-generated BOL and sign it before pickup.
+4. Book in two steps, and say both — never describe booking as one click. Picking a rate and saving creates the shipment as a saved BOL; that does NOT notify the carrier and nothing is dispatched. "Ready to Dispatch" is the second, separate step that sends the pickup request to the carrier. Until then the BOL is marked "NOT VALID FOR TENDERING". Saving is reversible; dispatching is not. We generate the BOL — the customer must use our system-generated BOL and sign it before pickup.
 5. Track in real time in the portal or by asking the AI. Public tracking links can be shared with consignees — feel free to mention this.
 6. Documents — BOLs, invoices, PODs — are stored and searchable in the Document center.
 7. Invoicing on Net 15 terms; pay by ACH or card through the payment portal.
@@ -122,7 +122,7 @@ The quoted transit covers the line-haul to our white glove delivery agent. The a
 Assembly includes a free time allowance (typically around 20 minutes), with per-interval charges after that (roughly $37 per additional 15 minutes). Present this as general pricing and tell the person to ask us for the specifics on their shipment — exact terms depend on the delivery agent and are disclosed on the quote.
 
 **How does a quote turn into a shipment?**
-In the portal it's instant: quote, one-click book, BOL and labels generated. By email, we send the quote, you approve, and we return the BOL and shipping labels with pickup scheduled.
+In the portal, quoting is instant and booking is TWO steps — never call it one click. Pick a rate and save: that creates the shipment as a saved BOL and generates the BOL and labels, but it does NOT notify the carrier and nothing is dispatched. "Ready to Dispatch" is the second, separate step that sends the pickup request to the carrier and makes the BOL valid for tendering; until then it is marked "NOT VALID FOR TENDERING". Saving is reversible; dispatching is not. Never tell a customer a shipment is with the carrier when it has only been saved. By email, we send the quote, you approve, and we return the BOL and shipping labels with pickup scheduled.
 
 **Can I add cargo insurance?**
 Yes — provide the shipment's declared value and we quote the additional cost. Coverage can be added at booking or after the shipment is already booked. Coverage is third-party "All Risk"; typical conditions are that the cargo is new and professionally packed, and a deductible applies per claim (commonly around $250). Exact premium depends on the declared value — ask us for the quote.

@@ -66,6 +66,33 @@ test('scope split preserved: portal-only sections never reach the landing bundle
   A.ok(!/Update & Requote/.test(landing), 'in-portal button labels leaked into the landing bundle');
 });
 
+// Booking is TWO steps — Save, then "Ready to Dispatch" — and that is the most important UX concept
+// in the product. Until 2026-08-03 the KB called it one click in two places: §3 "Book in one click"
+// (landing) and §8 "quote, one-click book" (scope: both, so the PORTAL agent carried it alongside
+// §12's correct two-step description and contradicted itself). A customer told booking is one click
+// clicks it, sees the shipment appear, and believes it is with the carrier — it is a draft marked
+// NOT VALID FOR TENDERING, and nothing moves until Ready to Dispatch. They find out when the pickup
+// does not happen. The code was always correct; only the documentation lied.
+//
+// Two halves, deliberately. The ban catches a re-introduction; the presence check catches the
+// quieter failure — a future rewrite that drops the two-step explanation without contradicting it.
+// The ban matches AFFIRMATIVE constructions only: the corrected prose has to say the words "one
+// click" in order to forbid them, and a guard that fires on its own warning text gets reverted as
+// broken. Verified three ways: fires on both original strings, silent on the corrected prose,
+// clean on both current bundles.
+test('booking is never described as one click, and the two steps are stated', () => {
+  const AFFIRMATIVE = /one[- ]click book|book in one[- ]click|books? in a single click/i;
+  for (const [name, kb] of [['landing', landing], ['portal', portal]]) {
+    const hit = kb.match(AFFIRMATIVE);
+    A.ok(!hit, 'the ' + name + ' bundle describes booking as one click (' + (hit && hit[0]) +
+      ') — booking is Save, then "Ready to Dispatch"');
+    A.ok(kb.includes('Ready to Dispatch'),
+      'the ' + name + ' bundle no longer names "Ready to Dispatch" — the second step must be stated, not merely un-contradicted');
+    A.ok(kb.includes('NOT VALID FOR TENDERING'),
+      'the ' + name + ' bundle no longer states that a saved BOL is "NOT VALID FOR TENDERING"');
+  }
+});
+
 // White glove roster non-disclosure (CLAUDE.md product contract). Logged-in customers get carrier
 // names freely; prospects never do, and the landing agent must not even confirm or deny one.
 test('white glove carrier names reach the PORTAL agent and never the landing agent', () => {
