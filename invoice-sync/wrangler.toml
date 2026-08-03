@@ -1,0 +1,69 @@
+# invoice-sync — Primus → Stripe invoice sync. Cron-driven, unattended.
+#
+# Spec: ops/SPEC-primus-stripe-invoice-sync.md
+#
+# READ BEFORE DEPLOYING:
+#   * This worker is DELIBERATELY separate from `stripe-payments`. That worker carries the live
+#     payment path and has a history of direct dashboard edits (deployed source drifting from src/).
+#     An unattended cron does not belong in that blast radius. Do not merge them.
+#   * NEVER edit this worker in the Cloudflare dashboard. src/ is the only source of truth for it,
+#     and it is the only worker in this estate for which that is currently true. Keep it that way.
+#   * STRIPE_MODE is the phase-1 safety guarantee, not a convenience flag. Phase 1-8 run in TEST.
+#     A test-mode invoice cannot reach a customer at all; a live draft can, with one dashboard click.
+#
+# Deploy:  cd invoice-sync && wrangler deploy
+#
+# Secrets (set via `wrangler secret put`, NOT stored here):
+#   PRIMUS_USER      — Primus system API username (shared `claude` user — do NOT alter its perms)
+#   PRIMUS_PASS      — Primus system API password
+#   STRIPE_RK_TEST   — Stripe RESTRICTED key, test mode  (invoice write, customer read)
+#   STRIPE_RK_LIVE   — Stripe RESTRICTED key, live mode  (do not set until spec phase 9)
+#
+# One-time D1 setup (run these, then paste the id below):
+#   wrangler d1 create invoice-sync
+#   wrangler d1 execute invoice-sync --remote --file=./schema.sql
+
+name = "invoice-sync"
+main = "src/index.js"
+compatibility_date = "2026-08-03"
+
+# No public surface. This worker is cron-driven and holds Stripe write credentials + Primus
+# system-API credentials; it has no reason to be reachable from the internet. Both default to
+# enabled, so they are set explicitly rather than left off.
+#
+# Consequence: the /health route in src/index.js is unreachable in production, by design. Local
+# runs are unaffected — `wrangler dev --remote --test-scheduled` proxies locally and does not need
+# workers.dev:
+#   wrangler dev --remote --test-scheduled --port 8799
+#   curl "http://localhost:8799/__scheduled?cron=0+9+*+*+*"
+workers_dev = false
+preview_urls = false
+
+[vars]
+# 'test' | 'live'. Never inferred, never defaulted — an unset/unknown value is a hard failure.
+STRIPE_MODE = "test"
+# Second, independent switch for live mode. Both this AND STRIPE_MODE="live" are required.
+# Flipping to live is spec phase 9 and has its own gate. Do not set this early.
+ALLOW_LIVE_MODE = "false"
+# Primus system API. Broker-level, all customers. NOT the customer/portal API.
+PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"
+# Pilot scope (spec §3.1). Comma-separated ARCodes. Only these get Stripe drafts; everything else
+# stays on the current Primus/QBO flow untouched. "5406" = Payless Rugs.
+#
+# FAILS CLOSED: unset/empty throws. "*" runs the full book and is spec phase 10 — it needs a
+# backfill first, because non-allowlisted invoices are never recorded and the rolling poll window
+# will not reach back for them.
+AR_ALLOWLIST = "5406"
+# Rolling poll window, days. Deliberately OVERLAPS previous runs — that overlap is what catches an
+# invoice skipped by a page shift (spec §3). Clamped to 2..90 in code.
+POLL_WINDOW_DAYS = "7"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "invoice-sync"
+database_id = "7dfcae90-2627-4d0c-80bb-e7d32853639c"
+
+# Disabled until spec phase 3 (list poll) is built and its exit gate passes.
+# A cron firing against an incomplete pass is how a half-processed window happens.
+# [triggers]
+# crons = ["0 9 * * *"]

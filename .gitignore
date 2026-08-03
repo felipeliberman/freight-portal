@@ -8,3 +8,6 @@ evals/questions.generated.json
 # Local investigation scripts — read secrets from the environment, never commit them
 measure-requote-timing.js
 .DS_Store
+
+# wrangler local state (dev cache, miniflare KV/D1) — never commit
+.wrangler/
