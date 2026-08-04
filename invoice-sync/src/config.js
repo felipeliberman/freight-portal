@@ -58,6 +58,45 @@ export function stripeKey(env, mode) {
 }
 
 /**
+ * THE AUTHORITATIVE MODE CHECK — Stripe's own answer, not our reading of a string.
+ *
+ * `stripeKey()` above parses a key PREFIX. That is a string we typed, checked against a string we
+ * typed, and it is now the WEAKER of the two paths (spec §8.867, §8.869): it cannot detect a key
+ * that was rotated, re-scoped, or bound to a different account. Every Stripe object carries
+ * `livemode`, which the SERVER asserts — so once any response is in hand, that is what mode this
+ * credential actually operates in.
+ *
+ * FAILS CLOSED in both directions:
+ *   - `livemode` missing or not a boolean → throw. "Cannot verify" must never read as "fine";
+ *     a response without it is not a response we understand.
+ *   - `livemode` disagreeing with the declared mode → throw. A sweep that reports clean against
+ *     the wrong account is worse than no sweep, because it produces false confidence in exactly
+ *     the artefact people trust most.
+ *
+ * Call this on the FIRST response of any run that touches Stripe, before acting on anything.
+ *
+ * @param {'test'|'live'} mode  the declared mode
+ * @param {object} stripeObject any Stripe API response object
+ */
+export function assertLivemode(mode, stripeObject) {
+  if (!stripeObject || typeof stripeObject.livemode !== 'boolean') {
+    throw new Error(
+      `Stripe response carries no boolean 'livemode', so the account mode cannot be verified. ` +
+      `Refusing to proceed — an unverifiable mode is treated as a mismatch, not as a pass.`
+    );
+  }
+  const expected = mode === 'live';
+  if (stripeObject.livemode !== expected) {
+    throw new Error(
+      `Stripe reports livemode=${stripeObject.livemode} but STRIPE_MODE='${mode}'. The key is ` +
+      `operating against the ${stripeObject.livemode ? 'LIVE' : 'TEST'} account. Refusing to ` +
+      `proceed — the key prefix agreed and the server did not, and the server is authoritative.`
+    );
+  }
+  return mode;
+}
+
+/**
  * Customer allowlist — pilot scope (spec §3.1).
  *
  * Phases 6-9 run against ONE customer. At ~1733 invoices/month the manual review that makes

@@ -73,9 +73,10 @@ CREATE TABLE IF NOT EXISTS ledger (
   classification        TEXT,
 
   stripe_invoice_id     TEXT,
-  -- intent  → row claimed, Stripe create not yet confirmed
-  -- draft | finalized | void | paid | uncollectible → mirrors Stripe
-  -- failed  → create attempted and errored; retryable, still holds the claim
+  -- The legal values are STRIPE_STATES in src/ledger.js, which is AUTHORITATIVE — do not restate
+  -- the list here. A comment inside CREATE TABLE is frozen into the live database's stored DDL at
+  -- creation, so a list duplicated here silently diverges from the code the day a state is added,
+  -- and cannot be corrected without a table rebuild. Point at the source instead of copying it.
   stripe_state          TEXT    NOT NULL DEFAULT 'intent',
 
   total_cents           INTEGER,
@@ -141,9 +142,8 @@ CREATE TABLE IF NOT EXISTS stripe_customer (
   ar_code            TEXT    NOT NULL,
 
   stripe_customer_id TEXT,
-  -- intent  → row claimed, Stripe create not yet confirmed
-  -- created → Stripe returned a customer
-  -- failed  → create attempted and errored; retryable, still holds the claim
+  -- Legal values: STRIPE_CUSTOMER_STATES in src/stripe-customer.js, which is AUTHORITATIVE.
+  -- Not restated here, for the reason given on ledger.stripe_state above.
   state              TEXT    NOT NULL DEFAULT 'intent',
 
   -- Layer 2 of the same discipline as `ledger` (spec §4.2). Server-side and immediate, so it closes

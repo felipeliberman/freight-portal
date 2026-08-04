@@ -889,7 +889,8 @@ ledger(
   version,              -- increments on reissue (§4.4)
   classification,       -- 'primary' | 'rebill' | 'hold'; PERSISTED, never re-derived
   stripe_invoice_id,
-  stripe_state,         -- intent | draft | finalized | void | paid | uncollectible | failed
+  stripe_state,         -- src/ledger.js STRIPE_STATES is authoritative. Today:
+                        -- intent | creating | draft | finalized | void | paid | uncollectible | failed
   total_cents,
   UNIQUE(mode, primus_invoice_id, version)
 )
@@ -3161,12 +3162,23 @@ finding in §8.868 surfaced.
 **Deploy verification, going forward:** a deploy names a commit; the tree is clean at that commit;
 the deployed bundle is pulled and diffed against a re-bundle of it. See §8.868 for why.
 
+> **⚠ IF THIS PROCEDURE LEADS YOU TO `sqlite_master`, READ §8.867 CLAUSE 4 FIRST.** The state-list
+> comments stored in the live DDL are **stale by construction and permanently uncorrectable** — they
+> were frozen before `creating` existed. Code is authoritative: `STRIPE_STATES` (`src/ledger.js`),
+> `STRIPE_CUSTOMER_STATES` (`src/stripe-customer.js`). Reading the deployed schema is the right
+> instinct for *structure* and the wrong one for *documentation*.
 
-## 8.867 TIME VALUES CARRY THEIR INTERPRETATION — STANDING RULE
 
-**A time value crossing a boundary carries its UNIT, its ZONE, and its MODALITY, or it is not
-portable.** Three clauses, one root cause: a time value travelling without the metadata needed to
-read it correctly. Each clause below has an instance in this system.
+## 8.867 A VALUE CARRIES ITS INTERPRETATION ACROSS A BOUNDARY — STANDING RULE
+
+**The root pattern: something crosses a boundary and arrives without the metadata needed to read it
+correctly.** Clauses 1–3 are the time-value form of it, which is where the pattern was first seen.
+Clause 4 is the same shape in a different register — documentation crossing into stored DDL — and
+is here rather than in its own section because recognising the *class* is what stops the fifth
+instance being debugged from scratch.
+
+**The time rule: a time value crossing a boundary carries its UNIT, its ZONE, and its MODALITY, or
+it is not portable.** Each clause below has an instance in this system.
 
 **Clause 1 — UNIT.** `cache.expires_at` holds **seconds** when written by `primus.js:40,127-134`
 and **milliseconds** when written by `customers.js:263-281`, in one column. Each reader compares in
@@ -3199,6 +3211,50 @@ value's unit and zone are both fine; what was dropped is what kind of time it is
 named `estimated*`, `requested*`, `scheduled*` or `expected*` must not flow unexamined into one
 named for an occurrence (`*Date` on an event, `dispatchDate`, `deliveredAt`, `paidAt`). That is
 greppable at review time, which is what makes this a rule and not an observation.
+
+**Clause 4 — PERMANENCE. Text that crosses into a stored artifact freezes on arrival.**
+
+*The class:* a comment is written in a source file, where its author reasonably assumes it stays
+editable. Some boundaries strip that assumption without saying so — the text arrives on the far
+side as an **immutable artifact**, and the interpretation that was lost is "this is maintained."
+It then keeps asserting its original claim for the rest of the system's life, with more authority
+than a source comment because a reader found it *inside the running system* rather than in a file
+someone might have forgotten to update. **Look for it wherever documentation is carried by data:**
+DDL comments, migration files that are never re-run, generated config committed once, a `COMMENT ON`
+in a schema, an enum documented in a doc-string that outlives the enum.
+
+*The instance:* `CREATE TABLE` comments become part of SQLite's stored schema. **Verified 2026-08-04
+by reading remote `sqlite_master` directly** — the comments came back verbatim. Both of these are on
+the live database and **BOTH ARE PERMANENTLY WRONG**, having been frozen before `creating` existed:
+
+```
+ledger.stripe_state          -- intent  → row claimed, Stripe create not yet confirmed
+                             -- draft | finalized | void | paid | uncollectible → mirrors Stripe
+                             -- failed  → create attempted and errored; retryable, still holds the claim
+
+stripe_customer.state        -- intent  → row claimed, Stripe create not yet confirmed
+                             -- created → Stripe returned a customer
+                             -- failed  → create attempted and errored; retryable, still holds the claim
+```
+
+Neither lists `creating`. **Neither ever will.** SQLite offers no way to edit stored DDL text short
+of a full table rebuild, and a rebuild of a live table to correct a comment is not a trade worth
+making.
+
+> ### ⚠ READ THIS BEFORE TRUSTING WHAT §8.866 SHOWS YOU
+>
+> **§8.866 is what sends a forensic reader to `sqlite_master` in the first place**, so this warning
+> belongs at that moment, not filed somewhere they would have to already suspect. The state lists in
+> the deployed DDL are **stale by construction**. They are not a second opinion, not a historical
+> record, and not evidence about anything.
+>
+> **AUTHORITATIVE:** `STRIPE_STATES` in `src/ledger.js`, and `STRIPE_CUSTOMER_STATES` in
+> `src/stripe-customer.js`. Nothing else.
+
+*The fix that generalises,* applied 2026-08-04: `schema.sql` no longer restates either list — it
+points at the code constant. **Duplicating a list across a freezing boundary guarantees divergence;
+pointing across it cannot.** That does not repair the two blocks above, and nothing will. It stops
+the third.
 
 
 ## 8.868 THE DEPLOYED WORKER IS NOT REPRODUCIBLE FROM GIT — OPEN

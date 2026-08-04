@@ -31,12 +31,11 @@ export function idempotencyKey(mode, primusInvoiceId, version) {
  * So the validation lives at the two PARAMETERISED writers. The literal writers (claim → 'intent',
  * recordFailure → 'failed', supersede → 'void') cannot be wrong and need nothing.
  *
- * 'creating' is deliberately ABSENT: it does not exist yet. It lands with the create path, in the
- * same change that adds it — listing it here first would put this file ahead of the code, which is
- * the mirror of the drift being avoided.
+ * 'creating' lands here with markCreating() below — the change that introduces it, per the rule
+ * that this file must never run ahead of the code.
  */
 export const STRIPE_STATES = Object.freeze([
-  'intent', 'draft', 'finalized', 'void', 'paid', 'uncollectible', 'failed',
+  'intent', 'creating', 'draft', 'finalized', 'void', 'paid', 'uncollectible', 'failed',
 ]);
 
 /** Throws rather than returning false: an unknown state is a programming error, not a data condition. */
@@ -128,7 +127,15 @@ export class Ledger {
     return results || [];
   }
 
-  /** Rows the reconcile pass still has to chase (spec §3 pass 2). */
+  /**
+   * Rows the reconcile pass still has to chase (spec §3 pass 2).
+   *
+   * 'creating' is NOT here, and that exclusion is deliberate rather than an oversight: reconcile
+   * asks "has this invoice been paid", which is meaningless for a row whose invoice may not exist.
+   * Orphan candidates are a DIFFERENT question with a different answer, and they have their own
+   * sweep — openCreating(). If 'creating' were added here it would be swept by the wrong logic and
+   * silently marked as needing nothing.
+   */
   async openForReconcile(limit = 200) {
     const { results } = await this.db
       .prepare(
@@ -139,6 +146,29 @@ export class Ledger {
           ORDER BY updated_at ASC LIMIT ?`
       )
       .bind(this.mode, limit)
+      .all();
+    return results || [];
+  }
+
+  /**
+   * Rows stuck in `creating` — the orphan candidates openForReconcile deliberately excludes.
+   *
+   * `staleMs` keeps this from fighting a run still in progress: a row that entered `creating`
+   * seconds ago probably belongs to a live invocation, one older than the lease TTL cannot. The
+   * default is deliberately LONGER than LEASE_TTL_MS (10 min) — sweeping a row out from under a
+   * running create is how a second create happens, which is the failure the ledger exists to stop.
+   *
+   * This returns CANDIDATES ONLY. Resolving them means reading Stripe (list, never search — §4.1),
+   * and that half lands with the Stripe client.
+   */
+  async openCreating({ staleMs = 15 * 60 * 1000, now = Date.now(), limit = 100 } = {}) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM ledger
+          WHERE mode = ? AND stripe_state = 'creating' AND updated_at <= ?
+          ORDER BY updated_at ASC LIMIT ?`
+      )
+      .bind(this.mode, now - staleMs, limit)
       .all();
     return results || [];
   }
@@ -170,6 +200,31 @@ export class Ledger {
             AND (stripe_invoice_id IS NULL OR stripe_invoice_id = ?)`
       )
       .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, stripeInvoiceId)
+      .run();
+    return (res.meta && res.meta.changes) === 1;
+  }
+
+  /**
+   * intent|failed → creating. Call IMMEDIATELY BEFORE the Stripe create.
+   *
+   * This is what turns the orphan window from invisible into queryable. Without it, a row in
+   * `intent` is ambiguous — it cannot distinguish "we never called Stripe" from "we called and
+   * lost the response" — so a re-run cannot know whether it is safe to create. With it:
+   *
+   *   intent   → never attempted → safe to create
+   *   creating → attempted, outcome UNKNOWN → must read Stripe before creating anything
+   *   anything else → known
+   *
+   * Refuses once an invoice id is attached: an invoice that exists is not being created again.
+   */
+  async markCreating(ledgerId) {
+    const res = await this.db
+      .prepare(
+        `UPDATE ledger SET stripe_state = 'creating', updated_at = ?
+          WHERE id = ? AND mode = ? AND stripe_state IN ('intent', 'failed')
+            AND stripe_invoice_id IS NULL`
+      )
+      .bind(Date.now(), ledgerId, this.mode)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
