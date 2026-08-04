@@ -7,10 +7,17 @@
  *
  * TWO ROUTES, selected by query parameter (both live at "/"):
  *
- *   ?bol=  PORTAL route — logged-in customers (portal.html). Behavior is unchanged
- *          and must stay that way: digits-only input, all timeline rows including
- *          NOTE, {found,bol,carrier,service,status,delivered,events}, no rate limit
- *          (portal staff share NAT'd office IPs and would lock each other out).
+ *   ?bol=  PORTAL route — the portal.html chat widget. Digits-only input, all
+ *          timeline rows including NOTE, {found,bol,carrier,service,status,
+ *          delivered,events}, no rate limit (portal staff share NAT'd office IPs
+ *          and would lock each other out), and 503 on upstream failure.
+ *
+ *          NOTE ON WHO CALLS IT: the ?bol= consumer is the LOGGED-OUT public-view
+ *          widget inside portal.html (the #public-view srcdoc iframe), not the
+ *          logged-in portal — the logged-in agent reads shipment status from Primus
+ *          booking data and never calls this Worker. An earlier version of this
+ *          comment said "logged-in customers", and that error is part of why the
+ *          503 below was added to ?q= only.
  *
  *   ?q=    PUBLIC route — unauthenticated landing page (index.html). Relaxed
  *          alphanumeric input so carrier PROs work, NOTE rows filtered out, wider
@@ -68,8 +75,8 @@ export default {
 };
 
 /* ------------------------------------------------------------------ *
- * PORTAL ROUTE (?bol=) — unchanged. Do not alter without checking
- * portal.html fetchTrack/renderTrack, which are live with customers.
+ * PORTAL ROUTE (?bol=). Do not alter without checking portal.html
+ * fetchTrack/renderTrack, which are live with customers.
  * ------------------------------------------------------------------ */
 async function handlePortal(url, CORS) {
   const json = (data, status = 200) =>
@@ -87,15 +94,25 @@ async function handlePortal(url, CORS) {
     '&customer=' + encodeURIComponent(CUSTOMER) +
     '&trackingNumber=' + encodeURIComponent(bol);
 
+  // 503, NOT 200. A transport/parse failure is OUR fault and must never reach the
+  // customer as a not-found: portal.html:1573 tests !resp.ok and falls through to the
+  // d.found===false branch, whose copy says "double-check the number" — so a 200 here
+  // renders our outage as the customer's bad BOL. The status code is the only thing
+  // separating the two, because both cases carry found:false. Mirrors ?q= (:185, :190).
   let data;
   try {
     const res = await fetch(trackUrl);
-    if (!res.ok) throw new Error('upstream');
+    if (!res.ok) throw new Error('upstream ' + res.status);
     data = await res.json();
-  } catch {
-    return json({ found: false, error: 'upstream_error' });
+  } catch (e) {
+    console.error('fl-tracking portal-route upstream failure', { bol, message: String((e && e.message) || e) });
+    return json({ found: false, error: 'upstream_error' }, 503);
   }
 
+  // Genuine not-found stays 200. The upstream answered; this number simply is not there.
+  // Widening the 503 to cover this would invert the same defect — telling a customer with
+  // a mistyped BOL that our system is down, so they wait on something that will never fix
+  // itself. found:false + no error field is the not-found signal, and it must stay 200.
   const r = data?.Result;
   if (!r || !r.TrackingInformation?.length) {
     return json({ found: false });

@@ -1904,10 +1904,11 @@ Nothing below is built. Ordered by what blocks what, not by size.
 
 | # | Item | Ref |
 |---|---|---|
+| **B0** | **A REJECTED TENDER DRAWS A GREEN "DISPATCHED" CHECKPOINT.** BOL 160135857 — carrier rejected 3×, portal showed dispatched, no error at any point. Timeline reads stored record state, never the tender outcome (`portal.html:8521`). **Highest-severity open item. Blocks broad customer exposure.** Confirmed observed, cause unverified — do not fix before the record is read | §8.864 |
 | B1 | `_recordQboPayments` — six silent failure modes; the only writeback from payment to books, and it cannot report its own failure | §0.1.3 |
 | B2 | Debit cards are still surcharged, which is not permitted in the US. The cap fix did not address it | §5.7 |
 | B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
-| B4 | **Tracking is broken now.** `portal.freightandlogistics.com` returns NXDOMAIN on two independent resolvers and a live fetch fails to connect, yet `track-proxy/track-proxy.js:43` POSTs `trackShipment.php` to that host. Independent of Wix. **Customer-facing.** | §8.861 |
+| B4 | ~~Tracking is broken now~~ — **WRONG, corrected 2026-08-03.** There was no outage: nothing has called `track-proxy` since 2026-07-30, and tracking works today on `fl-tracking` (live-verified, both routes). The row is kept rather than deleted because the error is the lesson — a dead dependency was filed as a customer-facing emergency without checking whether anything reached it. The real live defect it was hiding (`?bol=` returning 200 on upstream failure, rendering our outage as the customer's bad number) is **FIXED**. Retiring the dead Worker is cleanup → **D6** | §8.861, §8.863 |
 | B5 | `www.freightandlogistics.com/demo-session` — **works today**, so NOT broken, but it is Wix-hosting-dependent and is the only remaining `.com` content dependency in the repo | §8.862 |
 
 ### C. Before anything is created in Stripe
@@ -1928,6 +1929,8 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | D3 | Login screen support contact | §5.9 |
 | D4 | Detail-pass chunking for full-book scale | §3.2 |
 | D5 | Dunning intervals, measured rather than reasoned | §7.1.1 |
+| D6 | **Retire the `track-proxy` Worker.** Dead code, still deployed and still answering. No repo consumers, fully superseded by `fl-tracking`. Confirm no dashboard route and no traffic first, then delete the Worker and `track-proxy/` | §8.861 |
+| D7 | **Delete the `#public-view` widget** (`portal.html:997-1865`) and point logged-out `/portal` at the landing chat. Never executed in 50 days / 619 versions; duplicates a working surface. Owner decision 2026-08-03: delete, do not repair | §8.861 |
 
 ### E. Parked, deliberately
 
@@ -2232,26 +2235,156 @@ invoice.** Which is binding is not decidable from our own material.
 This is the anti-fabrication rule failing from the inside: the KB is the agent's source of truth,
 and here the KB contradicts the contract.
 
-## 8.861 LIVE DEFECT B4 — tracking POSTs to a host that does not exist
+## 8.861 B4 — CORRECTED 2026-08-03. The original section was wrong twice over
 
-Found 2026-08-03. **Reported, not fixed.** Independent of Wix; broken now.
+**The original §8.861 asserted a live, customer-facing tracking outage. There was no outage.** It
+also recorded a customer-visible error message that no customer has ever seen. Both claims were
+produced by reading `track-proxy.js` and reasoning forward from a dead DNS record, without checking
+either of the two things that would have falsified them: whether any code still calls that Worker,
+and what the Worker actually returns when you ask it.
 
-`portal.freightandlogistics.com` returns **NXDOMAIN** on the default resolver and on `8.8.8.8`, and
-a live `curl` fails to connect (exit 6, could not resolve host). `track-proxy/track-proxy.js:43`
-POSTs to `https://portal.freightandlogistics.com/trackShipment.php` with a `Referer` on the same
-host (`:47`).
+**The lesson, which is the reason this section is being rewritten instead of deleted: a dead
+dependency is not an outage until something depends on it.** Establishing "this host is gone" is
+half a finding. The other half is "and here is the live path that reaches it" — and that half was
+skipped, so a retired code path was filed as a customer-facing emergency.
 
-**How it presents to the customer — read from the code, not inferred.** The fetch is wrapped
-(`:41-58`); a DNS failure throws and is caught at `:57`, returning
-`{ ok: false, error: "Tracking is temporarily unavailable." }` with **HTTP 502**.
+### What was claimed vs. what is true
 
-So it **does not fail silently** — the customer sees "Tracking is temporarily unavailable." That is
-the correct shape of message for a transient outage, and it is **wrong here**: the host does not
-exist, so the condition is permanent, and the copy invites the customer to try again indefinitely.
-Every tracking lookup has been returning that message for as long as the host has been gone.
+| Original claim | Verified reality |
+|---|---|
+| "Tracking is broken now… **Customer-facing.**" | **No customer path has reached `track-proxy` since `817640f` (2026-07-30).** Tracking works today |
+| Customer sees "Tracking is temporarily unavailable." (HTTP 502) | **That branch has never fired.** The live Worker returns **HTTP 404 "No shipment found for that number."** |
 
-The fix is not in the error handling. The upstream host is wrong or retired, and the correct
-endpoint has to be established before anything is changed.
+The one true fact in the original: `portal.freightandlogistics.com` is **NXDOMAIN** — re-verified on
+the default resolver, `8.8.8.8`, and `1.1.1.1`, with `www.freightandlogistics.com` and
+`shipprimus.com` resolving as positive controls, and `curl` exiting 6. The host is genuinely gone.
+
+### What is actually in production
+
+Both live tracking surfaces call **`fl-tracking`**, and both work — verified live, not inferred:
+
+| Surface | Constant | Route | Live result |
+|---|---|---|---|
+| Landing chat (`index.html:928`) | `index.html:818` | `?q=` public | `200 ok:true` — ABF Freight, in transit, full timeline |
+| portal.html chat widget (`portal.html:1566`) | `portal.html:1464` | `?bol=` portal | `200 found:true` — same shipment |
+
+Negative control: `?q=ZZZ99999` → `200 ok:false found:false`. The logged-in portal's "Track
+Shipment" (`portal.html:1894` → `:23426`) is not a Worker consumer at all — it reads status from
+**Primus booking data** (`fetchBookingByBOL`, the `trackInline` card at `:17595`).
+
+**Verified-scope method for "nothing calls track-proxy"**: all 115 tracked files enumerated; every
+`http(s)` URL literal extracted from all 94 non-PNG files and grouped —
+`track-proxy.felipe-b80.workers.dev` appears **0 times**; literal grep for
+`track-proxy|trackShipment` across all tracked files → 5 hits, all comments/config/this spec, none a
+fetch target; `git log -S` across **all** branches → the only client reference was `index.html`,
+added `83d275a` (2026-07-08) and removed `817640f` (2026-07-30). **Limit:** Cloudflare routes and
+custom domains live in the dashboard, not the repo (`fl-tracking/wrangler.toml:1` says its own
+config was reconstructed from deployed settings), so a dashboard route or a non-repo consumer would
+be invisible here. Closing it is an owner check: Workers → track-proxy → Domains & Routes, plus the
+request-count graph.
+
+### The real defect this was hiding, and it was never the 502
+
+`track-proxy` returns **404 "No shipment found for that number."** for a real, in-transit BOL —
+byte-identical to what it returns for `ZZZ99999`. The 404 proves the `catch` at `:56` never fires:
+a response came back, so the failure lands at `:63` (JSON.parse fails) or `:67` (no `Result.BOL`),
+both of which return that same string. So the defect was never "permanent condition described as
+temporary." It was **a system fault presenting as the customer's bad number** — see §8.863.
+
+`b6ea763` established this on 2026-07-30 with these same two BOLs. The original §8.861, written
+2026-08-03, contradicted a finding already in the repo's own history.
+
+### Blast radius, bounded
+
+`track-proxy` was created **2026-07-09T03:01:59Z** and redeployed once at **03:06:32Z** — two
+deploys, one evening, never touched since (`wrangler deployments list`). The landing page called it
+from `83d275a` (2026-07-08) until `817640f` (2026-07-30). **Maximum customer exposure ~22 days,
+landing page only, and it ended four days before it was filed as live.** Whether the host was alive
+on 2026-07-08 is **not establishable from this repo** — dating the DNS removal needs an external
+DNS-history service. `portal.html` never pointed at `track-proxy`; `TRACK_API` has read `fl-tracking`
+since its first commit (`1414366`, 2026-06-14).
+
+### The live defect that was actually here — FIXED
+
+Found while verifying the above. `fl-tracking`'s **`?bol=` route returned HTTP 200 on upstream
+failure** (`worker.js:96` — the `json()` helper defaults `status = 200`), while the `?q=` route
+correctly returns 503. `portal.html:1573` tests `if(!resp.ok) throw 0`, which never fires on a 200,
+so control reached `:1575` `d.found===false` and rendered **"No status found for #X yet.
+Double-check the number"** — our outage, rendered as the customer's typo. The client never reads
+`d.error`.
+
+`b6ea763`'s commit message asserts "step 3's 503 will route upstream failures to `!resp.ok` →
+catch." That 503 was only ever added to the public route. The portal route kept the defect for
+another four days, in the same file, under a header comment that said its behavior was correct and
+"must stay that way."
+
+**Fixed Worker-side, not client-side**, so both surfaces inherit it and `portal.html:1573` starts
+working as already written; a client-side patch would leave the Worker still returning 200 for a
+failure and hand the same lie to the next consumer. Verified with negative controls in both
+directions against the real Worker module and the real client conditions: upstream throws / HTTP 500
+/ non-JSON body → **503**, client renders the outage copy; genuine not-found (no `Result`, or empty
+timeline) → **200 `found:false`**, client still renders "double-check the number"; healthy lookup →
+unchanged. The same harness run against the pre-fix Worker fails exactly the first three and passes
+the last three, so the controls discriminate rather than merely agreeing.
+
+The second direction is the one that matters: widening the 503 to cover genuine not-founds would
+invert the same defect — telling a customer with a mistyped BOL that our system is down, so they
+wait for a fix that will never come.
+
+### THIRD CORRECTION — `?bol=` has NO live consumer. The fix is latent-correctness
+
+Written after the fix, before it shipped, and it corrects this section a third time in one evening.
+
+**`?bol=`'s only consumer is dead code that has never executed.** Its sole caller is `TRACK_API` in
+the `#public-view` widget inside `portal.html`, and that widget's entire script has never run: the
+`srcdoc` attribute terminates at the first literal `"` (`portal.html:1458`, `const TRUCK_IMG = "`),
+so the iframe start tag closes at `:1498` and everything after — ~400 lines including all the
+tracking code — becomes inert raw text inside the `<iframe>` element.
+
+Confirmed three ways: **parse5** (spec-compliant) on the local file; **production bytes**, which are
+byte-identical to local by SHA-256; and **Chrome on the live site**, where `fetchTrack`, `sendMsg`,
+`expandChat`, `looksLikeTracking` and `TRACK_API` are all `undefined` in the frame and inline
+handlers throw `ReferenceError`.
+
+**Method note — why "never worked" is stated instead of "probably never worked."** `git log -S`
+tells you when a *string* moved; it cannot tell you whether the surrounding markup parsed. So **all
+619 historical versions of `portal.html` were parsed with parse5** and each one's `srcdoc` checked
+for the widget script. **Every single version is truncated; not one ever contained it.** It arrived
+broken in `1414366` (2026-06-14) — the iframe, `TRUCK_IMG`, and `fetchTrack` in one commit, with
+`TRUCK_IMG`'s literal quote 108 lines above the tracking code. That is 50 days, and it is a
+measurement rather than an inference. **Prefer parsing every version over trusting `git log -S`
+whenever the question is "did this ever work" rather than "when did this text change."**
+
+Consequences:
+
+- **The `?bol=` 503 fix above is correct but LATENT.** It repairs no customer-visible behaviour
+  today. It is kept because it costs nothing, makes the two routes consistent, and means the route
+  is already right when the widget question is settled. **It is explicitly not a customer-facing
+  repair, and it does not ship on its own urgency.**
+- **The only live tracking surface is the landing page (`?q=`)**, which already returned 503. The
+  logged-in portal reads status from Primus booking data and calls no Worker.
+- The severity error here is recorded as the second instance of the reviewer-facing cousin in
+  §8.863: characterising `?bol=` as a live customer path was reasoning from code to impact without
+  checking that anything reaches it — the identical mistake this section was created to correct.
+
+### Status
+
+- `track-proxy` is **superseded dead code that is still deployed**. No consumers, no repo
+  references, fully replaced by `fl-tracking` (whose `?q=` route is a strict superset: same field
+  names plus `searched[]`, a *bound* rate-limit namespace — track-proxy's `env.RL` was never bound
+  — NOTE filtering, and observability). **Retirement is cleanup, queued as D6, deliberately not part
+  of this change.**
+- Do **not** repoint `track-proxy`. The working upstream is already in production:
+  `shipprimus.com/tracking.php?format=json&customer=…&trackingNumber=…` (`fl-tracking/worker.js:35`),
+  verified live returning real shipment data.
+- What `portal.freightandlogistics.com/trackShipment.php` originally was is **not established**. The
+  PHP naming matches the Primus family (`tracking.php`, and the `t.php` link `b6ea763` removed),
+  suggesting a white-labeled Primus host — that is provenance, not an endpoint claim, and nothing
+  should be built on it.
+- **The `#public-view` widget is dead and is being deleted** — see the third correction above. Found
+  in passing while verifying this section, then run to ground: it has never executed in 619 versions
+  over 50 days. Owner decision 2026-08-03: delete it and point logged-out `/portal` at the landing
+  chat rather than repair ~400 lines of JS inside an HTML attribute. Queued as **D7**.
 
 ## 8.862 B5 — demo-session works TODAY; the earlier concern was wrong
 
@@ -2269,6 +2402,180 @@ no redirect** (`redirect_url` empty), and the page title is
 So B5 is **not** a current defect. It is recorded only as the last remaining `.com` **content**
 dependency in the repo — `portal.html:1504` (the `[[TALK]]` handler), `:2074` (iframe), `:2076`
 (fallback link) — which would break if Wix hosting ever stopped, but is fine today.
+
+## 8.863 DEFECT CLASS — misattributing a system fault to the customer
+
+**Named 2026-08-03, on the third instance.** This is a subclass of silent failure, and it is worse
+than the generic form.
+
+A generic silent failure loses information: something broke and nobody was told. **This class
+manufactures false information and aims it at the customer.** The system takes its own fault and
+renders it as a defect in the customer's input or understanding. The customer is then sent to fix
+something that was never broken — re-typing a correct BOL, re-checking a dispatch that never
+happened — while the actual fault stays unreported and unfixed.
+
+**Why it is more expensive than it looks.** The resulting support contacts arrive pre-labeled as
+user error: "customer can't type their BOL", "customer confused about dispatch." That is the exact
+shape of a metric that looks like a training or UX problem, so the real defect is not merely
+invisible — it is actively disguised as something else, and the disguise survives triage.
+
+### The three instances
+
+| # | Instance | System fault | What the customer was told |
+|---|---|---|---|
+| 1 | Failed dispatch rendering as success (**§8.864** — live, highest severity) | Carrier rejected the tender 3× | Green "Dispatched" checkpoint, no error — freight is moving, when nothing was accepted |
+| 2 | `track-proxy` 404 (§8.861) | Upstream host is NXDOMAIN | "No shipment found for that number" — double-check a correct BOL |
+| 3 | `fl-tracking` `?bol=` 200 on upstream error (§8.861) | Primus tracking unreachable | "No status found… **Double-check the number**" — same, on the live Worker |
+
+Instance 1 is now written up in **§8.864** — confirmed observed, cause unverified, unfixed, and the
+only one of the three still live. Instances 2 and 3 are the same misattribution at two layers, four
+days apart, and instance 3
+survived inside the very file whose commit message (`b6ea763`) claimed to have eliminated the
+conflation. That is the argument for naming the class rather than fixing instances one at a time:
+the fix does not generalize on its own, even for the person holding it.
+
+### The rule
+
+**Any error path whose cause could be either the system or the customer's input MUST distinguish
+between them before rendering, and MUST NEVER default to blaming the input.**
+
+Concretely:
+
+1. **The distinction must survive every hop.** A Worker that collapses "upstream down" and "not
+   found" into one status code has destroyed the information before the client can act on it —
+   which is exactly how instance 3 happened. Carry the difference in the status code, not only in a
+   body field a consumer may ignore.
+2. **Fix it at the layer that owns the truth.** The producer of the error knows which it was; the
+   consumer is guessing. Patch the Worker, not the client, or the next consumer inherits the lie.
+3. **When cause is genuinely unknown, blame the system.** "Something went wrong on our end" is
+   recoverable if wrong. "Check your number" is not — it costs the customer real effort and teaches
+   them to distrust their own correct input.
+4. **Do not invert it.** Widening a system-fault message to cover genuine customer errors is the
+   same defect running the other way: it tells someone with a real typo to wait for a fix that will
+   never come. Both directions need a negative control.
+5. **Test it in both directions.** A control that passes before and after the fix proves nothing.
+   Assert the system-fault case renders as our fault AND the customer-error case still renders as
+   theirs, and confirm the pre-fix code fails the first while passing the second.
+
+**When reviewing any error branch, the question is not "does this handle the error" but "whose fault
+does this claim it is, and does the code actually know that?"**
+
+### The reviewer-facing cousin — misattributing severity to ourselves
+
+The same mistake, aimed inward. **Reasoning from code structure to real-world impact without
+measuring whether any live path reaches the code.** Reading the code tells you what would happen
+*if it ran*. It does not tell you that it runs.
+
+It happened **twice in one evening**, 2026-08-03:
+
+1. **`track-proxy`'s "outage."** A dead upstream host was filed as a live customer-facing emergency
+   (§8.861). Nothing had called that Worker in four days. The severity was inferred from the code,
+   never from a caller.
+2. **The `?bol=` fix.** Having just corrected the first one, the same session characterised the
+   `?bol=` 503 as repairing a live customer path — and then found that `?bol=`'s only consumer is a
+   widget whose script **has never executed once in 50 days**. The fix is correct; the severity
+   claim was not.
+
+The second is the more instructive: it was made by someone who had just written the rule, in the
+same session, about the same subsystem. Knowing the failure mode does not confer immunity from it.
+
+**The rule: before characterising a defect's severity, establish that a live path reaches it.**
+
+- "This code is wrong" and "customers are hit by this" are two claims. The second needs its own
+  evidence: a caller, a request count, a log line, a reproduction.
+- **Reachability is falsifiable — go falsify it.** Grep for callers across the whole tree, check
+  whether the consumer executes, probe the deployed endpoint, look at traffic.
+- When reachability cannot be established, say so and label the finding **latent** rather than
+  guessing in either direction. A latent defect is still worth fixing; it is not worth an emergency.
+- Severity language is a claim about the world, not about the code. Spend it accordingly.
+
+## 8.864 LIVE DEFECT — a rejected tender drew a green "Dispatched" checkpoint
+
+**Instance 1 of §8.863, and the only one still live. Highest-severity open item. Confirmed observed,
+cause unverified, unfixed. Must be resolved before broad customer exposure.**
+
+Recorded 2026-08-03. It had existed only in the owner's memory and one conversation until now, which
+for the highest-severity open item is its own defect.
+
+### ESTABLISHED — owner's direct observation, BOL 160135857
+
+- The **carrier rejected the tender three times.**
+- The portal drew a green **"Dispatched"** checkpoint on the tracking timeline anyway.
+- **No error was surfaced at any point.**
+- A customer seeing this would believe the shipment was tendered and moving. **Nothing had been
+  accepted.** They would wait for a pickup that was never scheduled, and discover it only when the
+  freight failed to appear — by which point the pickup window is gone.
+
+This is the most damaging form of §8.863: the misattribution is not "your number is wrong" but
+"your freight is moving."
+
+### ESTABLISHED — verified in code this session
+
+The checkpoint is computed **entirely from stored record state**, never from the tender outcome
+(`portal.html:8521`):
+
+```js
+const disp = s.dispatched === true || !!dispatchDate || stDispatched;
+```
+
+…where `stDispatched` (`:8518`) is a regex over the record's **status string**:
+`/DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/`. All three inputs are fields on
+the BOL record as Primus returns it. **None of them is the result of the tender call.** `reached`
+(`:8527-8533`) then lights the stage monotonically, and the checkpoint rows are built from it at
+`:8922` and `:12854`.
+
+**So the owner's hypothesis is confirmed at the code level: the timeline reads stored status, not
+the tender outcome.** If Primus marks the record dispatched — or merely returns a status string
+containing "DISPATCH" — the green checkpoint is drawn regardless of what the carrier said.
+
+`_canonicalDispatch` (`:7098`) does have honest failure returns: `inFlight`, `needsDisclosure`,
+`chargeFailed` with a code and error (`:7099-7131`). It is called from at least four sites
+(`:7318`, `:8135`, `:12050`, `:15185`). **So the honest path is real, consistent with the correct
+error on BOL 160135858's 500 — but it is not the path that paints the timeline.**
+
+### NOT ESTABLISHED — and what was actually attempted
+
+**The BOL records could not be read.** `fetchBookingByBOL` was run for **160135857** and **160135858**
+from a logged-in session; both returned not-found. That means **not resolvable from that account** —
+its fast path is a direct BOL-number lookup that swallows errors in a bare `catch`, and its fallback
+scan is owner-filtered (`okOwner`: `thirdParty.id === primusCustomerId`) over a 548-day window. The
+BOLs are most likely on a different customer. **They were not searched for across other accounts,
+deliberately — that is customer data, and the finding does not need it.** So "not found" here is a
+statement about the lookup's scope, not about the BOLs' existence.
+
+Consequently these remain open:
+
+1. **Does Primus set `dispatched: true` / a dispatch date / a "DISPATCH" status string on a REJECTED
+   tender?** This is the crux. The code confirms the timeline would believe it; only the record
+   shows whether Primus said it.
+2. **Which of the dispatch entry points reach the honest path and which paint from stored state.**
+   Four `_canonicalDispatch` call sites plus the agent tool path are known; they have not been
+   traced individually.
+3. Whether the three rejections produced any client-visible signal that was swallowed upstream of
+   the timeline.
+
+### ALTERNATIVE CAUSES — named so the hypothesis is tested, not confirmed
+
+Two candidates would produce the same symptom **without** Primus ever storing a dispatched state:
+
+- **`:7102`** — `window._lastBooked.dispatched` short-circuits `_canonicalDispatch` to
+  `{ ok:true, alreadyDispatched:true, dispatchOk:true }` **before any network call**. An optimistic
+  local flag set once would make every subsequent attempt report success.
+- **`:8155`** — the dispatch button is painted green with "Dispatched!" by the click handler, and
+  **`:6797`** renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local UI state, not
+  record state.
+
+### WHAT WOULD FALSIFY THE STORED-STATE HYPOTHESIS
+
+Pull the BOL 160135857 record from the owning account and read `dispatched`, the dispatch date, and
+the status string. **If they show `false` / empty / a non-dispatch status, the timeline could not
+have drawn that checkpoint from stored state**, the hypothesis is dead, and the cause is one of the
+optimistic-local-state candidates above. If they show a dispatched state despite three rejections,
+the hypothesis holds and the fix belongs at the boundary — the timeline must reflect tender outcome,
+not record state, and a rejected tender must not be storable as dispatched.
+
+**Do not fix before this is answered.** The two causes need opposite fixes, and §8.863's whole point
+is that guessing which one is live is how this class survives.
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
