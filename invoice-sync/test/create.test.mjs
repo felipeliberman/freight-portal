@@ -28,7 +28,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Ledger } from '../src/ledger.js';
-import { freshDb, ANY_AR } from './helpers.mjs';
+import { freshDb, ANY_AR, whyRed } from './helpers.mjs';
 
 /**
  * A CALL RECORDER. Deliberately NOT a response simulator.
@@ -50,25 +50,10 @@ function stripeCallRecorder() {
   return { calls, createCustomer: record('createCustomer'), createInvoice: record('createInvoice') };
 }
 
-/**
- * Printed BY THE FAILURE, not left in a comment.
- *
- * Once the attach guard lands this is the only red test in the suite, and a single standing red
- * normalises within days and then gets deleted by someone tidying up. Nobody opens the file when
- * the suite is green-except-one — so the reason has to be in the output they actually see.
- */
-const WHY_RED = [
-  '',
-  '  ── CONTROL 9 IS RED BY ABSENCE, NOT BY DEFECT ──',
-  '  Nothing is broken. This test is pending implementation of src/create.js',
-  '  (createInvoiceForClaimedRow). It goes green on its own the moment that lands.',
-  '',
-  '  DO NOT DELETE THIS TEST TO GREEN THE SUITE.',
-  '  Delete it only if the create path is abandoned outright. It is the only thing',
-  '  asserting that a create never implicitly creates a Stripe customer — the',
-  '  customer-orphan failure mode (spec §4.2, §8.869).',
-  '',
-].join('\n');
+const WHY_RED = whyRed(
+  'src/create.js (createInvoiceForClaimedRow)',
+  'It is the only thing asserting that a create never implicitly creates a Stripe\n  customer — the customer-orphan failure mode (spec §4.2, §8.869).'
+);
 
 test('PENDING-IMPLEMENTATION (red by absence, not by defect): a create whose customer join misses refuses, and creates no customer', async () => {
   // PROVISIONAL PATH AND SIGNATURE. Neither exists yet, so this test is naming both — see the

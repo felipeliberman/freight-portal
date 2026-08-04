@@ -13,6 +13,7 @@
 // just-created invoice is not findable and two runs 30s apart both see "no match".
 
 import { normalizeArCode, allowlistPredicate, isAllowlisted } from './arcode.js';
+import { REFUSAL_REASONS, refuse, allow } from './refusals.js';
 
 /** Marks exception rows that are a DATA GAP in one record, not an operational failure. */
 export const QUARANTINE_PREFIX = 'quarantine:';
@@ -232,25 +233,69 @@ export class Ledger {
    * no ledger row referenced. That is the orphan this whole mechanism exists to prevent,
    * manufactured by the code meant to record ids.
    *
-   * Re-attaching the SAME id still returns true: it is a benign retry, not a conflict. A re-run
-   * that re-attaches what it already attached must not start reporting failures on correct work.
+   * Re-attaching the SAME id succeeds: a benign retry is not a conflict. A re-run that re-attaches
+   * what it already attached must not start reporting failures on correct work.
    *
-   * @returns {boolean} true if this row now carries this id; FALSE means a different id is already
-   *   attached and the caller must not treat the create as recorded.
+   * @returns {{ok:true}} on success, or a refusal:
+   *   `already_materialized`         this row already carries a DIFFERENT id
+   *   `invoice_id_already_claimed`   a DIFFERENT ROW already holds this id (control 6)
+   *
+   * The SAME mechanism as StripeCustomers.attach(), not merely the same vocabulary: two sibling
+   * tables handling an identical condition by opposite philosophies would mean a caller cannot
+   * learn one convention and rely on it.
    */
   async attachStripeInvoice(ledgerId, stripeInvoiceId, state = 'draft') {
     assertState(state);
     const bound = this.bound();
     if (!stripeInvoiceId) throw new Error('attachStripeInvoice requires a stripeInvoiceId');
-    const res = await this.db
-      .prepare(
-        `UPDATE ledger SET stripe_invoice_id = ?, stripe_state = ?, last_error = NULL, updated_at = ?
-          WHERE id = ? AND mode = ? AND ${bound.sql}
-            AND (stripe_invoice_id IS NULL OR stripe_invoice_id = ?)`
-      )
-      .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, ...bound.params, stripeInvoiceId)
-      .run();
-    return (res.meta && res.meta.changes) === 1;
+
+    // Pre-check, so the ordinary collision never reaches the storage engine at all.
+    const claimant = await this._holderOf(stripeInvoiceId);
+    if (claimant && claimant.id !== ledgerId) {
+      return refuse(REFUSAL_REASONS.INVOICE_ID_ALREADY_CLAIMED, { heldBy: claimant.primus_invoice_id });
+    }
+
+    let res;
+    try {
+      res = await this.db
+        .prepare(
+          `UPDATE ledger SET stripe_invoice_id = ?, stripe_state = ?, last_error = NULL, updated_at = ?
+            WHERE id = ? AND mode = ? AND ${bound.sql}
+              AND (stripe_invoice_id IS NULL OR stripe_invoice_id = ?)`
+        )
+        .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, ...bound.params, stripeInvoiceId)
+        .run();
+    } catch (err) {
+      // THE NARROW CATCH — classified by RE-READING STATE, never by parsing the message. The
+      // ledger_stripe_invoice_uniq violation and every other constraint on this table carry the
+      // SAME SQLite code (2067), and D1 wraps messages differently from node:sqlite. The error
+      // becomes a refusal ONLY when a read confirms a different row now holds this id; anything
+      // else rethrows untouched. Identical to StripeCustomers.attach() on purpose.
+      const holder = await this._holderOf(stripeInvoiceId);
+      if (holder && holder.id !== ledgerId) {
+        return refuse(REFUSAL_REASONS.INVOICE_ID_ALREADY_CLAIMED, { heldBy: holder.primus_invoice_id });
+      }
+      throw err;
+    }
+
+    if ((res.meta && res.meta.changes) === 1) return allow();
+    return refuse(REFUSAL_REASONS.ALREADY_MATERIALIZED);
+  }
+
+  /**
+   * Which row, if any, holds this Stripe invoice id in this mode.
+   *
+   * ── DELIBERATELY NOT BOUND-SCOPED. This is not an omission — do not "fix" it. ────────────────
+   * Every other query on this class carries the pilot bound. This one must not: the unique index is
+   * GLOBAL, so a collision with an out-of-bound row is still a collision. Bounding this read would
+   * make the refusal miss precisely the case the 11 Payless rows exist to represent — a row outside
+   * the pilot already holding the id we are about to claim.
+   */
+  async _holderOf(stripeInvoiceId) {
+    return this.db
+      .prepare('SELECT id, primus_invoice_id FROM ledger WHERE mode = ? AND stripe_invoice_id = ?')
+      .bind(this.mode, stripeInvoiceId)
+      .first();
   }
 
   /**

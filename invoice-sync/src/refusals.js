@@ -1,0 +1,92 @@
+// THE REFUSAL VOCABULARY — one set, agreed before the controls were written rather than grown
+// case by case inside them (spec §8.872).
+//
+// ── REFUSALS AND THROWS ARE DIFFERENT CATEGORIES. Keep them apart. ───────────────────────────
+//
+// A REFUSAL is an EXPECTED OUTCOME that a caller handles: the customer is not resolved yet, the
+// row is outside the pilot bound, another run is mid-create. Every one of these is a normal state
+// of a correct system, and the caller's job is to skip and move on.
+//
+// A THROW is a BROKEN INVARIANT that nobody should be handling. `assertLivemode` throwing on a
+// mode mismatch is the example: a caller able to write `if (!result.ok)` past it is a caller that
+// can ignore it, and the whole point is that it cannot be ignored. Same for an unknown
+// `stripe_state`, and for a claim outside the bound (which means a caller skipped the poll's
+// filter — a programming error, not a business condition).
+//
+// The temptation runs one way: the next refusal will look throwable, or the next broken invariant
+// will look like it deserves a nice `{ok:false}`. Neither. Ask whether a correct system reaches
+// this state on an ordinary Tuesday. If yes it is a refusal; if no it is a throw.
+//
+// ── SHAPE ────────────────────────────────────────────────────────────────────────────────────
+//
+// Always `{ ok: false, reason: <one of REFUSAL_REASONS> }`, optionally with `detail`. NEVER a bare
+// `false`, never a thrown string. A caller that has to string-match an error to understand it is
+// not looking at an API.
+
+/**
+ * Every legal refusal reason. ONE set, imported rather than remembered — the same discipline as
+ * STRIPE_STATES, and for the same reason: a coined synonym is how a vocabulary stops being one.
+ */
+export const REFUSAL_REASONS = Object.freeze({
+  /**
+   * The ARCode is outside AR_ALLOWLIST (control 8).
+   *
+   * DELIBERATELY THE SAME STRING checkArCode already returns for this exact condition
+   * (config.js). A second name for one condition is how five different words for "this ARCode did
+   * not work out" came to exist across four layers.
+   */
+  NOT_ALLOWLISTED: 'not_allowlisted',
+
+  /** The (mode, ar_code) join yields no usable Stripe customer id (control 9). */
+  NO_STRIPE_CUSTOMER: 'no_stripe_customer',
+
+  /**
+   * This row is in `creating` — a create was attempted and its outcome is unknown (control 7).
+   * Stripe must be READ before anything else is created, or the unknown becomes a duplicate.
+   */
+  CREATE_IN_FLIGHT: 'create_in_flight',
+
+  /** The row already carries a Stripe id; there is nothing to create (control 1's negative side). */
+  ALREADY_MATERIALIZED: 'already_materialized',
+
+  /**
+   * A DIFFERENT ledger row already holds this Stripe INVOICE id (control 6).
+   *
+   * The sibling of CUSTOMER_ID_ALREADY_CLAIMED, on the other table. Both tables must handle an
+   * identical condition by an identical philosophy — a caller that learns one convention has to be
+   * able to rely on it, which is the entire point of having a vocabulary rather than a habit.
+   */
+  INVOICE_ID_ALREADY_CLAIMED: 'invoice_id_already_claimed',
+
+  /**
+   * A DIFFERENT row already holds this Stripe customer id (control 5).
+   *
+   * The worst refusal in the set: unrefused it would bill one company's freight to another. It is
+   * expected — it is precisely what the partial unique index exists to produce — so it belongs
+   * here rather than escaping as a raw storage-engine error.
+   */
+  CUSTOMER_ID_ALREADY_CLAIMED: 'customer_id_already_claimed',
+});
+
+const ALL = Object.freeze(new Set(Object.values(REFUSAL_REASONS)));
+
+/**
+ * Build a refusal. Validates the reason against the set, so a typo cannot invent a sixth word.
+ *
+ * @param {string} reason  one of REFUSAL_REASONS
+ * @param {object} [detail] short, non-sensitive context — never a Primus detail object (§6.1)
+ */
+export function refuse(reason, detail = undefined) {
+  if (!ALL.has(reason)) {
+    throw new Error(
+      `Unknown refusal reason ${JSON.stringify(reason)} — expected one of ${[...ALL].join(', ')}. ` +
+      `The set is agreed up front (spec §8.872); growing it case by case is how it stops being a set.`
+    );
+  }
+  return detail === undefined ? { ok: false, reason } : { ok: false, reason, detail };
+}
+
+/** The success counterpart, so callers test one shape rather than two. */
+export function allow(value = undefined) {
+  return value === undefined ? { ok: true } : { ok: true, value };
+}

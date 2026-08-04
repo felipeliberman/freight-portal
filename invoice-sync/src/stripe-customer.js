@@ -17,6 +17,7 @@
 // stronger guarantee. This module is what makes the discipline survive the day it becomes Write.
 
 import { normalizeArCode, allowlistPredicate, isAllowlisted } from './arcode.js';
+import { REFUSAL_REASONS, refuse, allow } from './refusals.js';
 
 /**
  * Every legal `stripe_customer.state`. ONE list, imported rather than remembered.
@@ -157,26 +158,74 @@ export class StripeCustomers {
   /**
    * Attach the Stripe customer id. WRITE-ONCE PER ID, exactly as on the ledger.
    *
-   * A different id is refused rather than overwritten — overwriting would strand the first customer
-   * as an object no row references, which is the same defect the ledger carried until 3f9411e.
    * Re-attaching the SAME id succeeds: a benign retry is not a conflict.
    *
-   * @returns {boolean} false means a DIFFERENT id is already attached; the caller must not treat
-   *   its create as recorded.
+   * @returns {{ok:true}} on success, or a refusal:
+   *   `already_materialized`          this row already carries a DIFFERENT id. Overwriting would
+   *                                   strand the first customer as an object nothing references —
+   *                                   the defect the ledger carried until 3f9411e.
+   *   `customer_id_already_claimed`   a DIFFERENT ROW already holds this id (control 5). Unrefused
+   *                                   this is a mis-join, and a mis-join bills one company's
+   *                                   freight to another.
    */
   async attach(id, stripeCustomerId) {
     if (!stripeCustomerId) throw new Error('attach() requires a stripeCustomerId');
     const bound = this.bound();
-    const res = await this.db
-      .prepare(
-        `UPDATE stripe_customer
-            SET stripe_customer_id = ?, state = 'created', last_error = NULL, updated_at = ?
-          WHERE id = ? AND mode = ? AND ${bound.sql}
-            AND (stripe_customer_id IS NULL OR stripe_customer_id = ?)`
-      )
-      .bind(stripeCustomerId, Date.now(), id, this.mode, ...bound.params, stripeCustomerId)
-      .run();
-    return (res.meta && res.meta.changes) === 1;
+
+    // Pre-check, so the ordinary collision never reaches the storage engine at all.
+    const claimant = await this._holderOf(stripeCustomerId);
+    if (claimant && claimant.id !== id) {
+      return refuse(REFUSAL_REASONS.CUSTOMER_ID_ALREADY_CLAIMED, { heldBy: claimant.ar_code });
+    }
+
+    let res;
+    try {
+      res = await this.db
+        .prepare(
+          `UPDATE stripe_customer
+              SET stripe_customer_id = ?, state = 'created', last_error = NULL, updated_at = ?
+            WHERE id = ? AND mode = ? AND ${bound.sql}
+              AND (stripe_customer_id IS NULL OR stripe_customer_id = ?)`
+        )
+        .bind(stripeCustomerId, Date.now(), id, this.mode, ...bound.params, stripeCustomerId)
+        .run();
+    } catch (err) {
+      // ── THE NARROW CATCH. Classified by RE-READING STATE, never by parsing the message. ──────
+      //
+      // The message is the only thing that distinguishes this constraint from the (mode, ar_code)
+      // one — both carry SQLITE code 2067 — and D1 wraps messages differently from node:sqlite.
+      // Matching on text would be brittle across engines AND would swallow the ar_code refusal and
+      // every future index on this table.
+      //
+      // So the error is converted ONLY when the domain condition is CONFIRMED by a read: a
+      // different row, in this mode, now holds this id. Anything else rethrows untouched. This is
+      // the race backstop; the pre-check above handles the ordinary case.
+      const holder = await this._holderOf(stripeCustomerId);
+      if (holder && holder.id !== id) {
+        return refuse(REFUSAL_REASONS.CUSTOMER_ID_ALREADY_CLAIMED, { heldBy: holder.ar_code });
+      }
+      throw err;
+    }
+
+    if ((res.meta && res.meta.changes) === 1) return allow();
+    // The row exists and is in bounds (the caller got here holding it), so a zero-row update means
+    // the write-once guard fired: a different id is already on THIS row.
+    return refuse(REFUSAL_REASONS.ALREADY_MATERIALIZED);
+  }
+
+  /**
+   * Which row, if any, holds this Stripe customer id in this mode.
+   *
+   * ── DELIBERATELY NOT BOUND-SCOPED. This is not an omission — do not "fix" it. ────────────────
+   * Every other query on this class carries the pilot bound. This one must not: the unique index is
+   * GLOBAL, so a collision with an out-of-bound row is still a collision. Bounding this read would
+   * make the refusal miss precisely the case the 11 Payless rows exist to represent.
+   */
+  async _holderOf(stripeCustomerId) {
+    return this.db
+      .prepare('SELECT id, ar_code FROM stripe_customer WHERE mode = ? AND stripe_customer_id = ?')
+      .bind(this.mode, stripeCustomerId)
+      .first();
   }
 
   async setState(id, state) {

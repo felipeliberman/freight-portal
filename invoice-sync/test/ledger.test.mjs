@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Ledger, idempotencyKey } from '../src/ledger.js';
+import { REFUSAL_REASONS } from '../src/refusals.js';
 import { freshDb, ANY_AR } from './helpers.mjs';
 
 test('schema applies cleanly', () => {
@@ -65,16 +66,22 @@ test('a reissue claims a new version rather than colliding', async () => {
   assert.equal((await ledger.versionsOf('141886')).length, 2);
 });
 
-test('two ledger rows cannot claim the same Stripe invoice', async () => {
+test('CONTROL 6: two ledger rows cannot claim the same Stripe invoice', async () => {
   const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const a = await ledger.claim({ primusInvoiceId: 'A' });
   const b = await ledger.claim({ primusInvoiceId: 'B' });
   await ledger.attachStripeInvoice(a.row.id, 'in_test_123');
-  await assert.rejects(
-    () => ledger.attachStripeInvoice(b.row.id, 'in_test_123'),
-    /UNIQUE|constraint/i,
-    'the partial unique index must reject a shared stripe_invoice_id'
-  );
+
+  // WAS `assert.rejects(..., /UNIQUE|constraint/i)`. That assertion was worse than the defect it
+  // described: a test pinning a raw storage error keeps the anti-pattern alive and makes removing
+  // it look like a regression. The condition is expected — it is what the partial unique index
+  // exists to produce — so it is refused in the domain vocabulary, exactly as on the customer table.
+  const refusal = await ledger.attachStripeInvoice(b.row.id, 'in_test_123');
+  assert.equal(refusal.ok, false);
+  assert.equal(refusal.reason, REFUSAL_REASONS.INVOICE_ID_ALREADY_CLAIMED);
+  assert.equal(refusal.detail.heldBy, 'A', 'and it names which invoice already holds the id');
+
+  assert.equal((await ledger.get('B')).stripe_invoice_id, null, 'B is untouched');
 });
 
 test('many intent rows with no Stripe invoice coexist', async () => {
@@ -117,11 +124,12 @@ test('REGRESSION (defect reproduced before the fix): attachStripeInvoice refuses
   const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141604', bolNumber: '160135796', arCode: '1234' });
 
-  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_FIRST'), true,
+  assert.deepEqual(await ledger.attachStripeInvoice(row.id, 'in_FIRST'), { ok: true },
     'the first attach succeeds AND reports that it did — a silent void return cannot be acted on');
 
-  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SECOND'), false,
-    'a different id is refused, not applied');
+  assert.deepEqual(await ledger.attachStripeInvoice(row.id, 'in_SECOND'),
+    { ok: false, reason: REFUSAL_REASONS.ALREADY_MATERIALIZED },
+    'a different id on THIS row is refused with a named reason, not applied');
 
   const after = await ledger.get('141604');
   assert.equal(after.stripe_invoice_id, 'in_FIRST',
@@ -133,8 +141,8 @@ test('REGRESSION (defect reproduced before the fix): re-attaching the SAME strip
   const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141385', arCode: '1234' });
 
-  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SAME'), true);
-  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SAME'), true,
+  assert.deepEqual(await ledger.attachStripeInvoice(row.id, 'in_SAME'), { ok: true });
+  assert.deepEqual(await ledger.attachStripeInvoice(row.id, 'in_SAME'), { ok: true },
     'idempotent re-attach must succeed — the guard blocks a DIFFERENT id, not a repeat of the same one');
 
   assert.equal((await ledger.get('141385')).stripe_invoice_id, 'in_SAME');

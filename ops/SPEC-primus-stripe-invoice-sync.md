@@ -3583,6 +3583,111 @@ wide bound, then prove **all seven** state-advancing writes refuse under the nar
 same calls succeed through a wide-bound instance, so the refusals are the bound acting rather than
 the guards being broken.
 
+## 8.872 THE REFUSAL VOCABULARY — agreed before the controls, not grown inside them
+
+**Settled 2026-08-04, before Step 5 was written.** The set was deferred at Step 3 on the grounds
+that one member is not a set; it was agreed once all nine controls were visible and the real shape
+was knowable.
+
+| reason | condition | control |
+|---|---|---|
+| `not_allowlisted` | the ARCode is outside `AR_ALLOWLIST` | 8 |
+| `no_stripe_customer` | the `(mode, ar_code)` join yields no usable customer id | 9 |
+| `create_in_flight` | the row is in `creating`; the outcome is unknown and Stripe must be READ first | 7 |
+| `already_materialized` | the row already carries a Stripe id | 1 (negative side) |
+| `customer_id_already_claimed` | a DIFFERENT row already holds this Stripe customer id | 5 |
+| `invoice_id_already_claimed` | a DIFFERENT ledger row already holds this Stripe invoice id | 6 |
+
+**Six, not five.** The set was agreed at five; control 6 turned out to be the same expected mis-join
+class as control 5 on the other table, and it needed its own name — `customer_id_already_claimed`
+does not describe an invoice. The increment is a genuinely new condition, not drift.
+
+**Shape: always `{ ok: false, reason }`, optionally `detail`. Never a bare `false`, never a thrown
+string.** `refuse()` validates against the set, so a sixth word cannot be coined by typo — the
+failure that guards against is real and already present: **five different strings for "this ARCode
+did not work out" exist across four layers** (`unmatched_ar_code`, `missing_ar_code`,
+`not_allowlisted`, `missing_claimed_ar_code`, `no_display_name_suffix`).
+
+**`not_allowlisted` deliberately REUSES the string `checkArCode` already returns** for exactly that
+condition. Two names for one condition is how a vocabulary stops being one.
+
+### REFUSALS AND THROWS ARE DIFFERENT CATEGORIES — keep them apart
+
+**A refusal is an expected outcome a caller handles.** The customer is not resolved yet, the row is
+outside the pilot bound, another run is mid-create. Every one is a normal state of a correct system
+and the caller's job is to skip and move on.
+
+**A throw is a broken invariant nobody should be handling.** `assertLivemode` throwing on a mode
+mismatch is the example: **a caller able to write `if (!result.ok)` past it is a caller that can
+ignore it**, and the entire point is that it cannot be. Same for an unknown `stripe_state`, and for
+a claim outside the bound — which means a caller skipped the poll's filter, a programming error
+rather than a business condition.
+
+**`mode_mismatch` is deliberately NOT in the vocabulary.** It stays a throw.
+
+The test to apply when the next one arrives: **does a correct system reach this state on an ordinary
+Tuesday?** If yes it is a refusal; if no it is a throw. The temptation runs both ways — the next
+refusal will look throwable, and the next broken invariant will look like it deserves a tidy
+`{ok:false}`.
+
+### Control 5's raw storage error, and why the catch is narrow
+
+`attach()` used to let a raw `UNIQUE constraint failed: stripe_customer.mode,
+stripe_customer.stripe_customer_id` escape to the caller — **a mis-join announcing itself in the
+vocabulary of the storage engine rather than the domain**, understandable only by string-matching.
+The condition is *expected* — it is precisely what the partial unique index exists to produce — so
+it belongs in the refusal set.
+
+**The catch classifies by RE-READING STATE, never by parsing the message.** Verified 2026-08-04:
+the control-5 constraint and the `(mode, ar_code)` constraint carry **the same SQLite code (2067)**
+and differ only in message text, and D1 wraps messages differently from `node:sqlite`. Matching text
+would be brittle across engines *and* would swallow the `ar_code` refusal plus every future index on
+that table.
+
+So the error becomes a refusal **only when the domain condition is confirmed by a read** — a
+different row, in this mode, now holds this id. Anything the re-read cannot confirm is **rethrown
+untouched**, and a test proves it (an injected I/O error propagates rather than becoming a refusal).
+A pre-check handles the ordinary case so the storage engine is never reached; the catch is the race
+backstop.
+
+**`Ledger.attachStripeInvoice` got the identical treatment (control 6), and that was the point.**
+Two sibling tables handling an identical condition by opposite philosophies — one returning a
+designed refusal, one letting a raw storage error escape — would mean **a caller cannot learn one
+convention and rely on it**, which is the entire reason to have a vocabulary rather than a habit.
+Both tables now share one MECHANISM, not merely one word list.
+
+`ledger.test.mjs` previously asserted that collision with `assert.rejects(..., /UNIQUE|constraint/i)`.
+**That assertion was worse than the defect it described**: a test pinning a raw storage error keeps
+the anti-pattern alive and makes removing it look like a regression. It is gone.
+
+**`_holderOf` on both classes is DELIBERATELY NOT bound-scoped, and says so in the code** — it looks
+like an omission to anyone applying the constructor-bound rule mechanically. The unique index is
+GLOBAL, so a collision with an out-of-bound row is still a collision; bounding that read would make
+the refusal miss precisely the case the 11 Payless rows exist to represent.
+
+### The nine controls, and which are red by absence
+
+`test/controls.test.mjs` is the index. Controls pinned as they were built stay with the code they
+guard and are cross-referenced rather than duplicated — **two copies of a control is how one of them
+quietly stops being maintained.**
+
+| # | control | where | state |
+|---|---|---|---|
+| 1 | claim → attach → a re-run does not re-create | `controls.test.mjs` | green |
+| 2 | a second customer claim is refused | `stripe-customer.test.mjs` | green |
+| 3 | `creating` → read Stripe → adopt | `controls.test.mjs` | **red by absence** |
+| 4 | a test-mode row cannot satisfy a live lookup | `stripe-customer.test.mjs` | green |
+| 5 | two ARCodes cannot share one customer id | `stripe-customer.test.mjs` + `controls.test.mjs` | green |
+| 6 | attach refuses a DIFFERENT invoice id, and a mis-join refuses in the domain vocabulary | `ledger.test.mjs` | green |
+| 7 | a `creating` row is never safe to create | `controls.test.mjs` | primitive green, **create path red by absence** |
+| 8 | a non-allowlisted row cannot be materialized | `allowlist-bound.test.mjs` + `controls.test.mjs` | bound green (against the 11 real Payless rows), **create path red by absence** |
+| 9 | a missing customer join refuses, creates nothing | `create.test.mjs` | **red by absence** |
+
+**Four tests are red by absence and each says so in its NAME and in its OUTPUT**, via a shared
+`whyRed()` marker. None can be read as a defect, and each carries `DO NOT DELETE THIS TEST TO GREEN
+THE SUITE`. Control 3 additionally records that it **cannot be exercised at all today** —
+`invoice-sync-test` is expired and no key exists (§8.869).
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification

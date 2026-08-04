@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { StripeCustomers, STRIPE_CUSTOMER_STATES, customerIdempotencyKey } from '../src/stripe-customer.js';
 import { Ledger, STRIPE_STATES } from '../src/ledger.js';
 import { assertLivemode } from '../src/config.js';
+import { REFUSAL_REASONS } from '../src/refusals.js';
 import { freshDb, ANY_AR } from './helpers.mjs';
 
 // ── claim ────────────────────────────────────────────────────────────────────────────────────
@@ -58,8 +59,10 @@ test('attach refuses to overwrite a DIFFERENT stripe_customer_id', async () => {
   const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
 
-  assert.equal(await c.attach(row.id, 'cus_FIRST'), true);
-  assert.equal(await c.attach(row.id, 'cus_SECOND'), false, 'a different id is refused');
+  assert.deepEqual(await c.attach(row.id, 'cus_FIRST'), { ok: true });
+  assert.deepEqual(await c.attach(row.id, 'cus_SECOND'),
+    { ok: false, reason: REFUSAL_REASONS.ALREADY_MATERIALIZED },
+    'a different id on THIS row is refused with a named reason');
   assert.equal(await c.idFor('1234'), 'cus_FIRST', 'overwriting would strand cus_FIRST in Stripe');
   assert.equal((await c.get('1234')).state, 'created');
 });
@@ -67,8 +70,8 @@ test('attach refuses to overwrite a DIFFERENT stripe_customer_id', async () => {
 test('attach is idempotent for the SAME id — a retry is not a conflict', async () => {
   const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
-  assert.equal(await c.attach(row.id, 'cus_SAME'), true);
-  assert.equal(await c.attach(row.id, 'cus_SAME'), true);
+  assert.deepEqual(await c.attach(row.id, 'cus_SAME'), { ok: true });
+  assert.deepEqual(await c.attach(row.id, 'cus_SAME'), { ok: true });
 });
 
 test('attach refuses a falsy id — it would satisfy the IS NULL branch forever', async () => {
@@ -82,9 +85,15 @@ test('CONTROL 5 at the database: two ARCodes cannot share one Stripe customer', 
   const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const a = await c.claim({ arCode: '1234' });
   const b = await c.claim({ arCode: '9999' });
-  assert.equal(await c.attach(a.row.id, 'cus_SHARED'), true);
-  await assert.rejects(() => c.attach(b.row.id, 'cus_SHARED'), /UNIQUE/,
-    'the partial unique index rejects a mis-join rather than billing one company as another');
+  assert.deepEqual(await c.attach(a.row.id, 'cus_SHARED'), { ok: true });
+
+  // WAS a raw SQLite UNIQUE error escaping to the caller — a mis-join announcing itself in the
+  // vocabulary of the storage engine rather than the domain, understandable only by string-matching.
+  const refusal = await c.attach(b.row.id, 'cus_SHARED');
+  assert.equal(refusal.ok, false);
+  assert.equal(refusal.reason, REFUSAL_REASONS.CUSTOMER_ID_ALREADY_CLAIMED,
+    'a mis-join is refused in the domain vocabulary, not the storage engine\'s');
+  assert.equal(refusal.detail.heldBy, '1234', 'and it names which customer already holds the id');
 });
 
 // ── the creating transition ──────────────────────────────────────────────────────────────────

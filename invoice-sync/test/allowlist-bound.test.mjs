@@ -88,7 +88,7 @@ test('a row claimed under a WIDER allowlist cannot be advanced under a NARROWER 
 
   // Every state-advancing write refuses it — not by remembering to check, but because the row is
   // not addressable through a Ledger whose bound excludes it.
-  assert.equal(await pilot.attachStripeInvoice(row.id, 'in_X'), false, 'attachStripeInvoice');
+  assert.equal((await pilot.attachStripeInvoice(row.id, 'in_X')).ok, false, 'attachStripeInvoice');
   assert.equal(await pilot.markCreating(row.id), false, 'markCreating');
   assert.equal(await pilot.setState(row.id, 'draft'), false, 'setState');
   assert.equal(await pilot.setClassification(row.id, 'primary'), false, 'setClassification');
@@ -105,7 +105,7 @@ test('a row claimed under a WIDER allowlist cannot be advanced under a NARROWER 
 
   // And the SAME calls succeed through a Ledger whose bound includes it, so the refusals above are
   // the bound acting, not the guards being broken.
-  assert.equal(await wide.attachStripeInvoice(row.id, 'in_X'), true);
+  assert.deepEqual(await wide.attachStripeInvoice(row.id, 'in_X'), { ok: true });
 });
 
 test('the customer table refuses the same way', async () => {
@@ -117,7 +117,7 @@ test('the customer table refuses the same way', async () => {
   assert.equal(await pilot.get('5406'), null, 'not even readable through the narrower bound');
   assert.equal(await pilot.idFor('5406'), null);
   assert.equal(await pilot.markCreating(row.id), false);
-  assert.equal(await pilot.attach(row.id, 'cus_X'), false);
+  assert.equal((await pilot.attach(row.id, 'cus_X')).ok, false);
   assert.equal(await pilot.setState(row.id, 'failed'), false);
   assert.equal(await pilot.recordFailure(row.id, 'x'), false);
 

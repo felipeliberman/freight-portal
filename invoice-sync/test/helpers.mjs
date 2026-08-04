@@ -35,6 +35,26 @@ class D1Like {
 export const ANY_AR = { all: true, codes: new Set() };
 export const onlyAr = (...codes) => ({ all: false, codes: new Set(codes.map(c => String(c).trim().toUpperCase())) });
 
+/**
+ * The RED-BY-ABSENCE marker, shared so every pending control reads the same and none of them can
+ * be mistaken for a defect.
+ *
+ * Printed BY THE FAILURE, not left in a comment: a standing red normalises within days and then
+ * gets deleted by someone tidying up, and nobody opens the file when the suite is green-except-a-few.
+ */
+export function whyRed(what, why) {
+  return [
+    '',
+    '  ── RED BY ABSENCE, NOT BY DEFECT ──',
+    `  Nothing is broken. Pending: ${what}`,
+    `  ${why}`,
+    '',
+    '  DO NOT DELETE THIS TEST TO GREEN THE SUITE. It goes green on its own when',
+    '  the code it guards exists. Delete it only if that work is abandoned outright.',
+    '',
+  ].join('\n');
+}
+
 export function freshDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);
