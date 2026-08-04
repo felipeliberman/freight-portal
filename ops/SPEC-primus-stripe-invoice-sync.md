@@ -1832,17 +1832,50 @@ command's exit code.
 earlier commit of the same lineage. `stripe-payments` has a documented history of dashboard edits
 producing exactly that divergence.
 
-## 8.6 Work queue as of 2026-08-03
+## 8.6 WORK QUEUE — open items as of 2026-08-03 (end of phase 8)
 
-In order. Nothing below is built.
+Nothing below is built. Ordered by what blocks what, not by size.
 
-1. **`_recordQboPayments` silent catch** (§0.1.3) — reported read-only. Under §0.05 this is now the
-   ONLY writeback path from payment to books, which raises its severity rather than lowering it.
-2. **Portal surcharge fixes** — the under-$300 Visa cap breach and the debit exclusion (§5.7).
-   Independent of the delivery-only decision; **the fee stays**, so both must be fixed, not dropped.
-3. **Stripe never-payable configuration + its test** (§0.05 invariant).
-4. **Deep link** (§5.8) including the ownership check, and the login support contact (§5.9).
-5. **Booking join and §5.3** — the phase 6 prerequisite.
+### A. Contractual — blocks the 3-business-day billing clause
+
+| # | Item | Ref | Why it blocks |
+|---|---|---|---|
+| A1 | **The 48-hour vs 10-business-day claims window.** Two windows, two clocks, same subject. The AGENT asserts 48h from delivery as "binding" and "always governs"; the CONTRACT says 10 business days from invoice. They cannot both stand. **Owner decides the number.** | §8.857 | Live now in the deployed Worker. Blocks the KB edit AND the Terms edit. |
+| A2 | **Terms versioning.** `index.html:1710` writes the terms URL into executed credit applications as "incorporated into and made part of this agreement". `rec.consents.termsAndConditions` is a BOOLEAN — it records THAT they agreed, never WHAT. Editing the Terms silently repoints every past signer at text they never saw. | §8.856 | Must land BEFORE any Terms edit, or the 3-day clause goes in unversioned too. |
+| A3 | **Split KNOWLEDGE.md §5** ("Billing, adjustments, claims" → 5a/5b/5c/5d). A retrieval defect: one heading is how a billing question reaches a claims deadline. | §8.858 | Independent of A1's number. Gives the 3-day clause an unambiguous home. |
+| A4 | **Publish the Terms everywhere before the first 3-day notice ships.** Includes the Wix copy, which cannot be verified from this repo. | §8.85 | Phase 9 precondition. A green repo is not evidence. |
+
+### B. Live defects — reported, not fixed, out of scope for this build
+
+| # | Item | Ref |
+|---|---|---|
+| B1 | `_recordQboPayments` — six silent failure modes; the only writeback from payment to books, and it cannot report its own failure | §0.1.3 |
+| B2 | Debit cards are still surcharged, which is not permitted in the US. The cap fix did not address it | §5.7 |
+| B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
+
+### C. Before anything is created in Stripe
+
+| # | Item | Ref |
+|---|---|---|
+| C1 | The dispute-notice WORDING. Currently `« PENDING OWNER WORDING »` and send-blocked | §5.5 |
+| C2 | `ap@paylessrugs.com` verification. Send-blocked until confirmed | §5.6 |
+| C3 | The Stripe never-payable configuration, and a test that pins it | §0.05 |
+| C4 | Void-awareness detection — a corrected primary currently classifies as a rebill | §8.9 |
+
+### D. Not started
+
+| # | Item | Ref |
+|---|---|---|
+| D1 | R2 bucket, mirror fetch/write, and the `docs.` route that validates a token | §8.95 |
+| D2 | Deep link into the portal, including the ownership check | §5.8 |
+| D3 | Login screen support contact | §5.9 |
+| D4 | Detail-pass chunking for full-book scale | §3.2 |
+| D5 | Dunning intervals, measured rather than reasoned | §7.1.1 |
+
+### E. Parked, deliberately
+
+`wip/gate-outcome-rewrite` — the outcome-based save-stall detector. Regresses layer2 case 54; cause
+identified at `portal.html:15754`. Untouched until picked up on purpose.
 
 ## 8.65 Layer3 `agreed-config-dropped-on-pull` — UNREPRODUCED, closed
 
