@@ -155,7 +155,7 @@ test('AGGREGATES across all items — BOL 160134786, the case that would have sh
   assert.equal(f.pieces, 2);
   assert.equal(f.weight, 176);
   assert.equal(f.classLabel, '70, 85');
-  assert.equal(f.commodityLabel, 'rug', 'identical commodities dedupe to one');
+  assert.equal(f.commodityLabel, 'Rug', 'identical commodities dedupe to one');
 });
 
 test('lists are ASCENDING regardless of array order — identical freight renders identically', () => {
@@ -164,7 +164,7 @@ test('lists are ASCENDING regardless of array order — identical freight render
   assert.equal(a.classLabel, '70, 85');
   assert.equal(b.classLabel, '70, 85');
   assert.equal(a.commodityLabel, b.commodityLabel);
-  assert.equal(a.commodityLabel, 'rug, sofa');
+  assert.equal(a.commodityLabel, 'Rug, Sofa');
 });
 
 test('class sorts NUMERICALLY, not as strings', () => {
@@ -177,7 +177,7 @@ test('a long commodity list collapses to a count', () => {
   assert.equal(summariseFreight(many).commodityLabel, '4 items');
   assert.equal(COMMODITY_LIST_MAX, 3);
   const three = many.slice(0, 3);   // rug, sofa, table
-  assert.equal(summariseFreight(three).commodityLabel, 'rug, sofa, table', 'at the threshold it still lists, sorted');
+  assert.equal(summariseFreight(three).commodityLabel, 'Rug, Sofa, Table', 'at the threshold it still lists, sorted');
 });
 
 test('single item reproduces the originally accepted shape exactly', () => {
@@ -185,7 +185,7 @@ test('single item reproduces the originally accepted shape exactly', () => {
   assert.equal(f.pieces, 1);
   assert.equal(f.weight, 82);
   assert.equal(f.classLabel, '70');
-  assert.equal(f.commodityLabel, 'rug');
+  assert.equal(f.commodityLabel, 'Rug');
 });
 
 test('empty or absent freight aggregates to nothing rather than throwing', () => {
@@ -237,4 +237,19 @@ test('and it STILL fires on the real hostile values after that fix', () => {
   assert.throws(() => assertBookingClean({ mode: '273.57' }, source), /hostile VALUE: 273\.57/);
   assert.throws(() => assertBookingClean({ mode: '9.74313' }, source), /hostile VALUE/);
   assert.throws(() => assertBookingClean({ mode: 'GUARANTEED' }, source), /hostile VALUE/);
+});
+
+test('commodity is TITLE-CASED at render, and the raw value is untouched', () => {
+  // Primus mixes "Area Rug", "rug", "table" across one customer's invoices.
+  const f = summariseFreight([{ qty: 1, weight: 10, class: 70, commodity: 'Area Rug' },
+                              { qty: 1, weight: 10, class: 70, commodity: 'table' }]);
+  assert.equal(f.commodityLabel, 'Area Rug, Table');
+  assert.deepEqual(f.commodities, ['Area Rug', 'table'], 'raw values unchanged — render-only');
+});
+
+test('title-casing does not defeat the dedupe', () => {
+  // "rug" and "Rug" are the same commodity. A case-SENSITIVE key would render "Rug, Rug" once
+  // both were title-cased — the fix has to be in the dedupe, not in the label.
+  assert.equal(summariseFreight([{ commodity: 'rug' }, { commodity: 'Rug' }]).commodityLabel, 'Rug');
+  assert.equal(summariseFreight([{ commodity: 'AREA RUG' }, { commodity: 'area rug' }]).commodityLabel, 'Area Rug');
 });

@@ -485,7 +485,7 @@ test('§5.3 renders the accepted lane shape, enriching the ONE existing line', (
     { customerReference: '129320', booking: BOOKING });
   assert.equal(r.payload.lines.length, 1, 'still a 1:1 mirror of invoiceBreakdown — nothing synthesized');
   assert.equal(r.payload.lines[0].description,
-    'Freight \u2014 LTL \u00b7 Adairsville, GA \u2192 Baldwin Place, NY \u00b7 1 pc rug \u00b7 82 lbs \u00b7 Class 70 \u00b7 PU 06/22/26');
+    'Freight \u2014 LTL \u00b7 Adairsville, GA \u2192 Baldwin Place, NY \u00b7 1 pc Rug \u00b7 82 lbs \u00b7 Class 70 \u00b7 PU 06/22/26');
 });
 
 test('the Primus line text leads, so the mirror stays visible', () => {
@@ -552,7 +552,7 @@ test('a multi-item booking aggregates on the invoice line', () => {
     vendor: { name: 'Pilot Freight Services', serviceLevel: 'x' },
   } } });
   const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: multi });
-  assert.match(r.payload.lines[0].description, /2 pcs rug \u00b7 176 lbs \u00b7 Class 70, 85/);
+  assert.match(r.payload.lines[0].description, /2 pcs Rug \u00b7 176 lbs \u00b7 Class 70, 85/);
 
   // THE POINT WHERE AGGREGATION AND FAITHFUL-MIRROR COULD DISAGREE: freightInfo has 2 items,
   // invoiceBreakdown has 1. The line count follows invoiceBreakdown, ALWAYS — freight items are

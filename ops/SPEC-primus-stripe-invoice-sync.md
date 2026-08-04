@@ -1872,6 +1872,63 @@ does not affect the ordering, because Pages going first is correct either way.
 the principle. The principle is *which side of the gap harms the customer*. Work out the direction
 of harm for the specific change before applying the default.
 
+## 8.8 STANDING RULE — the eval asserts the WHOLE SET, not one sample
+
+**A green run on one record is not evidence. Render every record and assert every one.**
+
+Worked example, 2026-08-03. Two defects passed 209 unit tests and a full single-invoice render, and
+were caught only by rendering all 11 pilot invoices:
+
+**1. The booking value scan rejected EVERY booking.** `accountingInformation.insuranceIncluded` is
+`false` on the live record. `hostileValues` stringified it to `"false"` — 5 characters, past the
+length guard — and added it to the hostile set. The narrowed `hazmat: false` then matched it, so
+`narrowBooking` threw for all 11. **Carrier, footer and the entire lane description were silently
+absent from every rendered invoice**, and the single-invoice render looked plausible because a
+missing booking degrades gracefully to the Primus line text alone.
+
+The failure mode is the lesson: **a scan broad enough to reject legitimate data is its own defect.**
+It failed loudly, which is the right direction — but it failed on 11 of 11, and only the full set
+showed it.
+
+**2. Only the LAST send-blocker survived.** `send_blocked` was assigned rather than accumulated, so
+the unverified-recipient block overwrote the missing-dispute-notice block. Clearing one would have
+looked like clearing all of them.
+
+Neither is exotic. Both are the ordinary shape of a bug that a representative sample hides: one
+failed uniformly (so a single sample looked like the norm), the other failed only when two
+conditions coincided (so a single sample never met both).
+
+**Rule:** any change to a rendering or narrowing path is verified by rendering the complete pilot
+set and asserting each record — not by one representative invoice.
+
+## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
+
+**A corrected primary is currently classified as a REBILL, and that is the worst misclassification
+this system can produce.** A full corrected invoice would render as though it were a supplemental
+charge: a second invoice for the whole amount, described like an add-on, with nothing saying it
+supersedes anything. **To the customer that reads as double billing.**
+
+**It cannot be detected from a void flag.** The Primus list `status` object is
+`{estimatedCosts, actualCosts, costActualClosed, charges, readyToInvoice, generated, sent, paid}` —
+verified live 2026-08-03. There is no void or cancelled field anywhere in it.
+
+**It CAN be detected by SHAPE, and that detection is not built.** A corrected primary and a true
+rebill differ in two observable ways:
+
+| | true rebill | corrected primary |
+|---|---|---|
+| line description | a surcharge — `OVERSIZE SURCHARGE`, `RESIDENTIAL DELIVERY FEE` | full freight — `FREIGHT CHARGE` |
+| amount vs the primary | small and unrelated ($55 against $167.12) | at or near the primary's total |
+
+**Blast radius across the pilot set: ZERO.** Both rebills are $55.00 with surcharge line
+descriptions, against primaries of $167.12 and $156.03. Neither resembles a corrected primary on
+either signal.
+
+**PHASE 9 GATE.** Before live mode, a later invoice on a BOL whose line description matches the
+primary's, or whose amount is within tolerance of the primary's total, must classify **`hold`**
+rather than `rebill`. `hold` is already a supported verdict and already leaves placement unplaced —
+the detection is what is missing, not the handling.
+
 ## 9. Build order
 
 Phases 1–4 are **test mode only** (§2.1). Nothing customer-facing exists until phase 5.
@@ -1921,6 +1978,7 @@ from the cold outreach campaign on the root domain.
 | **D4** | Credit-note path for net-negative rebills (§5.2) | Phase 9 |
 | **D5** | Is the `COI` on a BOL the carrier's or ours? (§8) | Phase 8 |
 | **D7** | Authoritative dispute-notice wording, transcribed from the current Primus invoice email (§5.5). If >369 chars, which short form goes in the memo | Phase 5 |
+| **D10** | Rebill→original linkage: what a rebill carries pointing at the invoice it supplements (§5.3) | Phase 6 |
 | **D8** | ~~Clock start~~ **CLOSED**: Stripe's send timestamp (§5.5). Still open: the business-day calendar for rendering an explicit deadline | Phase 9 |
 | **D9** | Delivery answered (§0.1.1 — Primus + QBO email, both stopping at go-live). **Still open:** can Payless log into the portal and pay via the modal? That path survives the routine change and is the same two-live-paths failure | Phase 9 |
 | **D6** | Stripe email subject line — currently "New invoice from Freight and Logistics, Inc. #\<number\>", carries no BOL or PO reference. Gmail will thread these for customers the way QBO reminders threaded for us | Phase 10 |

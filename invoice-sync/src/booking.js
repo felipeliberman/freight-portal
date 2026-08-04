@@ -209,13 +209,22 @@ function dedupeSorted(values, numeric) {
   for (const v of values) {
     if (v === null || v === undefined || v === '') continue;
     const k = String(v).trim();
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
+    if (!k) continue;
+    // Case-INSENSITIVE for text: Primus writes "rug" and "Rug" for the same commodity, and a
+    // case-sensitive key would render "Rug, Rug" once both are title-cased. First spelling wins.
+    const key = numeric ? k : k.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(k);
   }
   return numeric
     ? out.sort((a, b) => Number(a) - Number(b))
     : out.sort((a, b) => a.localeCompare(b));
+}
+
+/** "area RUG" -> "Area Rug". Render-only; never written back to the narrowed record. */
+function titleCaseWords(v) {
+  return String(v).toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
 }
 
 /** Above this many distinct commodities the list is replaced by a count. */
@@ -244,8 +253,12 @@ export function summariseFreight(items) {
     classes,
     commodities,
     // A long list stops informing and starts crowding the line.
+    // TITLE-CASED AT RENDER ONLY — `commodities` above stays exactly as Primus returned it.
+    // Primus mixes "Area Rug", "rug" and "table" on one customer's invoices; inconsistent casing
+    // on a single document reads as carelessness. The faithful-mirror rule is untouched: it
+    // protects amounts and the descriptions of CHARGES, and this is neither.
     commodityLabel: commodities.length === 0 ? null
-      : commodities.length <= COMMODITY_LIST_MAX ? commodities.join(', ')
+      : commodities.length <= COMMODITY_LIST_MAX ? commodities.map(titleCaseWords).join(', ')
       : `${commodities.length} items`,
     classLabel: classes.length ? classes.join(', ') : null,
     hazmat: list.some(i => i.hazmat === true),
