@@ -1991,7 +1991,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 
 | # | Item | Ref |
 |---|---|---|
-| **B0** | **A REJECTED TENDER DRAWS A GREEN "DISPATCHED" CHECKPOINT.** BOL 160135857 — carrier rejected 3×, portal showed dispatched, no error at any point. Timeline reads stored record state, never the tender outcome (`portal.html:7650`). **Highest-severity open item. Blocks broad customer exposure.** Confirmed observed, cause unverified — do not fix before the record is read | §8.864 |
+| **B0** | **EVERY SAVED SHIPMENT SHOWS A COMPLETED "DISPATCHED" CHECKPOINT.** Cause **confirmed** 2026-08-04 on BOL 160135909: a saved shipment's requested pickup date (`estimatedPickupDate`) falls into `dispatchDate` at `portal.html:7631` and lights `disp` at `:7650`. **Not** a failed tender — the earlier "rejected tender rendered as success" framing was a misdiagnosis. Introduced 2026-07-28 (`e3b5d65`); the code it replaced was correct. A standing misrepresentation, not an incident. **Unfixed, parked — portal tracking, unrelated to this build.** Fix shape and reader inventory in §8.864; owner decision pending on scheduled-marker vs tender-outcome-only | §8.864 |
 | B1 | `_recordQboPayments` — six silent failure modes; the only writeback from payment to books, and it cannot report its own failure | §0.1.3 |
 | B2 | Debit cards are still surcharged, which is not permitted in the US. The cap fix did not address it | §5.7 |
 | B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
@@ -2572,12 +2572,15 @@ invisible — it is actively disguised as something else, and the disguise survi
 
 | # | Instance | System fault | What the customer was told |
 |---|---|---|---|
-| 1 | Failed dispatch rendering as success (**§8.864** — live, highest severity) | Carrier rejected the tender 3× | Green "Dispatched" checkpoint, no error — freight is moving, when nothing was accepted |
+| 1 | A "Dispatched" checkpoint on freight nobody tendered (**§8.864**) | A saved shipment's **requested pickup date** lights the checkpoint — **not** a failed tender, which is what this instance was believed to be until 2026-08-04 | "Dispatched ✅" on a shipment still showing Saved / Ready to Dispatch |
 | 2 | `track-proxy` 404 (§8.861) | Upstream host is NXDOMAIN | "No shipment found for that number" — double-check a correct BOL |
 | 3 | `fl-tracking` `?bol=` 200 on upstream error (§8.861) | Primus tracking unreachable | "No status found… **Double-check the number**" — same, on the live Worker |
 
-Instance 1 is now written up in **§8.864** — confirmed observed, cause unverified, unfixed, and the
-only one of the three still live. Instances 2 and 3 are the same misattribution at two layers, four
+Instance 1 is written up in **§8.864**. Its cause is **confirmed for the 2026-08-02 observation and
+for that observation only** — and it turned out not to be a failed tender at all. Whether an earlier
+occurrence exists is **unestablished**, and §8.864 records the rule that C may not absorb one
+retroactively: anything predating 2026-07-28 cannot share C's cause, because the code did not exist.
+Instances 2 and 3 are the same misattribution at two layers, four
 days apart, and instance 3
 survived inside the very file whose commit message (`b6ea763`) claimed to have eliminated the
 conflation. That is the argument for naming the class rather than fixing instances one at a time:
@@ -2733,11 +2736,29 @@ anyone attempted to dispatch it.** The three carrier rejections and the green ch
 unrelated events that appeared together and were connected on that basis. The defect predates the
 dispatch attempt and has nothing to do with tender outcome.
 
-**Open, and not closed by this:** the theory was carried for about two months, but this mechanism
-has existed for seven days. Either the earlier observations were a **different** defect, or the
-recalled duration exceeds the mechanism's life. §8.863's instance 1 is therefore **only closed for
-the 2026-08-02 observation**. Any pre-2026-07-28 sighting of a dispatch reported as successful
-remains unexplained and would need its own evidence.
+### SCOPE OF THE CLOSURE — deliberately partial, confirmed with the owner 2026-08-04
+
+**What is established:** the 2026-08-02 observation on BOL 160135857 has a confirmed cause
+(Candidate C), reproduced directly on BOL 160135909.
+
+**What is NOT established:** whether any earlier occurrence exists. The theory was carried for about
+two months; the mechanism has existed since 2026-07-28. The owner's position, recorded verbatim in
+substance: *no specific memory of a dispatch reported as successful before that date, and no ability
+to rule one out* — the account of 160135857 came from memory, and that account was already wrong
+once about what it demonstrated.
+
+**The rule this creates: C MUST NOT ABSORB ANY EARLIER OCCURRENCE RETROACTIVELY.** If one surfaces:
+
+- It **cannot** share C's cause if it predates **2026-07-28**, because the code did not exist. This
+  is a hard boundary, not a judgement call — `e3b5d65` is the commit.
+- It must be investigated on its own evidence, starting from the surviving candidates (A, the
+  `_lastBooked` short-circuit at `:6230`, is the one with a real mechanism and no evidence of ever
+  firing) rather than assumed to be another sighting of C.
+- "We already found that one" is exactly the move that produced the two-month misdiagnosis in the
+  first place — a symptom matched to a nearby explanation instead of to its own cause (§8.863).
+
+**Instance 1 therefore reads: cause confirmed for one observation, class open.** It is not a
+closed item, and it should not be marked closed by anyone tidying this list later.
 
 ### Candidates A and B are NOT the cause
 
