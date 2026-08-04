@@ -12,14 +12,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Ledger, idempotencyKey } from '../src/ledger.js';
-import { freshDb } from './helpers.mjs';
+import { freshDb, ANY_AR } from './helpers.mjs';
 
 test('schema applies cleanly', () => {
   assert.ok(freshDb());
 });
 
 test('a second claim for the same invoice is refused', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const a = await ledger.claim({ primusInvoiceId: '141886', bolNumber: '160133942', arCode: '5406' });
   const b = await ledger.claim({ primusInvoiceId: '141886', bolNumber: '160133942', arCode: '5406' });
 
@@ -31,7 +31,7 @@ test('a second claim for the same invoice is refused', async () => {
 
 test('a burst of claims for one invoice yields exactly one winner', async () => {
   // Simulates the overlapping-cron case the whole design exists to survive.
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const results = [];
   for (let i = 0; i < 25; i++) results.push(await ledger.claim({ primusInvoiceId: '999001', bolNumber: 'B1' }));
   assert.equal(results.filter(r => r.claimed).length, 1);
@@ -41,8 +41,8 @@ test('test-mode rows never suppress a live-mode claim', async () => {
   // The silent failure this guards: a test row suppressing the live create, whose symptom is
   // "we never billed them" and which nobody notices until the customer does.
   const db = freshDb();
-  const testLedger = new Ledger(db, 'test');
-  const liveLedger = new Ledger(db, 'live');
+  const testLedger = new Ledger(db, 'test', ANY_AR);
+  const liveLedger = new Ledger(db, 'live', ANY_AR);
 
   const t = await testLedger.claim({ primusInvoiceId: '141886' });
   const l = await liveLedger.claim({ primusInvoiceId: '141886' });
@@ -55,7 +55,7 @@ test('test-mode rows never suppress a live-mode claim', async () => {
 });
 
 test('a reissue claims a new version rather than colliding', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: '141886' });
   const v = await ledger.nextVersion('141886');
   assert.equal(v, 2);
@@ -66,7 +66,7 @@ test('a reissue claims a new version rather than colliding', async () => {
 });
 
 test('two ledger rows cannot claim the same Stripe invoice', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const a = await ledger.claim({ primusInvoiceId: 'A' });
   const b = await ledger.claim({ primusInvoiceId: 'B' });
   await ledger.attachStripeInvoice(a.row.id, 'in_test_123');
@@ -80,7 +80,7 @@ test('two ledger rows cannot claim the same Stripe invoice', async () => {
 test('many intent rows with no Stripe invoice coexist', async () => {
   // Guards against the partial index being written without its WHERE clause, which would make
   // NULL stripe_invoice_id collide and break every claim after the first.
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   for (let i = 0; i < 5; i++) {
     const r = await ledger.claim({ primusInvoiceId: `INV${i}` });
     assert.equal(r.claimed, true);
@@ -88,7 +88,7 @@ test('many intent rows with no Stripe invoice coexist', async () => {
 });
 
 test('classification is written once and never overwritten', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141886', bolNumber: 'B9' });
 
   assert.equal(await ledger.setClassification(row.id, 'primary'), true);
@@ -114,7 +114,7 @@ test('classification is written once and never overwritten', async () => {
 // reporting false conflicts.
 
 test('REGRESSION (defect reproduced before the fix): attachStripeInvoice refuses to overwrite a DIFFERENT stripe_invoice_id', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141604', bolNumber: '160135796', arCode: '1234' });
 
   assert.equal(await ledger.attachStripeInvoice(row.id, 'in_FIRST'), true,
@@ -130,7 +130,7 @@ test('REGRESSION (defect reproduced before the fix): attachStripeInvoice refuses
 });
 
 test('REGRESSION (defect reproduced before the fix): re-attaching the SAME stripe_invoice_id is a benign retry, not a conflict', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141385', arCode: '1234' });
 
   assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SAME'), true);
@@ -141,7 +141,7 @@ test('REGRESSION (defect reproduced before the fix): re-attaching the SAME strip
 });
 
 test('BOL siblings surface for the layer-3 guard, excluding void and failed', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const a = await ledger.claim({ primusInvoiceId: 'I1', bolNumber: '160133942' });
   const b = await ledger.claim({ primusInvoiceId: 'I2', bolNumber: '160133942' });
   await ledger.claim({ primusInvoiceId: 'I3', bolNumber: '160133942' });
@@ -154,7 +154,7 @@ test('BOL siblings surface for the layer-3 guard, excluding void and failed', as
 });
 
 test('reconcile sweep includes draft and uncollectible, not just finalized', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const states = ['draft', 'finalized', 'uncollectible', 'paid', 'void', 'intent'];
   for (const [i, st] of states.entries()) {
     const { row } = await ledger.claim({ primusInvoiceId: `S${i}` });
@@ -165,7 +165,7 @@ test('reconcile sweep includes draft and uncollectible, not just finalized', asy
 });
 
 test('exceptions upsert and count repeats instead of duplicating', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   await ledger.recordException('unmatched_ar_code', '7788', 'no QBO DisplayName suffix');
   await ledger.recordException('unmatched_ar_code', '7788');
   await ledger.recordException('unknown_doc_type', 'WHATSIT');
@@ -179,7 +179,7 @@ test('exceptions upsert and count repeats instead of duplicating', async () => {
 
 test('a quarantine row is visibly distinct from an operational exception', async () => {
   // Reading a data gap as a fetch failure has already cost a debugging round (spec §0.25).
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   await ledger.recordException('fetch_failed', 'invoice:1', 'HTTP 503');
   await ledger.quarantine('2', 'null_required_value', 'null required value(s): total');
 
@@ -194,12 +194,12 @@ test('a quarantine row is visibly distinct from an operational exception', async
 
 test('quarantines are per-mode like every other ledger row', async () => {
   const db = freshDb();
-  await new Ledger(db, 'test').quarantine('1', 'null_required_value', 'x');
-  assert.equal((await new Ledger(db, 'live').openQuarantines()).length, 0);
+  await new Ledger(db, 'test', ANY_AR).quarantine('1', 'null_required_value', 'x');
+  assert.equal((await new Ledger(db, 'live', ANY_AR).openQuarantines()).length, 0);
 });
 
 test('the lease admits one holder at a time', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   assert.equal(await ledger.acquireLease('sync', 'run-A', 60_000), true);
   assert.equal(await ledger.acquireLease('sync', 'run-B', 60_000), false, 'concurrent run must back off');
 
@@ -210,7 +210,7 @@ test('the lease admits one holder at a time', async () => {
 test('an expired lease is taken over', async () => {
   // A run killed by CPU limits never reaches its release; without expiry takeover the sync
   // wedges until a human notices. Negative TTL stands in for "held, but expiry has passed".
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   assert.equal(await ledger.acquireLease('sync', 'run-A', -1), true);
   assert.equal(await ledger.acquireLease('sync', 'run-B', 60_000), true, 'expired lease is takeable');
 });
@@ -218,7 +218,7 @@ test('an expired lease is taken over', async () => {
 test('releasing with the wrong holder is a no-op', async () => {
   // run() releases in a finally block using its own runId. If a slow run lost the lease by expiry
   // and the next run took it over, the slow run's release must not evict the new holder.
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   await ledger.acquireLease('sync', 'run-A', -1);
   await ledger.acquireLease('sync', 'run-B', 60_000);
 
@@ -228,8 +228,8 @@ test('releasing with the wrong holder is a no-op', async () => {
 
 test('a lease is per-mode', async () => {
   const db = freshDb();
-  assert.equal(await new Ledger(db, 'test').acquireLease('sync', 'r1', 60_000), true);
-  assert.equal(await new Ledger(db, 'live').acquireLease('sync', 'r2', 60_000), true);
+  assert.equal(await new Ledger(db, 'test', ANY_AR).acquireLease('sync', 'r1', 60_000), true);
+  assert.equal(await new Ledger(db, 'live', ANY_AR).acquireLease('sync', 'r2', 60_000), true);
 });
 
 test('Ledger refuses to construct without an explicit mode', () => {

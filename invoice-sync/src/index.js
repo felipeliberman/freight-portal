@@ -39,7 +39,7 @@ export async function run(env) {
   // Resolve everything up front so a misconfiguration fails on line one rather than midway
   // through a window, holding a lease, with invoices half-processed.
   const cfg = loadConfig(env);
-  const ledger = new Ledger(cfg.db, cfg.mode);
+  const ledger = new Ledger(cfg.db, cfg.mode, cfg.arAllowlist);
   const runId = crypto.randomUUID();
 
   if (!cfg.stripeRestricted) {

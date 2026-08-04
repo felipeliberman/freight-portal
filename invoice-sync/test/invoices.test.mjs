@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { Ledger } from '../src/ledger.js';
 import { checkArCode, loadArAllowlist } from '../src/config.js';
 import { windowFor, normalizePage, toCents, listInvoices, pollWindow } from '../src/invoices.js';
-import { freshDb, fakePrimus, inv } from './helpers.mjs';
+import { freshDb, fakePrimus, inv, ANY_AR } from './helpers.mjs';
 
 const PILOT = loadArAllowlist({ AR_ALLOWLIST: '5406' });
 
@@ -145,7 +145,7 @@ test('records with no invoiceId are counted, not silently dropped', async () => 
 
 test('EXIT GATE: a full window replayed twice creates zero duplicate ledger rows', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const invoices = Array.from({ length: 250 }, (_, i) => inv(i + 1));
   const primus = fakePrimus(invoices);
 
@@ -164,7 +164,7 @@ test('overlapping windows over shifted data still converge to one row per invoic
   // What the rolling 7-day window actually does day to day: yesterday's tail re-polled alongside
   // today's new invoices.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
 
   await poll(fakePrimus([inv(1), inv(2), inv(3)]), ledger, PILOT, 2);
   await poll(fakePrimus([inv(2), inv(3), inv(4), inv(5)]), ledger, PILOT, 2);
@@ -179,7 +179,7 @@ test('a non-allowlisted invoice leaves NO ledger row', async () => {
   // Load-bearing (spec §3.1): recording skips would make claim() return false forever once the
   // allowlist widens, permanently suppressing them.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakePrimus([inv(1), inv(2, { ARCode: '2395' }), inv(3, { ARCode: '9999' })]);
 
   const s = await poll(primus, ledger);
@@ -192,7 +192,7 @@ test('a non-allowlisted invoice leaves NO ledger row', async () => {
 test('widening the allowlist later picks up previously skipped invoices', async () => {
   // The consequence of not recording skips: they must still be claimable afterwards.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const invoices = [inv(1), inv(2, { ARCode: '2395' })];
 
   await poll(fakePrimus(invoices), ledger);
@@ -204,7 +204,7 @@ test('widening the allowlist later picks up previously skipped invoices', async 
 
 test('an ARCode near miss is recorded as an exception, not skipped silently', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const allow = loadArAllowlist({ AR_ALLOWLIST: '05406' });
 
   const s = await poll(fakePrimus([inv(1)]), ledger, allow);
@@ -219,7 +219,7 @@ test('an ARCode near miss is recorded as an exception, not skipped silently', as
 
 test('an invoice with no ARCode is recorded and not claimed', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const s = await poll(fakePrimus([inv(1, { ARCode: null })]), ledger);
   assert.equal(s.missingArCode, 1);
   assert.equal(db.count('ledger'), 0);
@@ -228,7 +228,7 @@ test('an invoice with no ARCode is recorded and not claimed', async () => {
 
 test('invoices that are not generated are skipped', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakePrimus([
     inv(1),
     inv(2, { status: { generated: false } }),
@@ -244,7 +244,7 @@ test('invoices that are not generated are skipped', async () => {
 test('an unparseable total is not claimed on a guessed amount', async () => {
   // Storing a wrong total would drive a bogus void-and-reissue at phase 6 (spec §4.4).
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const s = await poll(fakePrimus([inv(1, { total: 'ask accounting' })]), ledger);
   assert.equal(s.missingTotal, 1);
   assert.equal(db.count('ledger'), 0);
@@ -253,7 +253,7 @@ test('an unparseable total is not claimed on a guessed amount', async () => {
 
 test('a zero-dollar invoice is claimed — zero is a real amount, not a missing one', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const s = await poll(fakePrimus([inv(1, { total: 0 })]), ledger);
   assert.equal(s.claimed, 1);
   assert.equal(db.rows('SELECT total_cents FROM ledger')[0].total_cents, 0);
@@ -264,7 +264,7 @@ test('a zero-dollar invoice is claimed — zero is a real amount, not a missing 
 test('an amount changed after issuance is detected on the next poll', async () => {
   // Spec §4.4 — phase 6 owns the state machine; phase 3 makes the frequency visible.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
 
   await poll(fakePrimus([inv(1, { total: 100 })]), ledger);
   const s = await poll(fakePrimus([inv(1, { total: 175.25 })]), ledger);
@@ -276,7 +276,7 @@ test('an amount changed after issuance is detected on the next poll', async () =
 
 test('an unchanged amount is not reported as drift', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await poll(fakePrimus([inv(1, { total: 100 })]), ledger);
   const s = await poll(fakePrimus([inv(1, { total: '$100.00' })]), ledger);
   assert.equal(s.totalChanged, 0);
@@ -285,7 +285,7 @@ test('an unchanged amount is not reported as drift', async () => {
 test('a shortfall against the reported result count is surfaced', async () => {
   // The overlap is supposed to absorb page-shift skips. A persistent shortfall means it is not.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakePrimus([inv(1), inv(2)], { totalResults: 5 });
   const s = await poll(primus, ledger);
   assert.equal(s.unique, 2);
@@ -295,13 +295,13 @@ test('a shortfall against the reported result count is surfaced', async () => {
 
 test('no shortfall is reported when the counts agree', async () => {
   const db = freshDb();
-  const s = await poll(fakePrimus([inv(1), inv(2)]), new Ledger(db, 'test'));
+  const s = await poll(fakePrimus([inv(1), inv(2)]), new Ledger(db, 'test', ANY_AR));
   assert.equal(s.shortfall, undefined);
 });
 
 test('the poll sends the window and paging params Primus expects', async () => {
   const primus = fakePrimus([inv(1)]);
-  await poll(primus, new Ledger(freshDb(), 'test'));
+  await poll(primus, new Ledger(freshDb(), 'test', ANY_AR));
   assert.equal(primus.calls[0].path, '/invoice');
   assert.deepEqual(primus.calls[0].params, { issuedFrom: '2026-07-01', issuedTo: '2026-07-31', page: 1, limit: 100 });
 });

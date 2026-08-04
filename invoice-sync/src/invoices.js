@@ -113,6 +113,12 @@ export async function pollWindow({ primus, ledger, allowlist, checkArCode, issue
     const verdict = checkArCode(allowlist, arCode);
     if (!verdict.allowed) {
       s.skippedNotAllowed++;
+      // ── DELIBERATELY NOT BOUND BY THE ALLOWLIST. Do not "fix" these two writes. ──────────────
+      // Everything else refuses to touch a non-allowlisted ARCode. The exception queue is the one
+      // place that MUST record them: these rows exist precisely to say "a code outside the bound
+      // was seen, and here it is." Gating them would silence the only signal distinguishing
+      // "the pilot is correctly scoped" from "the pilot ran for a week and billed nothing."
+      // recordException writes no ledger state and advances nothing — it is a report, not an action.
       if (verdict.reason === 'near_miss') {
         s.nearMiss++;
         await ledger.recordException('unmatched_ar_code', String(arCode),

@@ -15,7 +15,7 @@ import {
   newValueSink, formatValueSink,
 } from '../src/detail.js';
 import { describeShape } from '../src/envelope.js';
-import { freshDb } from './helpers.mjs';
+import { freshDb, ANY_AR } from './helpers.mjs';
 
 // ── the fetch boundary (§6.1) ────────────────────────────────────────────────────────────────
 
@@ -477,7 +477,7 @@ const QBO_OK = [{
 
 test('a resolvable ARCode yields both halves of the join', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: QBO_OK });
 
   const r = await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1591052345' });
@@ -490,7 +490,7 @@ test('a resolvable ARCode yields both halves of the join', async () => {
 
 test('a resolved customer is cached and not re-fetched', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: QBO_OK });
 
   await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1' });
@@ -503,7 +503,7 @@ test('a resolved customer is cached and not re-fetched', async () => {
 
 test('an expired cache entry is refetched', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: QBO_OK });
 
   const t0 = 1_000_000;
@@ -515,7 +515,7 @@ test('an expired cache entry is refetched', async () => {
 
 test('an unmatched ARCode resolves to null and records an exception', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: [{ DisplayName: 'Someone Else-9999' }] });
 
   const r = await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1' });
@@ -527,7 +527,7 @@ test('an unmatched ARCode resolves to null and records an exception', async () =
 
 test('an ambiguous ARCode resolves to null', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: [{ DisplayName: 'A-5406' }, { DisplayName: 'B-5406' }] });
   assert.equal(await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1' }), null);
   assert.match((await ledger.openExceptions())[0].detail, /2 QBO customers/);
@@ -535,7 +535,7 @@ test('an ambiguous ARCode resolves to null', async () => {
 
 test('a QBO customer with no email cannot be billed', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({ qboRows: [{ Id: '1', DisplayName: 'Payless Rugs-5406' }] });
   assert.equal(await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1' }), null);
   assert.match((await ledger.openExceptions())[0].detail, /PrimaryEmailAddr/);
@@ -545,7 +545,7 @@ test('a list/detail customerCode disagreement is never reconciled by preference'
   // The two responses describe different customers. Picking either one would bill on an assumption
   // that has just been shown to be false.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({
     qboRows: QBO_OK,
     detail: rawDetail({ customerInfo: { customerId: '999', customerCode: '2395' } }),
@@ -557,7 +557,7 @@ test('a list/detail customerCode disagreement is never reconciled by preference'
 
 test('a failed QBO lookup records the error without an upstream body', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = { async get() { throw new Error('Primus GET /quickbooks/customers failed: HTTP 503'); } };
 
   assert.equal(await resolveCustomer({ primus, db, ledger, arCode: '5406', sampleInvoiceId: '1' }), null);
@@ -567,7 +567,7 @@ test('a failed QBO lookup records the error without an upstream body', async () 
 test('resolution is per distinct customer, not per invoice', async () => {
   // The subrequest budget (spec §3.2) does not survive per-invoice resolution at full-book scale.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   for (const id of ['a', 'b', 'c', 'd']) {
     await ledger.claim({ primusInvoiceId: id, arCode: '5406', bolNumber: `B${id}`, totalCents: 100 });
   }
@@ -583,7 +583,7 @@ test('resolution is per distinct customer, not per invoice', async () => {
 
 test('the resolution summary carries identity only — no amounts', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: 'a', arCode: '5406', bolNumber: 'B1', totalCents: 123456 });
   const s = await resolveClaimedCustomers({ primus: fakeCustomerApi({ qboRows: QBO_OK }), db, ledger });
 
@@ -594,7 +594,7 @@ test('the resolution summary carries identity only — no amounts', async () => 
 
 test('one unresolvable customer does not stop the others', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: 'a', arCode: '5406', bolNumber: 'B1', totalCents: 100 });
   await ledger.claim({ primusInvoiceId: 'b', arCode: '2395', bolNumber: 'B2', totalCents: 100 });
 
@@ -617,7 +617,7 @@ test('the live QBO envelope nests the array one level deeper than /invoice', asy
   // Observed 2026-08-03: {data:{results:{customers:[…]},message}} — /invoice puts the array at
   // data.results, this endpoint puts a container there.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = {
     async get(path) {
       if (path === '/quickbooks/customers') return { data: { results: { customers: QBO_OK }, message: 'ok' } };
@@ -632,7 +632,7 @@ test('the live QBO envelope nests the array one level deeper than /invoice', asy
 test('descending is refused when more than one property is an array', async () => {
   // Two candidate arrays is ambiguous. Better to fail the match than pick one.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = {
     async get(path) {
       if (path === '/quickbooks/customers') return { data: { results: { customers: QBO_OK, vendors: [] } } };
@@ -646,7 +646,7 @@ test('a single-record QBO search response resolves like a list', async () => {
   // Live shape 2026-08-03: /quickbooks/customers answers a one-hit search with an OBJECT at
   // data.results, not an array of one.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = {
     async get(path) {
       if (path === '/quickbooks/customers') return { data: { results: QBO_OK[0], message: 'ok' } };
@@ -663,7 +663,7 @@ test('an unwrappable object fails the suffix check instead of billing someone', 
   // DisplayName match is strict. This pins that: an object that is neither a list container nor a
   // customer record must produce an exception, never a match.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = {
     async get(path) {
       if (path === '/quickbooks/customers') return { data: { results: { status: 'ok', count: 0 } } };

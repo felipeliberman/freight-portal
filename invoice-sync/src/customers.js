@@ -237,14 +237,26 @@ export async function resolveCustomer({ primus, db, ledger, arCode, sampleInvoic
  * budget (spec §3.2) does not survive per-invoice resolution at full-book scale.
  */
 export async function resolveClaimedCustomers({ primus, db, ledger, valueSink = null, now = Date.now() }) {
+  // BOUND BY THE ALLOWLIST (spec §3.1). This sweep builds its own SQL rather than going through a
+  // Ledger method, so the constructor-held bound does not reach it automatically — it is welded in
+  // explicitly here.
+  //
+  // It was the ONE boundary already being crossed by live code: the query selects every `intent`
+  // row with an ARCode, so on remote D1 it reached the 11 Payless rows (claimed when AR_ALLOWLIST
+  // was "5406", pilot now "1234") on every run — performing a QBO lookup and CACHING THAT
+  // CUSTOMER'S EMAIL ADDRESSES for an account outside the pilot. No ledger state changed and no
+  // billing risk, but the pilot bound is exactly the thing that is supposed to make "outside the
+  // pilot" mean something.
+  const bound = ledger.bound();
   const { results } = await db
     .prepare(
       `SELECT ar_code, MIN(primus_invoice_id) AS sample_invoice_id, COUNT(*) AS n
          FROM ledger
         WHERE mode = ? AND stripe_state = 'intent' AND ar_code IS NOT NULL
+          AND ${bound.sql}
         GROUP BY ar_code`
     )
-    .bind(ledger.mode)
+    .bind(ledger.mode, ...bound.params)
     .all();
 
   const summary = { customers: (results || []).length, resolved: 0, unresolved: 0, withPrimusId: 0, detail: [] };

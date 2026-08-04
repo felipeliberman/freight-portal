@@ -33,3 +33,47 @@
  *   without repeating the null dance. Callers that must preserve SQL NULL check before calling.
  */
 export const normalizeArCode = v => String(v ?? '').trim().toUpperCase();
+
+/**
+ * The allowlist as a SQL predicate — the pilot bound expressed the way `mode` already is.
+ *
+ * The allowlist is the pilot's BLAST-RADIUS BOUND. Enforcing it at each call site is the failure it
+ * exists to prevent, reproduced inside the mechanism meant to prevent it: eleven places to remember,
+ * and the bound is only as good as the least careful one. So it is held by the object and welded
+ * into the query, exactly as `AND mode = ?` is — not because eleven authors remembered, but because
+ * the row is not addressable otherwise.
+ *
+ * A NULL `ar_code` PASSES. "No code" is not "a code outside the bound": such a row reaches no
+ * customer (resolveClaimedCustomers filters `ar_code IS NOT NULL`) and the poll already records an
+ * exception and skips before it can be claimed. Refusing it here would fail a case that is already
+ * handled correctly one layer up.
+ *
+ * @param {{all:boolean, codes:Set<string>}} allowlist
+ * @param {string} column  qualified where needed, e.g. 'l.ar_code'
+ * @returns {{sql:string, params:string[]}} sql is always a complete boolean expression
+ */
+export function allowlistPredicate(allowlist, column = 'ar_code') {
+  if (!allowlist || typeof allowlist.all !== 'boolean' || !(allowlist.codes instanceof Set)) {
+    throw new Error(
+      'allowlistPredicate requires a {all, codes:Set} allowlist. It is never defaulted — an ' +
+      'absent bound must not silently mean "everything" (spec §3.1).'
+    );
+  }
+  if (allowlist.all) return { sql: '1 = 1', params: [] };
+  const codes = [...allowlist.codes];
+  // An empty non-wildcard list matches nothing, which is the fail-closed direction. loadArAllowlist
+  // already throws on it; this stays correct if some other caller ever builds one by hand.
+  if (!codes.length) return { sql: `${column} IS NULL`, params: [] };
+  return {
+    sql: `(${column} IS NULL OR ${column} IN (${codes.map(() => '?').join(', ')}))`,
+    params: codes,
+  };
+}
+
+/** True when this ARCode may be acted on. NULL/blank passes, for the reason above. */
+export function isAllowlisted(allowlist, arCode) {
+  if (allowlist && allowlist.all) return true;
+  const code = normalizeArCode(arCode);
+  if (!code) return true;
+  return !!(allowlist && allowlist.codes && allowlist.codes.has(code));
+}

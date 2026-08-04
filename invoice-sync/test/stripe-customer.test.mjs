@@ -10,12 +10,12 @@ import assert from 'node:assert/strict';
 import { StripeCustomers, STRIPE_CUSTOMER_STATES, customerIdempotencyKey } from '../src/stripe-customer.js';
 import { Ledger, STRIPE_STATES } from '../src/ledger.js';
 import { assertLivemode } from '../src/config.js';
-import { freshDb } from './helpers.mjs';
+import { freshDb, ANY_AR } from './helpers.mjs';
 
 // ── claim ────────────────────────────────────────────────────────────────────────────────────
 
 test('a second claim for the same ARCode is refused, not an error', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const a = await c.claim({ arCode: '1234', qboDisplayName: 'Freight and Logistics, Inc. - TEST-1234' });
   const b = await c.claim({ arCode: '1234' });
 
@@ -28,8 +28,8 @@ test('a second claim for the same ARCode is refused, not an error', async () => 
 
 test('NEGATIVE CONTROL: a test-mode claim does not satisfy a live-mode lookup', async () => {
   const db = freshDb();
-  const testMode = new StripeCustomers(db, 'test');
-  const liveMode = new StripeCustomers(db, 'live');
+  const testMode = new StripeCustomers(db, 'test', ANY_AR);
+  const liveMode = new StripeCustomers(db, 'live', ANY_AR);
 
   await testMode.claim({ arCode: '1234' });
   await testMode.attach((await testMode.get('1234')).id, 'cus_TEST');
@@ -41,7 +41,7 @@ test('NEGATIVE CONTROL: a test-mode claim does not satisfy a live-mode lookup', 
 });
 
 test('claim refuses an empty ARCode rather than creating an unkeyed row', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   for (const bad of [null, undefined, '', '   ']) {
     await assert.rejects(() => c.claim({ arCode: bad }), /requires an arCode/);
   }
@@ -55,7 +55,7 @@ test('the idempotency key is mode-namespaced and case-normalised', () => {
 // ── attach: write-once per id ────────────────────────────────────────────────────────────────
 
 test('attach refuses to overwrite a DIFFERENT stripe_customer_id', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
 
   assert.equal(await c.attach(row.id, 'cus_FIRST'), true);
@@ -65,21 +65,21 @@ test('attach refuses to overwrite a DIFFERENT stripe_customer_id', async () => {
 });
 
 test('attach is idempotent for the SAME id — a retry is not a conflict', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
   assert.equal(await c.attach(row.id, 'cus_SAME'), true);
   assert.equal(await c.attach(row.id, 'cus_SAME'), true);
 });
 
 test('attach refuses a falsy id — it would satisfy the IS NULL branch forever', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
   await assert.rejects(() => c.attach(row.id, null), /requires a stripeCustomerId/);
   await assert.rejects(() => c.attach(row.id, ''), /requires a stripeCustomerId/);
 });
 
 test('CONTROL 5 at the database: two ARCodes cannot share one Stripe customer', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const a = await c.claim({ arCode: '1234' });
   const b = await c.claim({ arCode: '9999' });
   assert.equal(await c.attach(a.row.id, 'cus_SHARED'), true);
@@ -90,7 +90,7 @@ test('CONTROL 5 at the database: two ARCodes cannot share one Stripe customer', 
 // ── the creating transition ──────────────────────────────────────────────────────────────────
 
 test("markCreating moves intent -> creating, and failed -> creating for a retry", async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
 
   assert.equal(await c.markCreating(row.id), true);
@@ -102,7 +102,7 @@ test("markCreating moves intent -> creating, and failed -> creating for a retry"
 });
 
 test('markCreating REFUSES once an id is attached — an existing customer is not re-created', async () => {
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
   await c.attach(row.id, 'cus_1');
 
@@ -114,11 +114,11 @@ test("'creating' is a legal state on both tables, and a typo is refused loudly",
   assert.ok(STRIPE_CUSTOMER_STATES.includes('creating'));
   assert.ok(STRIPE_STATES.includes('creating'));
 
-  const c = new StripeCustomers(freshDb(), 'test');
+  const c = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await c.claim({ arCode: '1234' });
   await assert.rejects(() => c.setState(row.id, 'createing'), /Unknown stripe_customer state/);
 
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const l = await ledger.claim({ primusInvoiceId: 'I1' });
   await assert.rejects(() => ledger.setState(l.row.id, 'createing'), /Unknown stripe_state/);
 });
@@ -127,7 +127,7 @@ test("'creating' is a legal state on both tables, and a typo is refused loudly",
 
 test('openCreating returns only STALE creating rows — a run in flight is left alone', async () => {
   const db = freshDb();
-  const c = new StripeCustomers(db, 'test');
+  const c = new StripeCustomers(db, 'test', ANY_AR);
   const fresh = await c.claim({ arCode: '1111' });
   const stale = await c.claim({ arCode: '2222' });
   await c.markCreating(fresh.row.id);
@@ -144,7 +144,7 @@ test('openCreating returns only STALE creating rows — a run in flight is left 
 
 test('the ledger sweep is separate from reconcile: creating is in one and not the other', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const states = ['draft', 'finalized', 'uncollectible', 'paid', 'void', 'intent'];
   for (const [i, st] of states.entries()) {
     const { row } = await ledger.claim({ primusInvoiceId: `S${i}` });
@@ -164,7 +164,7 @@ test('the ledger sweep is separate from reconcile: creating is in one and not th
 });
 
 test('ledger markCreating refuses once an invoice id is attached', async () => {
-  const ledger = new Ledger(freshDb(), 'test');
+  const ledger = new Ledger(freshDb(), 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: 'I1' });
   await ledger.attachStripeInvoice(row.id, 'in_1');
   assert.equal(await ledger.markCreating(row.id), false);

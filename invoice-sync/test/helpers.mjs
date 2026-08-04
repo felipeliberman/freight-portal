@@ -25,6 +25,16 @@ class D1Like {
   count(table) { return this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n; }
 }
 
+/**
+ * Allowlist fixtures. `Ledger` and `StripeCustomers` now REQUIRE one — the pilot bound is held by
+ * the object the way `mode` is, so it cannot be forgotten at a call site (spec §3.1).
+ *
+ * ANY_AR is the wildcard, for the many tests that are not about the bound. Tests that ARE about it
+ * use onlyAr(...) and assert the refusal explicitly.
+ */
+export const ANY_AR = { all: true, codes: new Set() };
+export const onlyAr = (...codes) => ({ all: false, codes: new Set(codes.map(c => String(c).trim().toUpperCase())) });
+
 export function freshDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);

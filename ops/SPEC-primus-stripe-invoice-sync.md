@@ -3516,6 +3516,73 @@ because production needed repairing**. Skipping it because this database happens
 leave the next database that *does* carry a dirty value silently broken, with no record that the
 step was ever considered.
 
+## 8.871 THE PILOT BOUND IS HELD BY THE OBJECT, NOT REMEMBERED AT THE CALL SITE
+
+**Decision 2026-08-04.** `Ledger` and `StripeCustomers` now take the AR allowlist as a **required
+constructor argument**, exactly as they already take `mode`, and it is welded into the `WHERE`
+clause of every query rather than checked by each caller.
+
+**The reasoning is the allowlist's own purpose turned on itself.** A boundary enumeration found
+**eleven** places where a non-allowlisted `ar_code` could enter or advance state, and exactly
+**one** enforced it (the poll, `invoices.js:113`). Enforcing at eleven call sites is the failure the
+allowlist exists to prevent, reproduced inside the mechanism meant to prevent it: the pilot's
+blast-radius bound would be only as good as the least careful caller.
+
+**`mode` is the precedent and it works.** Every query carries `AND mode = ?` because the constructor
+holds it, not because eleven authors remembered — a row in the wrong mode is not *addressable*,
+which is stronger than it being checked. The bound is now held the same way. The cost, stated: this
+couples storage to policy. At pilot scale that is the right trade.
+
+### How it refuses
+
+| layer | behaviour |
+|---|---|
+| constructor | **throws** on an absent or wrongly-shaped allowlist. Never defaulted — an absent bound silently meaning "everything" is the §3.1 misconfiguration |
+| `claim()` (both tables) | **throws.** A silent `claimed:false` is indistinguishable from "already claimed", and would suppress the invoice forever with no signal — the never-billed failure §3.1's ordering rule exists to prevent |
+| state-advancing writes | the bound is part of the `WHERE`, so the row is **not addressable**; the guarded update returns `false` and nothing is half-applied |
+| sweeps | out-of-bound rows are simply not returned |
+
+**A NULL `ar_code` PASSES.** "No code" is not "a code outside the bound": such a row reaches no
+customer (`resolveClaimedCustomers` filters `ar_code IS NOT NULL`) and the poll already records an
+exception and skips before it can be claimed. Refusing here would fail a case handled correctly one
+layer up.
+
+### TWO DELIBERATE EXCEPTIONS — reasoning lives in the code, and tests assert both
+
+**1. `siblingsOfBol` stays UNFILTERED.** It is a READ whose only job is to force explicit
+classification, and a BOL collision can span an allowlisted and a NON-allowlisted customer.
+Filtering would hide exactly that collision, and the caller would create silently where it should
+have held. **The bound limits what we WRITE; it must not limit what we can SEE before writing.**
+Narrowing a safety read makes it blinder.
+
+**2. The near-miss / missing-code writes at `invoices.js:118-122` stay UNBOUND.** These rows exist
+precisely to say *a code outside the bound was seen, and here it is*. Gating them would silence the
+only signal distinguishing "the pilot is correctly scoped" from "the pilot ran for a week and billed
+nothing." `recordException` advances no state — it is a report, not an action.
+
+### B3 — the one boundary already being crossed in production
+
+`resolveClaimedCustomers` (`customers.js`) builds its own SQL rather than going through a `Ledger`
+method, so the constructor-held bound does not reach it automatically. It selected **every** `intent`
+row carrying an ARCode, which on remote D1 meant **the 11 Payless rows** — claimed while
+`AR_ALLOWLIST` was `"5406"`, with the pilot now `"1234"` — on **every run**, performing a QBO lookup
+and **caching that customer's email addresses** for an account outside the pilot. The `qbo:ar:5406`
+cache row on remote is the evidence.
+
+**No ledger state changed and there was no billing risk, which is exactly why it went unnoticed** —
+but the pilot bound is the thing that is supposed to make "outside the pilot" mean something. The
+bound is now welded in explicitly, and a test asserts no QBO lookup is issued for an out-of-bound
+customer.
+
+### The 11 Payless rows are now a live negative control
+
+They are left in place deliberately (owner decision 2026-08-04): a row that must be refused, sitting
+in the real database, tests the guard against production data rather than against a fixture written
+by the same hand that wrote the guard. The test suite mirrors the scenario exactly — claim under a
+wide bound, then prove **all seven** state-advancing writes refuse under the narrow one, and that the
+same calls succeed through a wide-bound instance, so the refusals are the bound acting rather than
+the guards being broken.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification

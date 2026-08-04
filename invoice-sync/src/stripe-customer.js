@@ -16,7 +16,7 @@
 // create this module claims for cannot execute at all during the pilot (spec §8.869). That is the
 // stronger guarantee. This module is what makes the discipline survive the day it becomes Write.
 
-import { normalizeArCode } from './arcode.js';
+import { normalizeArCode, allowlistPredicate, isAllowlisted } from './arcode.js';
 
 /**
  * Every legal `stripe_customer.state`. ONE list, imported rather than remembered.
@@ -60,13 +60,23 @@ export class StripeCustomers {
    * @param {'test'|'live'} mode  included in every key, so a test-mode row can never satisfy a
    *   live-mode lookup and suppress a live create
    */
-  constructor(db, mode) {
+  constructor(db, mode, allowlist) {
     if (mode !== 'test' && mode !== 'live') {
       throw new Error(`StripeCustomers requires an explicit mode, got ${mode}`);
     }
+    if (!allowlist || typeof allowlist.all !== 'boolean' || !(allowlist.codes instanceof Set)) {
+      throw new Error(
+        'StripeCustomers requires an explicit AR allowlist. It is never defaulted: an absent bound ' +
+        'silently meaning "everything" is the misconfiguration §3.1 exists to prevent.'
+      );
+    }
     this.db = db;
     this.mode = mode;
+    this.allowlist = allowlist;
   }
+
+  /** The pilot bound as SQL, for welding into a WHERE clause. Public — see Ledger.bound(). */
+  bound(column = 'ar_code') { return allowlistPredicate(this.allowlist, column); }
 
   /**
    * Claim an ARCode for customer creation. Call this BEFORE touching Stripe.
@@ -78,6 +88,14 @@ export class StripeCustomers {
   async claim({ arCode, qboDisplayName = null }) {
     const code = normalizeArCode(arCode);
     if (!code) throw new Error('claim() requires an arCode');
+    // Throws rather than refusing quietly, for the same reason Ledger.claim does: a silent refusal
+    // is indistinguishable from "already claimed" and suppresses the customer with no signal.
+    if (!isAllowlisted(this.allowlist, code)) {
+      throw new Error(
+        `claim() refused: ARCode ${JSON.stringify(code)} is outside AR_ALLOWLIST. A customer outside ` +
+        `the pilot bound must never be claimed for creation (§3.1).`
+      );
+    }
     const now = Date.now();
     const key = customerIdempotencyKey(this.mode, code);
 
@@ -97,9 +115,10 @@ export class StripeCustomers {
   }
 
   async get(arCode) {
+    const bound = this.bound();
     return this.db
-      .prepare('SELECT * FROM stripe_customer WHERE mode = ? AND ar_code = ?')
-      .bind(this.mode, normalizeArCode(arCode))
+      .prepare(`SELECT * FROM stripe_customer WHERE mode = ? AND ar_code = ? AND ${bound.sql}`)
+      .bind(this.mode, normalizeArCode(arCode), ...bound.params)
       .first();
   }
 
@@ -123,12 +142,14 @@ export class StripeCustomers {
    * Refuses once an id is attached: a customer that exists is not being created again.
    */
   async markCreating(id) {
+    const bound = this.bound();
     const res = await this.db
       .prepare(
         `UPDATE stripe_customer SET state = 'creating', updated_at = ?
-          WHERE id = ? AND mode = ? AND state IN ('intent', 'failed') AND stripe_customer_id IS NULL`
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND state IN ('intent', 'failed')
+            AND stripe_customer_id IS NULL`
       )
-      .bind(Date.now(), id, this.mode)
+      .bind(Date.now(), id, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
@@ -145,33 +166,36 @@ export class StripeCustomers {
    */
   async attach(id, stripeCustomerId) {
     if (!stripeCustomerId) throw new Error('attach() requires a stripeCustomerId');
+    const bound = this.bound();
     const res = await this.db
       .prepare(
         `UPDATE stripe_customer
             SET stripe_customer_id = ?, state = 'created', last_error = NULL, updated_at = ?
-          WHERE id = ? AND mode = ?
+          WHERE id = ? AND mode = ? AND ${bound.sql}
             AND (stripe_customer_id IS NULL OR stripe_customer_id = ?)`
       )
-      .bind(stripeCustomerId, Date.now(), id, this.mode, stripeCustomerId)
+      .bind(stripeCustomerId, Date.now(), id, this.mode, ...bound.params, stripeCustomerId)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
 
   async setState(id, state) {
     assertState(state);
+    const bound = this.bound();
     const res = await this.db
-      .prepare('UPDATE stripe_customer SET state = ?, updated_at = ? WHERE id = ? AND mode = ?')
-      .bind(state, Date.now(), id, this.mode)
+      .prepare(`UPDATE stripe_customer SET state = ?, updated_at = ? WHERE id = ? AND mode = ? AND ${bound.sql}`)
+      .bind(state, Date.now(), id, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
 
   async recordFailure(id, message) {
+    const bound = this.bound();
     const res = await this.db
       .prepare(`UPDATE stripe_customer SET state = 'failed', last_error = ?, updated_at = ?
-                 WHERE id = ? AND mode = ?`)
+                 WHERE id = ? AND mode = ? AND ${bound.sql}`)
       // Truncated, and callers must pass a message that never embeds an upstream body (spec §6.3).
-      .bind(String(message).slice(0, 300), Date.now(), id, this.mode)
+      .bind(String(message).slice(0, 300), Date.now(), id, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
@@ -185,13 +209,14 @@ export class StripeCustomers {
    * under a running create is how you get the second create this whole design exists to prevent.
    */
   async openCreating({ staleMs = 15 * 60 * 1000, now = Date.now(), limit = 100 } = {}) {
+    const bound = this.bound();
     const { results } = await this.db
       .prepare(
         `SELECT * FROM stripe_customer
-          WHERE mode = ? AND state = 'creating' AND updated_at <= ?
+          WHERE mode = ? AND state = 'creating' AND updated_at <= ? AND ${bound.sql}
           ORDER BY updated_at ASC LIMIT ?`
       )
-      .bind(this.mode, now - staleMs, limit)
+      .bind(this.mode, now - staleMs, ...bound.params, limit)
       .all();
     return results || [];
   }

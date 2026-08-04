@@ -25,7 +25,7 @@ import { Ledger } from '../src/ledger.js';
 import { StripeCustomers } from '../src/stripe-customer.js';
 import { checkArCode, loadArAllowlist } from '../src/config.js';
 import { resolveCustomer } from '../src/customers.js';
-import { freshDb } from './helpers.mjs';
+import { freshDb, ANY_AR } from './helpers.mjs';
 
 // ── the function itself ──────────────────────────────────────────────────────────────────────
 
@@ -62,8 +62,8 @@ test('EXCLUSION: internal whitespace is PRESERVED — bad data must not be silen
 
 test('REGRESSION: the (mode, ar_code) join resolves across whitespace and case', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
-  const customers = new StripeCustomers(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
+  const customers = new StripeCustomers(db, 'test', ANY_AR);
 
   // The same customer, written through two different doors, spelled two different ways — which is
   // exactly what happens when one value comes off a Primus list and another off a config or a
@@ -82,7 +82,7 @@ test('REGRESSION: the (mode, ar_code) join resolves across whitespace and case',
 });
 
 test('REGRESSION: one ARCode yields ONE stripe_customer row, however it is spelled', async () => {
-  const customers = new StripeCustomers(freshDb(), 'test');
+  const customers = new StripeCustomers(freshDb(), 'test', ANY_AR);
 
   const a = await customers.claim({ arCode: 'abc1' });
   const b = await customers.claim({ arCode: 'ABC1' });
@@ -101,7 +101,7 @@ test('REGRESSION: one ARCode yields ONE stripe_customer row, however it is spell
 });
 
 test('REGRESSION: idFor finds the customer regardless of how the caller spells the code', async () => {
-  const customers = new StripeCustomers(freshDb(), 'test');
+  const customers = new StripeCustomers(freshDb(), 'test', ANY_AR);
   const { row } = await customers.claim({ arCode: 'ABC1' });
   await customers.attach(row.id, 'cus_1');
 
@@ -112,7 +112,7 @@ test('REGRESSION: idFor finds the customer regardless of how the caller spells t
 
 test('the ledger stores the canonical form, so the column itself is join-ready', async () => {
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: 'I1', arCode: ' abc1 ' });
   assert.equal(db.rows('SELECT ar_code FROM ledger')[0].ar_code, 'ABC1');
 });
@@ -122,7 +122,7 @@ test('a null ARCode still stores NULL, not an empty string', async () => {
   // resolveClaimedCustomers filters on `ar_code IS NOT NULL`. Normalising null to '' would put a
   // row into that sweep that does not belong there.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: 'I1', arCode: null });
   assert.equal(db.rows('SELECT ar_code FROM ledger')[0].ar_code, null);
 });
@@ -131,7 +131,7 @@ test('a BLANK ARCode stores NULL, not an empty string', async () => {
   // '' would land the row in resolveClaimedCustomers' `ar_code IS NOT NULL` sweep, which would then
   // do a QBO lookup for the empty string. An empty ARCode is not an ARCode.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   await ledger.claim({ primusInvoiceId: 'I1', arCode: '   ' });
   assert.equal(db.rows('SELECT ar_code FROM ledger')[0].ar_code, null);
 });
@@ -157,7 +157,7 @@ test('DELIBERATE LOOSENING: the Primus cross-check compares the two endpoints on
   // 2026-08-04, not as housekeeping: the trade is that a case variant now matches, in exchange for
   // the two endpoints being compared on the same terms as every other ARCode comparison.
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const primus = fakeCustomerApi({
     qboRows: [{
       Id: '58', DisplayName: 'Acme-ABC1',
@@ -179,7 +179,7 @@ test('DELIBERATE LOOSENING: the Primus cross-check compares the two endpoints on
 
   // The guard itself must still fire on a REAL disagreement — the loosening is case, not meaning.
   const db2 = freshDb();
-  const ledger2 = new Ledger(db2, 'test');
+  const ledger2 = new Ledger(db2, 'test', ANY_AR);
   const primus2 = fakeCustomerApi({
     qboRows: [{
       Id: '58', DisplayName: 'Acme-ABC1',

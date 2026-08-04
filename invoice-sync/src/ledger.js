@@ -12,7 +12,7 @@
 // Stripe Search cannot substitute for this: it is index-backed with up to ~1min of lag, so a
 // just-created invoice is not findable and two runs 30s apart both see "no match".
 
-import { normalizeArCode } from './arcode.js';
+import { normalizeArCode, allowlistPredicate, isAllowlisted } from './arcode.js';
 
 /** Marks exception rows that are a DATA GAP in one record, not an operational failure. */
 export const QUARANTINE_PREFIX = 'quarantine:';
@@ -55,12 +55,31 @@ export class Ledger {
   /**
    * @param {D1Database} db
    * @param {'test'|'live'} mode  included in every key so test rows can never suppress a live create
+   * @param {{all:boolean, codes:Set<string>}} allowlist  the pilot bound (spec §3.1), HELD HERE
+   *   rather than remembered at each call site — for the same reason `mode` is. See
+   *   allowlistPredicate() in arcode.js.
    */
-  constructor(db, mode) {
+  constructor(db, mode, allowlist) {
     if (mode !== 'test' && mode !== 'live') throw new Error(`Ledger requires an explicit mode, got ${mode}`);
+    if (!allowlist || typeof allowlist.all !== 'boolean' || !(allowlist.codes instanceof Set)) {
+      throw new Error(
+        'Ledger requires an explicit AR allowlist. It is never defaulted: an absent bound silently ' +
+        'meaning "everything" is precisely the misconfiguration that would blast the full book (§3.1).'
+      );
+    }
     this.db = db;
     this.mode = mode;
+    this.allowlist = allowlist;
   }
+
+  /**
+   * The pilot bound as SQL, for welding into a WHERE clause.
+   *
+   * PUBLIC on purpose. resolveClaimedCustomers (customers.js) builds its own SQL and needs the same
+   * bound; an underscore here would be a private name already crossing a module boundary — a public
+   * contract lying about its status, which invites the next caller to duplicate it or reach past it.
+   */
+  bound(column = 'ar_code') { return allowlistPredicate(this.allowlist, column); }
 
   // ── claim ──────────────────────────────────────────────────────────────────────────────────
 
@@ -73,6 +92,15 @@ export class Ledger {
    */
   async claim({ primusInvoiceId, primusInvoiceNumber = null, bolNumber = null, arCode = null, customerReference = null, version = 1, totalCents = null }) {
     if (!primusInvoiceId) throw new Error('claim() requires primusInvoiceId');
+    // THROWS rather than returning claimed:false. A silent refusal here would be indistinguishable
+    // from "already claimed", and the invoice would be suppressed forever with no signal — the
+    // exact never-billed failure §3.1's ordering rule exists to prevent.
+    if (!isAllowlisted(this.allowlist, arCode)) {
+      throw new Error(
+        `claim() refused: ARCode ${JSON.stringify(arCode)} is outside AR_ALLOWLIST. The poll filters ` +
+        `before claiming (§3.1), so reaching here means a caller skipped the bound.`
+      );
+    }
     const now = Date.now();
     const key = idempotencyKey(this.mode, primusInvoiceId, version);
 
@@ -122,6 +150,13 @@ export class Ledger {
    * This is the only defense against a Primus reissue that changes BOTH invoiceId and
    * invoiceNumber, where the ledger key and the Stripe idempotency key both miss. A hit does not
    * block; it forces explicit classification instead of a silent create.
+   *
+   * ── DELIBERATELY NOT ALLOWLIST-FILTERED. Do not "fix" this. ─────────────────────────────────
+   * Every other query on this class carries the pilot bound. This one must not: it is a READ whose
+   * only job is to force explicit classification, and a BOL collision can span an allowlisted and a
+   * NON-allowlisted customer. Filtering would hide exactly that collision — narrowing a safety read
+   * makes it blinder, and the caller would then create silently where it should have held.
+   * The bound limits what we WRITE. It must not limit what we can SEE before writing.
    */
   async siblingsOfBol(bolNumber) {
     if (!bolNumber) return [];
@@ -146,15 +181,17 @@ export class Ledger {
    * silently marked as needing nothing.
    */
   async openForReconcile(limit = 200) {
+    const bound = this.bound();
     const { results } = await this.db
       .prepare(
         // Deliberately includes 'draft' and 'uncollectible', not just 'finalized'. Sweeping only
         // open invoices silently strands everything in the other states.
         `SELECT * FROM ledger
           WHERE mode = ? AND stripe_state IN ('draft', 'finalized', 'uncollectible')
+            AND ${bound.sql}
           ORDER BY updated_at ASC LIMIT ?`
       )
-      .bind(this.mode, limit)
+      .bind(this.mode, ...bound.params, limit)
       .all();
     return results || [];
   }
@@ -171,13 +208,15 @@ export class Ledger {
    * and that half lands with the Stripe client.
    */
   async openCreating({ staleMs = 15 * 60 * 1000, now = Date.now(), limit = 100 } = {}) {
+    const bound = this.bound();
     const { results } = await this.db
       .prepare(
         `SELECT * FROM ledger
           WHERE mode = ? AND stripe_state = 'creating' AND updated_at <= ?
+            AND ${bound.sql}
           ORDER BY updated_at ASC LIMIT ?`
       )
-      .bind(this.mode, now - staleMs, limit)
+      .bind(this.mode, now - staleMs, ...bound.params, limit)
       .all();
     return results || [];
   }
@@ -201,14 +240,15 @@ export class Ledger {
    */
   async attachStripeInvoice(ledgerId, stripeInvoiceId, state = 'draft') {
     assertState(state);
+    const bound = this.bound();
     if (!stripeInvoiceId) throw new Error('attachStripeInvoice requires a stripeInvoiceId');
     const res = await this.db
       .prepare(
         `UPDATE ledger SET stripe_invoice_id = ?, stripe_state = ?, last_error = NULL, updated_at = ?
-          WHERE id = ? AND mode = ?
+          WHERE id = ? AND mode = ? AND ${bound.sql}
             AND (stripe_invoice_id IS NULL OR stripe_invoice_id = ?)`
       )
-      .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, stripeInvoiceId)
+      .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, ...bound.params, stripeInvoiceId)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
@@ -227,22 +267,24 @@ export class Ledger {
    * Refuses once an invoice id is attached: an invoice that exists is not being created again.
    */
   async markCreating(ledgerId) {
+    const bound = this.bound();
     const res = await this.db
       .prepare(
         `UPDATE ledger SET stripe_state = 'creating', updated_at = ?
-          WHERE id = ? AND mode = ? AND stripe_state IN ('intent', 'failed')
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND stripe_state IN ('intent', 'failed')
             AND stripe_invoice_id IS NULL`
       )
-      .bind(Date.now(), ledgerId, this.mode)
+      .bind(Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
 
   async setState(ledgerId, state) {
     assertState(state);
+    const bound = this.bound();
     const res = await this.db
-      .prepare('UPDATE ledger SET stripe_state = ?, updated_at = ? WHERE id = ? AND mode = ?')
-      .bind(state, Date.now(), ledgerId, this.mode)
+      .prepare(`UPDATE ledger SET stripe_state = ?, updated_at = ? WHERE id = ? AND mode = ? AND ${bound.sql}`)
+      .bind(state, Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
@@ -252,22 +294,26 @@ export class Ledger {
    * otherwise reclassify an invoice that has already been sent, so this refuses to overwrite.
    */
   async setClassification(ledgerId, classification) {
+    const bound = this.bound();
     const res = await this.db
       .prepare(
         `UPDATE ledger SET classification = ?, updated_at = ?
-          WHERE id = ? AND mode = ? AND classification IS NULL`
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND classification IS NULL`
       )
-      .bind(classification, Date.now(), ledgerId, this.mode)
+      .bind(classification, Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
 
+  /** @returns {boolean} false when the bound excludes this row — the caller learns nothing happened. */
   async recordFailure(ledgerId, message) {
-    await this.db
-      .prepare(`UPDATE ledger SET stripe_state = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND mode = ?`)
+    const bound = this.bound();
+    const res = await this.db
+      .prepare(`UPDATE ledger SET stripe_state = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND mode = ? AND ${bound.sql}`)
       // Truncated, and callers must pass a message that never embeds an upstream body (spec §6.3).
-      .bind(String(message).slice(0, 300), Date.now(), ledgerId, this.mode)
+      .bind(String(message).slice(0, 300), Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
+    return (res.meta && res.meta.changes) === 1;
   }
 
   /**
@@ -278,22 +324,26 @@ export class Ledger {
    * cannot be backfilled: Primus keeps no paid timestamp, so the moment is otherwise lost.
    */
   async markPaidFirstSeen(ledgerId, at = Date.now()) {
+    const bound = this.bound();
     const res = await this.db
       .prepare(
         `UPDATE ledger SET paid_first_seen_at = ?
-          WHERE id = ? AND mode = ? AND paid_first_seen_at IS NULL`
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND paid_first_seen_at IS NULL`
       )
-      .bind(at, ledgerId, this.mode)
+      .bind(at, ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }
 
   /** Void + reissue (spec §4.4): a finalized Stripe invoice cannot be edited. */
+  /** @returns {boolean} false when the bound excludes this row. */
   async supersede(oldLedgerId, newLedgerId) {
-    await this.db
-      .prepare(`UPDATE ledger SET superseded_by = ?, stripe_state = 'void', updated_at = ? WHERE id = ? AND mode = ?`)
-      .bind(newLedgerId, Date.now(), oldLedgerId, this.mode)
+    const bound = this.bound();
+    const res = await this.db
+      .prepare(`UPDATE ledger SET superseded_by = ?, stripe_state = 'void', updated_at = ? WHERE id = ? AND mode = ? AND ${bound.sql}`)
+      .bind(newLedgerId, Date.now(), oldLedgerId, this.mode, ...bound.params)
       .run();
+    return (res.meta && res.meta.changes) === 1;
   }
 
   async nextVersion(primusInvoiceId) {

@@ -28,7 +28,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Ledger } from '../src/ledger.js';
-import { freshDb } from './helpers.mjs';
+import { freshDb, ANY_AR } from './helpers.mjs';
 
 /**
  * A CALL RECORDER. Deliberately NOT a response simulator.
@@ -86,7 +86,7 @@ test('PENDING-IMPLEMENTATION (red by absence, not by defect): a create whose cus
     `src/create.js exists but exports no createInvoiceForClaimedRow${WHY_RED}`);
 
   const db = freshDb();
-  const ledger = new Ledger(db, 'test');
+  const ledger = new Ledger(db, 'test', ANY_AR);
   const { row } = await ledger.claim({ primusInvoiceId: '141604', bolNumber: '160135796', arCode: '1234' });
 
   // The join misses: nothing was ever inserted into stripe_customer for (test, 1234).
