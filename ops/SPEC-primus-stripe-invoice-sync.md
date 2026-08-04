@@ -1977,6 +1977,41 @@ verify it, and no automated check will ever cover it. A green repo is not eviden
 two different clocks (§8.86). Adding a third window on top of an unresolved contradiction makes the
 contradiction worse, not merely longer.
 
+## 8.855 The terms URL — OPEN, and not the URL that was assumed
+
+**Correcting the premise before recording the item.** Verified scope, all 113 tracked files, four
+patterns: **`termsandconditions` appears NOWHERE in this repo except this spec.** `portal.html` §3
+is "Customer Responsibilities" and names no URL; `portal.html` renders the Terms **inline** from a
+JS array via `openTermsPanel()`, entirely self-contained.
+
+**The URL customers are actually pointed at is `https://www.freightandlogistics.ai/?terms=1`** — the
+**.ai** domain, served by our own Cloudflare Pages from `index.html`. Three references, all in
+`index.html`:
+
+| Line | Context |
+|---|---|
+| 1324 | support form — "By submitting you agree to our Terms" |
+| 1506 | credit application — the consent checkbox |
+| **1710** | **the SIGNED agreement record** — "Terms and Conditions and Privacy Policy (https://www.freightandlogistics.ai/?terms=1), **incorporated into and made part of this agreement**" |
+
+**So tearing down Wix breaks nothing this repo points at.** No repo-referenced terms link depends on
+`freightandlogistics.com`.
+
+**The real open item is different, and it does not close when Wix does.** Line 1710 embeds that URL
+into **executed credit applications** as incorporated contract text. That means:
+
+1. **`www.freightandlogistics.ai/?terms=1` must resolve permanently.** It is not a marketing link;
+   it is cited inside signed agreements. Pages allowlists `/`, so `?terms=1` resolves today.
+2. **The Terms shown there change over time, and nothing records which version a customer signed.**
+   A customer who signed in March and disputes in December is pointed at whatever the page says
+   then. There is no version stamp, no archive, and no way to reconstruct the text they agreed to.
+   That is a records problem, not a link problem, and it is made sharper — not created — by editing
+   the Terms.
+
+**What cannot be verified from here:** Wix's own internal links, email signatures, printed invoices,
+and anything historically sent to customers that may point at the `.com` terms page. A verified
+scope over this repo says nothing about those.
+
 ## 8.86 LIVE DEFECT — two conflicting claims deadlines, already published
 
 Found 2026-08-03 while inventorying dispute windows. **Reported, not fixed** — out of scope for the
