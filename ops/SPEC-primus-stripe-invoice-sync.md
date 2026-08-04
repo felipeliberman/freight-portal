@@ -875,7 +875,7 @@ ledger(
   version,              -- increments on reissue (§4.4)
   classification,       -- 'primary' | 'rebill' | 'hold'; PERSISTED, never re-derived
   stripe_invoice_id,
-  stripe_state,         -- intent | draft | finalized | void | paid | uncollectible
+  stripe_state,         -- intent | draft | finalized | void | paid | uncollectible | failed
   total_cents,
   UNIQUE(mode, primus_invoice_id, version)
 )

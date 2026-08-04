@@ -9,6 +9,41 @@
 -- is silent and its symptom is "we never billed them."
 
 
+-- ── PENDING MIGRATIONS — apply to remote D1 BEFORE deploying code that uses them ──────────────
+--
+-- DEPLOY ORDER IS SCHEMA FIRST, CODE SECOND. Backwards, the running worker issues statements
+-- against columns that do not exist and every write fails mid-run.
+--
+-- THIS FILE IS THE RESUME DOCUMENT. Statements 1 and 2 are NOT re-runnable — SQLite has no
+-- `ADD COLUMN IF NOT EXISTS`, so a second run errors `duplicate column name`. And re-running this
+-- file repairs neither of them, because the columns live inside a `CREATE TABLE IF NOT EXISTS`
+-- that no-ops against an existing table. A half-applied migration is therefore resumed BY COLUMN,
+-- from a fresh PRAGMA — never by re-running the file.
+--
+--   1. ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER       -- NOT re-runnable
+--   2. ALTER TABLE ledger ADD COLUMN customer_reference TEXT          -- NOT re-runnable
+--   3. CREATE TABLE IF NOT EXISTS stripe_customer (...)               -- idempotent
+--   4. CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq ...  -- idempotent
+--
+-- Apply 1 and 2 as explicit --command ALTERs. Apply 3 and 4 by re-running this file, which is a
+-- no-op for every table that already exists:
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+--   wrangler d1 execute invoice-sync --remote --file=./schema.sql
+--
+-- Verify POSITIVELY afterwards — never an exit code (spec §0.25):
+--   wrangler d1 execute invoice-sync --remote --command "PRAGMA table_info(ledger)"
+--   wrangler d1 execute invoice-sync --remote --command "SELECT sql FROM sqlite_master WHERE tbl_name='stripe_customer'"
+--
+-- DOWN MIGRATION:
+--   1, 2 — DO NOTHING. An added nullable column with no reader is inert, and dropping it is a
+--          riskier operation than the one it would undo.
+--   3, 4 — DROP TABLE stripe_customer. THIS EXPIRES AT THE FIRST STRIPE CREATE: once the table
+--          holds a stripe_customer_id, dropping it orphans every Stripe object keyed through it,
+--          which is precisely the failure the table exists to prevent. After the first create
+--          there is no down migration, only a forward fix.
+
+
 -- ── ledger ───────────────────────────────────────────────────────────────────────────────────
 -- The authoritative idempotency spine (spec §4.2 layer 1). A row is written BEFORE the Stripe
 -- create is attempted, so the database rejects a concurrent second attempt regardless of timing.
@@ -26,7 +61,7 @@ CREATE TABLE IF NOT EXISTS ledger (
   -- the invoice that belongs to them rather than to us. Prints as "REF.#" on the Primus invoice.
   -- Source: shipment.consigneeReferenceNumber on the LIST response ONLY; the detail does not carry
   -- it (verified live 2026-08-03). Claim-time value, like ar_code — never re-derived later.
-  -- MIGRATION: ALTER TABLE ledger ADD COLUMN customer_reference TEXT
+  -- MIGRATION: statement 2 in the PENDING block at the top of this file.
   customer_reference    TEXT,
 
   -- Increments on reissue (spec §4.4). A finalized Stripe invoice cannot be edited, so a
@@ -54,12 +89,8 @@ CREATE TABLE IF NOT EXISTS ledger (
   -- stores `paid` as a bare boolean with no date, so the moment passes unrecorded otherwise. This
   -- is the only payment timestamp that will ever exist outside QBO.
   --
-  -- MIGRATION on an existing database (schema.sql is CREATE IF NOT EXISTS, so it will NOT add this
-  -- to a table that already exists). Run before the next deploy:
-  --   wrangler d1 execute invoice-sync --remote --command \
-  --     "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
-  --   wrangler d1 execute invoice-sync --remote --command \
-  --     "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+  -- MIGRATION: statement 1 in the PENDING block at the top of this file. (schema.sql is
+  -- CREATE IF NOT EXISTS, so re-running it will NOT add this to a table that already exists.)
   paid_first_seen_at    INTEGER,
 
   created_at            INTEGER NOT NULL,
@@ -82,6 +113,65 @@ CREATE INDEX IF NOT EXISTS ledger_bol_idx ON ledger (mode, bol_number);
 CREATE INDEX IF NOT EXISTS ledger_state_idx ON ledger (mode, stripe_state);
 
 CREATE INDEX IF NOT EXISTS ledger_ar_idx ON ledger (mode, ar_code);
+
+
+-- ── stripe_customer ──────────────────────────────────────────────────────────────────────────
+-- The Stripe CUSTOMER identity, keyed (mode, ar_code). One row per customer, many ledger rows
+-- against it, JOINED AT READ TIME.
+--
+-- There is deliberately NO stripe_customer_id copy on `ledger`. A copy would be N duplicates of a
+-- single fact; it would turn the adoption path — rewriting the id after re-finding a customer
+-- whose ledger write was lost — into a fan-out UPDATE carrying its own atomicity problem; and it
+-- would be a second id column of exactly the shape whose unconditional overwrite is the defect
+-- being fixed on ledger.stripe_invoice_id. Both sides of the join are already indexed:
+-- ledger_ar_idx (mode, ar_code) on one side, this table's UNIQUE (mode, ar_code) on the other. If
+-- the join ever costs anything, add an index, not a column.
+--
+-- NOT in the `cache` table, which is where a Stripe customer id most obviously wants to live and
+-- must not. customerCacheKey (src/customers.js) is DELIBERATELY not mode-namespaced, because it
+-- caches upstream Primus/QBO data that is identical in test and live. A Stripe customer id is the
+-- opposite: mode-scoped, and meaningless across the boundary. Storing it there would either
+-- destroy that rationale or let a live run attach a live invoice to a TEST-mode customer — the
+-- exact failure mode-namespacing exists to prevent (spec §2.1). That cache also carries a 24h TTL
+-- and a writer that swallows its own errors; an identifier that must survive does not live behind
+-- a lossy, expiring, silent store.
+CREATE TABLE IF NOT EXISTS stripe_customer (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  mode               TEXT    NOT NULL,           -- 'test' | 'live'
+  ar_code            TEXT    NOT NULL,
+
+  stripe_customer_id TEXT,
+  -- intent  → row claimed, Stripe create not yet confirmed
+  -- created → Stripe returned a customer
+  -- failed  → create attempted and errored; retryable, still holds the claim
+  state              TEXT    NOT NULL DEFAULT 'intent',
+
+  -- Layer 2 of the same discipline as `ledger` (spec §4.2). Server-side and immediate, so it closes
+  -- the sub-second race; it expires at 24h, so it closes nothing longer. The claim row is what
+  -- persists past that, which is the whole reason this table exists.
+  idempotency_key    TEXT    NOT NULL,
+
+  qbo_display_name   TEXT,
+  last_error         TEXT,
+
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+
+  -- CLAIM BEFORE CREATE, exactly as on `ledger` — deliberately the same discipline rather than a
+  -- second one invented for customers. Total, no WHERE clause, so it is legal inline.
+  UNIQUE (mode, ar_code)
+);
+
+-- Two ARCodes must never attach the SAME Stripe customer. That is a mis-join, not a coincidence,
+-- and its consequence is one company's freight detail and amounts billed to another. PARTIAL, so
+-- the many 'intent' rows with a NULL stripe_customer_id do not collide with each other.
+--
+-- This is necessarily its own statement: SQLite accepts no WHERE clause on an inline UNIQUE(...)
+-- table constraint, so a partial unique index cannot be inline. It therefore fails, and re-runs,
+-- independently of the CREATE TABLE above — statement 4 in the PENDING block, not part of 3.
+CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq
+  ON stripe_customer (mode, stripe_customer_id)
+  WHERE stripe_customer_id IS NOT NULL;
 
 
 -- ── exceptions ───────────────────────────────────────────────────────────────────────────────

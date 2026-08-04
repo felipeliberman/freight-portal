@@ -20,11 +20,41 @@
 # schema.sql is `CREATE TABLE IF NOT EXISTS` — it will NOT add a column to a table that already
 # exists. Added columns need an explicit ALTER.
 #
-# PENDING (not yet applied to the remote database, required before the next deploy):
+# PENDING (not yet applied to the remote database, required before the next deploy).
+#
+# Verified absent on remote 2026-08-04 by `PRAGMA table_info(ledger)`: the ledger has 16 columns and
+# BOTH ALTERs below are outstanding. This block previously listed only the first of the two, which
+# is how a migration list goes stale — schema.sql is now the single source and this points at it.
+#
+# CONSEQUENCE WORTH KNOWING: the code on main ALREADY writes both columns (src/ledger.js claim() and
+# markPaidFirstSeen), so main cannot run against the remote database until these land. It fails loud
+# at statement-prepare, not silently. Production is unaffected only because the deployed Worker
+# predates those lines.
+#
+# Statements 1 and 2 are NOT re-runnable (no ADD COLUMN IF NOT EXISTS); 3 and 4 are idempotent.
+# Re-running schema.sql repairs neither 1 nor 2. A half-applied run resumes BY COLUMN from a fresh
+# PRAGMA. schema.sql carries all four verbatim, with their down migrations.
+#
+#   1. ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER
+#   2. ALTER TABLE ledger ADD COLUMN customer_reference TEXT
+#   3. CREATE TABLE IF NOT EXISTS stripe_customer (...)              — quoted in schema.sql
+#   4. CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq ... — quoted in schema.sql
+#
 #   wrangler d1 execute invoice-sync --remote \
 #     --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
+#   wrangler d1 execute invoice-sync --remote \
+#     --command "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+#   # 3 and 4 — a no-op for every table that already exists:
+#   wrangler d1 execute invoice-sync --remote --file=./schema.sql
+#
 #   # then verify positively, per spec §0.25 — do not trust the exit code:
 #   wrangler d1 execute invoice-sync --remote --command "PRAGMA table_info(ledger)"
+#   wrangler d1 execute invoice-sync --remote \
+#     --command "SELECT sql FROM sqlite_master WHERE tbl_name='stripe_customer'"
+#
+# DOWN: 1 and 2 — do nothing; an inert nullable column is not worth a riskier operation to undo.
+# 3 and 4 — DROP TABLE stripe_customer, which EXPIRES AT THE FIRST STRIPE CREATE. After that it
+# orphans every Stripe object keyed through it, and there is no down migration, only a forward fix.
 #
 # Deploy:  cd invoice-sync && wrangler deploy
 #
