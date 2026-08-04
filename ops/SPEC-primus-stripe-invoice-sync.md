@@ -313,6 +313,28 @@ Consolidation is the fix, not a refactor riding along with it — copies that mu
 what produced the divergence. Flooring in integer cents additionally makes the displayed fee equal
 the charged fee by construction.
 
+### 0.2.0 PILOT IDENTITY CHECKLIST — required before `AR_ALLOWLIST` is repointed (2026-08-04)
+
+The pilot subject is now the **owner's test account** (§3.1). Nothing here may be guessed: every
+item is a value the code matches **exactly**, and a wrong one either claims another customer's
+invoices or silently claims nothing.
+
+| # | Needed | Why exactly this, and what breaks without it |
+|---|---|---|
+| 1 | **ARCode** — the value in `customerInfo.customerCode` on that account's Primus invoices | The *only* thing `AR_ALLOWLIST` matches (`checkArCode`, `config.js:93`). It is the pilot boundary; fails closed if unset. Verified on Payless as matching `customerInfo.customerCode` on 11 of 11 |
+| 2 | **QBO DisplayName** for that account | `displayNameMatchesArCode` (`customers.js:31`) requires the DisplayName to END in `-<ARCode>` — a **suffix** match, deliberately not `endsWith`, so `Acme-15406` cannot match `5406`. If the record does not follow the `<Company>-<ARCode>` convention, resolution returns `unmatched` and every invoice lands in the exception queue rather than being billed. **Tell me the exact string, including whether the suffix exists at all** |
+| 3 | **Whether that account has invoices in the poll window** | Phase 3 polls 60 days. No invoices means the pilot renders nothing and proves nothing — worth knowing before the switch, not after |
+| 4 | **Recipient email(s) on the QBO record** | `PrimaryEmailAddr.Address`, comma-split into primary + cc (`parseEmails`). Nothing sends in test mode, but the value is read and rendered, and a malformed address vanishes silently (§5.6) |
+
+**Useful but not identity:** the Primus `customerInfo.customerId` (the numeric — Payless's is
+`701567`). It is a cross-check only; ARCode remains the key by elimination.
+
+Once items 1–2 are known, the changes are: `AR_ALLOWLIST` (secret/`wrangler.toml`), the pilot
+references in §3.1, §8.7's verification subject, and the fixtures in
+`invoice-sync/test/allowlist.test.mjs` and `customers.test.mjs` — **the Payless values in those tests
+stay as worked examples where they demonstrate matching behaviour** (`Payless Rugs-5406` vs
+`Unrelated 5406 Holdings` is a real negative control and should not be deleted).
+
 ### 0.2 Stripe customer identity is already split two ways
 
 | Path | Keyed on | Where |
@@ -666,8 +688,31 @@ per-invoice, never per-run, so a run killed by CPU limits resumes rather than re
 
 ### 3.1 Customer allowlist — pilot scope
 
-**Phases 6–9 run against ONE customer: Payless Rugs, ARCode `5406`.** Everything else stays on the
+**CHANGED 2026-08-04 — the pilot subject is the OWNER'S TEST ACCOUNT, not Payless Rugs.**
+
+**Phases 6–9 run against ONE customer: the owner's test account. Its ARCode is NOT YET RECORDED —
+see the block below, and do not set `AR_ALLOWLIST` until it is.** Everything else stays on the
 current Primus/QBO flow, untouched, until phase 9 proves out.
+
+**Why it changed:** the pilot writes to a real customer's Stripe records and, at phase 9, sends real
+customer-facing mail. Doing that first against an account the owner controls removes the entire class
+of "we tested on someone who could receive it." `ap@paylessrugs.com` verification (C2) and the
+recipient-confirmation work stop being preconditions for the *pilot* — they return only when a real
+customer is added.
+
+> ### BLOCKED — the test account's identity is not yet known
+>
+> `AR_ALLOWLIST` is currently `5406` (Payless). **It must not be repointed by guessing.** The
+> allowlist is the only thing standing between the pilot and the full book, and `checkArCode`
+> (`invoice-sync/src/config.js:93`) matches on exact ARCode, so a wrong value silently claims the
+> wrong customer's invoices or none at all. Required from the owner, verbatim — see the identity
+> checklist in §0.2.
+
+**Payless data is RETAINED as worked examples.** The 11 rendered invoices, BOL 160134786's
+aggregation, `vendor.cost` 273.57 and the under-$300 surcharge finding are **evidence** — they
+demonstrate real behaviour of the mapper, classifier and Primus payloads, and none of that is
+invalidated by changing who the pilot bills. Where Payless appears below as a *worked example*, it
+stays. Where it appears as *the pilot subject*, it is superseded by this section.
 
 This is what makes the manual review phase survivable. Drafts-only and test mode are both only as
 good as someone actually reading the output, and nobody reads ~1733 invoices a month. One customer's
@@ -1937,7 +1982,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 
 | # | Item | Ref | Why it blocks |
 |---|---|---|---|
-| A1 | **The 48-hour vs 10-business-day claims window.** Two windows, two clocks, same subject. The AGENT asserts 48h from delivery as "binding" and "always governs"; the CONTRACT says 10 business days from invoice. They cannot both stand. **Owner decides the number.** | §8.857 | Live now in the deployed Worker. Blocks the KB edit AND the Terms edit. |
+| A1 | **CLOSED 2026-08-04.** Neither candidate won — the Worldwide Express structure is adopted: 5 days to report concealed damage (carrier-attributed), 9 months to file from delivery (or from PICKUP for non-delivery), we file and pursue but do not warrant the outcome, ~30 days to acknowledge + ~120 to resolve. **The decision is made; only its publication is still gated, on A2.** | §8.857 | No longer a decision. The 48h framing is still live in the deployed Worker until the KB is rebuilt and redeployed. |
 | A2 | **Terms versioning.** `index.html:1710` writes the terms URL into executed credit applications as "incorporated into and made part of this agreement". `rec.consents.termsAndConditions` is a BOOLEAN — it records THAT they agreed, never WHAT. Editing the Terms silently repoints every past signer at text they never saw. | §8.856 | Must land BEFORE any Terms edit, or the 3-day clause goes in unversioned too. |
 | A3 | **Split KNOWLEDGE.md §5** ("Billing, adjustments, claims" → 5a/5b/5c/5d). A retrieval defect: one heading is how a billing question reaches a claims deadline. | §8.858 | Independent of A1's number. Gives the 3-day clause an unambiguous home. |
 | A4 | **Publish the Terms everywhere before the first 3-day notice ships.** Includes the Wix copy, which cannot be verified from this repo. | §8.85 | Phase 9 precondition. A green repo is not evidence. |
@@ -1958,7 +2003,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | # | Item | Ref |
 |---|---|---|
 | C1 | The dispute-notice WORDING. Currently `« PENDING OWNER WORDING »` and send-blocked | §5.5 |
-| C2 | `ap@paylessrugs.com` verification. Send-blocked until confirmed | §5.6 |
+| C2 | ~~`ap@paylessrugs.com` verification~~ — **DEFERRED 2026-08-04**: no longer a pilot precondition, because the pilot subject is the owner's test account (§3.1). Returns as a blocker the moment a real customer is added. The unverified-address finding in §5.6 stands | §5.6 |
 | C3 | The Stripe never-payable configuration, and a test that pins it | §0.05 |
 | C4 | Void-awareness detection — a corrected primary currently classifies as a rebill | §8.9 |
 
@@ -2181,10 +2226,55 @@ never saw.
 they have not changed since June. That is luck, not a mechanism — the first edit ends it unless
 versioning lands first. The Wix copy and anything a customer signed against it are gone.
 
-## 8.857 OPEN DECISION — the cargo-claims window. Two candidates, they cannot both stand.
+## 8.857 CLOSED 2026-08-04 — the cargo-claims window. Neither candidate won.
 
-**Blocks BOTH the KB edit and the Terms edit.** The number is the owner's to decide; nothing is
-changed until it is.
+**DECIDED BY THE OWNER. This is no longer an open question.** Both candidates below are superseded;
+they are kept only so the record shows what was replaced and why nothing may be published in the old
+shape.
+
+### THE DECISION — adopt the Worldwide Express structure
+
+| Element | Rule |
+|---|---|
+| **Concealed damage** (not noted on the POD) | **5 days to report**, attributed to the carrier |
+| **Filing deadline** | **9 months**, from **delivery** |
+| **Filing deadline, non-delivery** | **9 months**, from **PICKUP** |
+| **Our role** | We **file and pursue** any claim brought to us, and assist — but do **not warrant the outcome** |
+| **Expected timing** | Carriers take **~30 days to acknowledge** and **~120 more to resolve** |
+
+**Why it resolves the conflict:** the old candidates were a single bar doing two different jobs at
+once. This separates them — a short **reporting** window for concealed damage, and a long **filing**
+window for the claim itself — so a shipment delivered before its invoice issues no longer has two
+clocks running in opposite order. The clock question disappears because the two windows measure
+different events.
+
+### WHAT THIS REPLACES — all four sites, none yet edited
+
+| Site | Currently says | Becomes |
+|---|---|---|
+| `portal.html:8653` §6 | 10 business days from invoice | the structure above |
+| `index.html:1930` §12 | 10 business days from invoice | the structure above |
+| `KNOWLEDGE.md:82`, `:134`, `:245-247` | 48 hours from delivery, "binding", "always governs" | the structure above |
+
+**The 48-hour framing is live in the deployed Worker** and the agent still asserts it. That does not
+change until the KB is rebuilt (`node evals/build-worker-kb.js`) and the Worker redeployed.
+
+### THE ONLY THING STILL IN FRONT OF PUBLISHING: A2
+
+**A2 (Terms versioning) still lands first.** Not a preference — the reason is unchanged from §8.856:
+`index.html:1710` writes the terms URL into executed credit applications as "incorporated into and
+made part of this agreement", and `rec.consents.termsAndConditions` is a BOOLEAN recording only
+*that* they agreed, never *what*. Publishing this decision into an unversioned Terms page silently
+repoints every past signer at text they never saw. **A1 is closed; the publishing of A1 is blocked
+by A2, and by nothing else.**
+
+Order stands: **A2 → the Terms edit carrying this decision and the 3-business-day billing clause →
+A3 → A4.**
+
+### SUPERSEDED — the two candidates, kept for the record
+
+**Blocks BOTH the KB edit and the Terms edit.** ~~The number is the owner's to decide; nothing is
+changed until it is.~~ *(Decided 2026-08-04 — see above.)*
 
 | Candidate | Window | Clock starts | Where it is published |
 |---|---|---|---|
@@ -2538,6 +2628,36 @@ It happened **twice in one evening**, 2026-08-03:
 The second is the more instructive: it was made by someone who had just written the rule, in the
 same session, about the same subsystem. Knowing the failure mode does not confer immunity from it.
 
+**Third instance, and the most expensive — CORRELATING A SYMPTOM WITH THE MOST ALARMING NEARBY
+EVENT** (§8.864, 2026-08-04). A green "Dispatched" checkpoint was seen on BOL 160135857 in the same
+session as three carrier rejections of that BOL's tender. The two were connected, and the resulting
+theory — *a failed dispatch is rendering as success* — was carried as the highest-severity open
+item **for about two months**.
+
+It was wrong. The checkpoint was green **before any dispatch was attempted**, because a saved
+shipment's requested pickup date lights it. The rejections and the checkmark were unrelated events
+that arrived together.
+
+**What made this expensive is precisely that the wrong theory was the scarier one.** "Dispatch
+failures render as success" implies freight nobody tendered, carriers never notified, and a
+structural problem in the write path — so it earned top priority, blocked customer exposure, and
+shaped two months of thinking. The true cause is a display defect in a resolver, is worse in
+*reach* (every saved shipment, continuously, not one incident) and far smaller in *kind*.
+
+**The rule: when a symptom and an alarming event coincide, the coincidence is a hypothesis, not a
+finding.** Concretely:
+
+- **Establish the symptom's cause independently of the alarming event.** Here, one question would
+  have collapsed it in a minute: *does this checkpoint appear on a shipment that was never
+  dispatched at all?* That test needs no incident, no BOL, and no risk.
+- **Test the boring explanation first.** It is usually cheaper to test, and being wrong about it
+  costs nothing.
+- **Severity is not evidence.** A theory does not become more likely because its consequences are
+  worse; alarm is a reason to verify sooner, never a reason to verify less.
+- **Date the mechanism against the observation.** The resolver that causes this was written
+  2026-07-28 and could not have caused anything before it existed — a check that would have broken
+  the two-month framing immediately.
+
 **The rule: before characterising a defect's severity, establish that a live path reaches it.**
 
 - "This code is wrong" and "customers are hit by this" are two claims. The second needs its own
@@ -2548,255 +2668,153 @@ same session, about the same subsystem. Knowing the failure mode does not confer
   guessing in either direction. A latent defect is still worth fixing; it is not worth an emergency.
 - Severity language is a claim about the world, not about the code. Spend it accordingly.
 
-## 8.864 LIVE DEFECT — a rejected tender drew a green "Dispatched" checkpoint
+## 8.864 LIVE DEFECT — every saved shipment shows a completed "Dispatched" checkpoint
 
-**Instance 1 of §8.863, and the only one still live. Highest-severity open item. Confirmed observed,
-cause unverified, unfixed. Must be resolved before broad customer exposure.**
+**CONFIRMED by direct observation 2026-08-04. Cause identified. UNFIXED and deliberately PARKED —
+this is a portal tracking defect with no relationship to the invoice sync.**
 
-Recorded 2026-08-03. It had existed only in the owner's memory and one conversation until now, which
-for the highest-severity open item is its own defect.
+### CONFIRMED — direct observation, BOL 160135909
 
-### ESTABLISHED — owner's direct observation, BOL 160135857
+Created and saved by the owner, never dispatched, observed minutes later:
 
-- The **carrier rejected the tender three times.**
-- The portal drew a green **"Dispatched"** checkpoint on the tracking timeline anyway.
-- **No error was surfaced at any point.**
-- A customer seeing this would believe the shipment was tendered and moving. **Nothing had been
-  accepted.** They would wait for a pickup that was never scheduled, and discover it only when the
-  freight failed to appear — by which point the pickup window is gone.
-
-This is the most damaging form of §8.863: the misattribution is not "your number is wrong" but
-"your freight is moving."
-
-### ESTABLISHED — verified in code this session
-
-**Line numbers below are post-D7** (the widget deletion removed 869 lines, shifting everything after
-`portal.html:1865` by −869). Each was re-located by content, not by arithmetic.
-
-The checkpoint is computed **entirely from stored record state**, never from the tender outcome
-(`portal.html:7650`):
-
-```js
-const disp = s.dispatched === true || !!dispatchDate || stDispatched;
-```
-
-…where the three terms resolve, in `resolveShipmentProgress` (`portal.html:7622`), to:
-
-```js
-statusStr    = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal
-               || ti.statusName || s.status                                  // :7626
-dispatchDate = ti.dispatchDate || s.estimatedPickupDate                      // :7631  ← see below
-stDispatched = /DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/.test(statusStr)  // :7647
-```
-
-All are fields on the BOL record as Primus returns it. **None is the result of the tender call.**
-`reached` (`:7656`) lights the stage monotonically, and **both** checkpoint renderers — `:8051` and
-`:11987` — are fed by this one resolver (`:7706`, `:11977`), so they cannot disagree and cannot be
-independently at fault.
-
-### THE MECHANISM, FOUND 2026-08-04 — `dispatchDate` falls back to `estimatedPickupDate`
-
-**`:7631` ORs in `s.estimatedPickupDate`, which is a BOOKING-time field, not a dispatch field.** It
-is the pickup date the customer asked for, written into the booking payload at save time
-(`portal.html:19264`, `estimatedPickupDate: _snapBD.pickupDate||''`) and read everywhere else in
-this file as the *requested/estimated pickup date* (`:5219`, `:5308`, `:6931`, `:7183`, `:11956`,
-`:14457`).
-
-Expanded, the union at `:7650` is:
-
-```js
-disp = s.dispatched === true || !!(ti.dispatchDate || s.estimatedPickupDate) || stDispatched
-```
-
-**So any saved shipment carrying a pickup date lights the green "Dispatched" checkpoint — with no
-dispatch attempt, no tender, and no misbehaviour by Primus at all.** Every booked shipment has a
-pickup date; the two-step flow (§ Save, then Ready to Dispatch) guarantees a population of saved
-shipments that have one and have never been dispatched.
-
-This is a complete, code-visible explanation of the observed defect that requires nothing of Primus,
-and it is **simpler than every other candidate**. It is also the one that can be tested with zero
-risk — see the discriminating test below. It does not yet explain "no error surfaced"; that part may
-still belong to a different cause.
-
-**So the owner's hypothesis is confirmed at the code level: the timeline reads stored status, not
-the tender outcome.** If Primus marks the record dispatched — or merely returns a status string
-containing "DISPATCH" — the green checkpoint is drawn regardless of what the carrier said.
-
-`_canonicalDispatch` (`:6227`) does have honest failure returns: `inFlight`, `needsDisclosure`,
-`chargeFailed` with a code and error. It is called from at least four sites
-(`:6447`, `:7264`, `:11183`, `:14318`). **So the honest path is real, consistent with the correct
-error on BOL 160135858's 500 — but it is not the path that paints the timeline.**
-
-### NOT ESTABLISHED — and what was actually attempted
-
-**The BOL records could not be read.** `fetchBookingByBOL` was run for **160135857** and **160135858**
-from a logged-in session; both returned not-found. That means **not resolvable from that account** —
-its fast path is a direct BOL-number lookup that swallows errors in a bare `catch`, and its fallback
-scan is owner-filtered (`okOwner`: `thirdParty.id === primusCustomerId`) over a 548-day window. The
-BOLs are most likely on a different customer. **They were not searched for across other accounts,
-deliberately — that is customer data, and the finding does not need it.** So "not found" here is a
-statement about the lookup's scope, not about the BOLs' existence.
-
-Consequently these remain open:
-
-1. **Does Primus set `dispatched: true` / a dispatch date / a "DISPATCH" status string on a REJECTED
-   tender?** This is the crux. The code confirms the timeline would believe it; only the record
-   shows whether Primus said it.
-2. **Which of the dispatch entry points reach the honest path and which paint from stored state.**
-   Four `_canonicalDispatch` call sites plus the agent tool path are known; they have not been
-   traced individually.
-3. Whether the three rejections produced any client-visible signal that was swallowed upstream of
-   the timeline.
-
-### ALTERNATIVE CAUSES — named so the hypothesis is tested, not confirmed
-
-**CANDIDATE C — the `estimatedPickupDate` fallback at `:7631`. Added 2026-08-04, and it is now the
-LEADING hypothesis**, because it is the only one that needs nothing to have gone wrong anywhere: not
-in Primus, not in the dispatch call, not in local state. A saved shipment with a pickup date lights
-the checkpoint. See the mechanism section above. **It is also the only candidate testable at zero
-risk**, which is why the discriminating test now starts there rather than with BOL 160135857.
-
-If C is live, the fix is narrow and local: `dispatchDate` must stop falling back to a booking field,
-and the `disp` term must be sourced from something that actually indicates a tender.
-
-The two original candidates would also produce the symptom without Primus storing a dispatched
-state. **They are not equally serious, and the first is the one to hope against.**
-
-**CANDIDATE A — `portal.html:6230`, the more serious by a wide margin.** Anchor:
-`if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)`.
-It short-circuits `_canonicalDispatch` to `{ ok:true, alreadyDispatched:true, dispatchOk:true }`
-**before any network call is made**.
-
-If this is the live cause, **this is not a display defect.** It is a code path that reports a
-successful dispatch that never left the browser — no tender, no Primus write, nothing for a carrier
-to reject or accept, and a caller that cannot tell the difference because the return shape is
-identical to a real success. A stale or wrongly-set `_lastBooked.dispatched` would make **every
-subsequent attempt on that BOL** report success instantly. That also fits the reported symptom
-better than it first appears: **three rejections in a row with no error** is exactly what a
-short-circuit produces, whereas a stored-field problem would still have made three real API calls
-that each returned a rejection someone could have surfaced.
-
-The fix is different in kind, and so is the severity: a stored-field problem is "the timeline reads
-the wrong source", while this is "a dispatch can be reported without being attempted." The second
-demands a structural guarantee — no success return may originate from a path that made no call —
-not a change to how a checkpoint is drawn.
-
-**CANDIDATE B — optimistic UI paint.** `:7284` paints the dispatch button green with "Dispatched!"
-in the click handler, and `:5926` renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local
-UI state, not record state. Real, but it is a display defect and the lesser of the two.
-
-### THE DISCRIMINATING TEST — rewritten 2026-08-04
-
-**Superseded version:** the original test opened by reading BOL 160135857 and treated three falsy
-fields as killing the stored-state hypothesis. **A cancelled record can defeat that test silently,
-and it named the wrong field.** Both defects are recorded below rather than quietly patched, because
-"the procedure produced a clean negative" is exactly the kind of false confidence §8.863 is about.
-
-#### START HERE — Test C. Zero risk, zero writes, no dispatch, ~60 seconds
-
-**This tests the leading hypothesis and it is the one to run first.** It touches no dispatch path,
-sends nothing to any carrier, and needs no access beyond an ordinary login.
-
-1. Log into the portal as **Haynes** (or any account with saved shipments).
-2. Open **My Shipments** and pick a shipment that is **Saved and has never been dispatched** — it
-   shows "Ready to Dispatch" and "Cancel Shipment", which per `:7902` only render when
-   `isShipmentDispatched()` is false.
-3. Open it and look at the **timeline**.
-
-| Observation | Verdict |
+| Surface | Reads |
 |---|---|
-| The **"Dispatched" checkpoint is GREEN** on a shipment that was only ever saved | **CANDIDATE C IS CONFIRMED LIVE.** The checkpoint is lit by `estimatedPickupDate`, and this alone reproduces the reported symptom. Fix `:7631` |
-| The checkpoint is **dark** | C is not firing for this shipment. Check whether it has a pickup date at all; if it does and the checkpoint is dark, C is **ruled out** and the record read below becomes necessary |
+| My Shipments list | **Saved** |
+| Modal status header | **SHIPMENT CREATED** |
+| PRO# | **none** |
+| Action button | **Ready to Dispatch** |
+| Timeline | Booked ✅ · **DISPATCHED ✅ dated 08/04/26** · Picked Up ○ · In Transit ○ · Delivered ○ |
 
-**If C confirms, stop.** It is sufficient to explain a green checkpoint on an untendered shipment,
-and it is fixable without touching the dispatch path at all. Candidates A and B remain open only for
-the *separate* question of why **no error surfaced** — which is a different symptom with a different
-cause, and should not be merged into this one.
+**The same screen contradicts itself four ways at once** — "SHIPMENT CREATED", no PRO, a
+Ready-to-Dispatch button offering an action already shown as complete, and a green Dispatched
+checkpoint. **The customer reads the timeline, not the button.**
 
-#### THEN — the record read, only if C is ruled out
+### The mechanism
 
-**Prerequisite:** BOL **160135857** is not on the Haynes account — `fetchBookingByBOL` returned
-not-found for it and for 160135858 from a Haynes session, which reflects that lookup's scope, not
-the BOLs' existence. Use master-console access, or log in as the owning account.
+`resolveShipmentProgress` (`portal.html:7622`):
 
-**THE RECORD HAS BEEN MODIFIED SINCE THE OBSERVATION. Verified 2026-08-04** via the `fl-tracking`
-public route, which resolves any BOL with no owner filter:
-
-```
-160135857 → CANCELED.  timeline: 08/02 04:52 CANC "Shipment canceled"
-                                 08/02 04:18 SHC  "Shipment has been created via API"
-           Estes Express (EXLA), PICO RIVERA CA → PICO RIVERA CA, 1 pc, 100 lbs
-160135858 → CANCELED.  created 08/02 04:50, canceled 08/02 04:52
+```js
+dispatchDate = ti.dispatchDate || s.estimatedPickupDate                   // :7631
+disp         = s.dispatched === true || !!dispatchDate || stDispatched    // :7650
 ```
 
-**What the cancellation does to this test — all four are ways a cancelled record reads as a clean
-negative when the defect was real:**
+`estimatedPickupDate` is a **booking-time** field — the pickup date the customer requested, written
+into the booking payload at save (`:19264`) and read as the estimated pickup date everywhere else
+(`:5219`, `:5308`, `:6931`, `:7183`, `:11956`, `:14457`). Any saved shipment carrying one lights the
+checkpoint. `dates.dispatched` (`:7665`) is the same variable, so **the date displayed beside the
+green check is the requested pickup date presented as a dispatch date** — which is what 08/04/26 was.
 
-1. **`status` is contaminated.** It now reads `CANCELED`, which does not match the `stDispatched`
-   regex. "Status doesn't match" is therefore explained by the cancellation **regardless of what it
-   said at the time**. That term is dead as evidence in *both* directions.
-2. **The record may be gone, not merely voided.** Cancel tries `DELETE /applet/v1/book/{BOLId}`
-   **first**, falling back to `POST /applet/v1/book/{BOLId}/void` only if the DELETE fails
-   (`showCancelShipmentConfirm`, `portal.html:7398`). A successful DELETE means "not found" is the
-   expected result and rules out nothing.
-3. **Dispatch fields may have been cleared by the void.** Unknown, and not determinable from this
-   repo. If `dispatched` and `ti.dispatchDate` come back falsy, that is consistent with *both* "it
-   was never dispatched" and "the void cleared them."
-4. **The tracking timeline shows no dispatch event** — created, then cancelled, nothing between.
-   Suggestive of never-accepted, but carrier-event data does not reflect the booking record's
-   `dispatched` flag, so it is not the discriminator.
+Both renderers (`:8051`, `:11987`) are fed by this one resolver (`:7706`, `:11977`), so neither is
+independently at fault and both show it.
 
-**Read these fields — the full chains, not the short list the superseded version gave.** The
-original named `dispatchDate` alone and would have produced a **false negative**, because `:7631`
-ORs in `estimatedPickupDate`:
+### Introduced 2026-07-28 by `e3b5d65` — and the code it replaced was CORRECT
 
-| Field | Why |
+The prior implementation kept the estimate out of the state term and used it only for display:
+
+```js
+// BEFORE (modal):  done: detail.dispatched || !!ti2.dispatchDate
+//                  date: ti2.dispatchDate || detail.estimatedPickupDate
+// BEFORE (card):   done: !!(s.dispatched || ti.dispatchDate)
+```
+
+`done` excluded `estimatedPickupDate`; only the *displayed date* fell back to it. **The refactor
+that unified the header and the timeline onto one resolver collapsed those two into a single
+`dispatchDate` variable and used it for both the date and the state.** A deliberate separation was
+lost in a change whose purpose was consolidation — the consolidation was right, the merge of a
+display fallback into a state term was not.
+
+**Dating consequence, and it matters: the mechanism is 7 days old (2026-07-28 → 2026-08-04) and
+CANNOT explain any observation predating 2026-07-28.**
+
+### The original incident was MISDIAGNOSED
+
+BOL 160135857 was never "a rejected tender rendered as success." **The checkpoint was green before
+anyone attempted to dispatch it.** The three carrier rejections and the green checkmark were
+unrelated events that appeared together and were connected on that basis. The defect predates the
+dispatch attempt and has nothing to do with tender outcome.
+
+**Open, and not closed by this:** the theory was carried for about two months, but this mechanism
+has existed for seven days. Either the earlier observations were a **different** defect, or the
+recalled duration exceeds the mechanism's life. §8.863's instance 1 is therefore **only closed for
+the 2026-08-02 observation**. Any pre-2026-07-28 sighting of a dispatch reported as successful
+remains unexplained and would need its own evidence.
+
+### Candidates A and B are NOT the cause
+
+- **A — the `_lastBooked.dispatched` short-circuit (`:6230`).** Not the cause: C fires with no
+  dispatch attempt at all, and A cannot fire until a dispatch has already succeeded (every
+  `_lastBooked` writer initialises `dispatched:false`; only `:6339` sets it true). **A remains a
+  real mechanism for a DIFFERENT symptom** — a success returned with no network call — and there is
+  no evidence it has ever fired. Not closed, not urgent, not this defect.
+- **B — optimistic UI paint (`:7284`, `:5926`).** Not the cause. Local button/header state only.
+
+### Blast radius — a standing misrepresentation, not an incident
+
+Measured read-only against the live book (Haynes, 180-day window, the page's own predicates):
+
+| | |
 |---|---|
-| `dispatched` | first term of the `disp` union, `:7650` |
-| `trackingInformation.dispatchDate` | real dispatch date, first half of the second term |
-| **`estimatedPickupDate`** | **booking-time field that also satisfies the second term — the Candidate C mechanism** |
-| `lastStatus`, `trackingInformation.lastStatusExternal` / `lastStatusInternal` / `statusName`, `status` | the full `statusStr` chain at `:7626`, in precedence order |
-| `carrierPRO`, `vendor.PRO`, `trackingInformation.PRO` / `proNumber`, `proNumber` | a PRO means a carrier accepted; note `isShipmentDispatched` (`:5193`) reads a **different** field set than the timeline, so read both |
+| Records returned | 65 |
+| Carrying `estimatedPickupDate` | **65 / 65 (100%)** |
+| Drawing a green Dispatched checkpoint | 65 |
+| Never dispatched (`isShipmentDispatched()` false) | 1 |
+| **Mislit — green checkpoint, never dispatched** | **1, and it was lit ONLY by `estimatedPickupDate`** |
 
-**Verdict table:**
+**The rate is what generalises, not the count.** Every record sampled carries a pickup date, so
+**every saved-not-yet-dispatched shipment is mislit** — the mislit population *is* the
+saved-not-yet-dispatched population. Haynes badly under-samples it: they book by email and do not
+use the portal's two-step Save-then-Dispatch flow, so only one such shipment existed. Accounts that
+do use the portal are where the population lives, and the two-step flow guarantees one exists
+continuously.
 
-| Observation | Conclusion | Rules out |
+**To count it properly** requires a query across all customers — master-console access or an
+all-accounts token — counting records where `isShipmentDispatched()` is false and
+`estimatedPickupDate` is set. Not obtainable from a single customer's bearer token, which is why
+only the rate is stated here.
+
+### The fix — SHAPE ONLY, not scoped, not written
+
+**An EXPECTED date must not drive a checkpoint meaning OCCURRED.** Deleting the fallback outright
+may blank a marker that is legitimately useful, so the likely shape is separating the two: a
+requested pickup date renders as a **scheduled** marker, and only a tender outcome renders as a
+**completed** checkpoint.
+
+**Required before proposing anything** — every downstream reader of `dispatchDate` and `disp`:
+
+| Reader | Site | Consumes |
 |---|---|---|
-| `dispatched === true`, **or** a non-empty `trackingInformation.dispatchDate`, **or** any PRO | **Stored-state confirmed.** The record claims dispatched on a tender that was rejected | Explains the checkpoint. Fix at the boundary: tender outcome must drive the timeline, and a rejected tender must not be storable as dispatched |
-| All of those falsy **but `estimatedPickupDate` is set** | **CANDIDATE C** — the checkpoint was lit by a booking field | Confirms C without needing Test C |
-| All falsy **including** `estimatedPickupDate`, status `CANCELED` | **NOTHING IS RULED OUT.** Every one of these is consistent with the cancellation having cleared or overwritten it | Nothing. Do not read this as a negative |
-| Fields **absent** from the payload (missing, not `false`) | **NOTHING IS RULED OUT.** A voided record may not carry them | Nothing. Absence is not `false` |
-| HTTP 404 / not found | **NOTHING IS RULED OUT** — the DELETE path above makes this the *expected* result | Nothing |
+| `disp` → `reached` → `stages.dispatched` | `:7650`, `:7657`, `:7662` | lights the checkpoint |
+| `dates.dispatched` | `:7665` | the date shown beside it — same variable |
+| `statusLabel` / `displayStatus` | `:7670-7671` | the header status string |
+| Shipment modal timeline | `:8048-8051` (via `:7706`) | `_st.dispatched`, `_dt.dispatched` |
+| Modal header status | `:7757` | `_progress.displayStatus` |
+| Chat/inline tracking card | `:11984-11987` (via `:11977`) | `_st.dispatched`, `_dt.dispatched` |
+| — | `:11979` | `_prog.stages.delivered` (unaffected) |
 
-**Three of five outcomes now rule out nothing.** That is the honest state of this read after the
-cancellation, and it is the reason Test C leads.
+**Open decision for the owner:** does a distinct scheduled-pickup marker belong on the timeline, or
+should `Dispatched` simply require a real tender outcome with `estimatedPickupDate` rendering
+nowhere on it?
 
-#### Candidate A — and why Step 5 as originally written was dangerous
+**Does the same pattern appear elsewhere in the timeline logic? No.** Within the resolver, dispatch
+is the **only** stage whose date input includes an estimate — `pickupDate` (`:7629`) and
+`deliveryDate` (`:7630`) read `*Actual` fields exclusively, and `transit` derives from those. Two
+other sites blend estimated into actual (`:7183`, `:11956`) but both are **display-only** fields
+that drive no state; they lose the requested-vs-actual distinction, which is a lesser and separate
+issue.
 
-The superseded Step 5 said to "re-attempt a dispatch on a test BOL with the Network tab open." **That
-cannot work as a safe test, because the short-circuit can only fire after a real dispatch has already
-completed.** Every writer of `window._lastBooked` initialises `dispatched: false` (`:10958`, `:11167`,
-`:11223`, `:14034`); the only assignment to `true` is `:6339`, at the end of a successful
-`_canonicalDispatch`. So reaching the short-circuit requires tendering for real first.
+### WORKED EXAMPLE — the procedure nearly defeated itself
 
-**Safe substitute — set the flag directly against a BOLId that does not exist:**
+The superseded discriminating test told the reader to check `dispatched`, `dispatchDate`, `status`
+and a PRO, and to conclude the stored-state hypothesis was **dead** if all were falsy. **`:7631` ORs
+in `estimatedPickupDate`, which that list never named.** A reader following it on a cancelled record
+would have seen `dispatchDate: null`, declared the hypothesis dead, and gone hunting Candidate A —
+the short-circuit that cannot be reached without tendering real freight first.
 
-```js
-window._lastBooked = { BOLId: 'NO-SUCH-BOL-TEST', BOLNumber: 'NO-SUCH-BOL-TEST', dispatched: true };
-const r = await _canonicalDispatch('NO-SUCH-BOL-TEST');
-console.log(r);   // watch the Network tab
-```
-
-| Observation | Verdict |
-|---|---|
-| `{ok:true, alreadyDispatched:true, dispatchOk:true}` and **no network request at all** | **Candidate A's mechanism is confirmed**: a success return with no call. The `:6230` guard precedes the token fetch, the terms resolution and the PRE charge gate, so nothing else can intervene |
-| A request to `/applet/v2/dispatch/NO-SUCH-BOL-TEST` appears (and fails harmlessly on a nonexistent BOL) | The short-circuit did not fire; re-read `:6230` |
-
-This proves the **mechanism** exists. It cannot prove the mechanism was the cause on 160135857 —
-that page session's state is gone and is not recoverable.
-
-**Do not fix before Test C is answered.** The candidates need different fixes in different files,
-and §8.863's whole point is that guessing which one is live is how this class survives.
+**The procedure would have produced exactly the wrong verdict, and sent someone toward the one test
+that puts freight on a truck.** The discriminator was *assumed* from a field name rather than traced
+through the code that consumes it. That is the whole argument for §0.26's anchors and for §8.863's
+rule that reachability and mechanism are traced, never inferred — applied here to a procedure
+written in this document, two sections above the rule that would have caught it.
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
