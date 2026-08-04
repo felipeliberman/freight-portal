@@ -1957,6 +1957,46 @@ conditions coincided (so a single sample never met both).
 **Rule:** any change to a rendering or narrowing path is verified by rendering the complete pilot
 set and asserting each record — not by one representative invoice.
 
+## 8.85 TERMS GATE — published Terms updated everywhere BEFORE the first 3-day notice ships
+
+**PHASE 9 PRECONDITION, alongside §8.9.**
+
+If a customer receives an invoice stating a 3-business-day billing-dispute window while the
+published Terms say something else, and a dispute lands inside that window, **they have the better
+argument.** The invoice is our assertion; the Terms are the contract they agreed to.
+
+**The gate:** every published copy of a dispute or claim window carries the agreed wording BEFORE
+the first invoice bearing the notice is sent. Not the same day — before.
+
+**The copy that counts is one we cannot see.** Terms are also hosted at
+`freightandlogistics.com/termsandconditions` (Wix, outside this repo). **That is the URL customers
+are contractually pointed at.** It is changed by hand by the owner; nothing in this repository can
+verify it, and no automated check will ever cover it. A green repo is not evidence that gate is met.
+
+**Also blocking, and PRE-EXISTING:** the repo already publishes TWO different claims deadlines on
+two different clocks (§8.86). Adding a third window on top of an unresolved contradiction makes the
+contradiction worse, not merely longer.
+
+## 8.86 LIVE DEFECT — two conflicting claims deadlines, already published
+
+Found 2026-08-03 while inventorying dispute windows. **Reported, not fixed** — out of scope for the
+invoice-sync build.
+
+| Source | Text | Window | Clock |
+|---|---|---|---|
+| `portal.html:9524` Terms §6 | "Claims must be filed in writing within **10 business days of invoice**" | 10 business days | invoice date |
+| `index.html:1930` Terms §12 | same | 10 business days | invoice date |
+| `KNOWLEDGE.md:82` §5 | "written claim is filed **within 48 hours of delivery**" | 48 hours | delivery date |
+| `KNOWLEDGE.md:134` FAQ | "written claims must be filed within 48 hours of delivery" | 48 hours | delivery date |
+
+**Different length AND different starting event.** `KNOWLEDGE.md:245` goes further and instructs the
+agent that the 48-hour rule is "our binding requirement" and "the operative deadline" — so **the
+agent tells customers 48 hours from delivery while the published Terms say 10 business days from
+invoice.** Which is binding is not decidable from our own material.
+
+This is the anti-fabrication rule failing from the inside: the KB is the agent's source of truth,
+and here the KB contradicts the contract.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
