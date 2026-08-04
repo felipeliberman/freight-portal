@@ -1711,6 +1711,41 @@ Item 3 matters most and is the least certain: `_recordQboPayments` still swallow
 (§0.1.3), so a QBO write failure is invisible from the UI — and that unfixed defect now sits
 directly beneath a change to the same payment path.
 
+### RESULT — PASSED, live, 2026-08-03
+
+| Check | Observed |
+|---|---|
+| Fee is 2.9% flat | $10.00 subtotal → **$0.29** fee, total **$10.29** |
+| Floor holds at scale | $489.64 invoice → **$14.19** = **2.8998%** |
+| Label | reads **"Convenience fee (2.9%)"** — no flat component |
+| Displayed == charged | $10.29 displayed, **$10.29 paid** |
+| Reaches QuickBooks | QBO invoice **142870** shows **Paid in full**, $10.00 recorded |
+| `_recordQboPayments` | **writeback worked** on this run |
+
+The $489.64 case is the useful one: 2.8998% confirms the floor is doing its job on a realistic
+amount, not just on the round $10.00.
+
+**One caveat on the writeback.** It worked here; that is one successful observation, not evidence
+the six failure modes in §0.1.3 are absent. They are all silent, so a passing run looks identical to
+a run where the write was never attempted. §0.1.3 stays open.
+
+### OPEN QUESTION — the card fee is not booked in QuickBooks
+
+QBO invoice 142870 recorded **$10.00**, not $10.29. **The card fee is not written to QBO.**
+
+Consequence: **Stripe balance and QBO revenue diverge by the fee on every card payment.** Stripe
+receives $10.29; QBO records $10.00 against the invoice; the $0.29 exists in Stripe and nowhere in
+the books.
+
+`_recordQboPayments` (`portal.html:4493-4495`) deliberately records `_qboBalance` — the invoice
+balance — falling back to the Primus invoice total. Neither includes the fee, so this is the code
+behaving as written rather than a defect in it.
+
+Presumably intentional — the fee is a payment-processing charge rather than freight revenue, and
+booking it against the freight invoice would overstate the invoice. **Raised for the owner as an
+accounting decision, not an engineering one.** Recorded so it is explicit rather than implicit; no
+action taken.
+
 ## 8.55 Deploy order EXCEPTION — Pages before Worker, for the 2.9% fee change
 
 **The standing rule is Worker before Pages** (§8.5) — KNOWLEDGE.md chain integrity, so the agent is
