@@ -38,11 +38,48 @@ export function classifyLine(line) {
   return { kind: cents === 0 ? 'zero' : 'billable', cents, reason: null };
 }
 
+/**
+ * Carrier names too long for a Stripe custom field, abbreviated the way the PORTAL already
+ * abbreviates them — so the customer reads the SAME name on the invoice and in My Shipments.
+ *
+ * Source of truth for the one entry below: `portal.html`'s existing
+ * `.replace('Metropolitan Warehouse & Delivery Corp','Metro W&D')`.
+ *
+ * Surveyed against live booking data 2026-08-04 (45 bookings, 9 distinct carrier names): exactly
+ * ONE name exceeds 30 characters, and it is the most common carrier in the sample (21 of 45).
+ * Keys are matched case-insensitively after whitespace collapse, so "Metropolitan Warehouse and
+ * Delivery" and the "& ... Corp" spelling both land on the same abbreviation.
+ */
+const CARRIER_ABBREV = new Map([
+  ['metropolitan warehouse & delivery corp', 'Metro W&D'],
+  ['metropolitan warehouse and delivery corp', 'Metro W&D'],
+  ['metropolitan warehouse & delivery', 'Metro W&D'],
+  ['metropolitan warehouse and delivery', 'Metro W&D'],
+]);
+
+/**
+ * Shorten to `max` WITHOUT cutting mid-word. A hard slice produced
+ * "Metropolitan Warehouse & Deliv" on live output — a chopped word reads as a bug, where a
+ * deliberate abbreviation reads as intent. Falls back to the last whole word plus an ellipsis.
+ */
+export function shortenForField(value, max = CUSTOM_FIELD_MAX) {
+  const v = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  if (!v) return '';
+  const abbrev = CARRIER_ABBREV.get(v.toLowerCase());
+  if (abbrev) return abbrev;
+  if (v.length <= max) return v;
+  // Reserve one char for the ellipsis, then back off to a word boundary.
+  const cut = v.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  const stem = (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).replace(/[\s,·&-]+$/, '');
+  return `${stem}…`;
+}
+
 /** Truncate to Stripe's custom-field limit without emitting an empty field. */
 function customField(name, value) {
   const v = value === null || value === undefined ? '' : String(value).trim();
   if (!v) return null;
-  return { name: String(name).slice(0, CUSTOM_FIELD_MAX), value: v.slice(0, CUSTOM_FIELD_MAX) };
+  return { name: String(name).slice(0, CUSTOM_FIELD_MAX), value: shortenForField(v, CUSTOM_FIELD_MAX) };
 }
 
 /**
@@ -258,14 +295,25 @@ export function buildStripeInvoice(detail, customer, {
   }
 
   // §5.1 — WHERE the zero-dollar descriptions go depends on the classification, and they are never
-  // lines in either case. On a PRIMARY they fold into the freight line's "Incl." list; on a REBILL
+  // lines in either case. On a PRIMARY they fold onto the freight line as bare names (HOLD #5); on a REBILL
   // they move to memo context, because on a rebill the customer is scrutinising the line list and a
   // folded "includes" reads as though it were part of what they are being charged for now.
   let zeroDollarPlacement = 'unplaced';
   let rebillContext = null;
   if (zeroDollarDescriptions.length && lines.length) {
     if (classification === 'primary') {
-      lines[0].description = `${lines[0].description} \u00b7 Incl. ${zeroDollarDescriptions.join(', ')}`;
+      // BARE NAME ONLY — no "Incl." prefix. HELD BY THE OWNER, and the hold is still active.
+      //
+      // "Incl. RESIDENTIAL DELIVERY" asserts the accessorial was INCLUDED AT NO CHARGE. That is a
+      // commercial claim, not a formatting choice, and it is not ours to make from a string: the
+      // priced-or-included question (KNOWLEDGE.md §White Glove, "residential liftgate standard on
+      // every white glove delivery") is unanswered. A $0 line in `invoiceBreakdown` means the line
+      // carried no charge ON THIS INVOICE — which is NOT the same as the service being free, and a
+      // later rebill of that same accessorial would contradict the word "Incl." in writing.
+      //
+      // The bare name states what is true and nothing more: the accessorial was on the shipment.
+      // Do NOT restore the prefix until the owner answers priced-or-included. Spec §5.3.
+      lines[0].description = `${lines[0].description} \u00b7 ${zeroDollarDescriptions.join(', ')}`;
       zeroDollarPlacement = 'folded-into-line';
     } else if (classification === 'rebill') {
       rebillContext = `Originally billed: ${zeroDollarDescriptions.join(', ')}`;

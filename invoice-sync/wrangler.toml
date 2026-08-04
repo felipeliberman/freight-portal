@@ -63,12 +63,23 @@ ALLOW_LIVE_MODE = "false"
 # Primus system API. Broker-level, all customers. NOT the customer/portal API.
 PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"
 # Pilot scope (spec §3.1). Comma-separated ARCodes. Only these get Stripe drafts; everything else
-# stays on the current Primus/QBO flow untouched. "5406" = Payless Rugs.
+# stays on the current Primus/QBO flow untouched.
+#
+# "1234" = Freight and Logistics, Inc. - TEST — the OWNER'S OWN test account (§3.1, changed
+# 2026-08-04 from "5406" Payless Rugs). Piloting on an account the owner controls removes the
+# class of risk where a real customer could receive something before phase 9 is gated.
+#
+# Verified 2026-08-04 before repointing, all three sources agreeing:
+#   invoice LIST ARCode = 1234   invoice DETAIL customerInfo.customerCode = 1234
+#   QBO DisplayName = "Freight and Logistics, Inc. - TEST-1234" (exact suffix, single match)
+# Exactly 2 invoices carry it and both are the test account's — no collision. Scan coverage was
+# complete (0 page failures), so "no other invoice carries 1234" is supportable, not an artefact.
 #
 # FAILS CLOSED: unset/empty throws. "*" runs the full book and is spec phase 10 — it needs a
 # backfill first, because non-allowlisted invoices are never recorded and the rolling poll window
-# will not reach back for them.
-AR_ALLOWLIST = "5406"
+# will not reach back for them. NOTE (§8.865): a backfill beyond ~2026-03 is IMPOSSIBLE through
+# this endpoint, and any window spanning 2026-04-29 returns HTTP 500.
+AR_ALLOWLIST = "1234"
 # Rolling poll window, days. Deliberately OVERLAPS previous runs — that overlap is what catches an
 # invoice skipped by a page shift (spec §3). Clamped to 2..90 in code.
 POLL_WINDOW_DAYS = "7"

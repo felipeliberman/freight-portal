@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildStripeInvoice, classifyLine, customerVisibleNumber, assertPayloadClean,
-  unverifiedRecipients, assertSendable,
+  unverifiedRecipients, assertSendable, shortenForField,
 } from '../src/mapper.js';
 import { parseEmails } from '../src/customers.js';
 import { newValueSink, formatEmailDrops } from '../src/detail.js';
@@ -246,9 +246,14 @@ test('§5.1 primary-vs-rebill fold: zero-dollar descriptions are placed, not jus
       { code: 'LFD', description: 'LIFTGATE AT DESTINATION', qty: '1.00', rate: 0, total: 0 },
     ],
   });
-  // On a PRIMARY the description must be folded into the freight line's "Includes:" list; on a
-  // REBILL it must move to memo context. Today it is only carried out unplaced.
-  assert.match(payload.lines[0].description, /Incl\./);
+  // On a PRIMARY the description folds onto the freight line; on a REBILL it moves to memo
+  // context. Today it is only carried out unplaced.
+  //
+  // Folded as a BARE NAME — HOLD #5, spec §5.3. This assertion used to expect "Incl.", which
+  // would have re-taught the held format to whoever eventually builds the §4.3 classifier. A todo
+  // is still a specification of intent, so it has to carry the hold like any other.
+  assert.match(payload.lines[0].description, /· LIFTGATE AT DESTINATION/);
+  assert.doesNotMatch(payload.lines[0].description, /Incl\./, 'HELD: no "Incl." prefix');
 });
 
 test('§5.3 lane description: origin → destination, commodity, class, pickup date', () => {
@@ -589,9 +594,37 @@ test('§5.1 PRIMARY folds zero-dollar descriptions into the freight line', () =>
   const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail(ZERO_LINES)), CUSTOMER,
     { booking: BOOKING, classification: 'primary' });
   assert.equal(r.payload.lines.length, 1, 'still never a line');
-  assert.match(r.payload.lines[0].description, /Incl\. LIFTGATE AT DESTINATION/);
+  assert.match(r.payload.lines[0].description, /· LIFTGATE AT DESTINATION/);
+  // HOLD #5 (spec §5.3) — the accessorial renders as a BARE NAME. "Incl." asserts it was included
+  // at no charge, which is a commercial claim the owner has not made, and a later rebill of the
+  // same accessorial would contradict it in writing on the customer's invoice.
+  //
+  // This assertion IS the hold. It previously asserted the prefix, which is how the held behaviour
+  // drifted back into live rendered output on 2026-08-04 — the comment said one thing and the test
+  // enforced the other. Do not relax it until the owner answers priced-or-included.
+  assert.doesNotMatch(r.payload.lines[0].description, /Incl\./,
+    'HELD: no "Incl." prefix — see spec §5.3 HOLD #5');
   assert.equal(r.payload.zero_dollar_placement, 'folded-into-line');
   assert.equal(r.payload.rebill_context, undefined);
+});
+
+test('carrier custom field: abbreviated to the portal\'s own name, never cut mid-word', () => {
+  // Live 2026-08-04: "Metropolitan Warehouse & Deliv" reached rendered output — a chopped word.
+  assert.equal(shortenForField('Metropolitan Warehouse & Delivery Corp'), 'Metro W&D');
+  assert.equal(shortenForField('Metropolitan Warehouse and Delivery'), 'Metro W&D');
+  // Short names pass through untouched.
+  assert.equal(shortenForField('Estes Express'), 'Estes Express');
+  assert.equal(shortenForField('Pilot Freight Services'), 'Pilot Freight Services');
+  // No abbreviation available → word boundary + ellipsis, never a mid-word cut.
+  const ORIGINAL = 'Some Extremely Long Carrier Name Incorporated';
+  const long = shortenForField(ORIGINAL);
+  assert.ok(long.length <= 30, `must fit the field: got ${long.length}`);
+  assert.ok(long.endsWith('…'), 'ellipsis marks the truncation');
+  const stem = long.slice(0, -1);
+  assert.ok(ORIGINAL.startsWith(stem), 'the kept portion is a prefix of the original');
+  // THE point of the fix: the character after the kept portion in the ORIGINAL is a space, i.e.
+  // we stopped at a word boundary. ("Metropolitan Warehouse & Deliv" stopped mid-word.)
+  assert.equal(ORIGINAL.charAt(stem.length), ' ', 'cut lands at a word boundary, not mid-word');
 });
 
 test('§5.1 REBILL moves them to memo context, never onto the line', () => {

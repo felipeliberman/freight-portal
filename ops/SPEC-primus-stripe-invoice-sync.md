@@ -1150,8 +1150,44 @@ Target shape (verified to wrap cleanly across two lines in the Stripe PDF):
 
 ```
 <Primus line description> — LTL · <origin city, ST> → <dest city, ST> · <pieces> pcs <commodity> ·
-<weight> lbs · Class <class> · PU <pickup date> · Incl. <zero-dollar accessorials>
+<weight> lbs · Class <class> · PU <pickup date> · <zero-dollar accessorials>
 ```
+
+> **HOLD #5 — ACTIVE. The zero-dollar accessorials render as the BARE NAME, with no `Incl.` prefix.**
+>
+> This spec previously specified `Incl. <zero-dollar accessorials>`, and **that is how the drift
+> happened**: the owner held the prefix in conversation, the hold was never written down here, and
+> the spec kept instructing the mapper to emit it. It reached live rendered output on 2026-08-04
+> (invoice #141385, `Incl. RESIDENTIAL DELIVERY`) before being caught.
+>
+> **Why the prefix is not ours to write:** "Incl." asserts the accessorial was **included at no
+> charge** — a commercial claim. A `$0.00` line in `invoiceBreakdown` means the line carried no
+> charge *on this invoice*, which is not the same as the service being free. If that accessorial is
+> later rebilled, the word "Incl." contradicts us in writing on the customer's own document — the
+> same trap §5.1 already avoids by refusing to print `LIFTGATE — $0.00` as a line.
+>
+> **Blocked on:** the priced-or-included question at `KNOWLEDGE.md` §White Glove ("residential
+> liftgate standard on every white glove delivery"). **Owner decides.** Until then the bare name
+> states what is true and nothing more: the accessorial was on the shipment.
+>
+> **A hold that lives only in conversation is not a hold.** This is the second time in this project
+> that an owner decision existed nowhere in the repo and was silently reverted by the artefact that
+> outlived the conversation (cf. §8.864's instance 1, which survived only in memory). Any future
+> hold gets written at the point of decision, into the section that would otherwise contradict it.
+
+**Carrier names in `custom_fields` are abbreviated, never cut mid-word.** Stripe caps custom-field
+values at 30 characters, and a hard slice produced **`Metropolitan Warehouse & Deliv`** on live
+rendered output — a chopped word reads as a bug where a deliberate abbreviation reads as intent.
+`shortenForField` (`mapper.js`) maps long names to the abbreviation **the portal already uses**, so
+the customer sees the same name on the invoice and in My Shipments; with no abbreviation available
+it truncates at a word boundary with an ellipsis.
+
+Surveyed against live booking data 2026-08-04 (45 bookings, 9 distinct carrier names): **exactly one
+name exceeds 30 characters** — `Metropolitan Warehouse & Delivery Corp` (38), and it is the most
+common carrier in the sample (21 of 45). Its abbreviation `Metro W&D` is taken from `portal.html`'s
+existing `.replace('Metropolitan Warehouse & Delivery Corp','Metro W&D')`. The map holds four keys
+covering the `&`/`and` and `Corp`/no-`Corp` spellings. **The footer keeps the full legal name** — it
+has no length limit, so nothing is lost.
 
 **The Primus line text leads** (e.g. `FREIGHT CHARGE`), so the mirror stays visibly faithful. The
 line items themselves remain a **1:1 mirror of `invoiceBreakdown`** — context is added to the
@@ -2935,7 +2971,43 @@ through this endpoint.** Any phase 9 plan that assumes it can re-derive history 
 ledger gaps, to re-render a disputed invoice, or to prove what was billed — must not assume this
 endpoint can supply it.
 
-### 4. Operational notes
+### 4. THE AR CODE IS RESOLVED LIVE, NOT FROZEN AT ISSUE — and that cuts both ways
+
+**Demonstrated 2026-08-04 by accident, which is the only reason it is known.** The owner changed the
+account's AR Code field; invoices issued **9 and 13 July** — weeks earlier — immediately reported the
+new value on `GET /invoice`. Observed across three states of the same two invoices:
+
+| AR Code field set to | List `ARCode` returned for #141604 / #141385 |
+|---|---|
+| `12345678` (original) | `12345678` |
+| `12134` (mistyped) | `12134` |
+| `1234` (corrected) | `1234` |
+
+**The good half.** There is no migration hazard of the kind feared: renumbering an account
+propagates to its existing open invoices rather than orphaning them. A backfill does not have to be
+run before a code change, and historical invoices do not need rewriting.
+
+**The bad half, and it is worse than the good half is good.** The AR Code is a **live join key, not
+historical data**. One mistyped character silently re-labels **every open invoice on the account at
+once** — no error, no warning, no signal anywhere. During this session `12134` was live across both
+invoices and would have been live across hundreds on a real account. Nothing in Primus, the Worker,
+or QBO objected; the only reason it surfaced is that a scan happened to be run immediately after.
+
+Consequences that phase 9 must respect:
+
+- **An invoice's ARCode is not evidence of anything historical.** It reports the customer record's
+  code *as of the read*, not as of issue. A ledger row recording the claimed ARCode is therefore a
+  snapshot that can silently disagree with a later read of the same invoice.
+- **A typo is indistinguishable from a legitimate renumber** from the outside. Both look like "the
+  code changed."
+- **The blast radius is the whole account, instantly.** This is the argument for the allowlist
+  failing closed and for `checkArCode`'s near-miss detection — but neither catches a typo that
+  lands on a *different valid-looking* code, as `12134` did.
+- **Worth considering before live mode:** an alert when the set of ARCodes seen in a poll differs
+  from the previous run. That is a detection mechanism, not built, and recorded here as a candidate
+  rather than a decision.
+
+### 5. Operational notes
 
 - Windows **ending today** succeed up to at least 90 days; the 120-day failure was the poisoned date,
   not length. Length itself was never shown to be the limit.
