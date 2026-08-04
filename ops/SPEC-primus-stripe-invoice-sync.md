@@ -11,6 +11,36 @@
 
 This does not land on a clean slate. Three existing facts constrain the design.
 
+### 0.05 ARCHITECTURE DECISION — Stripe is DELIVERY ONLY (2026-08-03)
+
+**Stripe sends the invoice. Stripe never collects it.**
+
+The Pay button on the Stripe invoice does **not** go to Stripe's hosted invoice page. It deep-links
+into **our portal**, where the customer logs in and lands with the invoice panel open on that
+specific invoice. Payment happens through the existing portal path — which already applies the card
+fee and already writes to QBO.
+
+**Why.** A Stripe invoice fixes its amount at finalisation, before the customer chooses a payment
+method, so method-dependent surcharging is structurally impossible on the hosted page (§5.7,
+verified against Stripe's docs). The card fee cannot be absorbed. Therefore the payment surface has
+to be ours. It also matches the wider goal that every customer-facing surface is ours.
+
+#### INVARIANT — the Stripe invoice must never be payable
+
+This is the new fail-closed boundary and it **replaces** the old one (the §0.1.2 double-payment
+gate). Whatever configuration makes it true must be explicit and tested:
+
+- no payment methods attached to the invoice,
+- nothing that lets a customer pay Stripe directly,
+- the hosted page must not present a collection path.
+
+The old invariant guarded *two* payable objects. The new one guards *one* — and it fails closed in
+the same direction: if the Stripe invoice is ever payable, the failure it produces is exactly the
+one §0.1.2 describes.
+
+**Not yet scoped:** the precise Stripe configuration that guarantees this, and the test that pins
+it. Both are required before phase 6.
+
 ### 0.1 The portal already has a live invoice-payment surface
 
 `portal.html:4968-5030` renders a "Pay Invoices" modal listing Primus invoices and pays them via
@@ -62,6 +92,220 @@ Three consequences:
 **Still open, and NOT closed by the above:** whether Payless can log into the portal and pay through
 the payment modal (§0.1). That path survives the routine change entirely, and it is the same
 two-live-paths failure as consequence 2. D1 remains open.
+
+### 0.1.2 D1 — DISSOLVED BY ARCHITECTURE, not fixed
+
+**STATUS: RESOLVED by §0.05. Retained in full because the reasoning matters if anyone reconsiders
+the hosted invoice page later.**
+
+**Why it is gone rather than mitigated:** the double-payment path required *two payable objects*
+for the same money. Under §0.05 Stripe never collects, so the second object does not exist. The
+portal is the only place money moves — which is the state that already holds today.
+
+**This section is now a warning, not a gate.** Everything below describes what WOULD happen if the
+Stripe invoice were ever made payable. That is precisely why §0.05's invariant exists: enabling
+collection on the hosted page silently reintroduces every consequence enumerated here.
+
+The original framing, preserved: this was never live harm. The portal was already the only way to
+pay, so there was nothing to collide with; it would have become real the moment the first payable
+Stripe invoice existed.
+
+Answered from code, read-only, 2026-08-03. No live test was run.
+
+#### The mechanism
+
+The portal creates a **bare PaymentIntent**. It never creates, references, or attaches to a Stripe
+Invoice object.
+
+```
+portal.html:4126   qbo-api/invoices?docNumber=<Primus invoice #>   → _qboId, _qboBalance
+portal.html:4984   stripe-payments/create-payment-intent           → PaymentIntent
+   worker :185       description = "Invoices: 140488, 140061"      ← FREE TEXT, not a reference
+portal.html:4999   _recordQboPayments(invoices, paymentIntent.id)
+portal.html:4496   qbo-api/payment { invoiceId:_qboId, amount, paymentDate, stripePaymentIntentId }
+```
+
+The complete Stripe surface of `stripe-payments` is `payment_intents`, `payment_methods`,
+`customers`, `customers/search`, `setup_intents`. **There is no call to `/v1/invoices` anywhere**,
+no Checkout Session, no payment link. `portal.html` contains no `hosted_invoice_url` and no
+`checkout.stripe`.
+
+**Payments reach QBO, but not the way one might assume.** It is not Stripe attaching a payment to an
+invoice — it is **the portal writing the QBO payment itself**, client-side, after Stripe succeeds.
+
+**Why the two objects cannot see each other.** A Stripe Invoice is closed by a payment *attached to
+it*. The portal's PaymentIntent is a standalone object whose only connection to invoice 140488 is
+the string `"Invoices: 140488"` in a `description` field. Stripe does not parse descriptions.
+Nothing links them, in either direction, at any layer.
+
+**The convergence.** The portal resolves QBO by `docNumber`, and QBO's `docNumber` **is** the Primus
+invoice number (it imports unchanged — §0.1.1). The sync sets the Stripe invoice `number` to the
+same Primus invoice number. So **invoice 140488 is addressable from both surfaces, keyed on the
+same identifier**, with no link between the objects that represent it.
+
+#### Consequences, severity order
+
+**1. Double payment. Nothing prevents it.**
+- *Customer:* pays 140488 on the Stripe hosted page, and again in the portal (or vice versa). Both
+  succeed. They are charged twice. **The two amounts differ** — the portal adds a 2.9% + $0.30 card
+  convenience fee (`portal.html:4536`); a Stripe invoice carries no such line.
+- *Stripe:* two unrelated successful objects — one Invoice marked paid, one PaymentIntent with a
+  description string. Nothing flags a duplicate.
+- *QBO:* one payment written by the portal, one arriving via Stripe. Potential double credit (see 3).
+
+**2. A portal payment leaves the Stripe invoice OPEN.**
+- *Customer:* has paid. Their Stripe invoice still shows unpaid, and the hosted payment page still
+  invites payment.
+- *Stripe:* `open`. It closes only when our reconcile marks it paid out-of-band.
+- *Timing, concretely:* portal → QBO is immediate (a client-side POST). QBO → Primus is the
+  4–5×/day sync — **up to ~6 hours** (reported, §7.1.1, not measured). Our reconcile then runs on
+  the poll cadence — **up to another 24 hours** on a daily cron. **Worst case roughly 30 hours
+  open after the customer has paid.** Reminders are OFF for the pilot (§7.2), which is doing more
+  work here than it was originally credited with.
+- *Additional failure:* `_recordQboPayments` is **best-effort and swallows errors** —
+  `.catch(e => { console.error(...); return null; })`, and the success UI shows regardless. If that
+  write fails, QBO never learns, Primus never flips, and **the Stripe invoice stays open
+  indefinitely** while the customer has been charged.
+
+**3. QBO double credit.**
+- *Customer:* may see a credit balance or a refund conversation.
+- *QBO:* one payment from the portal's direct write, plus one from Stripe's own attachment if both
+  paths are used on the same invoice.
+- *Stripe:* nothing unusual — it has no view of QBO.
+- **Depends on the Stripe→QBO connector configuration, which is not in our code.** See "live test".
+
+#### Partial protections, and exactly how far they reach
+
+**`_qboBalance` reading zero** is real but **late**. The portal reads the balance from QBO
+(`portal.html:4126`), so an invoice already paid in Stripe *does* eventually show zero and drop out
+of the payable list.
+
+How late: Stripe → QBO, plus QBO's own balance update. Until that lands, **the portal shows the
+invoice as fully payable, at full amount, with a working Pay button.** A customer who paid the
+Stripe invoice an hour ago sees no indication anywhere in the portal that they have already paid.
+
+There is **no protection at all in the other direction**: paying in the portal does nothing to the
+Stripe invoice until reconcile runs.
+
+Neither protection prevents a double payment. Both only shorten the window afterwards.
+
+#### Options — enumerated, NOT recommended
+
+**A. Converge the portal on the Stripe Invoice object.** Portal pays the invoice itself (hosted
+page, or a PaymentIntent created *from* the invoice), so both entry points close the same object.
+- *Breaks:* the card convenience fee (a Stripe invoice cannot easily carry a per-payment
+  surcharge); **batch payment** — the portal pays several invoices with one PaymentIntent
+  (`"Invoices: 140488, 140061"`), and Stripe invoices are paid one at a time; the saved-ACH flow;
+  the QBO writeback becomes duplicative and must be removed.
+- *Cost:* the largest. Rewrites live payment code that handles real money.
+- *Customers not on the sync:* have no Stripe invoice, so the old path must remain — **two payment
+  paths coexisting in the portal**, indefinitely, until every customer is synced.
+
+**B. Segment the portal path off for synced customers.** Portal hides or disables invoice payment
+for ARCodes on the sync allowlist; those customers pay only via Stripe.
+- *Breaks:* pilot customers lose a portal feature they may use today. If Payless pays through the
+  portal now, this is a visible regression for them.
+- *Cost:* smallest — an allowlist check in `portal.html`.
+- *Customers not on the sync:* entirely unaffected.
+- *Risk:* the allowlist now lives in two places (worker config and portal). **Drift between them is
+  a silent reopening of the gap** — the exact failure this option exists to close.
+
+**C. Gate one path behind the other.** Portal checks whether a Stripe invoice exists for that
+invoice number and, if so, redirects to the hosted invoice URL instead of paying locally.
+- *Breaks:* adds a live lookup on the payment path — a new failure mode on a money surface. Needs a
+  decision on what happens when the lookup fails (fail open = the gap returns; fail closed = the
+  customer cannot pay).
+- *Cost:* medium. A new read endpoint over the ledger, plus a portal branch.
+- *Customers not on the sync:* unaffected — the lookup returns nothing and the old path runs.
+- *Note:* Stripe Search's ~1min index lag is not a factor here, since invoices are created hours
+  before anyone pays.
+
+**D. Per-customer ownership of the invoicing surface** — a generalisation of B: each customer is
+either a portal-invoicing customer or a Stripe-invoicing customer, never both, with the assignment
+held in one place rather than inferred.
+- *Breaks:* nothing structurally; it is a policy, and its weakness is that it depends on the
+  assignment being respected.
+- *Cost:* low technically, higher operationally.
+- *Customers not on the sync:* unaffected by construction.
+
+#### Knowable from code vs only from a live test
+
+**Settled from code, no test needed:**
+- The portal creates no Stripe Invoice — certain, from the worker's complete endpoint list.
+- The two paths converge on the Primus invoice number — certain.
+- The PaymentIntent's only link to the invoice is a free-text description — certain.
+- The QBO writeback is client-side, best-effort, and swallows errors — certain.
+- The card surcharge asymmetry — certain.
+
+**Only from a live test (none run):**
+- Whether Stripe's QBO connector *also* writes a payment for an invoice-attached payment, producing
+  the double credit in consequence 3. That is connector configuration, not our code.
+- The real QBO→Primus latency distribution (§7.1.1 is reported, not measured).
+- Whether a Stripe-paid invoice actually disappears from the portal list, and how quickly — depends
+  on `qbo-api` behaviour and QBO's balance timing.
+- Whether Payless's users use the portal invoice modal at all. That is usage data, not code, and it
+  determines whether option B is a real regression or a no-op for them.
+
+### 0.1.3 `_recordQboPayments` — the only writeback, and it cannot report failure
+
+Read-only survey 2026-08-03. **Not fixed. Queue item 1 (§8.6).**
+
+Under §0.05 the portal is the only payment surface, which makes this the **single point where
+money-received becomes money-recorded**. That raises its severity rather than lowering it.
+
+`portal.html:4489-4508`. The comment reads *"Best-effort — never blocks the success UI, since Stripe
+has already captured the funds."* The reasoning is sound; the implementation goes past best-effort
+into unobservable.
+
+**Six silent failure modes:**
+
+| # | Failure | Where | What is visible |
+|---|---|---|---|
+| a | QBO lookup fails → `_qboId` stays `''` → the write is **never attempted** | `:4133` catch, `:4492` guard | console only |
+| b | Lookup succeeds but matches no QBO invoice → same no-op | `:4127-4132` | nothing |
+| c | The POST throws | `:4506` `.catch(… return null)` | console only |
+| d | The POST returns HTTP 4xx/5xx | `:4506` — **there is no `r.ok` check**; `.then(r => r.json())` resolves and the error body is discarded | **nothing at all** |
+| e | No retry, no queue, no persistence — verified absent | — | the fact that a payment needs recording exists nowhere |
+| f | Partial batch: `Promise.all` swallows per-invoice, so 3 paid can record 2 | `:4491` | success UI identical |
+
+**(d) is the sharpest.** An application-level rejection from `qbo-api` is indistinguishable from
+success, because the response is parsed and thrown away without inspection.
+
+**Customer-visible outcome of any of them:** charged, and sent a payment confirmation email
+(`:5001`/`:5043`, a separate SendGrid call that fires regardless). They hold proof of payment while
+QBO shows the invoice open, Primus never flips `paid`, and — once the sync exists — the Stripe
+invoice stays open indefinitely.
+
+**Amount edge:** the recorded amount is `_qboBalance`, falling back to the Primus total
+(`:4493-4495`). If QBO already carries a partial payment, the fallback over-records.
+
+### 0.1.4 Display/charge mismatch on the card fee — a SECOND defect, different cause
+
+**Distinct from the cap breach (§5.7). Same code, different failure.**
+
+On a $55.00 invoice the portal **displayed a $1.59 fee and charged $1.60.** The customer is shown
+one surcharge and charged another. That fails the disclosure requirement on its own terms —
+independently of whether the amount is within Visa's cap.
+
+**Cause: four copies of the fee logic that drifted.** Not a rounding subtlety — a duplication
+problem.
+
+| Site | Formula | Role |
+|---|---|---|
+| `portal.html:4536` | `subtotal * 0.029 + 0.30` | modal summary (displayed) |
+| `portal.html:4604` | `subtotal * 0.029 + 0.30` | receipt (displayed) |
+| `portal.html:4947` | `subtotal * 0.029 + 0.30` | fee row (displayed) |
+| `portal.html:4783` | `subtotal * 1.029 + 0.30` | **`calcTotal` — the CHARGED amount** |
+
+Three display sites computed the fee directly and rendered it via `.toFixed(2)`. The fourth
+computed the *total* in a different shape, and that total is what reaches
+`/create-payment-intent`, where the worker does `Math.round(amount * 100)`. At $55 the displayed
+fee floors to `1.59` while the rounded total yields `1.60` — the two paths disagree by a cent.
+
+**Fix: one function, `cardFeeOn()`, called by all four sites; none computes its own value.**
+Consolidation is the fix, not a refactor riding along with it — copies that must agree are exactly
+what produced the divergence. Flooring in integer cents additionally makes the displayed fee equal
+the charged fee by construction.
 
 ### 0.2 Stripe customer identity is already split two ways
 
@@ -673,6 +917,21 @@ the detail's `shipment` object does not carry it (verified live 2026-08-03: invo
 `consigneeReferenceNumber "129320"` on the list, absent from the detail). If the poll does not
 capture it, it is unavailable at map time. Stored on `ledger.customer_reference`.
 
+**OPEN — the third slot is NOT settled: `Consignee` vs `Carrier`.** Once §5.3 puts the destination
+city into the line description, `Consignee` becomes partly redundant — the line already says where
+it went. An AP clerk approving a freight charge is arguably more likely to need **who moved it**
+than the recipient's contact name, and carrier appears nowhere else on the Stripe invoice except a
+PDF-only footer.
+
+Arguments each way, to be decided rather than defaulted:
+- *Keep Consignee:* it is the name on the delivery, matches the Primus PDF's own prominent
+  `CONSIGNEE` block, and on a residential white-glove book the recipient's name is often how the
+  shipment is discussed internally. The line description carries only the destination **city**, not
+  the person.
+- *Switch to Carrier:* claim disputes, tracking, and "where is it" questions all start with the
+  carrier. It is the one field an AP clerk cannot derive from anything else on the invoice, and
+  §5.4's footer is PDF-only so email and hosted-page readers never see it.
+
 **Open:** `billPartyReferenceNumber` also exists and is `""` on this record. Semantically it is the
 bill-to party's own reference and would be the better source if it were ever populated. Worth
 checking across more customers before the full-book widening.
@@ -760,9 +1019,18 @@ carries `accountingInformation.costQuoteId` and vendor data that must not cross.
 Target shape (verified to wrap cleanly across two lines in the Stripe PDF):
 
 ```
-Freight Charge — LTL · <origin city, ST> → <dest city, ST> · <pieces> pcs <commodity> ·
+<Primus line description> — LTL · <origin city, ST> → <dest city, ST> · <pieces> pcs <commodity> ·
 <weight> lbs · Class <class> · PU <pickup date> · Incl. <zero-dollar accessorials>
 ```
+
+**The Primus line text leads** (e.g. `FREIGHT CHARGE`), so the mirror stays visibly faithful. The
+line items themselves remain a **1:1 mirror of `invoiceBreakdown`** — context is added to the
+existing line's description, never as synthesised extra lines.
+
+**HARD LIMIT: 500 characters**, verified against Stripe's changelog (2018-10-31), not assumed:
+*"The `description` field on invoice line items now has a maximum character length limit of `500`."*
+Over-length descriptions must be truncated or revised. §5.3's two-rendered-line wrap constraint sits
+well inside that — the limit is not the binding constraint, legibility is.
 
 **Note:** the Stripe dashboard exposes no line-item description field — API-only. Manual invoices
 created by hand cannot carry this, and cannot carry the Primus invoice number either.
@@ -838,6 +1106,235 @@ per run. **Email drops carry their OWN denominator** (`emailParses`, one per cus
 rather than the invoice-record count: drops happen once per customer, not once per invoice, and a
 shared denominator would produce a rate that looks precise and means nothing. A rate moving from 0
 to 40 is the signal.
+
+### 5.7 Card fee — OPEN COMMERCIAL DECISION
+
+Nothing implemented. This records what is true today, what Stripe can and cannot do, and two
+compliance questions for the owner.
+
+#### Three different behaviours today
+
+| Surface | Card fee | Who absorbs it |
+|---|---|---|
+| Portal invoice modal | **2.9% + $0.30 added** | Customer pays it |
+| QBO payment link | none | **We absorb it** (owner had believed customers paid it; they do not) |
+| Stripe invoice as mapped | none | We would absorb it |
+
+**Desired:** ACH free; card carries the fee (percentage AND per-transaction), shown at checkout as
+a separate charge, **not** baked into the invoice total and **not** a line on the invoice.
+
+**DECIDED 2026-08-03: the portal card fee STAYS.** Under §0.05 the portal is the only payment
+surface, so absorbing the fee is not an option — and the desired behaviour is already exactly what
+the portal does today. This resolves the whole section: the fee does not need to move onto a Stripe
+invoice, because no Stripe invoice ever collects. §5.7's feasibility analysis below is retained as
+the record of *why* the hosted page was rejected.
+
+#### Can Stripe Invoicing do this natively? NO — verified, not reasoned
+
+**The timing problem is real and confirmed by Stripe's own docs.** An invoice's amount is fixed at
+finalisation, which happens *before* the customer chooses a payment method on the hosted page.
+
+> "After you finalize an invoice, you can't change certain fields that pertain to the amount and
+> customer." … "If you require updates to the invoice amount after it finalizes, use credit notes."
+> — [Invoice workflow transitions](https://docs.stripe.com/invoicing/integration/workflow-transitions)
+
+And surcharging is **not a Stripe Invoicing feature**. The surcharging documentation lists its
+supported integrations as **Payment Intents, Payment Line Items, and Checkout**. Stripe Invoicing
+and the hosted invoice page are **not mentioned as supported**.
+— [Collect surcharges](https://docs.stripe.com/payments/cards/surcharge)
+
+So there is no native mechanism by which a Stripe invoice's total varies with the payment method
+the customer picks. The structural objection was correct.
+
+#### Mechanisms that could produce the behaviour, and what each costs
+
+**A. Route card payers off the invoice** — ACH pays the Stripe invoice; card payers go to a
+Checkout Session or PaymentIntent that supports surcharging.
+- *Cost:* high. And it **recreates §0.1.2 exactly** — a second payable object for the same money
+  that cannot close the invoice. We would be building the failure we are currently gating on.
+
+**B. Two invoices, one card-priced and one ACH-priced.** Doubles the idempotency surface, doubles
+the invoice numbers in play, and asks the customer to pick a document. Not seriously proposed.
+
+**C. INVERSE FRAMING — price at the card rate, credit back for ACH.** Asked for explicitly, so
+answered explicitly: **it does not work as a discount.** A Stripe discount/coupon is applied to the
+invoice *before* finalisation, so it hits the same timing wall. The only post-finalisation lever is
+a **credit note**, which is issued *after* payment. The customer would pay the card-inflated amount
+by ACH and receive a credit afterwards — over-collection followed by a correction, not a discount
+at checkout. It also breaks the §0.1.1 guarantee that the Stripe invoice total matches the Primus
+invoice total, and puts a number on the customer's invoice that is not what we billed.
+
+**D. Charge the fee as a separate transaction after the fact.** Requires detecting the method
+post-payment, a second charge, and separate consent. Worst of all options.
+
+**E. Absorb the fee.** Zero complexity, zero new failure modes. Matches what the QBO payment link
+already does today.
+
+**HONEST ANSWER: it cannot be done cleanly on an invoice object.** The invoice is a fixed-amount
+document by design and the fee is method-dependent by definition; those two facts do not reconcile
+without leaving the invoice, and leaving the invoice reintroduces §0.1.2.
+
+#### Is there an existing feature being overlooked? No
+
+- **Adaptive Pricing** — *currency localisation.* It does apply to hosted invoice pages, but it
+  presents a local currency; it has nothing to do with payment-method-dependent fees.
+  [Adaptive Pricing](https://docs.stripe.com/payments/checkout/adaptive-pricing)
+- **Stripe Tax** — computes *tax*. A card surcharge is not a tax, and representing it as one would
+  be wrong on the document and wrong in the filing.
+
+#### Two compliance questions for the owner — reported, not decided
+
+**1. The label is probably wrong.** The portal charges a **percentage**, and calls it a
+*convenience fee*. Under card-network rules a percentage-based charge is a **surcharge**;
+"convenience fee" is a narrower category, generally required to be flat and limited to alternative
+payment channels. The practice may be fine; the wording likely is not. Legal/network question, not
+an engineering one.
+
+Stripe also notes a procedural requirement: **Visa requires notifying Visa and your acquirer at
+least 30 days before surcharging begins.**
+
+**2. The flat $0.30 component breaches Visa's cap on every invoice under $300.**
+
+Stripe's own guidance names this exact pattern:
+
+> "on small transactions, a flat fee might exceed Visa's 3% cap, which makes it noncompliant"
+> — [What Is a Surcharge Fee?](https://stripe.com/resources/more/surcharge-fees)
+
+Visa's US cap is **3%**, or the merchant discount rate, whichever is lower. Mastercard's is 4%.
+
+The portal charges `2.9% + $0.30`, so the **effective** rate is `2.9% + (30/A)%`:
+
+| Invoice | Effective rate | Visa 3% cap |
+|---|---|---|
+| $300.00 | 3.00% | exactly at the cap |
+| $210.78 | 3.04% | **over** |
+| $100.00 | 3.20% | **over** |
+| $55.00 | 3.45% | **over** |
+| $27.27 | 4.00% | over Visa AND at Mastercard's cap |
+
+**Break-even is $300.00.** Below it, every card payment exceeds Visa's cap.
+
+**This is live in the pilot data.** Of the 11 Payless invoices claimed, amounts include **$55.00
+(twice — the rebills), $167.12, $194.52, $210.78** — the majority are under $300.
+
+**3. DEBIT REMAINS SURCHARGED — DEFERRED, NOT RESOLVED.**
+
+The 2026-08-03 flat-fee removal fixes **the cap only**. Debit cards continue to be surcharged, and
+**that is not permitted in the US.** This stays open; it does not close with the cap fix.
+
+**The proper fix is Stripe's surcharge API**, which returns a status of `unavailable` for debit and
+enforces `maximum_amount` — i.e. it answers both the debit question and the cap question at the
+source, instead of the portal guessing before the card exists. Deferred, not dropped.
+
+**Wording, on the record (2026-08-03):** "convenience fee" was KEPT in the flat-fee-removal diff, so
+the label change could be approved independently. Noted explicitly because shipping a NEW string
+that still reads "convenience fee" **re-asserts** the label rather than merely inheriting it. The
+label diff is prepared separately on request.
+
+**4. Debit cards cannot be surcharged in the US — and the portal cannot tell.**
+
+> United States — permitted payment methods: **Credit cards only.**
+> — [Collect surcharges](https://docs.stripe.com/payments/cards/surcharge)
+
+**The portal's fee logic does not distinguish card type in any way.** The entire rule is:
+
+```js
+portal.html:4536   const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+portal.html:4604   var   fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+```
+
+One branch — ACH or not-ACH. Every card Stripe accepts, **including debit**, is charged 2.9% + $0.30.
+
+**And it structurally cannot distinguish**, because the fee is computed and displayed *before the
+card is collected*. The worker requests `payment_method_types[] = card` with no funding restriction
+(`stripe-payments/src/index.js:183`), and the brand is only known **after** payment, when the portal
+passes `cardBrand`/`cardLast4` to `/send-confirmation` (`:227`, `:243`). At fee-calculation time
+there is no card to inspect.
+
+#### Exact current user-facing wording — verbatim, unchanged
+
+```
+portal.html:4560   Convenience fee (2.9% + $0.30)
+portal.html:4626   Convenience fee (2.9% + $0.30)
+portal.html:4859   Pay by Card   —   2.9% + $0.30 convenience fee
+portal.html:4859   Pay by Bank   —   ACH transfer - No fee
+portal.html:4947   Convenience fee (2.9% + $0.30)
+```
+
+Four disclosure sites, three render paths, one string. **Not changed.**
+
+### 5.8 Deep link — scope (NOT BUILT, read-only survey 2026-08-03)
+
+Stripe's Pay button carries an invoice into the portal. What that takes:
+
+**1. Read the identifier from the URL.** No mechanism exists. The portal has no invoice deep-link
+route today. The identifier should be the **Primus invoice number** — it is the one value already
+shared by the Stripe invoice (`number`), QBO (`docNumber`), and the portal's own invoice list.
+
+**2. Survive the login round trip — and `_finalizeLogin` actively destroys tab state.**
+
+`portal.html:10285` runs `localStorage.removeItem('rp_tabs')` and `rp_active_title` on **every**
+login, and `doLogout` (`:9562`) does the same. So any pending-invoice value parked in `rp_tabs` is
+wiped by the very act of logging in.
+
+`_finalizeLogin` writes `sessionStorage.fl_session` (`:10294`) and does **not** clear other
+sessionStorage keys, so a **dedicated key** (e.g. `fl_pending_invoice`) written before login
+survives it. That is the mechanism — a separate key, never `rp_tabs`.
+
+Ordering note: `_finalizeLogin` calls `closeLogin()` then `setLoggedIn(true)`, so the pending
+invoice must be consumed *after* that, not during.
+
+**3. Open the right panel.** Reuse the existing invoice panel and detail modal. No new UI. The
+pending key is read after auth, the panel opened, the invoice selected, and the key **cleared** so a
+refresh does not silently reopen it.
+
+#### THE OWNERSHIP CHECK — and the current state is worse than "client-side only"
+
+**A link is not authorisation.** If an AP clerk clicks a link and authenticates as a different
+customer, the portal must not open or display that invoice.
+
+**What exists today.** The portal fetches invoices from `PRIMUS_BASE` =
+`https://freightandlogistics-api.shipprimus.com` (`portal.html:2107`) — the **customer/portal API**,
+which is scoped to one customer's own data by the bearer token
+(`GET /applet/v1/invoice?limit=100&page=N`, `portal.html:22333`, `Authorization: Bearer <token>`).
+
+**So server-side scoping does exist, and it is the right kind:** the API returns only the
+authenticated customer's invoices. An invoice belonging to another customer is not in the response
+at all.
+
+**But that is a property of the LIST, not a check on a LOOKUP.** There is no
+"does this invoice belong to me" function anywhere, because nothing has ever needed one. A deep link
+introduces the first case where the portal is handed an identifier from outside and asked to display
+it.
+
+**The check must therefore be: resolve the identifier ONLY within the authenticated customer's own
+fetched invoice set, and if it is not there, do not display it.** Not a filter applied to a
+separately-fetched invoice — a lookup that can only ever succeed inside data the token already
+scoped. That makes ownership a consequence of where the data came from rather than of a comparison
+someone can forget.
+
+**Failure copy matters and must not leak.** "Invoice not found" and "that invoice is not yours" must
+be the **same message**, or the portal becomes an oracle for which invoice numbers exist on other
+accounts.
+
+**Not built. Nothing above is implemented.**
+
+### 5.9 Login screen — no support contact (scope)
+
+`portal.html:969-994` is the entire login screen. It has email, password, an error line, a Sign in
+button, a Remember me checkbox, and one link: *"Don't have an account? Open one free →"*.
+
+**There is no support contact, no "forgot password", no "trouble signing in".** Confirmed by search
+across the file.
+
+That matters more under §0.05 than it did before: the deep link routes invoice recipients — AP
+clerks, who may never have logged in — straight to this screen. **Accounts are provisioned manually
+and no password reset exists**, so the only recovery path is contacting support, and the screen
+gives them nothing to contact.
+
+Scope: a support line on the login card (`support@freightandlogistics.ai`, and the phone is
+permitted here — this is an onboarding/access surface, not error-fallback copy; see CLAUDE.md's
+no-phone-as-fallback rule, which this does not breach).
 
 ### 5.4 Memo and documents
 
@@ -1179,6 +1676,67 @@ command's exit code.
 earlier commit of the same lineage. `stripe-payments` has a documented history of dashboard edits
 producing exactly that divergence.
 
+## 8.6 Work queue as of 2026-08-03
+
+In order. Nothing below is built.
+
+1. **`_recordQboPayments` silent catch** (§0.1.3) — reported read-only. Under §0.05 this is now the
+   ONLY writeback path from payment to books, which raises its severity rather than lowering it.
+2. **Portal surcharge fixes** — the under-$300 Visa cap breach and the debit exclusion (§5.7).
+   Independent of the delivery-only decision; **the fee stays**, so both must be fixed, not dropped.
+3. **Stripe never-payable configuration + its test** (§0.05 invariant).
+4. **Deep link** (§5.8) including the ownership check, and the login support contact (§5.9).
+5. **Booking join and §5.3** — the phase 6 prerequisite.
+
+## 8.65 Layer3 `agreed-config-dropped-on-pull` — UNREPRODUCED, closed
+
+Verified working on **both** paths 2026-08-03 (90660 → 90035, 100 lbs): form path — no accessorials
+$69.00/50 rates, with Residential + Liftgate $230.00/43 rates, Primus quote #52571424 showing
+LIFTGATE DELIVERY $65.00 and RESIDENTIAL DELIVERY $75.00; agent path — same quote via chat, 43
+rates, STG LTL $230.00, header "Residential Delivery, Liftgate Delivery".
+
+Layer3 finding is **UNREPRODUCED**, six days old (present in every 2026-07-29 run), and not in the
+invoice-sync path. No investigation, no fix. If it recurs there will be a payload worth reading then.
+
+## 8.7 Post-deploy verification — card fee change
+
+Reading a diff is not verification on a payment path. After the fee change deploys, **one small live
+card payment**, confirming three things:
+
+1. the fee charged is **2.9% flat** (no flat component),
+2. the fee **displayed equals the fee charged** (§0.1.4 — this is what was broken),
+3. it **lands in QuickBooks**.
+
+Item 3 matters most and is the least certain: `_recordQboPayments` still swallows its errors
+(§0.1.3), so a QBO write failure is invisible from the UI — and that unfixed defect now sits
+directly beneath a change to the same payment path.
+
+## 8.55 Deploy order EXCEPTION — Pages before Worker, for the 2.9% fee change
+
+**The standing rule is Worker before Pages** (§8.5) — KNOWLEDGE.md chain integrity, so the agent is
+never speaking from a KB that predates the code.
+
+**For the 2026-08-03 card-fee change the order is REVERSED: Pages first, Worker second.** Do not
+"correct" this back.
+
+The governing principle is unchanged — *the agent quoting a LOWER fee than we charge is worse than
+quoting a higher one* — but for this change the direction of harm points the other way:
+
+| Order | Gap state | Customer effect |
+|---|---|---|
+| Worker first | KB says 2.9%, portal still charges 2.9% + $0.30 | quoted 2.9%, **charged MORE**. This is the agent quoting lower than we charge — the bad case. |
+| **Pages first** | portal charges 2.9%, KB still says 2.9% + $0.30 | quoted 2.9% + $0.30, **charged LESS**. Harmless. |
+
+**A slow or manual Pages deploy is therefore fine** — the gap sits in the safe direction for as long
+as it lasts. **Do not deploy the Worker early to close it.**
+
+This also removes the Cloudflare Pages auto-build question as a blocker for this change: the answer
+does not affect the ordering, because Pages going first is correct either way.
+
+**Generalisation for the next time the two are out of step:** the standing order is a default, not
+the principle. The principle is *which side of the gap harms the customer*. Work out the direction
+of harm for the specific change before applying the default.
+
 ## 9. Build order
 
 Phases 1–4 are **test mode only** (§2.1). Nothing customer-facing exists until phase 5.
@@ -1222,7 +1780,7 @@ from the cold outreach campaign on the root domain.
 
 | # | Decision | Blocks |
 |---|---|---|
-| **D1** | How the portal's PaymentIntent modal (§0.1) and Stripe Invoices coexist — retire the modal, link it to the invoice, or reconcile the card surcharge | Phase 9 (live) |
+| **D1** | **ANSWERED §0.1.2** — the portal creates a bare PaymentIntent and the two paths converge on the Primus invoice number, so the same invoice is payable twice. Not live harm today (the portal is the only path); becomes real with the first Stripe invoice. Four options enumerated, **none chosen** | **Phase 6 GATE** |
 | ~~D2~~ | ~~ARCode ↔ QBO join~~ — **resolved 2026-08-03** (§0.2). Residual: confirm `customerInfo.customerId` is the portal's `primusCustomerId` | — |
 | **D3** | Does Primus issue two invoices on one BOL to different bill-to parties? Determines whether the classifier keys on `(BOLNumber, ARCode)` | Phase 6 |
 | **D4** | Credit-note path for net-negative rebills (§5.2) | Phase 9 |

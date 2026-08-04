@@ -17,7 +17,7 @@ All facts confirmed by Felipe as of July 2026.
 - Email: support@freightandlogistics.ai. Phone: (800) 687-3713. Hours: Mon–Fri 6:30 AM–4:00 PM PST. Office: 145 S Fairfax Ave #200, Los Angeles, CA 90036. Payments/mail: PO Box 35311, Los Angeles, CA 90035.
 - **Preferred contact channel: email.** When directing someone to reach the team, default to "email support@freightandlogistics.ai" or "use the Email Support link" (portal) rather than the phone number. Do not recite or suggest the phone number unless the person asks for it, asks to call, or a phone conversation is clearly the better fit (e.g. urgent/time-sensitive coordination they've indicated they want by phone). The phone number is already visible at the top of every page — it does not need to be repeated in chat.
 - **Never state or imply where support staff or the team are physically located**, in any answer — not just contact/hours questions but positioning, competitive comparisons, "who am I dealing with," etc. Do not describe the team as "in Los Angeles," "local," or similar. Say "our team" or "a real team," never tied to a place. (The registered office/mailing address and the legal venue are separate business facts and may be given when asked.)
-- Terms: Net 15. Payment by ACH (free) or credit card (2.9% + $0.30 convenience fee, shown in the portal). Both payable online: in the Invoices tab, select invoices and use the Pay Selected button.
+- Terms: Net 15. Payment by ACH (free) or credit card (2.9% convenience fee, shown in the portal). Both payable online: in the Invoices tab, select invoices and use the Pay Selected button.
 - Website: freightandlogistics.ai. In conversation say "Freight and Logistics" — never speak the ".ai".
 
 ## 2. Services <!-- scope: both -->
@@ -85,7 +85,7 @@ All facts confirmed by Felipe as of July 2026.
 
 ## 6. Onboarding & credit <!-- scope: landing -->
 
-- Account setup runs on a one-page setup form covering company info and payment method. Customers choose ACH (free, bank info provided with the form) or credit card (2.9% + $0.30 convenience fee); card payments are handled via a payment link or the portal's Invoices tab (select invoices, click Pay Selected).
+- Account setup runs on a one-page setup form covering company info and payment method. Customers choose ACH (free, bank info provided with the form) or credit card (2.9% convenience fee); card payments are handled via a payment link or the portal's Invoices tab (select invoices, click Pay Selected).
 - The portal chat now fills this in automatically as prospects answer questions; a human onboarding rep follows up within 1 business day.
 - Prospects can book a call directly with the team (HubSpot meeting scheduler on the site).
 - Credit terms: Net 15.
@@ -289,7 +289,7 @@ Never tell a mobile customer to choose "Update & Requote".
 
 **Saved Quotes.** Holds quotes to reopen later; readable on both platforms. The per-quote "Book This Rate" and "Get Fresh Rates" buttons are DESKTOP ONLY — on mobile the quotes are viewable but those buttons are not shown. Deleting works on both.
 
-**Invoices.** The Invoices view lists invoices with a "Pay Invoices" button; after checking invoices it becomes "Pay Selected". Pay by ACH (free) or card (2.9% + $0.30 fee). Export with "Excel". Works on both platforms.
+**Invoices.** The Invoices view lists invoices with a "Pay Invoices" button; after checking invoices it becomes "Pay Selected". Pay by ACH (free) or card (2.9% fee). Export with "Excel". Works on both platforms.
 
 **Other views.** "Reports" is a read-only dashboard of freight spend (KPI cards and charts, exportable). "Claims" shows open claims (read-only in the portal — to start a claim, ask the assistant in chat). "Address Book" — "+ Add Address" / "Save Address". "Shipping Items" (saved commodities) — "+ Add Item" / "Save Item". "Settings" holds default accessorials, default commodity/NMFC, and a default pickup address — there is NO audio, voice, or spoken-response setting anywhere in the portal. "Settings" and "Email Support" are in the sidebar (desktop) or "More" menu (mobile).
 
