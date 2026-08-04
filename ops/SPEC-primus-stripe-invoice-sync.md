@@ -917,7 +917,22 @@ the detail's `shipment` object does not carry it (verified live 2026-08-03: invo
 `consigneeReferenceNumber "129320"` on the list, absent from the detail). If the poll does not
 capture it, it is unavailable at map time. Stored on `ledger.customer_reference`.
 
-**OPEN — the third slot is NOT settled: `Consignee` vs `Carrier`.** Once §5.3 puts the destination
+**RESOLVED 2026-08-03 — the third slot is `Carrier`. `Consignee` is displaced.**
+
+The reader is an AP clerk, and **carrier is where claims and tracking start** — the one field they
+cannot derive from anything else in the email body or on the hosted page. The consignee's name is
+recoverable from the attached PDF; the carrier is recoverable from nowhere else.
+
+The fourth slot is unchanged: the **customer's reference**. Carrier took the third, never the fourth.
+
+**The consignee NAME moves to the footer as a DELIBERATE DEMOTION, not an omission** — rendered as
+`Megan Cappiello, Baldwin Place, NY` so the name and the place read as one thing. Consequence, stated
+plainly: the footer is **PDF-only**, so the recipient's name is now **absent from the email body and
+the hosted page**. If that turns out to matter for white-glove residential work — where the
+recipient's name is often how a shipment gets discussed — it is a **one-field change back, and
+Carrier is what it would displace**.
+
+The superseded argument, for the record: Once §5.3 puts the destination
 city into the line description, `Consignee` becomes partly redundant — the line already says where
 it went. An AP clerk approving a freight charge is arguably more likely to need **who moved it**
 than the recipient's contact name, and carrier appears nowhere else on the Stripe invoice except a
@@ -1026,6 +1041,32 @@ Target shape (verified to wrap cleanly across two lines in the Stripe PDF):
 **The Primus line text leads** (e.g. `FREIGHT CHARGE`), so the mirror stays visibly faithful. The
 line items themselves remain a **1:1 mirror of `invoiceBreakdown`** — context is added to the
 existing line's description, never as synthesised extra lines.
+
+#### Aggregation across ALL freight items — never element [0]
+
+**`freightInfo` is an array and multi-item is real.** 11 pilot bookings scanned 2026-08-03: 10 have
+one item, **BOL 160134786 has two** — 64 lbs Class 70 and 112 lbs Class 85. Zero empty arrays, zero
+absent.
+
+**Reading `[0]` alone would have printed `82 lbs · Class 70` on a shipment that is 176 lbs across
+classes 70 and 85.** Wrong numbers on a customer invoice — and it would have passed every test we
+had. That is the reason the rule is what it is.
+
+- **Weight and pieces SUM.**
+- **Class does NOT average** — there is no meaningful mean of 70 and 85 — so it renders as a
+  **deduped, NUMERICALLY ASCENDING list**: `Class 70, 85`. Ascending always, so identical freight
+  never renders two ways depending on array order. (String sorting would print `100, 70`.)
+- **Commodity takes the same deduped-ascending rule.** Beyond **3** distinct commodities the list is
+  replaced by `N items` — a long list stops informing and starts crowding the line.
+- Single-item output is byte-identical to the originally accepted shape.
+
+**Empty or absent `freightInfo` quarantines** — a line cannot describe freight it has no record of.
+**UNTESTED: 0 of 11 pilot bookings had one, so this rule exists and has never fired against real
+data.** Do not read it as verified.
+
+**`hazmat` is carried, and nothing renders it.** Every item observed has `hazmat: false` and
+`UN: ""`. A hazmat shipment would want surfacing on the line; **nothing in the pilot set exercises
+it**, so it is available to a future decision and not built.
 
 **HARD LIMIT: 500 characters**, verified against Stripe's changelog (2018-10-31), not assumed:
 *"The `description` field on invoice line items now has a maximum character length limit of `500`."*
@@ -1465,6 +1506,65 @@ a cost field even as an intermediate — a freight line derived by subtraction m
   gates live send.
 - **Line-item `description`** comes from Primus rate/accessorial config and can echo discount structure.
   Same class of risk, lower frequency.
+
+### 6.05 THE WORKED EXAMPLE — why the boundary is an allowlist, not a denylist
+
+Not a note. This is the case that proves the rule, and it comes from live data.
+
+The **booking** record carries, as plain named fields:
+
+```
+$.vendor.cost                            273.57      <- carrier cost
+$.vendor.name                            "Pilot Freight Services"   <- §5.3 NEEDS this
+$.accountingInformation.GPActual         9.74313     <- gross margin %
+$.accountingInformation.profitUSDActual  29.32       <- margin in dollars
+$.accountingInformation.costQuoteId      1443678960
+```
+
+**The customer invoice for that shipment is $300.93.** `vendor.cost` of **$273.57 IS the entire
+margin** — and it sits **one property away from `vendor.name`**, which the lane description needs.
+
+**`detail.js`'s `BANNED_FIELDS` matches NOT ONE of these names.** That denylist —
+`costBreakdown`, `payableBreakdown`, `profitSummary`, `invoiceInternalRemarks` — was written for the
+invoice detail and is completely blind to every hazard above.
+
+A denylist only excludes the hazards that existed when it was written, and it is written against one
+endpoint's vocabulary. A second endpoint arrives with different names for the same danger and the
+denylist says nothing. **The allowlist does not need to know what the hazard is called.**
+
+`src/booking.js` therefore has its own allowlists, its own seal, its own required-value list, and its
+own `BOOKING_HOSTILE` byte scan — reused nowhere, inherited from nothing.
+
+### 6.06 `_sourceKeys` records NAMES — do not "simplify" it by blinding it
+
+A leak scan over the narrowed booking fired on the bare string `accountingInformation`. The hit was
+in **`_sourceKeys`**, which truthfully records the source record's key NAMES.
+
+**The scan was over-broad; the diagnostic was correct.** The fix was to the TEST, not the field.
+
+Blinding `_sourceKeys` — filtering hostile names out of it — would look tidier and would destroy the
+thing it exists for. That field is what caught the `data.results` nesting bug, where reading the
+wrong level silently produced a record of nulls. A shape-describer that hides part of the shape
+cannot detect drift in the part it hides.
+
+**The distinction is NAMES vs VALUES**, and it is the same distinction that separates the key seal
+from the value audit (§6.5):
+
+- `_sourceKeys` may contain the NAME `accountingInformation`. A name is not margin.
+- It must never contain a VALUE. Pinned by an explicit test: it must match `accountingInformation`
+  and must not contain `273.57`, `9.74313`, `29.32`, or any party name.
+- It never reaches Stripe regardless — it is on `NON_PAYLOAD_FIELDS` and `assertPayloadClean`
+  rejects any key called `_sourceKeys`.
+
+**The byte scan is on the SERIALISED payload, and covers names AND values.** Names alone are not
+enough: the seal already makes an unexpected KEY impossible, so a name scan is belt-and-braces. The
+case it cannot catch is a future edit assigning a hostile VALUE to an ALLOWED key —
+`serviceLevel: v.cost` passes the seal and passes a name scan. So `assertBookingClean` takes the
+source record and learns the hostile values from it, rather than hard-coding a list that would only
+ever be right for the one booking it was written against.
+
+Both directions are pinned by negative controls: a planted hostile NAME throws, a planted hostile
+VALUE under an allowed key throws, and a clean payload against the same source does not.
 
 ### 6.5 Two boundary rules, deliberately separate
 

@@ -9,8 +9,22 @@ import {
 } from '../src/mapper.js';
 import { parseEmails } from '../src/customers.js';
 import { newValueSink, formatEmailDrops } from '../src/detail.js';
+import { narrowBooking } from '../src/booking.js';
 import { narrowInvoiceDetail } from '../src/detail.js';
 import { toCents } from '../src/invoices.js';
+import { readdir, readFile } from 'node:fs/promises';
+
+/** Narrowed booking for BOL 160133377, the invoice we map. */
+const BOOKING = narrowBooking({ data: { results: {
+  BOLNumber: '160133377', shipmentMode: 'LTL', totalWeight: 82, totalPieces: 1,
+  freightInfo: [{ qty: 1, weight: 82, class: 70, commodity: 'rug', hazmat: false }],
+  trackingInformation: { pickupDateEstimated: '2026-06-22', deliveryDateActual: '2026-07-09 00:00:00', lastStatusExternal: 'POD' },
+  pickupInformation: { timeFrom: '09:00:00', timeTo: '14:00:00' },
+  shipper: { name: 'Momeni Rugs', city: 'ADAIRSVILLE', state: 'GA' },
+  consignee: { name: 'Megan Cappiello', city: 'BALDWIN PLACE', state: 'NY' },
+  vendor: { name: 'Pilot Freight Services', serviceLevel: 'Hd basic - signature release', cost: 273.57 },
+  accountingInformation: { GPActual: 9.74313, profitUSDActual: 29.32 },
+} } });
 
 function rawDetail(over = {}) {
   return {
@@ -237,28 +251,32 @@ test('§5.1 primary-vs-rebill fold: zero-dollar descriptions are placed, not jus
   assert.match(payload.lines[0].description, /Incl\./);
 });
 
-test('§5.3 lane description: origin → destination, commodity, class, pickup date', { todo: 'needs the booking join — a separate §6.1 boundary, not built' }, () => {
-  const { payload } = build();
-  assert.match(payload.lines[0].description, /LTL · .+ → .+ · .+ lbs · Class /);
+test('§5.3 lane description: origin → destination, commodity, class, pickup date', () => {
+  // Was a {todo} until the booking join existed. Now REAL — an inflated todo count stops being a
+  // usable inventory of what is genuinely unbuilt.
+  const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: BOOKING });
+  assert.match(payload.lines[0].description,
+    /LTL \u00b7 .+ \u2192 .+ \u00b7 .+ lbs \u00b7 Class /);
 });
 
 // ── the customer reference: fourth custom field ──────────────────────────────────────────────
 
-test('the fourth custom field is the CUSTOMER reference, not carrier', () => {
-  // The only thing on the invoice that belongs to them rather than to us, and what their AP
-  // matches on. Carrier is ours and appears elsewhere.
+test('the fourth slot is the CUSTOMER reference — Carrier took the third, not the fourth', () => {
+  // The reference is the only field on the invoice that belongs to them rather than to us, and it
+  // is what their AP matches on. Carrier displaced CONSIGNEE (2026-08-03), never this.
   const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
-    { customerReference: '129320' });
+    { customerReference: '129320', booking: BOOKING });
   const names = payload.invoice.custom_fields.map(f => f.name);
-  assert.deepEqual(names, ['BOL #', 'PRO #', 'Consignee', 'Your Ref #']);
+  assert.deepEqual(names, ['BOL #', 'PRO #', 'Carrier', 'Your Ref #']);
   assert.equal(payload.invoice.custom_fields[3].value, '129320');
   assert.ok(names.length <= 4, 'Stripe allows exactly four');
 });
 
 test('an absent customer reference drops the field rather than printing an empty one', () => {
   for (const ref of [null, undefined, '', '   ']) {
-    const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { customerReference: ref });
-    assert.equal(payload.invoice.custom_fields.length, 3);
+    const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+      { customerReference: ref, booking: BOOKING });
+    assert.deepEqual(payload.invoice.custom_fields.map(f => f.name), ['BOL #', 'PRO #', 'Carrier']);
     assert.ok(!payload.invoice.custom_fields.some(f => f.name === 'Your Ref #'));
   }
 });
@@ -370,8 +388,6 @@ test('position is the ONLY signal — reordering silently changes who is invoice
 // before it became executable, and nobody writing the first real send path next week would know
 // the rule existed. This is the enforcement.
 
-import { readdir, readFile } from 'node:fs/promises';
-
 /** Anything that could finalise, send, or otherwise make a Stripe invoice reachable. */
 const SEND_SURFACE = [
   /api\.stripe\.com/,
@@ -457,4 +473,102 @@ test('a clean field records a parse and no drops', () => {
   assert.equal(sink.emailParses, 1);
   assert.deepEqual(Object.keys(sink.emailDrops), []);
   assert.deepEqual(formatEmailDrops(sink), []);
+});
+
+// ── §5.3 line description, footer, and the custom-field swap ────────────────────────────────
+
+test('§5.3 renders the accepted lane shape, enriching the ONE existing line', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { customerReference: '129320', booking: BOOKING });
+  assert.equal(r.payload.lines.length, 1, 'still a 1:1 mirror of invoiceBreakdown — nothing synthesized');
+  assert.equal(r.payload.lines[0].description,
+    'Freight \u2014 LTL \u00b7 Adairsville, GA \u2192 Baldwin Place, NY \u00b7 1 pc rug \u00b7 82 lbs \u00b7 Class 70 \u00b7 PU 06/22/26');
+});
+
+test('the Primus line text leads, so the mirror stays visible', () => {
+  const d = narrowInvoiceDetail(rawDetail({
+    invoiceBreakdown: [{ code: '', description: 'FREIGHT CHARGE', qty: '1.00', rate: 300.93, total: 300.93 }],
+  }));
+  const r = buildStripeInvoice(d, CUSTOMER, { booking: BOOKING });
+  assert.match(r.payload.lines[0].description, /^FREIGHT CHARGE \u2014 LTL/);
+});
+
+test('without a booking the description degrades to the Primus text alone', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: null });
+  assert.equal(r.payload.lines[0].description, 'Freight');
+});
+
+test('the description stays inside Stripe\'s 500-character limit', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: BOOKING });
+  assert.ok(r.payload.lines[0].description.length <= 500);
+});
+
+test('custom fields are BOL # · PRO # · Carrier · Your Ref #', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { customerReference: '129320', booking: BOOKING });
+  assert.deepEqual(r.payload.invoice.custom_fields.map(f => f.name),
+    ['BOL #', 'PRO #', 'Carrier', 'Your Ref #']);
+  assert.equal(r.payload.invoice.custom_fields[2].value, 'Pilot Freight Services');
+  assert.equal(r.payload.invoice.custom_fields[3].value, '129320');
+  assert.ok(!r.payload.invoice.custom_fields.some(f => f.name === 'Consignee'), 'Consignee displaced by Carrier');
+});
+
+test('the consignee NAME survives in the footer — demoted, not omitted', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: BOOKING });
+  const f = r.payload.invoice.footer;
+  assert.match(f, /Consignee: Megan Cappiello, Baldwin Place, NY/, 'name and place read as one thing');
+  assert.match(f, /Carrier: Pilot Freight Services/);
+  assert.match(f, /Service: Hd basic - signature release/);
+  assert.match(f, /Pickup 06\/22\/26 09:00\u201314:00/);
+  assert.match(f, /Delivered 07\/09\/26/);
+  assert.match(f, /Shipper: Momeni Rugs, Adairsville, GA/);
+});
+
+test('NO booking margin data reaches the Stripe payload', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { customerReference: '129320', booking: BOOKING });
+  const s = JSON.stringify(r.payload);
+  for (const leak of ['273.57', '9.74313', '29.32', 'cost', 'GPActual', 'profitUSD', 'accountingInformation']) {
+    assert.ok(!s.includes(leak), `payload leaked: ${leak}`);
+  }
+});
+
+test('assertPayloadClean now also rejects the BOOKING hostile names', () => {
+  assert.throws(() => assertPayloadClean({ invoice: { cost: 273.57 } }), /forbidden field/);
+  assert.throws(() => assertPayloadClean({ a: { GPActual: 9.7 } }), /forbidden field/);
+});
+
+test('a multi-item booking aggregates on the invoice line', () => {
+  const multi = narrowBooking({ data: { results: {
+    BOLNumber: '160134786', shipmentMode: 'LTL', totalWeight: 176, totalPieces: 2,
+    freightInfo: [{ qty: 1, weight: 64, class: 70, commodity: 'rug' },
+                  { qty: 1, weight: 112, class: 85, commodity: 'rug' }],
+    trackingInformation: { pickupDateEstimated: '2026-06-22' }, pickupInformation: {},
+    shipper: { name: 'Momeni Rugs', city: 'ADAIRSVILLE', state: 'GA' },
+    consignee: { name: 'A Customer', city: 'BALDWIN PLACE', state: 'NY' },
+    vendor: { name: 'Pilot Freight Services', serviceLevel: 'x' },
+  } } });
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { booking: multi });
+  assert.match(r.payload.lines[0].description, /2 pcs rug \u00b7 176 lbs \u00b7 Class 70, 85/);
+
+  // THE POINT WHERE AGGREGATION AND FAITHFUL-MIRROR COULD DISAGREE: freightInfo has 2 items,
+  // invoiceBreakdown has 1. The line count follows invoiceBreakdown, ALWAYS — freight items are
+  // aggregated INTO the description, never expanded into extra lines.
+  assert.equal(r.payload.lines.length, 1, 'lines follow invoiceBreakdown, not freightInfo');
+  assert.equal(multi.freight.length, 2, 'while the booking genuinely has two freight items');
+});
+
+test('line count follows invoiceBreakdown even when it has MORE lines than freight items', () => {
+  // The mirror is 1:1 with invoiceBreakdown in both directions.
+  const d = narrowInvoiceDetail(rawDetail({
+    invoiceBreakdown: [
+      { code: '', description: 'FREIGHT CHARGE', qty: '1.00', rate: 200, total: 200 },
+      { code: 'FSC', description: 'FUEL SURCHARGE', qty: '1.00', rate: 100.93, total: 100.93 },
+    ],
+  }));
+  const r = buildStripeInvoice(d, CUSTOMER, { booking: BOOKING });
+  assert.equal(r.payload.lines.length, 2);
+  assert.equal(BOOKING.freight.length, 1, 'one freight item, two invoice lines');
+  // Both lines carry the same shipment context — it describes the shipment, not the charge.
+  for (const l of r.payload.lines) assert.match(l.description, /LTL \u00b7 Adairsville, GA/);
 });

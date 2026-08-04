@@ -9,6 +9,7 @@
 
 import { toCents } from './invoices.js';
 import { auditValues, BANNED_FIELDS, NON_PAYLOAD_FIELDS } from './detail.js';
+import { summariseFreight, BOOKING_HOSTILE } from './booking.js';
 
 /** Stripe allows exactly 4 custom fields, 30 chars of name and 30 of value. */
 const CUSTOM_FIELD_MAX = 30;
@@ -68,7 +69,10 @@ export function customerVisibleNumber(invoiceNumber) {
  * be copied under an innocent key. Throws — this is the irreversible direction, so it fails closed.
  */
 export function assertPayloadClean(payload) {
-  const forbidden = [...BANNED_FIELDS, ...NON_PAYLOAD_FIELDS];
+  // Includes the BOOKING's hostile names: detail.js's BANNED_FIELDS matches NOT ONE of them
+  // (vendor.cost, GPActual, profitUSDActual...), which is the worked example for why the boundary
+  // is an allowlist rather than a denylist.
+  const forbidden = [...BANNED_FIELDS, ...NON_PAYLOAD_FIELDS, ...BOOKING_HOSTILE];
 
   const walk = (v, path) => {
     if (v === null || v === undefined) return;
@@ -85,6 +89,91 @@ export function assertPayloadClean(payload) {
   return payload;
 }
 
+/** "ADAIRSVILLE" -> "Adairsville". Primus stores cities uppercase; an invoice should not shout. */
+function titleCase(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  return s.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
+/** "2026-06-22" or "2026-07-09 00:00:00" -> "06/22/26". Null-safe; returns '' when unusable. */
+function shortDate(v) {
+  const m = String(v ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : '';
+}
+
+/** "Megan Cappiello, Baldwin Place, NY" — name and place read as ONE thing, not two. */
+function partyLabel(p) {
+  if (!p) return '';
+  const place = [titleCase(p.city), String(p.state ?? '').trim().toUpperCase()].filter(Boolean).join(', ');
+  return [String(p.name ?? '').trim(), place].filter(Boolean).join(', ');
+}
+
+/** "Adairsville, GA" */
+function placeLabel(p) {
+  if (!p) return '';
+  return [titleCase(p.city), String(p.state ?? '').trim().toUpperCase()].filter(Boolean).join(', ');
+}
+
+/**
+ * §5.3 — the lane description. ENRICHES the single existing line; it does NOT add lines.
+ *
+ * Line items stay a faithful 1:1 mirror of invoiceBreakdown. The Primus line text leads, so the
+ * mirror is visible. Everything after the em dash is shipment context from the booking join.
+ *
+ * Aggregated across ALL freight items (§5.3) — never element [0]. Stripe caps a line description
+ * at 500 characters; the shape below sits far inside that, and legibility binds first.
+ */
+export function buildLineDescription(primusDescription, booking) {
+  const head = String(primusDescription ?? '').trim() || 'Freight Charge';
+  if (!booking) return head;
+
+  const f = summariseFreight(booking.freight);
+  const lane = [placeLabel(booking.shipper), placeLabel(booking.consignee)].filter(Boolean).join(' \u2192 ');
+  const parts = [];
+  if (booking.mode) parts.push(String(booking.mode));
+  if (lane) parts.push(lane);
+  if (f.pieces) parts.push(`${f.pieces} pc${f.pieces === 1 ? '' : 's'}${f.commodityLabel ? ' ' + f.commodityLabel : ''}`);
+  if (f.weight) parts.push(`${f.weight} lbs`);
+  if (f.classLabel) parts.push(`Class ${f.classLabel}`);
+  const pu = shortDate(booking.pickup && booking.pickup.dateEstimated);
+  if (pu) parts.push(`PU ${pu}`);
+
+  return parts.length ? `${head} \u2014 ${parts.join(' \u00b7 ')}` : head;
+}
+
+/**
+ * §5.4 — the footer. PDF-ONLY, so it carries what will not fit on the line and what a reader can
+ * still get from the attached PDF.
+ *
+ * The CONSIGNEE NAME lives here by deliberate demotion (§5.4): it moved off a top-line custom field
+ * when Carrier took that slot, which means it is absent from the email body and the hosted page.
+ * Reversible in one field if that turns out to matter.
+ */
+export function buildFooter(booking) {
+  if (!booking) return '';
+  const lines = [];
+
+  const c = booking.carrier || {};
+  const carrierBits = [c.name && `Carrier: ${c.name}`, c.serviceLevel && `Service: ${c.serviceLevel}`].filter(Boolean);
+  if (carrierBits.length) lines.push(carrierBits.join(' \u00b7 '));
+
+  const pu = shortDate(booking.pickup && booking.pickup.dateEstimated);
+  const win = booking.pickup && booking.pickup.timeFrom && booking.pickup.timeTo
+    ? `${String(booking.pickup.timeFrom).slice(0, 5)}\u2013${String(booking.pickup.timeTo).slice(0, 5)}` : '';
+  const dl = shortDate(booking.delivery && booking.delivery.dateActual);
+  const when = [pu && `Pickup ${pu}${win ? ' ' + win : ''}`, dl && `Delivered ${dl}`].filter(Boolean);
+  if (when.length) lines.push(when.join(' \u00b7 '));
+
+  const who = [
+    booking.shipper && partyLabel(booking.shipper) && `Shipper: ${partyLabel(booking.shipper)}`,
+    booking.consignee && partyLabel(booking.consignee) && `Consignee: ${partyLabel(booking.consignee)}`,
+  ].filter(Boolean);
+  if (who.length) lines.push(who.join(' \u00b7 '));
+
+  return lines.join('\n');
+}
+
 /**
  * Build the Stripe invoice object.
  *
@@ -95,7 +184,7 @@ export function assertPayloadClean(payload) {
  * Returns a quarantine verdict rather than throwing when the invoice has null required values —
  * one bad record must not stop a run (spec §6.5).
  */
-export function buildStripeInvoice(detail, customer, { customerReference = null, verifiedRecipients = null, valueSink = null } = {}) {
+export function buildStripeInvoice(detail, customer, { customerReference = null, booking = null, verifiedRecipients = null, valueSink = null } = {}) {
   const audit = auditValues(detail, valueSink);
   if (!audit.ok) {
     return {
@@ -132,7 +221,8 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
       continue;
     }
     lines.push({
-      description: line.description,
+      // §5.3 enriches this description with booking context; the LINE ITSELF stays a 1:1 mirror.
+      description: buildLineDescription(line.description, booking),
       amount_cents: verdict.cents,
       currency: 'usd',
       quantity: 1,   // Primus `qty` is a formatted STRING ("1.00"); the amount is already the total
@@ -146,10 +236,15 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
   // on our invoice has been handed something harder to process than what it replaced.
   //
   // Claim-time value (ledger.customer_reference) — the LIST carries it, the detail does not.
+  // Four slots. CARRIER displaces Consignee (decided 2026-08-03): the reader is an AP clerk, and
+  // carrier is where claims and tracking start — the one field they cannot derive from anything
+  // else in the email body or on the hosted page. The consignee's NAME is recoverable from the
+  // attached PDF, and now lives in the footer; the carrier is recoverable from nowhere else.
+  // The fourth slot stays the CUSTOMER's reference — the only field on the invoice that is theirs.
   const custom_fields = [
     customField('BOL #', detail.shipment.BOLNumber),
     customField('PRO #', detail.shipment.carrierPRO),
-    customField('Consignee', detail.shipment.consigneeName),
+    customField('Carrier', booking && booking.carrier ? booking.carrier.name : null),
     customField('Your Ref #', customerReference),
   ].filter(Boolean);
 
@@ -183,6 +278,8 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
         ar_code: String(arCode),
       },
       custom_fields,
+      // PDF-only surface (§5.4).
+      footer: buildFooter(booking),
     },
 
     lines,
