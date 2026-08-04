@@ -1907,6 +1907,8 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B1 | `_recordQboPayments` — six silent failure modes; the only writeback from payment to books, and it cannot report its own failure | §0.1.3 |
 | B2 | Debit cards are still surcharged, which is not permitted in the US. The cap fix did not address it | §5.7 |
 | B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
+| B4 | **Tracking is broken now.** `portal.freightandlogistics.com` returns NXDOMAIN on two independent resolvers and a live fetch fails to connect, yet `track-proxy/track-proxy.js:43` POSTs `trackShipment.php` to that host. Independent of Wix. **Customer-facing.** | §8.861 |
+| B5 | `www.freightandlogistics.com/demo-session` — **works today**, so NOT broken, but it is Wix-hosting-dependent and is the only remaining `.com` content dependency in the repo | §8.862 |
 
 ### C. Before anything is created in Stripe
 
@@ -2177,6 +2179,39 @@ wording one.
 **carrier** on the customer's behalf, and they live in the same neighbourhood as the customer
 disputing **us**. Two opposite directions under one heading is the same defect one level down.
 
+## 8.859 The `.ai` apex change, and the zone-deprovision reference
+
+**What is actually happening (2026-08-03): the apex is being pointed at Porkbun so
+`freightandlogistics.ai` redirects to `www.freightandlogistics.ai`. Nothing is being
+deprovisioned.** Wix continues to serve and continues to hold DNS.
+
+**What the apex change fixes, once live:**
+
+1. **`freightandlogistics.ai/?terms=1` starts resolving.** Today the apex has **no A record** —
+   only `www` resolves — so the bare-domain form fails. This matters because executed credit
+   applications cite the terms URL as incorporated contract text (`index.html:1710`), and any that
+   cite the **apex** form rather than the `www` form currently point at nothing.
+2. **Anyone typing or linking the bare domain lands somewhere** instead of nowhere.
+
+### Reference only — what WOULD break if the zone were ever deprovisioned
+
+**Not a live risk. Recorded for the real Cloudflare nameserver migration, whenever that happens.**
+
+Both domains are on Wix DNS — `ns0.wixdns.net` / `ns1.wixdns.net`, SOA `support.wix.com` on each.
+That includes **`.ai`**, which is easy to miss when the mental model is "the Wix site is the .com".
+
+| | Would break | Depends on |
+|---|---|---|
+| 1 | `www.freightandlogistics.ai` → CNAME → `freight-portal.pages.dev` — the portal and landing site | Wix **DNS**, not Wix hosting |
+| 2 | MX for **both** zones → Google Workspace — all email | Wix DNS |
+| 3 | `www.freightandlogistics.ai/?terms=1` — the URL inside executed credit applications | Wix DNS |
+| 4 | SendGrid sending — SPF/DKIM TXT live in that zone | Wix DNS |
+
+**ZONE-EXPORT WARNING — carry this into the migration.** Export the complete zone for **both**
+domains before any cutover: **five MX records**, plus **SPF and DKIM TXT for both SendGrid and
+Google**. Anything not copied before the cutover is **lost silently** — the failure mode is mail
+quietly not delivering, which nobody notices until a customer says they never received something.
+
 ## 8.86 LIVE DEFECT — two conflicting claims deadlines, already published
 
 Found 2026-08-03 while inventorying dispute windows. **Reported, not fixed** — out of scope for the
@@ -2196,6 +2231,44 @@ invoice.** Which is binding is not decidable from our own material.
 
 This is the anti-fabrication rule failing from the inside: the KB is the agent's source of truth,
 and here the KB contradicts the contract.
+
+## 8.861 LIVE DEFECT B4 — tracking POSTs to a host that does not exist
+
+Found 2026-08-03. **Reported, not fixed.** Independent of Wix; broken now.
+
+`portal.freightandlogistics.com` returns **NXDOMAIN** on the default resolver and on `8.8.8.8`, and
+a live `curl` fails to connect (exit 6, could not resolve host). `track-proxy/track-proxy.js:43`
+POSTs to `https://portal.freightandlogistics.com/trackShipment.php` with a `Referer` on the same
+host (`:47`).
+
+**How it presents to the customer — read from the code, not inferred.** The fetch is wrapped
+(`:41-58`); a DNS failure throws and is caught at `:57`, returning
+`{ ok: false, error: "Tracking is temporarily unavailable." }` with **HTTP 502**.
+
+So it **does not fail silently** — the customer sees "Tracking is temporarily unavailable." That is
+the correct shape of message for a transient outage, and it is **wrong here**: the host does not
+exist, so the condition is permanent, and the copy invites the customer to try again indefinitely.
+Every tracking lookup has been returning that message for as long as the host has been gone.
+
+The fix is not in the error handling. The upstream host is wrong or retired, and the correct
+endpoint has to be established before anything is changed.
+
+## 8.862 B5 — demo-session works TODAY; the earlier concern was wrong
+
+Checked 2026-08-03 because a prior audit was reportedly fooled by a 200 that was really a redirect
+to the Wix homepage.
+
+**It is not a redirect.** `https://www.freightandlogistics.com/demo-session` returns **HTTP 200 with
+no redirect** (`redirect_url` empty), and the page title is
+`Freight and Logistics, Inc. | Free Demo | Pico Rivera California` — distinct from the root title
+`… | 3PL Freight Broker | Los Angeles California`. Two different pages, so the 200 is genuine.
+
+**It can also still be framed:** no `X-Frame-Options` and no `Content-Security-Policy`
+`frame-ancestors` header on the response, so the `portal.html:2074` iframe is not blocked.
+
+So B5 is **not** a current defect. It is recorded only as the last remaining `.com` **content**
+dependency in the repo — `portal.html:1504` (the `[[TALK]]` handler), `:2074` (iframe), `:2076`
+(fallback link) — which would break if Wix hosting ever stopped, but is fine today.
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
