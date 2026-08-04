@@ -2137,6 +2137,39 @@ primary's, or whose amount is within tolerance of the primary's total, must clas
 rather than `rebill`. `hold` is already a supported verdict and already leaves placement unplaced —
 the detection is what is missing, not the handling.
 
+## 8.95 PHASE 8 — decision layer built, R2 MIRROR DELIBERATELY NOT BUILT
+
+`src/documents.js` decides what MAY be exposed and derives the token a link would carry. It
+**fetches nothing, mirrors nothing, writes nothing.**
+
+**The mirror is not built on purpose.** Mirroring writes customer documents into a bucket — PODs
+carrying consignee home addresses and phone numbers, on a book that is ~90% residential. That is a
+real data-handling action, not a refactor, and it creates infrastructure. It is the same posture as
+the mapper: the decision is built and tested; the irreversible step waits.
+
+**Built:**
+- `normalizeType` — trim + uppercase before ANY comparison. `BOL ` carries a trailing space live;
+  without it the allowlist silently drops every Bill of Lading.
+- `classifyDocument` → `pull` / `never` / **`unknown`**. Unknown is excluded like `never` but is
+  also **recorded** — a new Primus type must be visible in both directions.
+- `selectDocuments(docs, classification)` — PUSH is **rebill-only** and limited to `RECLASS` /
+  `REWEIGH`, the two documents that ARE the justification for the charge.
+- `deriveDocToken` — HMAC-SHA256 over `invoiceId:bolNumber:type`. **Scoped per (INVOICE, DOCUMENT)**,
+  because two parties can bill on one BOL and a per-document token handed to one grants the other's
+  view. Derived, not stored, so no token table can drift from links already issued. **Throws without
+  a secret** — an unkeyed token is guessable.
+
+**Verified against the live document set** for BOL 160133377 (`BOL`, `LBL`, `QUO`, `INV`, `DO`,
+`COST`): exactly one document — the Bill of Lading — is exposed. `COST` (carrier cost) and `QUO` are
+excluded by name, `INV` because the Stripe invoice supersedes it.
+
+**`IMG` is pull-only on every classification**, pinned by a test. Driver photos show the consignee's
+house, door, plates and sometimes people, and the bill-to is frequently a retailer with no
+relationship to the delivery address.
+
+**Still to build for phase 8 to be complete:** the R2 bucket, the mirror fetch/write, and the
+`docs.freightandlogistics.ai` route that validates a token and serves the object. None started.
+
 ## 9. Build order
 
 Phases 1–4 are **test mode only** (§2.1). Nothing customer-facing exists until phase 5.
