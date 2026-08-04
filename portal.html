@@ -4482,6 +4482,23 @@ function summarizeInvoices(list) {
   };
 }
 
+// Card fee: 2.9% of the invoice subtotal, FLOORED to the cent. ONE definition — four copies of
+// this formula previously existed (two in the modal, one inline in the fee row, and calcTotal in a
+// different shape: subtotal * 1.029 + 0.30). Copies that must agree are how the charged amount and
+// the disclosed amount drift apart.
+//
+// FLOOR, not round. Rounding up can push the effective rate ABOVE 2.9%: at $55 the old code
+// displayed $1.59 and charged $1.60 (2.9091%), and on small amounts it breaches Visa's 3% cap
+// outright ($1.00 -> 3.00%, $0.87 -> 3.45%). Flooring makes the effective rate <= 2.9000% for every
+// amount, by construction, and makes the displayed fee equal the charged fee.
+//
+// Computed in integer cents so no float artefact can reappear.
+function cardFeeOn(subtotal) {
+  const cents = Math.round(Number(subtotal) * 100);
+  if (!Number.isFinite(cents) || cents <= 0) return 0;
+  return Math.floor(cents * 0.029) / 100;
+}
+
 // Record each paid invoice back to QuickBooks Online after Stripe succeeds, using
 // the QBO Id resolved at pay time (see the Pay Selected handler). The payment
 // amount is the QBO Balance, falling back to the invoice total. Best-effort — never
@@ -4533,7 +4550,7 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
   const summary = document.createElement('div');
   summary.style.cssText = 'padding:20px 24px;border-bottom:1px solid #e5e2d9;';
   const subtotal = invoices.reduce((s, inv) => s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0), 0);
-  const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+  const fee = paymentMethod === 'card' ? cardFeeOn(subtotal) : 0;
   invoices.forEach(inv => {
     const f = getInvoiceFields(inv);
     const block = document.createElement('div');
@@ -4557,7 +4574,7 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
     summary.appendChild(subtotalRow);
     const feeRow = document.createElement('div');
     feeRow.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 0 6px;border-bottom:1px solid #e5e2d9;';
-    feeRow.innerHTML = `<span>Convenience fee (2.9% + $0.30)</span><span>$${fee.toFixed(2)}</span>`;
+    feeRow.innerHTML = `<span>Convenience fee (2.9%)</span><span>$${fee.toFixed(2)}</span>`;
     summary.appendChild(feeRow);
   }
   const totalRow = document.createElement('div');
@@ -4601,7 +4618,7 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
   var time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
   var refNum = 'FL-' + Date.now().toString().slice(-8);
   var subtotal = invoices.reduce(function(s, inv) { return s + (parseFloat(getInvoiceFields(inv).rawAmt) || 0); }, 0);
-  var fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+  var fee = paymentMethod === 'card' ? cardFeeOn(subtotal) : 0;
   var shortId = confirmationId ? confirmationId.slice(-8).toUpperCase() : '';
   var cardLabel = cardBrand && cardLast4 ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) + ' ending in ' + cardLast4 : (paymentMethod === 'ach' ? 'ACH Bank Transfer' : 'Credit / Debit Card');
   var logoUrl = 'https://felipeliberman.github.io/freight-portal/logo.png';
@@ -4623,7 +4640,7 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
 
   var feeSection = fee > 0 ?
     '<div style="display:flex;justify-content:space-between;font-size:12px;color:#888;padding:8px 32px 2px;"><span>Subtotal</span><span>$' + subtotal.toFixed(2) + '</span></div>' +
-    '<div style="display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 32px 10px;border-bottom:1px solid #e5e2d9;"><span>Convenience fee (2.9% + $0.30)</span><span>$' + fee.toFixed(2) + '</span></div>'
+    '<div style="display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 32px 10px;border-bottom:1px solid #e5e2d9;"><span>Convenience fee (2.9%)</span><span>$' + fee.toFixed(2) + '</span></div>'
     : '';
 
   var achNote = paymentMethod === 'ach' ? '<div style="padding:8px 32px;font-size:11px;color:#888;">ACH transfers typically settle within 2-5 business days.</div>' : '';
@@ -4781,7 +4798,7 @@ function showStripePaymentModal(invoices) {
   let payMethod = 'ach'; // default: ACH, no fee
 
   function calcTotal(method) {
-    if (method === 'card') return subtotal * 1.029 + 0.30;
+    if (method === 'card') return subtotal + cardFeeOn(subtotal);
     return subtotal;
   }
 
@@ -4856,7 +4873,7 @@ function showStripePaymentModal(invoices) {
   }
 
   toggleWrap.appendChild(makeMethodBtn('pay-method-ach',  'Pay by Bank', 'ACH transfer - No fee', 'ach'));
-  toggleWrap.appendChild(makeMethodBtn('pay-method-card', 'Pay by Card', '2.9% + $0.30 convenience fee', 'card'));
+  toggleWrap.appendChild(makeMethodBtn('pay-method-card', 'Pay by Card', '2.9% convenience fee', 'card'));
   methodSection.appendChild(toggleWrap);
   box.appendChild(methodSection);
 
@@ -4944,7 +4961,7 @@ function showStripePaymentModal(invoices) {
   const feeRow = document.createElement('div');
   feeRow.id = 'pay-fee-row';
   feeRow.style.cssText = 'display:none;justify-content:space-between;font-size:12px;color:#888;margin-bottom:6px;';
-  feeRow.innerHTML = `<span>Convenience fee (2.9% + $0.30)</span><span>$${(subtotal * 0.029 + 0.30).toFixed(2)}</span>`;
+  feeRow.innerHTML = `<span>Convenience fee (2.9%)</span><span>$${cardFeeOn(subtotal).toFixed(2)}</span>`;
   const totalRow = document.createElement('div');
   totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:#1a1a1a;';
   totalRow.innerHTML = `<span>Total</span><span id="pay-total-amt">$${subtotal.toFixed(2)}</span>`;
