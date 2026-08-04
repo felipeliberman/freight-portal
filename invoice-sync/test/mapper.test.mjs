@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   buildStripeInvoice, classifyLine, customerVisibleNumber, assertPayloadClean,
   unverifiedRecipients, assertSendable, shortenForField,
+  DISPUTE_NOTICE, DISPUTE_NOTICE_PENDING, VERIFIED_RECIPIENTS, MEMO_MAX,
 } from '../src/mapper.js';
 import { parseEmails } from '../src/customers.js';
 import { newValueSink, formatEmailDrops } from '../src/detail.js';
@@ -606,6 +607,40 @@ test('§5.1 PRIMARY folds zero-dollar descriptions into the freight line', () =>
     'HELD: no "Incl." prefix — see spec §5.3 HOLD #5');
   assert.equal(r.payload.zero_dollar_placement, 'folded-into-line');
   assert.equal(r.payload.rebill_context, undefined);
+});
+
+test('§5.5 the APPROVED dispute notice fits the memo budget, docs link included', () => {
+  // The pilot customer, whose single address is the one cleared in VERIFIED_RECIPIENTS.
+  const PILOT = { ...CUSTOMER, primaryEmail: VERIFIED_RECIPIENTS[0], ccEmails: [] };
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), PILOT,
+    { booking: BOOKING, disputeNotice: DISPUTE_NOTICE, verifiedRecipients: VERIFIED_RECIPIENTS,
+      documentsUrl: 'https://docs.freightandlogistics.ai/d/abc123XYZ456' });
+  // Nothing may be silently trimmed: an over-length memo send-blocks, so a passing assertion here
+  // is what proves the approved wording survives WHOLE on every surface.
+  assert.equal(r.payload.send_blocked, undefined, 'approved notice + verified recipient => sendable');
+  assert.ok(r.payload.invoice.description.length <= MEMO_MAX);
+  // All three operative terms present, verbatim.
+  assert.match(r.payload.invoice.description, /within 3 business days of the date sent/);
+  assert.match(r.payload.invoice.description, /supporting documentation/);
+  assert.match(r.payload.invoice.description, /no dispute will be filed with the carrier and the invoice is due in full/);
+  // The notice LEADS, so it is what survives anywhere the surface truncates.
+  assert.ok(r.payload.invoice.description.startsWith('Dispute this invoice within 3 business days'));
+});
+
+test('VERIFIED_RECIPIENTS clears only the address it names — still fails closed for anyone else', () => {
+  // Cleared by OWNER ASSERTION, not by a check (§5.6). It must not become a blanket pass.
+  const other = { ...CUSTOMER, primaryEmail: 'stranger@example.com', ccEmails: [] };
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), other,
+    { booking: BOOKING, disputeNotice: DISPUTE_NOTICE, verifiedRecipients: VERIFIED_RECIPIENTS });
+  assert.match(r.payload.send_blocked.reason, /unverified_recipient/);
+  assert.throws(() => assertSendable(r.payload));
+});
+
+test('the approved notice is a CONSTANT, not retyped at call sites', () => {
+  // Retyping a contractual clause is how two versions of it end up in production.
+  assert.equal(typeof DISPUTE_NOTICE, 'string');
+  assert.ok(DISPUTE_NOTICE.length > 0 && DISPUTE_NOTICE !== DISPUTE_NOTICE_PENDING);
+  assert.equal(DISPUTE_NOTICE.length, 264, 'length is measured, not assumed — see §5.5');
 });
 
 test('carrier custom field: abbreviated to the portal\'s own name, never cut mid-word', () => {

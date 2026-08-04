@@ -224,6 +224,45 @@ export function buildFooter(booking) {
  */
 export const DISPUTE_NOTICE_PENDING = '\u00ab DISPUTE NOTICE \u2014 PENDING OWNER WORDING (D7) \u00bb';
 
+/**
+ * THE APPROVED BILLING-DISPUTE NOTICE. Owner-authored and APPROVED 2026-08-04 \u2014 not a draft, and
+ * not to be reworded, trimmed or "tightened" without the owner. Measured: 264 chars, against a
+ * 368-char budget once the contact line and a documents link are present (\u00a75.5).
+ *
+ * THIS IS A BILLING-DISPUTE CLAUSE. It is NOT the cargo-claims window (\u00a78.857 / A1) and the two
+ * must never be conflated: different subject, different clock, different legal basis.
+ *   - Cargo claims: 5 days to report concealed damage, 9 months to file. Carmack territory.
+ *   - This clause: 3 business days to dispute an INVOICE. A negotiated contractual term.
+ *
+ * 49 USC 14705 sets an 18-month limitation on actions to recover OVERCHARGES; it imposes no floor
+ * on a contractual dispute-NOTICE window, so 3 business days stands as a negotiated term rather
+ * than being pre-empted by the statute.
+ *
+ * DEFINITIONAL NOTE, unresolved: "the date sent" is the clock's start. Once Stripe becomes the
+ * delivery mechanism (\u00a70.1.1), "sent" means the Stripe send \u2014 not the Primus `status.sent` flag,
+ * which \u00a78.865 shows varies independently. Worth pinning before the first real dispute.
+ */
+export const DISPUTE_NOTICE =
+  'Dispute this invoice within 3 business days of the date sent. Send written notice with ' +
+  'supporting documentation to accounting@freightandlogistics.ai. Without timely notice and ' +
+  'documentation, no dispute will be filed with the carrier and the invoice is due in full.';
+
+/**
+ * Recipients cleared to receive invoices.
+ *
+ * `felipe@freightandlogistics.com` was cleared 2026-08-04 **BY OWNER ASSERTION** \u2014 it is the
+ * owner's own address on the owner's own test account. **No verification check was performed, and
+ * none exists.** This list is a record of a human decision, not the output of a process.
+ *
+ * The C2-style verification requirement is UNCHANGED FOR ANY REAL CUSTOMER: an address that
+ * appears only in QBO, with no corroboration and no record of who added it or when, must be
+ * confirmed with the customer directly before it is added here (\u00a75.6, `ap@paylessrugs.com`).
+ *
+ * Deliberately NOT the default for `verifiedRecipients`: an unpassed list must keep meaning
+ * "nothing is verified" so that a caller which forgets to pass it still fails closed.
+ */
+export const VERIFIED_RECIPIENTS = ['felipe@freightandlogistics.com'];
+
 export function buildMemo({ disputeNotice = null, supportEmail, supportPhone, documentsUrl = null } = {}) {
   const notice = (disputeNotice && String(disputeNotice).trim()) || DISPUTE_NOTICE_PENDING;
   const lines = [notice, '', `Questions? ${supportEmail} \u00b7 ${supportPhone}`];

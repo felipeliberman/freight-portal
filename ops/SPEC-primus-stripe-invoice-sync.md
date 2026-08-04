@@ -1229,6 +1229,30 @@ created by hand cannot carry this, and cannot carry the Primus invoice number ei
 
 ### 5.6 Recipients — a stated assumption and an UNVERIFIED address
 
+> **CLEARED FOR THE PILOT ONLY, 2026-08-04 — `felipe@freightandlogistics.com`.**
+>
+> Recorded in `VERIFIED_RECIPIENTS` (`invoice-sync/src/mapper.js`). It is the **owner's own address
+> on the owner's own test account**, and it was cleared **BY OWNER ASSERTION**.
+>
+> **No verification check was performed, and no such check exists.** That list is the record of a
+> human decision, not the output of a process — stated plainly so nobody later reads a populated
+> list as evidence that something was validated.
+>
+> **The C2-style requirement is UNCHANGED FOR EVERY REAL CUSTOMER.** An address that exists only in
+> QBO, with no corroboration and no record of who added it or when — `ap@paylessrugs.com` is the
+> live example below — must be confirmed with the customer directly before it goes on this list.
+> Being the pilot subject is what makes assertion sufficient here; it is not a precedent.
+>
+> Two properties deliberately preserved:
+>
+> - **`verifiedRecipients` still defaults to `null`**, and `unverifiedRecipients` still fails closed
+>   on a null or empty list. A caller that forgets to pass the list blocks everything, exactly as
+>   before. The constant is configuration a caller opts into, never a silent default.
+> - **The list clears only the address it names.** Verified by test: the same approved notice with
+>   an unknown recipient still yields `unverified_recipient` and still throws in `assertSendable`.
+
+
+
 **Source.** QBO customer record → `PrimaryEmailAddr.Address`, one free-text string, fetched
 per-CUSTOMER (never per-invoice) and cached 24h in D1 under `qbo:ar:<code>`.
 
@@ -1610,7 +1634,61 @@ and are not clickable. Mirror to R2 and serve short links from `docs.freightandl
 - `invoiceRemarks` is the manual override channel: whatever is typed in Primus flows to the memo —
   **subject to §6.2**, and it may never displace the dispute notice (§5.5).
 
-### 5.5 Dispute notice — REQUIRED payload element
+### 5.5 Dispute notice — REQUIRED payload element. **C1 APPROVED 2026-08-04**
+
+> ## APPROVED WORDING — not a draft
+>
+> ```
+> Dispute this invoice within 3 business days of the date sent. Send written notice with
+> supporting documentation to accounting@freightandlogistics.ai. Without timely notice and
+> documentation, no dispute will be filed with the carrier and the invoice is due in full.
+> ```
+>
+> Owner-authored and approved 2026-08-04. Lives as the exported constant `DISPUTE_NOTICE`
+> (`invoice-sync/src/mapper.js`) so it is never retyped at a call site — retyping a contractual
+> clause is how two versions of it reach production. **Do not reword, trim or "tighten" it.**
+>
+> ### It fits, measured rather than estimated
+>
+> | | |
+> |---|---|
+> | Notice | **264** chars |
+> | Budget with the docs link present | **368** (`MEMO_MAX` 500 − 132 fixed overhead) |
+> | Budget without a docs link | 439 |
+> | Rendered memo, with docs link | **396 / 500** — headroom 104 |
+> | Rendered memo, as actually rendered today (no docs link) | 325 / 500 |
+>
+> **Nothing is truncated, so all three operative terms survive intact**: the 3-business-day
+> deadline, that documentation is required, and the consequence (no carrier dispute filed, invoice
+> due in full). This is not a judgement — an over-length memo **send-blocks** (`memo_over_limit`),
+> so the passing test *is* the proof that the wording survives whole on every surface.
+>
+> **It leads the memo**, so on any surface that truncates, the notice is what survives.
+>
+> ### THIS IS A BILLING-DISPUTE CLAUSE, NOT THE CARGO-CLAIMS WINDOW
+>
+> Do not conflate it with A1 (§8.857). Different subject, different clock, different legal basis:
+>
+> | | Cargo claims (A1 / §8.857) | This clause (C1) |
+> |---|---|---|
+> | Subject | damage/loss to the freight | a disputed **invoice** |
+> | Window | 5 days to report concealed damage; **9 months** to file | **3 business days** to dispute |
+> | Clock | delivery (or pickup, for non-delivery) | the date the invoice was sent |
+> | Basis | Carmack territory | a negotiated contractual term |
+>
+> **49 USC 14705 sets an 18-month limitation on actions to recover OVERCHARGES. It imposes no floor
+> on a contractual dispute-NOTICE window.** So 3 business days stands as a negotiated term and is
+> not pre-empted by the statute. Anyone reading the two windows together should stop here: they are
+> not versions of the same rule and neither governs the other.
+>
+> ### Open definitional point, deliberately not resolved here
+>
+> "**the date sent**" is the clock's start. Once Stripe is the delivery mechanism (§0.1.1), that
+> means the **Stripe** send — not Primus's `status.sent` flag, which §8.865 shows varies
+> independently (invoice #141385 was never sent from Primus at all). Worth pinning before the first
+> real dispute, because the customer and we must start the same clock.
+
+
 
 The current Primus invoice email carries a dispute notice with **contractual weight**: discrepancies
 must be reported within **3 business days** with backup documentation (manufacturer spec sheet,
@@ -1998,7 +2076,7 @@ Assume no memory of the session that produced this. Everything below is committe
 | 4 Customer resolution | **Done.** ARCode is the key (§0.2, by elimination) |
 | 5 Mapper | **Done.** §5.1 placement, §5.3 lane, §5.5 memo mechanism, §4.3 classifier |
 | 6 Draft creation | **HELD AT STOP 1.** Nothing has ever been created in Stripe |
-| 7 Dunning / wording | **HELD AT STOP 2.** No customer-facing wording written |
+| 7 Dunning / wording | **STOP 2 PARTLY LIFTED 2026-08-04.** The dispute notice (C1) is APPROVED and rendering; dunning wording is still unwritten |
 | 8 Documents | Decision layer done; **R2 mirror deliberately not built** (§8.95) |
 | 9 Live mode | Not started. Not to be started without the Group A and C gates |
 
@@ -2006,8 +2084,10 @@ Assume no memory of the session that produced this. Everything below is committe
 
 1. **Nothing is created in Stripe.** The worker holds no Stripe key. All 11 pilot invoices have been
    rendered in memory and read; none exists anywhere.
-2. **No customer-facing wording has been written by the assistant.** The dispute notice renders
-   `« PENDING OWNER WORDING »` and is send-blocked through `assertSendable`.
+2. **No customer-facing wording has been written by the assistant.** Still true: the dispute
+   notice now rendering (C1, §5.5) was **written by the owner**, not drafted here. `DISPUTE_NOTICE_PENDING`
+   remains the fallback whenever a caller supplies no notice, and that case is still send-blocked
+   through `assertSendable`. Dunning wording remains unwritten.
 3. End of phase 8, which is here.
 
 ### What to pick up FIRST
@@ -2067,8 +2147,8 @@ Nothing below is built. Ordered by what blocks what, not by size.
 
 | # | Item | Ref |
 |---|---|---|
-| C1 | The dispute-notice WORDING. Currently `« PENDING OWNER WORDING »` and send-blocked | §5.5 |
-| C2 | ~~`ap@paylessrugs.com` verification~~ — **DEFERRED 2026-08-04**: no longer a pilot precondition, because the pilot subject is the owner's test account (§3.1). Returns as a blocker the moment a real customer is added. The unverified-address finding in §5.6 stands | §5.6 |
+| C1 | ~~The dispute-notice WORDING~~ — **APPROVED 2026-08-04**, owner-authored, live as `DISPUTE_NOTICE`. 264 chars against a 368 budget, nothing truncated, all three operative terms intact. A BILLING-dispute clause, not the cargo-claims window (A1) — 49 USC 14705 imposes no floor on a contractual notice window | §5.5 |
+| C2 | ~~`ap@paylessrugs.com` verification~~ — **not a pilot blocker**: the pilot subject is the owner's test account, and `felipe@freightandlogistics.com` was cleared **by owner assertion** (no check exists). **Returns as a hard blocker for any real customer**; the unverified-address finding in §5.6 stands untouched | §5.6 |
 | C3 | The Stripe never-payable configuration, and a test that pins it | §0.05 |
 | C4 | Void-awareness detection — a corrected primary currently classifies as a rebill | §8.9 |
 
