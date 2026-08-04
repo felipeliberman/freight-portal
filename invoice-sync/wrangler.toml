@@ -11,6 +11,21 @@
 #   * STRIPE_MODE is the phase-1 safety guarantee, not a convenience flag. Phase 1-8 run in TEST.
 #     A test-mode invoice cannot reach a customer at all; a live draft can, with one dashboard click.
 #
+# DEPLOY ORDER — SCHEMA FIRST, CODE SECOND. NEVER THE REVERSE.
+#
+# A schema change must be applied to the remote D1 BEFORE the code that writes the new column
+# deploys. Backwards, the running worker issues UPDATEs against a column that does not exist and
+# every write silently fails or errors mid-run.
+#
+# schema.sql is `CREATE TABLE IF NOT EXISTS` — it will NOT add a column to a table that already
+# exists. Added columns need an explicit ALTER.
+#
+# PENDING (not yet applied to the remote database, required before the next deploy):
+#   wrangler d1 execute invoice-sync --remote \
+#     --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
+#   # then verify positively, per spec §0.25 — do not trust the exit code:
+#   wrangler d1 execute invoice-sync --remote --command "PRAGMA table_info(ledger)"
+#
 # Deploy:  cd invoice-sync && wrangler deploy
 #
 # Secrets (set via `wrangler secret put`, NOT stored here):

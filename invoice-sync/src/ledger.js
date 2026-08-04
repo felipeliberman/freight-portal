@@ -40,7 +40,7 @@ export class Ledger {
    *   already owns this (invoice, version); `row` is the existing record. Not an error — the whole
    *   point of the overlapping window is that re-seeing an invoice is free.
    */
-  async claim({ primusInvoiceId, primusInvoiceNumber = null, bolNumber = null, arCode = null, version = 1, totalCents = null }) {
+  async claim({ primusInvoiceId, primusInvoiceNumber = null, bolNumber = null, arCode = null, customerReference = null, version = 1, totalCents = null }) {
     if (!primusInvoiceId) throw new Error('claim() requires primusInvoiceId');
     const now = Date.now();
     const key = idempotencyKey(this.mode, primusInvoiceId, version);
@@ -48,12 +48,12 @@ export class Ledger {
     const res = await this.db
       .prepare(
         `INSERT INTO ledger
-           (mode, primus_invoice_id, primus_invoice_number, bol_number, ar_code,
+           (mode, primus_invoice_id, primus_invoice_number, bol_number, ar_code, customer_reference,
             version, stripe_state, total_cents, idempotency_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'intent', ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'intent', ?, ?, ?, ?)
          ON CONFLICT (mode, primus_invoice_id, version) DO NOTHING`
       )
-      .bind(this.mode, String(primusInvoiceId), primusInvoiceNumber, bolNumber, arCode,
+      .bind(this.mode, String(primusInvoiceId), primusInvoiceNumber, bolNumber, arCode, customerReference,
             version, totalCents, key, now, now)
       .run();
 
@@ -154,6 +154,24 @@ export class Ledger {
       // Truncated, and callers must pass a message that never embeds an upstream body (spec §6.3).
       .bind(String(message).slice(0, 300), Date.now(), ledgerId, this.mode)
       .run();
+  }
+
+  /**
+   * Stamp the first moment a poll saw this invoice paid (spec §4.6).
+   *
+   * Write-once by the `IS NULL` guard — a later poll must not overwrite it, because the value is
+   * "when we first knew", not "when we last looked". Nothing reads this. It exists because it
+   * cannot be backfilled: Primus keeps no paid timestamp, so the moment is otherwise lost.
+   */
+  async markPaidFirstSeen(ledgerId, at = Date.now()) {
+    const res = await this.db
+      .prepare(
+        `UPDATE ledger SET paid_first_seen_at = ?
+          WHERE id = ? AND mode = ? AND paid_first_seen_at IS NULL`
+      )
+      .bind(at, ledgerId, this.mode)
+      .run();
+    return (res.meta && res.meta.changes) === 1;
   }
 
   /** Void + reissue (spec §4.4): a finalized Stripe invoice cannot be edited. */

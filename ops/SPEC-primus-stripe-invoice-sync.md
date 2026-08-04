@@ -30,6 +30,39 @@ Consequences that must be designed for, not discovered:
 **Phase 1 does not resolve this** — test mode means no customer sees a Stripe invoice, so the conflict
 is inert. **It must be resolved before live mode.** See Open Decision D1.
 
+#### 0.1.1 How the pilot customer is invoiced today (answered 2026-08-03)
+
+Payless currently receives **two invoices for the same charge**: one emailed from Primus, one emailed
+from QBO with a payment link. Both carry the **same number** — the Primus invoice number, which
+imports into QBO unchanged. Both sends are manual, by the account owner, who is the only person with
+QBO access.
+
+**Decision: when Stripe goes live for Payless, both sends stop.** No Primus email, no QBO email.
+Stripe becomes the only invoice they receive. Nothing is disabled in either system — the routine
+changes.
+
+Three consequences:
+
+1. **The Stripe invoice MUST carry the Primus invoice number as its customer-visible number.**
+   Payless AP matches on it and has always seen it. Stripe assigns its own number by default, so it
+   is **explicitly overridden** per invoice via the API. Stripe's internal number still exists
+   underneath, so reconciliation has two numbers in play — **expected, not a bug.**
+
+2. **The single-surface guarantee rests on a manual routine, not a system constraint. STATED RISK.**
+   Nothing in Primus, QBO, or Stripe prevents a second send. If a Primus or QBO send ever happens
+   alongside a Stripe send, the customer holds two live payment paths, and a payment through the
+   non-Stripe path leaves the Stripe invoice **open** — so dunning chases a customer who has already
+   paid. **That is the worst failure this system can produce.** It is mitigated by discipline only.
+
+3. **Payment methods** confirmed in the Stripe *sandbox*: Cards enabled (Amex included — Stripe does
+   not break out networks, Amex rides with Cards) and ACH Direct Debit enabled, no pending state.
+   **Payless pays by American Express today**, so both paths must work. Settings do **not** carry
+   from sandbox to live — **re-verify both in LIVE mode before phase 9.**
+
+**Still open, and NOT closed by the above:** whether Payless can log into the portal and pay through
+the payment modal (§0.1). That path survives the routine change entirely, and it is the same
+two-live-paths failure as consequence 2. D1 remains open.
+
 ### 0.2 Stripe customer identity is already split two ways
 
 | Path | Keyed on | Where |
@@ -44,8 +77,9 @@ routinely not the portal login email, so it would mint a fourth set of duplicate
 customer pays a synced invoice on customer A while their linked bank account lives on customer B —
 saved payment methods don't appear, ACH adoption drops, and the prepaid gate never sees them.
 
-**Rule:** resolve to the `primusCustomerId`-keyed customer as the single identity spine. Treat the QBO
-email as a **recipient list**, not an identity key.
+**Rule:** treat the QBO email as a **recipient list**, not an identity key. (An earlier draft named
+`primusCustomerId` as the spine — superseded by the decision below, which tested that candidate and
+rejected it.)
 
 **Join status (verified 2026-08-03).** The QBO half is settled: `ARCode` == `customerInfo.customerCode`
 on the invoice detail, and QBO `DisplayName` is `<Company>-<ARCode>` — confirmed on `Bison Office
@@ -82,6 +116,27 @@ about Primus worth seeing.
 without the `-<ARCode>` DisplayName suffix. Log to the exception queue, skip the invoice, and **never
 guess at a match** — a wrong customer match sends one customer's freight detail and consignee
 addresses to another. A skipped invoice is recoverable; a misdelivered one is not.
+
+### 0.24 ARCode is sourced from the CLAIM, never re-derived
+
+The invoice **detail response carries no `ARCode`** — confirmed by `hasOwnProperty` on the raw
+record, 2026-08-03. (An earlier note cited a 12-key field list as evidence; that list was
+TRUNCATED by the diagnostic's own shape-describer and should not have been read as complete. The
+truncation is now visible as `…+N more`. The conclusion held for an independent reason: the
+required-value gate quarantined on a null ARCode.) The authoritative
+value is the one the **list** response carried, which is what selected the invoice and what the
+ledger row stores.
+
+**The mapper gates on the claimed value. There is no fallback.** Absent → quarantine.
+
+Deriving it from `customerInfo.customerCode` was tried and removed: a second derivation path can
+only ever disagree silently, and "the two are equal" was an unverified §1 assertion about Primus.
+`ARCode` is therefore NOT a detail-level required value (requiring it there quarantines every
+invoice — which is exactly what the gate reported on the first real invoice mapped).
+
+**Equality checked rather than trusted: the list `ARCode` and the detail
+`customerInfo.customerCode` MATCH ON 11 OF 11** Payless invoices, 0 differ, 0 absent. That is a
+match on eleven records — **not** a confirmation of the general claim, and nothing depends on it.
 
 ### 0.25 Verification discipline — STANDING RULE
 
@@ -527,6 +582,31 @@ state. Define it explicitly:
 
 ---
 
+### 4.5 Prepaid payments — STRUCTURALLY EXCLUDED, not deferred
+
+Customers without credit can prepay **before an invoice exists**. Those payments have no invoice
+attached, so they **cannot enter this sync at all** — the poll reads `/invoice`, and there is nothing
+to read.
+
+Written down so their absence is never later read as a bug. This is not a gap, not a backlog item,
+and not something to design around. Out of scope by construction.
+
+### 4.6 Payment date — not built, one column reserved
+
+Primus stores `status.paid` as a **bare boolean with no date** (verified 2026-08-03). We are **not**
+surfacing payment dates to customers and **not** pulling them from QBO. Parked with the eventual
+Primus replacement.
+
+One exception, deliberately minimal:
+
+**`ledger.paid_first_seen_at`** — written once, when a poll first observes `status.paid` flip true.
+Nothing reads it. Nothing displays it. No feature is attached.
+
+It exists because it **cannot be backfilled**: the moment passes unrecorded and Primus keeps no
+timestamp, so it is the only payment timestamp that will ever exist outside QBO. One column, one
+assignment. If the dunning latency in §7.1.1 ever needs to be *measured* rather than reported, this
+is the only data that will make that possible.
+
 ## 5. Field mapping
 
 | Stripe | Source |
@@ -561,14 +641,41 @@ customer sees or remittance matching fails. Ledger idempotency is unaffected —
 read directly; nothing establishes that every numeric field is a number on every record. See the
 §5.1 string trap.
 
+**`invoiceDueDate` — evidence gathered, owner verification pending.**
+
+Invoice 140488's own PDF, as Payless receives it, reads `DATE 06/23/26 · TERMS Net 15 · DUE:
+07/08/26`. 06/23 + 15 days = 07/08, so the API's `invoiceDueDate` of `2026-07-08` is **internally
+consistent with the printed terms.**
+
+An earlier note here flagged the due date as preceding the issue date. **That was wrong** — it
+compared a live `due_date` against an `issueDate` taken from a hand-written TEST FIXTURE, not from
+the API. Retracted.
+
+Still marked **pending owner verification against QuickBooks** before anything downstream treats
+`invoiceDueDate` as trusted.
+
 ### Custom fields (Stripe allows 4)
 
 ```
-BOL #      → shipment.BOLNumber
-PRO #      → shipment.carrierPRO
-Carrier    → carrierName
-Consignee  → shipment.consigneeName
+BOL #       → shipment.BOLNumber
+PRO #       → shipment.carrierPRO
+Consignee   → shipment.consigneeName
+Your Ref #  → ledger.customer_reference   (shipment.consigneeReferenceNumber, LIST only)
 ```
+
+**The fourth slot is the CUSTOMER'S reference, not Carrier — decided 2026-08-03.** It is the only
+thing on the invoice that belongs to them rather than to us, and it is what their AP matches
+against internally; carrier is ours and appears elsewhere. An AP clerk who cannot find their own
+number on our invoice has been handed something harder to process than the invoice it replaced.
+
+**It is a CLAIM-TIME value.** `shipment.consigneeReferenceNumber` is on the **LIST** response only —
+the detail's `shipment` object does not carry it (verified live 2026-08-03: invoice 140488 shows
+`consigneeReferenceNumber "129320"` on the list, absent from the detail). If the poll does not
+capture it, it is unavailable at map time. Stored on `ledger.customer_reference`.
+
+**Open:** `billPartyReferenceNumber` also exists and is `""` on this record. Semantically it is the
+bill-to party's own reference and would be the better source if it were ever populated. Worth
+checking across more customers before the full-book widening.
 
 Verified: these render at the top of the PDF beneath the dates, where AP looks first.
 
@@ -616,20 +723,121 @@ A **$0-total** invoice creates nothing at all.
 
 Neither path exists in the current design. Both must be handled before live mode. See Open Decision D4.
 
-### 5.3 Description string
+### 5.3 Line description — PHASE 6 PREREQUISITE, not a nice-to-have
 
-Verified to wrap cleanly across two lines in the Stripe PDF:
+**The bar is set by the invoice Payless receives today.** Anything thinner is a downgrade, and the
+point of moving invoicing in-house is that what we send is *better* than what it replaces.
+
+**What the Primus invoice for 140488 actually shows** (extracted from the PDF, 2026-08-03):
+
+- `CHARGE DETAIL` is **one line**: `FREIGHT CHARGE · Qty 1.00 · Rate 300.93 · Subtotal 300.93`.
+  So a single Stripe line is **not** a regression at the charge level — the charge detail matches.
+- Everything else on the page is what a single Stripe line loses:
+
+| Block | Content on the Primus invoice |
+|---|---|
+| Shipment | Pickup Date 06/22/26, BOL #160133377, PRO #402052249, Mode LTL |
+| Service | `Hd basic - signature release` |
+| Carrier | Pilot Freight Services |
+| Weight | 82 lbs |
+| Delivery | Delivered 07/09/26, Signed By William Lawery 07/09/26 11:14:00 |
+| Shipper | Momeni Rugs, ADAIRSVILLE GA 30103, contact + phone |
+| Consignee | Megan Cappiello, BALDWIN PLACE NY 10505, contact + phone |
+| Pieces | Qty 1 · Type rug · Wt 82 · **CL 70** |
+| Pickup window | 06/22/26 between 09:00 and 14:00 |
+| References | **REF.# 129320** (consignee reference) |
+| Terms | Net 15, AR Code 5406 |
+
+**`REF.# 129320` is the highest-value omission.** It is the customer's own reference — the field an
+AP team matches on — and the current Stripe object drops it entirely. Stripe allows **4** custom
+fields and only 3 are used (BOL #, PRO #, Consignee); the fourth should be the customer reference,
+or Carrier, and that choice needs deciding rather than defaulting.
+
+**Blocked on the booking join**, which resolves cleanly via `GET /api/v1/book/bolnumber/{n}` —
+already proven. It needs its own §6.1 narrowing boundary with its own allowlist, since the booking
+carries `accountingInformation.costQuoteId` and vendor data that must not cross.
+
+Target shape (verified to wrap cleanly across two lines in the Stripe PDF):
 
 ```
 Freight Charge — LTL · <origin city, ST> → <dest city, ST> · <pieces> pcs <commodity> ·
 <weight> lbs · Class <class> · PU <pickup date> · Incl. <zero-dollar accessorials>
 ```
 
-Origin/destination, commodity, and class come from the booking record (`/book/bolnumber/{n}`), not the
-invoice — a second call or a cached join.
-
 **Note:** the Stripe dashboard exposes no line-item description field — API-only. Manual invoices
 created by hand cannot carry this, and cannot carry the Primus invoice number either.
+
+### 5.6 Recipients — a stated assumption and an UNVERIFIED address
+
+**Source.** QBO customer record → `PrimaryEmailAddr.Address`, one free-text string, fetched
+per-CUSTOMER (never per-invoice) and cached 24h in D1 under `qbo:ar:<code>`.
+
+#### POSITION IS THE ONLY SIGNAL — stated assumption
+
+QBO has no role field on this string. **Which address is primary and which are CC is decided
+entirely by comma order.**
+
+`"nickz@…, ap@…"` and `"ap@…, nickz@…"` produce **different recipients with no visible difference
+in intent.** Anyone reordering that field in QBO silently changes who gets invoiced, and nothing in
+this system detects it. There is no last-modified on the field and no validation of the addresses.
+
+The ordering never changes who is **billed** — the customer is keyed on ARCode (§0.2) — only who
+**receives** it. That is still billing data going to a chosen human.
+
+#### Parsing decisions
+
+Each real-world QBO shape either parses correctly or yields no recipient. **A wrong address is the
+worst failure here: it delivers successfully and looks perfect.** So anything unrecognisable is
+discarded rather than guessed at.
+
+| Shape | Decision |
+|---|---|
+| `a@x.com; b@x.com` (semicolon) | **parse** |
+| `Nick Zerbe <nick@x.com>` | **parse** — the angle-bracket address |
+| `Zerbe, Nick <nick@x.com>` (comma in display name) | **parse** — the name half carries no address and is dropped |
+| surrounding whitespace | **parse** — trimmed |
+| single address, no separator | **parse** |
+| duplicates | **parse**, deduped case-insensitively, first position wins |
+| empty / whitespace-only / separators only | **QUARANTINE** — no recipient, cannot deliver |
+| junk with no address | token **dropped**; if nothing remains → quarantine |
+| no dotted domain (`nick@localhost`) | **dropped** — not a deliverable business address |
+
+#### `ap@paylessrugs.com` is UNVERIFIED
+
+`nickz@paylessrugs.com` is corroborated independently — it appears on the Primus invoice PDF as
+`Email: NICKZ@PAYLESSRUGS.COM · Attn. Nick Zerbe`.
+
+**`ap@paylessrugs.com` exists in QBO alone.** No corroboration, no last-modified, no validation, and
+no record of who added it or when. **Owner is confirming it with Payless directly.**
+
+**Until that confirmation, nothing sends to it.** The mechanism is not a note:
+
+- `buildStripeInvoice` still BUILDS the payload (it needs reviewing) but sets
+  `payload.send_blocked = { reason: 'unverified_recipient', addresses: [...] }`.
+- **`assertSendable(payload)` THROWS.** Any send path must call it and must not catch it.
+- Verification **fails closed** — a null or empty verified list means *nothing* is verified, not
+  that everyone is fine.
+
+**That rule is ENFORCED, not documented.** A test scans every `src/*.js` for a Stripe send surface
+(`api.stripe.com`, `/invoices/…/send|finalize|pay`, `auto_advance: true`, `sendInvoice`…) and fails
+any file that can send without calling `assertSendable()`. It passes vacuously today because no
+send path exists; it fails the moment one is written without the gate. A `{ todo }` alongside it
+keeps the missing send path visible in every test run.
+
+This is the same treatment §5.1's `toCents()` mandate got. A rule that lives only in prose is a
+rule the next person doesn't know exists.
+
+#### Discarded addresses are COUNTED
+
+A dropped token means the invoice reaches one fewer person. "Dropped" and "never existed" are
+indistinguishable downstream — a typo like `ap@paylessrugs` (no TLD) vanishes with nothing anywhere
+saying so.
+
+Every discard is counted by reason — `no_at`, `no_dotted_domain`, `empty`, `duplicate` — and logged
+per run. **Email drops carry their OWN denominator** (`emailParses`, one per customer resolution)
+rather than the invoice-record count: drops happen once per customer, not once per invoice, and a
+shared denominator would produce a rate that looks precise and means nothing. A rate moving from 0
+to 40 is the signal.
 
 ### 5.4 Memo and documents
 
@@ -726,8 +934,14 @@ Options, in preference order:
 3. **Bound the lag** — refuse to send if issue-date age exceeds a threshold, and route to the
    exception queue.
 
-Whichever is chosen must be consistent with the 48-hour customer rule and the carrier claim windows.
-See Open Decision D8.
+**DECIDED 2026-08-03 (closes the clock-start half of D8): the clock starts the day the invoice is
+SENT.** Once Stripe is the sender, "sent" means **Stripe's send timestamp** — not `issueDate`, not
+the moment the invoice is generated in Primus, not the poll that discovered it. Written explicitly
+because all three are plausible-looking and all wrong, and the drift would silently shorten a
+customer's dispute window.
+
+Must stay consistent with the 48-hour customer rule and the carrier claim windows. The business-day
+calendar for rendering an explicit deadline is still open.
 
 ---
 
@@ -845,13 +1059,33 @@ Where a customer who has already paid still gets dunned:
   conservative intervals.
 - **Reconcile scope holes.** Covered by the §3 pass-2 guards.
 
-### 7.2 Phase 1–4 policy
+### 7.1.1 Round-trip latency — REPORTED, NOT MEASURED
 
-**Stripe automatic reminders stay OFF.** There is no lever to hold an in-flight reminder short of
-pausing the entire schedule.
+**Stated by the account owner 2026-08-03. Not instrumented, not sampled, not verified by this
+system.** Labelled that way deliberately — a number that sounds measured but isn't is the §0.25 error
+class.
 
-Before enabling anything: **measure the actual QBO→Primus lag distribution** from live data. Set
-intervals well clear of the observed tail — expect 45/60, not the 7/15/30 originally configured.
+- **Stripe → QBO:** automatic whenever the payment is attached to an invoice, which every invoice in
+  this sync is by definition.
+- **QBO → Primus:** syncs roughly **four to five times a day**.
+- **Worst case a few hours**, judged not to matter: paying major carriers (TForce, Estes) through
+  BillTrust takes days and nobody minds; the receivable side running hours behind is not a constraint
+  anyone will feel.
+
+**Why it still cannot be measured from data.** Primus stores `status.paid` as a bare boolean with
+**no accompanying date** — verified 2026-08-03 on paid invoices, whose only date fields are
+`issueDate`, `invoiceDueDate`, `invoiceFirstSaved`. "When did this flip?" is unanswerable from a
+historical read. Measuring it requires instrumenting forward — see `paid_first_seen_at` (§4.5).
+
+### 7.2 Phase 1–8 policy
+
+**Stripe automatic reminders stay OFF for the pilot, regardless of the latency above.** 11 invoices,
+one customer — chased manually if it ever comes to that. There is also no lever to hold an in-flight
+reminder short of pausing the entire schedule.
+
+**Turning reminders on is a PHASE 9 decision with a measured number behind it, never a phase 5
+default.** Before enabling anything, measure the real distribution rather than reasoning from the
+reported figure.
 
 The memo's phone number is fine, but note the single most likely reason a customer calls it is
 "I already paid this."
@@ -920,6 +1154,31 @@ indefinitely, which is itself a reason to serve your own.
 
 ---
 
+## 8.5 Deploy ordering — SCHEMA FIRST, CODE SECOND
+
+**A schema change is applied to the remote D1 BEFORE the code that writes it deploys. Never the
+reverse.** Backwards, the running worker issues UPDATEs against a column that does not exist and
+every write silently fails or errors mid-run.
+
+`schema.sql` is `CREATE TABLE IF NOT EXISTS`, so it will **not** add a column to a table that
+already exists. Added columns need an explicit `ALTER`.
+
+**Outstanding, required before the next deploy:**
+
+```
+wrangler d1 execute invoice-sync --remote \
+  --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
+wrangler d1 execute invoice-sync --remote --command "PRAGMA table_info(ledger)"   # verify positively
+```
+
+The second command is not optional — §0.25: assert the column exists, do not trust the first
+command's exit code.
+
+**Also outstanding:** the deployed worker (`5f716f43`) is **older than HEAD**. Before redeploying,
+**diff the deployed source against the repo** rather than assuming the deployed side is simply an
+earlier commit of the same lineage. `stripe-payments` has a documented history of dashboard edits
+producing exactly that divergence.
+
 ## 9. Build order
 
 Phases 1–4 are **test mode only** (§2.1). Nothing customer-facing exists until phase 5.
@@ -931,7 +1190,7 @@ Phases 1–4 are **test mode only** (§2.1). Nothing customer-facing exists unti
 | 3 | Invoice list poll, pagination, dedupe, run lock | Full month window replayed twice → zero duplicate ledger rows |
 | 4 | Customer resolution + ARCode cache (§0.2) | ARCode↔primusCustomerId join confirmed (D2) |
 | 5 | Field mapping, fetch-boundary narrowing, line rule (§5.1), classifier (§4.3), dispute notice (§5.5) | Internal fields provably absent from payload construction scope; payload builder refuses to construct without the dispute notice |
-| 6 | Draft creation in **test mode**, **pilot customer only** (§3.1) | Every Payless invoice for a real month reviewed line by line; classifier verified on known rebills |
+| 6 | Draft creation in **test mode**, **pilot customer only** (§3.1). **PREREQUISITE: §5.3 line description + the booking-join narrowing boundary** — a single generic line is thinner than the invoice Primus sends today | Every Payless invoice for a real month reviewed line by line; classifier verified on known rebills; **line detail at least as informative as the Primus invoice it replaces** |
 | 7 | Reconcile pass | Handles partial-pay and already-paid without aborting |
 | 8 | R2 document mirror + scoped short links (§6.4, §8) | Document allowlist verified; unknown-code logging in place |
 | 9 | **Live mode flip** — still drafts-only, still pilot-only | D1, D4, D5, D7, D8 resolved; §6.2 remarks scan in place; dispute notice verified on a real rendered PDF, email, and payment page |
@@ -969,6 +1228,6 @@ from the cold outreach campaign on the root domain.
 | **D4** | Credit-note path for net-negative rebills (§5.2) | Phase 9 |
 | **D5** | Is the `COI` on a BOL the carrier's or ours? (§8) | Phase 8 |
 | **D7** | Authoritative dispute-notice wording, transcribed from the current Primus invoice email (§5.5). If >369 chars, which short form goes in the memo | Phase 5 |
-| **D8** | What the 3-business-day clock runs from once the sync introduces lag, and the business-day calendar for rendering an explicit deadline (§5.5) | Phase 5 |
-| **D9** | Does Payless Rugs (ARCode 5406) use the portal's payment modal? If not, the pilot does not exercise the dual-payment-surface conflict in §0.1 and phase 9 gives false confidence about it | Phase 9 |
+| **D8** | ~~Clock start~~ **CLOSED**: Stripe's send timestamp (§5.5). Still open: the business-day calendar for rendering an explicit deadline | Phase 9 |
+| **D9** | Delivery answered (§0.1.1 — Primus + QBO email, both stopping at go-live). **Still open:** can Payless log into the portal and pay via the modal? That path survives the routine change and is the same two-live-paths failure | Phase 9 |
 | **D6** | Stripe email subject line — currently "New invoice from Freight and Logistics, Inc. #\<number\>", carries no BOL or PO reference. Gmail will thread these for customers the way QBO reminders threaded for us | Phase 10 |

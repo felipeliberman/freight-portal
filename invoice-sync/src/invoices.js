@@ -134,11 +134,15 @@ export async function pollWindow({ primus, ledger, allowlist, checkArCode, issue
     }
 
     const bolNumber = (inv.shipment && inv.shipment.BOLNumber) || null;
+    // Claim-time only: the customer's own reference lives on the LIST response and NOT on the
+    // detail (verified live 2026-08-03). If it is not captured here it is unavailable at map time.
+    const customerReference = (inv.shipment && inv.shipment.consigneeReferenceNumber) || null;
     const { claimed, row } = await ledger.claim({
       primusInvoiceId: inv.invoiceId,
       primusInvoiceNumber: inv.invoiceNumber ?? null,
       bolNumber,
       arCode: arCode === null ? null : String(arCode),
+      customerReference,
       totalCents,
     });
 
@@ -148,6 +152,13 @@ export async function pollWindow({ primus, ledger, allowlist, checkArCode, issue
       // Amount drift on an already-claimed invoice is the §4.4 edit path. Counted here so the
       // frequency is visible before phase 6 has to act on it; phase 6 owns the state machine.
       if (row && row.total_cents !== null && row.total_cents !== totalCents) s.totalChanged++;
+    }
+
+    // Spec §4.6 — stamp the first sighting of paid. Write-once; nothing reads it. Recorded here
+    // because the list response is the only place `status.paid` is observed without a detail call,
+    // and because the moment cannot be recovered later: Primus keeps no paid timestamp.
+    if (inv.status.paid === true && row && row.id && row.paid_first_seen_at == null) {
+      if (await ledger.markPaidFirstSeen(row.id)) s.paidFirstSeen = (s.paidFirstSeen || 0) + 1;
     }
   }
 

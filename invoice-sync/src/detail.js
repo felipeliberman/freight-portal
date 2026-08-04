@@ -172,6 +172,15 @@ export function narrowInvoiceDetail(body) {
   return assertExactKeys({
     invoiceId: d.invoiceId ?? null,
     invoiceNumber: d.invoiceNumber ?? null,
+
+    // ARCode is on the LIST response but NOT on the detail — confirmed by hasOwnProperty on the
+    // raw record, 2026-08-03. Carried
+    // through as whatever the detail says (normally null) and NOT derived from
+    // customerInfo.customerCode: a second derivation path can only ever disagree silently, and the
+    // §1 claim that the two are equal is an unverified assertion about Primus.
+    //
+    // The authoritative ARCode is the one CLAIMED from the list response and stored on the ledger
+    // row. The mapper gates on that (src/mapper.js), which is why this is not a required value.
     ARCode: d.ARCode ?? null,
     total: d.total ?? null,
     invoiceTermsCode: d.invoiceTermsCode ?? null,
@@ -212,7 +221,10 @@ export function narrowInvoiceDetail(body) {
 
 /** Fields whose NULL VALUE means: do not bill this invoice. Everything else is optional. */
 export const REQUIRED_VALUES = Object.freeze({
-  detail: Object.freeze(['invoiceId', 'invoiceNumber', 'ARCode', 'total', 'status', 'shipment', 'invoiceBreakdown']),
+  // ARCode deliberately ABSENT: the detail response does not carry it (verified live 2026-08-03).
+  // It is required to bill, but sourced from the ledger's claimed value and gated in the mapper —
+  // requiring it here would quarantine every invoice.
+  detail: Object.freeze(['invoiceId', 'invoiceNumber', 'total', 'status', 'shipment', 'invoiceBreakdown']),
   status: Object.freeze(['generated', 'paid']),
   shipment: Object.freeze(['BOLNumber']),
   customerInfo: Object.freeze(['customerCode']),
@@ -235,7 +247,15 @@ export function isMissingValue(v) {
 /** Per-run counter. Created per run and threaded explicitly — a module global would accumulate
  *  across invocations in a warm isolate and silently inflate (spec §0.25). */
 export function newValueSink() {
-  return { records: 0, fields: Object.create(null) };
+  return {
+    records: 0,
+    fields: Object.create(null),
+    // Email-address drops get their OWN denominator. Drops happen once per customer resolution,
+    // not once per invoice, so sharing `records` would produce a rate that looks precise and means
+    // nothing.
+    emailParses: 0,
+    emailDrops: Object.create(null),
+  };
 }
 
 /** "shipment.carrierPRO: 412/1750 (23.5%)" — a rate, so 1-in-1000 → 400-in-1000 is obvious. */
@@ -249,6 +269,31 @@ export function formatValueSink(sink) {
 function countOptional(sink, path) {
   if (!sink) return;
   sink.fields[path] = (sink.fields[path] || 0) + 1;
+}
+
+/**
+ * Record a discarded email token, by reason.
+ *
+ * "Dropped" and "never existed" are indistinguishable downstream: a typo like `ap@paylessrugs`
+ * (no TLD) drops silently and the invoice quietly reaches one fewer person, with nothing anywhere
+ * saying so. A rate moving from 0 to 40 is the signal.
+ */
+export function countEmailDrop(sink, reason) {
+  if (!sink) return;
+  sink.emailDrops[reason] = (sink.emailDrops[reason] || 0) + 1;
+}
+
+export function countEmailParse(sink) {
+  if (!sink) return;
+  sink.emailParses++;
+}
+
+/** "email.dropped.no_dotted_domain: 2/11 (18.2%)" — its own denominator, not the record count. */
+export function formatEmailDrops(sink) {
+  const n = (sink && sink.emailParses) || 0;
+  return Object.entries((sink && sink.emailDrops) || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => `email.dropped.${reason}: ${count}/${n}${n ? ` (${((count / n) * 100).toFixed(1)}%)` : ''}`);
 }
 
 /**

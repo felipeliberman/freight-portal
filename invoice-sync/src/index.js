@@ -11,7 +11,7 @@ import { PrimusClient } from './primus.js';
 import { Ledger } from './ledger.js';
 import { windowFor, pollWindow } from './invoices.js';
 import { resolveClaimedCustomers } from './customers.js';
-import { newValueSink, formatValueSink } from './detail.js';
+import { newValueSink, formatValueSink, formatEmailDrops } from './detail.js';
 
 const LEASE_NAME = 'sync';
 const LEASE_TTL_MS = 10 * 60 * 1000;
@@ -72,6 +72,7 @@ export async function run(env) {
     const customers = await resolveClaimedCustomers({ primus, db: cfg.db, ledger, valueSink });
 
     const optionalNulls = formatValueSink(valueSink);
+    const emailDrops = formatEmailDrops(valueSink);
     const quarantined = await ledger.openQuarantines(50);
 
     console.log(JSON.stringify({
@@ -79,6 +80,7 @@ export async function run(env) {
       recordsAudited: valueSink.records,
       quarantined: quarantined.length,
       optionalNulls,
+      emailDrops,
       note: 'phases 5+ not built; rows claimed as intent, nothing written to Stripe',
     }));
 
@@ -94,6 +96,8 @@ export async function run(env) {
     }
     if (summary.hitPageCap) console.warn('[invoice-sync] hit the pagination cap — window may be truncated');
     if (summary.nearMiss) console.warn(`[invoice-sync] ${summary.nearMiss} ARCode near-miss(es) — check AR_ALLOWLIST for a typo`);
+    // A dropped address means an invoice reaches one fewer person, with nothing else saying so.
+    if (emailDrops.length) console.warn(`[invoice-sync] discarded email tokens — ${emailDrops.join(' | ')}`);
 
     return { ok: true, mode: cfg.mode, ...summary };
   } catch (err) {

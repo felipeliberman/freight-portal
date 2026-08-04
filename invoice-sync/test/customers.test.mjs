@@ -14,6 +14,7 @@ import {
   REQUIRED_VALUES, NON_PAYLOAD_FIELDS, auditValues, isMissingValue,
   newValueSink, formatValueSink,
 } from '../src/detail.js';
+import { describeShape } from '../src/envelope.js';
 import { freshDb } from './helpers.mjs';
 
 // ── the fetch boundary (§6.1) ────────────────────────────────────────────────────────────────
@@ -250,7 +251,7 @@ test('REQUIRED_VALUES holds exactly 13 fields and is frozen', () => {
   // A COUNT, deliberately not a retyped copy of the list — a second copy would only prove the test
   // agrees with itself. This catches accidental widening without duplicating the source of truth.
   const total = Object.values(REQUIRED_VALUES).reduce((n, l) => n + l.length, 0);
-  assert.equal(total, 13);
+  assert.equal(total, 12);   // ARCode moved to the mapper's claimed-value gate
   assert.ok(Object.isFrozen(REQUIRED_VALUES));
   for (const [k, list] of Object.entries(REQUIRED_VALUES)) {
     assert.ok(Object.isFrozen(list), `REQUIRED_VALUES.${k} must be frozen`);
@@ -272,11 +273,22 @@ test('no margin figure survives narrowing, anywhere in the object', () => {
   }
 });
 
+test('describeShape makes truncation VISIBLE, never silent', () => {
+  const wide = {};
+  for (let i = 0; i < 20; i++) wide[`k${i}`] = i;
+  const d = describeShape(wide);
+  assert.match(d, /…\+8 more\}$/, `truncation must be visible, got: ${d}`);
+  assert.equal(describeShape({ a: 1, b: 2 }), '{a,b}', 'no marker when nothing is cut');
+});
+
 test('_sourceKeys carries key names only, never values', () => {
   // It is a diagnostic, and it sits on an object that phase 5 maps to a customer-facing invoice.
   // Key names are safe; a value from costBreakdown would not be.
   const k = narrowInvoiceDetail(rawDetail())._sourceKeys;
-  assert.match(k, /^\{[a-zA-Z,]+\}$/, `expected key names only, got: ${k}`);
+  // Key names, optionally followed by a VISIBLE truncation marker. The marker is a count, not a
+  // value — and it must be visible: silently cutting the list at 12 keys previously led to a claim
+  // that a field was absent from a response when it had only fallen off the description.
+  assert.match(k, /^\{[A-Za-z0-9_,]*(,…\+\d+ more)?\}$/, `expected key names only, got: ${k}`);
   for (const leak of ['94.00', '259.73', '41.2', 'Payless']) assert.ok(!k.includes(leak));
 });
 
@@ -289,6 +301,24 @@ test('narrowing keeps what the invoice actually needs', () => {
   assert.equal(n.customerInfo.customerId, 701567);
   assert.equal(n.invoiceBreakdown.length, 1);
   assert.equal(n.invoiceRemarks, 'Delivered to dock');
+});
+
+test('ARCode is NOT derived from customerInfo.customerCode', () => {
+  // The detail has no ARCode (verified live 2026-08-03). Deriving it from customerCode would be a
+  // second derivation path that can only ever disagree silently with the claimed value, resting on
+  // an unverified §1 claim that the two are equal. The mapper gates on the CLAIMED value instead.
+  const noArCode = rawDetail();
+  delete noArCode.data.ARCode;
+  const n = narrowInvoiceDetail(noArCode);
+  assert.equal(n.ARCode, null, 'must not synthesise an ARCode');
+  assert.equal(n.customerInfo.customerCode, '5406', 'customerCode is still carried, unused as a source');
+});
+
+test('a null detail ARCode does NOT quarantine — it is not a detail-level requirement', () => {
+  // Requiring it here would quarantine every invoice, since the detail never carries it.
+  const noArCode = rawDetail();
+  delete noArCode.data.ARCode;
+  assert.equal(auditValues(narrowInvoiceDetail(noArCode)).ok, true);
 });
 
 test('narrowing accepts a bare (un-enveloped) detail body', () => {

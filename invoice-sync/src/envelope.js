@@ -12,7 +12,12 @@ export function describeShape(body) {
   if (body === null || body === undefined) return String(body);
   if (Array.isArray(body)) return `array[${body.length}]`;
   if (typeof body !== 'object') return typeof body;
-  return `{${Object.keys(body).slice(0, 12).join(',')}}`;
+  const keys = Object.keys(body);
+  // The truncation MUST be visible. An earlier version silently cut at 12 keys, and the truncated
+  // list was then read as the complete field set — leading to a claim that a field was absent from
+  // a response when it had simply fallen off the end of the description.
+  const shown = keys.slice(0, 12).join(',');
+  return keys.length > 12 ? `{${shown},…+${keys.length - 12} more}` : `{${shown}}`;
 }
 
 /**

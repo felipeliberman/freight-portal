@@ -7,7 +7,7 @@
 // detail, consignee names, and amounts to another — unrecoverable in a way a skipped invoice is not.
 
 import { findRows, describeShape } from './envelope.js';
-import { fetchInvoiceDetail, auditValues } from './detail.js';
+import { fetchInvoiceDetail, auditValues, countEmailDrop, countEmailParse } from './detail.js';
 
 const CACHE_TTL_MS = 24 * 3600 * 1000;
 
@@ -62,24 +62,71 @@ export function pickQboCustomer(records, arCode) {
 }
 
 /**
- * `PrimaryEmailAddr.Address` may hold several comma-separated addresses
- * (e.g. "nickz@paylessrugs.com,ap@paylessrugs.com").
+ * `PrimaryEmailAddr.Address` → recipients.
  *
- * These are RECIPIENTS, not identity (spec §0.2) — the Stripe customer is keyed on ARCode, so
- * which address sorts first never determines who gets billed.
+ * ── STATED ASSUMPTION, and its failure mode ────────────────────────────────────────────────────
+ * POSITION IS THE ONLY THING distinguishing primary from CC. QBO has no role field here; the
+ * address list is one free-text string. So `"nickz@…, ap@…"` and `"ap@…, nickz@…"` produce
+ * DIFFERENT recipients with no visible difference in intent, and anyone reordering that field in
+ * QBO silently changes who gets invoiced. Nothing detects it.
+ *
+ * These are RECIPIENTS, not identity (spec §0.2) — the Stripe customer is keyed on ARCode, so the
+ * ordering never determines who gets BILLED, only who receives it.
+ *
+ * ── parsing decisions (each shape either parses correctly or quarantines) ──────────────────────
+ *   semicolon separators      → PARSE. Unambiguous; QBO users type both.
+ *   display-name form         → PARSE. `Nick Zerbe <nick@x.com>` → the angle-bracket address.
+ *                               A comma inside a display name ("Zerbe, Nick <n@x.com>") splits,
+ *                               but the name half carries no address and is dropped, so the
+ *                               result is still correct.
+ *   surrounding whitespace    → PARSE. Trimmed.
+ *   single address, no sep    → PARSE.
+ *   duplicates                → PARSE, deduped case-insensitively, first position wins.
+ *   empty / whitespace-only   → QUARANTINE. `primary` is null; the caller must not bill an
+ *                               invoice it cannot deliver.
+ *   junk with no address      → token DROPPED. If that leaves nothing, it becomes the empty case
+ *                               above and quarantines.
+ *
+ * A wrong address is the worst shape of failure here: it delivers successfully and looks perfect.
+ * So anything not recognisable as an address is discarded rather than guessed at.
  */
-export function parseEmails(raw) {
-  const parts = String(raw ?? '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.includes('@'));
-  return { primary: parts[0] ?? null, cc: parts.slice(1) };
+export function parseEmails(raw, sink = null) {
+  countEmailParse(sink);
+  const tokens = String(raw ?? '').split(/[,;]/);
+  const out = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    const { address, reason } = extractAddress(token);
+    if (!address) {
+      // Counted, never silent. A dropped token means the invoice reaches one fewer person.
+      countEmailDrop(sink, reason);
+      continue;
+    }
+    const key = address.toLowerCase();
+    if (seen.has(key)) { countEmailDrop(sink, 'duplicate'); continue; }
+    seen.add(key);
+    out.push(address);
+  }
+  return { primary: out[0] ?? null, cc: out.slice(1) };
+}
+
+/** One token → {address} or {reason} for why it was discarded. Never returns a guess. */
+function extractAddress(token) {
+  const s = String(token ?? '').trim();
+  if (!s) return { address: null, reason: 'empty' };
+  const angle = s.match(/<([^>]+)>/);
+  const candidate = (angle ? angle[1] : s).trim();
+  if (!candidate.includes('@')) return { address: null, reason: 'no_at' };
+  // Requires a dot in the domain: a bare `nick@localhost` is not a deliverable business address
+  // and is far more likely to be junk than intent.
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(candidate)) return { address: null, reason: 'no_dotted_domain' };
+  return { address: candidate, reason: null };
 }
 
 /** QBO record → only what Stripe needs. Balance, terms, and the rest stay upstream. */
-export function narrowQboCustomer(rec) {
+export function narrowQboCustomer(rec, sink = null) {
   const addr = (rec && rec.BillAddr) || {};
-  const { primary, cc } = parseEmails(rec && rec.PrimaryEmailAddr && rec.PrimaryEmailAddr.Address);
+  const { primary, cc } = parseEmails(rec && rec.PrimaryEmailAddr && rec.PrimaryEmailAddr.Address, sink);
   return {
     qboId: (rec && rec.Id) ?? null,
     displayName: (rec && rec.DisplayName) ?? null,
@@ -128,7 +175,7 @@ export async function resolveCustomer({ primus, db, ledger, arCode, sampleInvoic
     await ledger.recordException('unmatched_ar_code', String(arCode), picked.detail);
     return null;
   }
-  const qbo = narrowQboCustomer(picked.record);
+  const qbo = narrowQboCustomer(picked.record, valueSink);
 
   if (!qbo.primaryEmail) {
     await ledger.recordException('unmatched_ar_code', String(arCode),

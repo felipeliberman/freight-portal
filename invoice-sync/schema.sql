@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS ledger (
   bol_number            TEXT,
   ar_code               TEXT,
 
+  -- The CUSTOMER'S OWN reference — what their AP matches against internally, and the only thing on
+  -- the invoice that belongs to them rather than to us. Prints as "REF.#" on the Primus invoice.
+  -- Source: shipment.consigneeReferenceNumber on the LIST response ONLY; the detail does not carry
+  -- it (verified live 2026-08-03). Claim-time value, like ar_code — never re-derived later.
+  -- MIGRATION: ALTER TABLE ledger ADD COLUMN customer_reference TEXT
+  customer_reference    TEXT,
+
   -- Increments on reissue (spec §4.4). A finalized Stripe invoice cannot be edited, so a
   -- post-issuance amount change in Primus becomes void + reissue at version+1.
   version               INTEGER NOT NULL DEFAULT 1,
@@ -41,6 +48,20 @@ CREATE TABLE IF NOT EXISTS ledger (
   -- Set when a reissue supersedes this row; points at the successor's ledger id.
   superseded_by         INTEGER,
   last_error            TEXT,
+
+  -- Written ONCE, when a poll first observes status.paid flip true (spec §4.6). Nothing reads it,
+  -- nothing displays it, no feature is attached. It exists because it CANNOT BE BACKFILLED: Primus
+  -- stores `paid` as a bare boolean with no date, so the moment passes unrecorded otherwise. This
+  -- is the only payment timestamp that will ever exist outside QBO.
+  --
+  -- MIGRATION on an existing database (schema.sql is CREATE IF NOT EXISTS, so it will NOT add this
+  -- to a table that already exists). Run before the next deploy:
+  --   wrangler d1 execute invoice-sync --remote --command \
+  --     "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
+  --   wrangler d1 execute invoice-sync --remote --command \
+  --     "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+  paid_first_seen_at    INTEGER,
+
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL,
 
