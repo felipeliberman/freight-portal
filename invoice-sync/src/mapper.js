@@ -175,6 +175,29 @@ export function buildFooter(booking) {
 }
 
 /**
+ * §5.5 — the memo. Renders in the EMAIL BODY, the PDF, and the HOSTED PAGE; the footer is PDF-only,
+ * which is why the dispute notice lives here and not there.
+ *
+ * THE DISPUTE NOTICE IS A REQUIRED ELEMENT, NOT COPY. Absent, the invoice is NOT sendable — a
+ * missing notice forfeits the carrier dispute window and the contractual basis for payment in full.
+ *
+ * The authoritative wording is the OWNER'S to write (D7) and is NOT invented here. Until it is
+ * supplied, the slot renders a visible placeholder and the payload is send-blocked. A placeholder
+ * an AP clerk can see is honest; fabricated contractual language is not.
+ */
+export const DISPUTE_NOTICE_PENDING = '\u00ab DISPUTE NOTICE \u2014 PENDING OWNER WORDING (D7) \u00bb';
+
+export function buildMemo({ disputeNotice = null, supportEmail, supportPhone, documentsUrl = null } = {}) {
+  const notice = (disputeNotice && String(disputeNotice).trim()) || DISPUTE_NOTICE_PENDING;
+  const lines = [notice, '', `Questions? ${supportEmail} \u00b7 ${supportPhone}`];
+  if (documentsUrl) lines.push(`Shipment documents: ${documentsUrl}`);
+  const memo = lines.join('\n');
+  return { memo, noticeSupplied: notice !== DISPUTE_NOTICE_PENDING, length: memo.length };
+}
+
+export const MEMO_MAX = 500;
+
+/**
  * Build the Stripe invoice object.
  *
  * @param {object} detail   a NARROWED invoice detail (src/detail.js)
@@ -184,7 +207,12 @@ export function buildFooter(booking) {
  * Returns a quarantine verdict rather than throwing when the invoice has null required values —
  * one bad record must not stop a run (spec §6.5).
  */
-export function buildStripeInvoice(detail, customer, { customerReference = null, booking = null, verifiedRecipients = null, valueSink = null } = {}) {
+export function buildStripeInvoice(detail, customer, {
+  customerReference = null, booking = null, classification = null,
+  disputeNotice = null, documentsUrl = null,
+  supportEmail = 'accounting@freightandlogistics.ai', supportPhone = '800-687-3713',
+  verifiedRecipients = null, valueSink = null,
+} = {}) {
   const audit = auditValues(detail, valueSink);
   if (!audit.ok) {
     return {
@@ -229,6 +257,24 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
     });
   }
 
+  // §5.1 — WHERE the zero-dollar descriptions go depends on the classification, and they are never
+  // lines in either case. On a PRIMARY they fold into the freight line's "Incl." list; on a REBILL
+  // they move to memo context, because on a rebill the customer is scrutinising the line list and a
+  // folded "includes" reads as though it were part of what they are being charged for now.
+  let zeroDollarPlacement = 'unplaced';
+  let rebillContext = null;
+  if (zeroDollarDescriptions.length && lines.length) {
+    if (classification === 'primary') {
+      lines[0].description = `${lines[0].description} \u00b7 Incl. ${zeroDollarDescriptions.join(', ')}`;
+      zeroDollarPlacement = 'folded-into-line';
+    } else if (classification === 'rebill') {
+      rebillContext = `Originally billed: ${zeroDollarDescriptions.join(', ')}`;
+      zeroDollarPlacement = 'memo-context';
+    }
+    // classification null or 'hold' -> left UNPLACED. Guessing the placement is guessing whether
+    // the customer is looking at an original bill or a supplemental one.
+  }
+
   const number = customerVisibleNumber(detail.invoiceNumber);
   // Four slots, and the fourth is the CUSTOMER'S reference — not Carrier. Carrier is ours and
   // appears elsewhere; the reference is the only thing on the invoice that belongs to them, and
@@ -247,6 +293,8 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
     customField('Carrier', booking && booking.carrier ? booking.carrier.name : null),
     customField('Your Ref #', customerReference),
   ].filter(Boolean);
+
+  const memoOut = buildMemo({ disputeNotice, supportEmail, supportPhone, documentsUrl });
 
   const payload = {
     // Reference only. The customer object is NOT created here and this function holds no Stripe key.
@@ -278,6 +326,8 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
         ar_code: String(arCode),
       },
       custom_fields,
+      // §5.5 — renders in email, PDF and hosted page.
+      description: memoOut.memo,
       // PDF-only surface (§5.4).
       footer: buildFooter(booking),
     },
@@ -291,6 +341,18 @@ export function buildStripeInvoice(detail, customer, { customerReference = null,
   };
 
   if (unusable.length) payload._unusable_lines = unusable;
+  payload.classification = classification;
+  payload.zero_dollar_placement = zeroDollarPlacement;
+  if (rebillContext) payload.rebill_context = rebillContext;
+
+  // §5.5 fails closed: a missing dispute notice blocks SENDING, exactly like an unverified
+  // recipient. The payload still builds so it can be read.
+  if (!memoOut.noticeSupplied) {
+    payload.send_blocked = { reason: 'missing_dispute_notice', addresses: [] };
+  }
+  if (memoOut.length > MEMO_MAX) {
+    payload.send_blocked = { reason: 'memo_over_limit', addresses: [`${memoOut.length}/${MEMO_MAX}`] };
+  }
 
   // Recipient verification (spec §5.6). Unverified addresses do not block BUILDING — the payload
   // still needs reviewing — but they must block SENDING. assertSendable() is the hard gate.

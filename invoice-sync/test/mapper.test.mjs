@@ -294,8 +294,9 @@ test('an unverified recipient blocks SENDING, not building', () => {
 });
 
 test('every recipient verified clears the block', () => {
+  // A dispute notice must also be supplied — §5.5 send-blocks without one, independently.
   const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
-    { verifiedRecipients: ['nickz@paylessrugs.com', 'AP@PaylessRugs.com'] });
+    { disputeNotice: 'NOTICE', verifiedRecipients: ['nickz@paylessrugs.com', 'AP@PaylessRugs.com'] });
   assert.equal(payload.send_blocked, undefined);
   assert.doesNotThrow(() => assertSendable(payload));
 });
@@ -571,4 +572,79 @@ test('line count follows invoiceBreakdown even when it has MORE lines than freig
   assert.equal(BOOKING.freight.length, 1, 'one freight item, two invoice lines');
   // Both lines carry the same shipment context — it describes the shipment, not the charge.
   for (const l of r.payload.lines) assert.match(l.description, /LTL \u00b7 Adairsville, GA/);
+});
+
+// ── §5.1 placement and §5.5 memo ─────────────────────────────────────────────────────────────
+
+const ZERO_LINES = {
+  invoiceBreakdown: [
+    { code: '', description: 'FREIGHT CHARGE', qty: '1.00', rate: 300.93, total: 300.93 },
+    { code: 'LFD', description: 'LIFTGATE AT DESTINATION', qty: '1.00', rate: 0, total: 0 },
+  ],
+};
+
+test('§5.1 PRIMARY folds zero-dollar descriptions into the freight line', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail(ZERO_LINES)), CUSTOMER,
+    { booking: BOOKING, classification: 'primary' });
+  assert.equal(r.payload.lines.length, 1, 'still never a line');
+  assert.match(r.payload.lines[0].description, /Incl\. LIFTGATE AT DESTINATION/);
+  assert.equal(r.payload.zero_dollar_placement, 'folded-into-line');
+  assert.equal(r.payload.rebill_context, undefined);
+});
+
+test('§5.1 REBILL moves them to memo context, never onto the line', () => {
+  // On a rebill the customer is scrutinising the line list; a folded "includes" would read as part
+  // of what they are being charged for now.
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail(ZERO_LINES)), CUSTOMER,
+    { booking: BOOKING, classification: 'rebill' });
+  assert.ok(!r.payload.lines[0].description.includes('Incl.'));
+  assert.equal(r.payload.rebill_context, 'Originally billed: LIFTGATE AT DESTINATION');
+  assert.equal(r.payload.zero_dollar_placement, 'memo-context');
+});
+
+test('§5.1 UNCLASSIFIED leaves them unplaced rather than guessing', () => {
+  for (const c of [null, 'hold']) {
+    const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail(ZERO_LINES)), CUSTOMER,
+      { booking: BOOKING, classification: c });
+    assert.equal(r.payload.zero_dollar_placement, 'unplaced');
+    assert.ok(!r.payload.lines[0].description.includes('Incl.'));
+    assert.equal(r.payload.rebill_context, undefined);
+    assert.deepEqual(r.payload.zero_dollar_descriptions, ['LIFTGATE AT DESTINATION']);
+  }
+});
+
+test('§5.5 a MISSING dispute notice send-blocks — it is a required element, not copy', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, verifiedRecipients: ['nickz@paylessrugs.com', 'ap@paylessrugs.com'] });
+  assert.ok(r.payload, 'still builds, so it can be read');
+  assert.equal(r.payload.send_blocked.reason, 'missing_dispute_notice');
+  assert.throws(() => assertSendable(r.payload), /Refusing to send/);
+  assert.match(r.payload.invoice.description, /PENDING OWNER WORDING/,
+    'the gap is visible in the rendered memo, not hidden');
+});
+
+test('§5.5 a supplied notice clears that block and leads the memo', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, disputeNotice: 'Report discrepancies within 3 business days.',
+      verifiedRecipients: ['nickz@paylessrugs.com', 'ap@paylessrugs.com'] });
+  assert.equal(r.payload.send_blocked, undefined);
+  assert.match(r.payload.invoice.description, /^Report discrepancies within 3 business days\./,
+    'the notice LEADS — on any surface that truncates it must be what survives');
+  assert.match(r.payload.invoice.description, /accounting@freightandlogistics\.ai/);
+});
+
+test('§5.5 an over-length memo send-blocks rather than being silently truncated', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, disputeNotice: 'x'.repeat(600),
+      verifiedRecipients: ['nickz@paylessrugs.com', 'ap@paylessrugs.com'] });
+  assert.equal(r.payload.send_blocked.reason, 'memo_over_limit');
+  assert.throws(() => assertSendable(r.payload));
+});
+
+test('the memo goes to invoice.description — email, PDF AND hosted page', () => {
+  // The footer is PDF-only, which is why the dispute notice cannot live there.
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, disputeNotice: 'NOTICE' });
+  assert.equal(typeof r.payload.invoice.description, 'string');
+  assert.ok(!r.payload.invoice.footer.includes('NOTICE'), 'not on the PDF-only surface');
 });
