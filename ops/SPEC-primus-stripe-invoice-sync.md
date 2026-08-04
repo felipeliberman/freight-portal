@@ -1832,6 +1832,61 @@ command's exit code.
 earlier commit of the same lineage. `stripe-payments` has a documented history of dashboard edits
 producing exactly that divergence.
 
+## 8.55 HANDOFF — read this first (written 2026-08-03, end of session)
+
+Assume no memory of the session that produced this. Everything below is committed and pushed.
+
+### Where each phase stands
+
+| Phase | State |
+|---|---|
+| 1 Scaffold, mode-aware config, Primus auth | **Done.** Deployed, test mode, no cron, no public URL |
+| 2 D1 ledger + idempotency | **Done.** Constraint verified on the real D1 instance |
+| 3 Windowed poll | **Done.** 36 subrequests for 60 days, pilot allowlist `5406` |
+| 4 Customer resolution | **Done.** ARCode is the key (§0.2, by elimination) |
+| 5 Mapper | **Done.** §5.1 placement, §5.3 lane, §5.5 memo mechanism, §4.3 classifier |
+| 6 Draft creation | **HELD AT STOP 1.** Nothing has ever been created in Stripe |
+| 7 Dunning / wording | **HELD AT STOP 2.** No customer-facing wording written |
+| 8 Documents | Decision layer done; **R2 mirror deliberately not built** (§8.95) |
+| 9 Live mode | Not started. Not to be started without the Group A and C gates |
+
+### The three held stops
+
+1. **Nothing is created in Stripe.** The worker holds no Stripe key. All 11 pilot invoices have been
+   rendered in memory and read; none exists anywhere.
+2. **No customer-facing wording has been written by the assistant.** The dispute notice renders
+   `« PENDING OWNER WORDING »` and is send-blocked through `assertSendable`.
+3. End of phase 8, which is here.
+
+### What to pick up FIRST
+
+**A2 — Terms versioning — before A1, and before any Terms edit.**
+
+This ordering is not a preference. **A2 lands first regardless of which number wins A1**, because
+whichever number wins gets written into the Terms — and writing it into an unversioned Terms page
+repeats the exact problem A2 exists to fix. Deciding A1 first and editing immediately would put the
+new claims window in as unversioned text, on top of a 3-business-day billing clause that would also
+go in unversioned. One unversioned edit is a records gap; three is a pattern.
+
+So: **A2, then A1, then A3, then the Terms edit carrying both A1's number and the new 3-day billing
+clause, then A4.**
+
+### Then
+
+- **Group C** before anything is created in Stripe — the wording, the recipient verification, the
+  never-payable configuration and its test, and void-awareness detection.
+- **Group B** are live defects, reported and unfixed, each out of scope for the invoice-sync build
+  and each needing its own decision.
+- **Group D** is unstarted work. **Group E** is one parked branch with a known regression.
+
+### Standing rules this build follows
+
+Negative controls in both directions. Serialised-bytes scans covering names AND values. Positive
+verification, never exit codes (§0.25). Absence claims need a verified-scope method. Reversible
+fails open, irreversible fails closed. Anything asserted about Primus needs a second path or it is a
+claim about us. And §8.8: **the eval asserts the whole set, not one sample** — two defects this
+session passed 209 unit tests and a single-invoice render, and were caught only by rendering all 11.
+
 ## 8.6 WORK QUEUE — open items as of 2026-08-03 (end of phase 8)
 
 Nothing below is built. Ordered by what blocks what, not by size.
