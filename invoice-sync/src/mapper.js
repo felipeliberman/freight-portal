@@ -341,24 +341,30 @@ export function buildStripeInvoice(detail, customer, {
   };
 
   if (unusable.length) payload._unusable_lines = unusable;
+
+  // EVERY reason, not just the last one. A single overwritten field hides the other blockers and
+  // makes clearing one look like clearing all of them.
+  const blockers = [];
   payload.classification = classification;
   payload.zero_dollar_placement = zeroDollarPlacement;
   if (rebillContext) payload.rebill_context = rebillContext;
 
   // §5.5 fails closed: a missing dispute notice blocks SENDING, exactly like an unverified
   // recipient. The payload still builds so it can be read.
-  if (!memoOut.noticeSupplied) {
-    payload.send_blocked = { reason: 'missing_dispute_notice', addresses: [] };
-  }
-  if (memoOut.length > MEMO_MAX) {
-    payload.send_blocked = { reason: 'memo_over_limit', addresses: [`${memoOut.length}/${MEMO_MAX}`] };
-  }
+  if (!memoOut.noticeSupplied) blockers.push({ reason: 'missing_dispute_notice', addresses: [] });
+  if (memoOut.length > MEMO_MAX) blockers.push({ reason: 'memo_over_limit', addresses: [`${memoOut.length}/${MEMO_MAX}`] });
 
   // Recipient verification (spec §5.6). Unverified addresses do not block BUILDING — the payload
   // still needs reviewing — but they must block SENDING. assertSendable() is the hard gate.
   const unverified = unverifiedRecipients(payload.customer_ref, verifiedRecipients);
-  if (unverified.length) {
-    payload.send_blocked = { reason: 'unverified_recipient', addresses: unverified };
+  if (unverified.length) blockers.push({ reason: 'unverified_recipient', addresses: unverified });
+
+  if (blockers.length) {
+    payload.send_blocked = {
+      reason: blockers.map(b => b.reason).join(' + '),
+      addresses: blockers.flatMap(b => b.addresses),
+      all: blockers,
+    };
   }
 
   assertPayloadClean(payload);

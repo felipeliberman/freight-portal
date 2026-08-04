@@ -220,3 +220,21 @@ test('hazmat is carried but nothing renders it', () => {
   assert.equal(b.freight[0].hazmat, true);
   assert.equal(summariseFreight(b.freight).hazmat, true, 'visible to a future decision');
 });
+
+test('NEGATIVE: the value scan does NOT fire on booleans — the live false-positive', () => {
+  // accountingInformation.insuranceIncluded is `false` on the live record. Stringified it is
+  // "false" (5 chars) and matched the narrowed `hazmat: false`, rejecting EVERY booking in the
+  // pilot set. A scan broad enough to reject legitimate data is its own failure.
+  const src = rawBooking().data.results;
+  src.accountingInformation.insuranceIncluded = false;
+  assert.doesNotThrow(() => narrowBooking({ data: { results: src } }));
+  assert.equal(narrowBooking({ data: { results: src } }).freight[0].hazmat, false);
+});
+
+test('and it STILL fires on the real hostile values after that fix', () => {
+  // The boolean skip must not have widened into a general escape hatch.
+  const source = rawBooking().data.results;
+  assert.throws(() => assertBookingClean({ mode: '273.57' }, source), /hostile VALUE: 273\.57/);
+  assert.throws(() => assertBookingClean({ mode: '9.74313' }, source), /hostile VALUE/);
+  assert.throws(() => assertBookingClean({ mode: 'GUARANTEED' }, source), /hostile VALUE/);
+});

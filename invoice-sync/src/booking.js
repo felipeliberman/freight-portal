@@ -132,10 +132,17 @@ function hostileValues(source) {
     if (v === null || v === undefined) return;
     if (Array.isArray(v)) return v.forEach(walk);
     if (typeof v === 'object') return Object.values(v).forEach(walk);
+    // BOOLEANS ARE NOT DATA. Skipping them by TYPE, before stringifying: on the live record
+    // accountingInformation.insuranceIncluded is `false`, which stringifies to "false" (5 chars)
+    // and then matched the narrowed `hazmat: false` — rejecting EVERY booking. A scan this broad
+    // is a denial of service on legitimate data, which is its own kind of failure.
+    if (typeof v === 'boolean') return;
     const s = String(v).trim();
-    // Skip empties and trivially-short values: "0", "" and the like appear everywhere legitimately
-    // and would make the scan fire on innocent data.
-    if (s.length >= 4) out.add(s);
+    // Belt and braces for string-typed booleans and nulls, plus trivially-short values ("0", "")
+    // that appear everywhere legitimately.
+    if (s.length < 4) return;
+    if (s === 'true' || s === 'false' || s === 'null' || s === 'undefined') return;
+    out.add(s);
   };
   const src = source && typeof source === 'object' ? source : {};
   for (const [k, v] of Object.entries(src)) {

@@ -288,8 +288,9 @@ test('an unverified recipient blocks SENDING, not building', () => {
   const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
     { verifiedRecipients: ['nickz@paylessrugs.com'] });
   assert.ok(payload, 'the payload is still built for review');
-  assert.equal(payload.send_blocked.reason, 'unverified_recipient');
-  assert.deepEqual(payload.send_blocked.addresses, ['ap@paylessrugs.com']);
+  assert.match(payload.send_blocked.reason, /unverified_recipient/);
+  assert.ok(payload.send_blocked.all.some(b =>
+    b.reason === 'unverified_recipient' && b.addresses.join() === 'ap@paylessrugs.com'));
   assert.throws(() => assertSendable(payload), /Refusing to send.*ap@paylessrugs\.com/);
 });
 
@@ -305,8 +306,9 @@ test('verification FAILS CLOSED — no list means nothing is verified', () => {
   // "No list configured" must never read as "everyone is fine".
   for (const list of [null, undefined, []]) {
     const { payload } = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER, { verifiedRecipients: list });
-    assert.equal(payload.send_blocked.reason, 'unverified_recipient');
-    assert.deepEqual(payload.send_blocked.addresses.sort(), ['ap@paylessrugs.com', 'nickz@paylessrugs.com']);
+    assert.match(payload.send_blocked.reason, /unverified_recipient/);
+    const b = payload.send_blocked.all.find(x => x.reason === 'unverified_recipient');
+    assert.deepEqual(b.addresses.sort(), ['ap@paylessrugs.com', 'nickz@paylessrugs.com']);
     assert.throws(() => assertSendable(payload));
   }
 });
@@ -647,4 +649,14 @@ test('the memo goes to invoice.description — email, PDF AND hosted page', () =
     { booking: BOOKING, disputeNotice: 'NOTICE' });
   assert.equal(typeof r.payload.invoice.description, 'string');
   assert.ok(!r.payload.invoice.footer.includes('NOTICE'), 'not on the PDF-only surface');
+});
+
+test('EVERY send-blocker is reported, not just the last one', () => {
+  // One overwritten field hides the others and makes clearing one look like clearing all.
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, verifiedRecipients: [] });   // no notice AND no verified recipients
+  assert.match(r.payload.send_blocked.reason, /unverified_recipient/);
+  assert.match(r.payload.send_blocked.reason, /missing_dispute_notice/);
+  assert.equal(r.payload.send_blocked.all.length, 2);
+  assert.throws(() => assertSendable(r.payload));
 });
