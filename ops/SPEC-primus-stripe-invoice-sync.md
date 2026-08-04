@@ -2580,11 +2580,43 @@ The checkpoint is computed **entirely from stored record state**, never from the
 const disp = s.dispatched === true || !!dispatchDate || stDispatched;
 ```
 
-…where `stDispatched` (`:7647`) is a regex over the record's **status string**:
-`/DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/`. All three inputs are fields on
-the BOL record as Primus returns it. **None of them is the result of the tender call.** `reached`
-(`:7656`) then lights the stage monotonically, and the checkpoint rows are built from it at
-`:8051` and `:11987`.
+…where the three terms resolve, in `resolveShipmentProgress` (`portal.html:7622`), to:
+
+```js
+statusStr    = s.lastStatus || ti.lastStatusExternal || ti.lastStatusInternal
+               || ti.statusName || s.status                                  // :7626
+dispatchDate = ti.dispatchDate || s.estimatedPickupDate                      // :7631  ← see below
+stDispatched = /DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/.test(statusStr)  // :7647
+```
+
+All are fields on the BOL record as Primus returns it. **None is the result of the tender call.**
+`reached` (`:7656`) lights the stage monotonically, and **both** checkpoint renderers — `:8051` and
+`:11987` — are fed by this one resolver (`:7706`, `:11977`), so they cannot disagree and cannot be
+independently at fault.
+
+### THE MECHANISM, FOUND 2026-08-04 — `dispatchDate` falls back to `estimatedPickupDate`
+
+**`:7631` ORs in `s.estimatedPickupDate`, which is a BOOKING-time field, not a dispatch field.** It
+is the pickup date the customer asked for, written into the booking payload at save time
+(`portal.html:19264`, `estimatedPickupDate: _snapBD.pickupDate||''`) and read everywhere else in
+this file as the *requested/estimated pickup date* (`:5219`, `:5308`, `:6931`, `:7183`, `:11956`,
+`:14457`).
+
+Expanded, the union at `:7650` is:
+
+```js
+disp = s.dispatched === true || !!(ti.dispatchDate || s.estimatedPickupDate) || stDispatched
+```
+
+**So any saved shipment carrying a pickup date lights the green "Dispatched" checkpoint — with no
+dispatch attempt, no tender, and no misbehaviour by Primus at all.** Every booked shipment has a
+pickup date; the two-step flow (§ Save, then Ready to Dispatch) guarantees a population of saved
+shipments that have one and have never been dispatched.
+
+This is a complete, code-visible explanation of the observed defect that requires nothing of Primus,
+and it is **simpler than every other candidate**. It is also the one that can be tested with zero
+risk — see the discriminating test below. It does not yet explain "no error surfaced"; that part may
+still belong to a different cause.
 
 **So the owner's hypothesis is confirmed at the code level: the timeline reads stored status, not
 the tender outcome.** If Primus marks the record dispatched — or merely returns a status string
@@ -2618,8 +2650,17 @@ Consequently these remain open:
 
 ### ALTERNATIVE CAUSES — named so the hypothesis is tested, not confirmed
 
-Two candidates would produce the same symptom **without** Primus ever storing a dispatched state.
-**They are not equally serious, and the first is the one to hope against.**
+**CANDIDATE C — the `estimatedPickupDate` fallback at `:7631`. Added 2026-08-04, and it is now the
+LEADING hypothesis**, because it is the only one that needs nothing to have gone wrong anywhere: not
+in Primus, not in the dispatch call, not in local state. A saved shipment with a pickup date lights
+the checkpoint. See the mechanism section above. **It is also the only candidate testable at zero
+risk**, which is why the discriminating test now starts there rather than with BOL 160135857.
+
+If C is live, the fix is narrow and local: `dispatchDate` must stop falling back to a booking field,
+and the `disp` term must be sourced from something that actually indicates a tender.
+
+The two original candidates would also produce the symptom without Primus storing a dispatched
+state. **They are not equally serious, and the first is the one to hope against.**
 
 **CANDIDATE A — `portal.html:6230`, the more serious by a wide margin.** Anchor:
 `if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)`.
@@ -2644,55 +2685,119 @@ not a change to how a checkpoint is drawn.
 in the click handler, and `:5926` renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local
 UI state, not record state. Real, but it is a display defect and the lesser of the two.
 
-### THE DISCRIMINATING TEST — a procedure, runnable by anyone with account access
+### THE DISCRIMINATING TEST — rewritten 2026-08-04
 
-**One read discriminates between two causes that need opposite fixes.** Written to be followed by
-someone who did not investigate this and does not need to read the rest of the section.
+**Superseded version:** the original test opened by reading BOL 160135857 and treated three falsy
+fields as killing the stored-state hypothesis. **A cancelled record can defeat that test silently,
+and it named the wrong field.** Both defects are recorded below rather than quietly patched, because
+"the procedure produced a clean negative" is exactly the kind of false confidence §8.863 is about.
 
-**Prerequisite:** access to the account that owns BOL **160135857**. It is not the Haynes account —
-`fetchBookingByBOL` was run for both 160135857 and 160135858 from a Haynes session and returned
-not-found for each, which reflects that lookup's scope, not the BOLs' existence.
+#### START HERE — Test C. Zero risk, zero writes, no dispatch, ~60 seconds
 
-**Step 1 — get a token.** Log into the portal as the owning customer. In DevTools console,
-`await getToken()` returns the bearer token the portal already uses. No new credential is needed.
+**This tests the leading hypothesis and it is the one to run first.** It touches no dispatch path,
+sends nothing to any carrier, and needs no access beyond an ordinary login.
 
-**Step 2 — read the record.** Either of these; the second is the portal's own helper and is easier:
+1. Log into the portal as **Haynes** (or any account with saved shipments).
+2. Open **My Shipments** and pick a shipment that is **Saved and has never been dispatched** — it
+   shows "Ready to Dispatch" and "Cancel Shipment", which per `:7902` only render when
+   `isShipmentDispatched()` is false.
+3. Open it and look at the **timeline**.
 
-```js
-// A. direct — the endpoint the portal uses for a single BOL by number
-const t = await getToken();
-const r = await fetch('https://freightandlogistics-api.shipprimus.com/applet/v1/book/bolnumber/160135857',
-                      { headers: { Authorization: 'Bearer ' + t } });
-const rec = await r.json();
-console.log(r.status, rec);
+| Observation | Verdict |
+|---|---|
+| The **"Dispatched" checkpoint is GREEN** on a shipment that was only ever saved | **CANDIDATE C IS CONFIRMED LIVE.** The checkpoint is lit by `estimatedPickupDate`, and this alone reproduces the reported symptom. Fix `:7631` |
+| The checkpoint is **dark** | C is not firing for this shipment. Check whether it has a pickup date at all; if it does and the checkpoint is dark, C is **ruled out** and the record read below becomes necessary |
 
-// B. via the portal helper (unwraps data/results for you)
-const rec = await fetchBookingByBOL('160135857');
+**If C confirms, stop.** It is sufficient to explain a green checkpoint on an untendered shipment,
+and it is fixable without touching the dispatch path at all. Candidates A and B remain open only for
+the *separate* question of why **no error surfaced** — which is a different symptom with a different
+cause, and should not be merged into this one.
+
+#### THEN — the record read, only if C is ruled out
+
+**Prerequisite:** BOL **160135857** is not on the Haynes account — `fetchBookingByBOL` returned
+not-found for it and for 160135858 from a Haynes session, which reflects that lookup's scope, not
+the BOLs' existence. Use master-console access, or log in as the owning account.
+
+**THE RECORD HAS BEEN MODIFIED SINCE THE OBSERVATION. Verified 2026-08-04** via the `fl-tracking`
+public route, which resolves any BOL with no owner filter:
+
+```
+160135857 → CANCELED.  timeline: 08/02 04:52 CANC "Shipment canceled"
+                                 08/02 04:18 SHC  "Shipment has been created via API"
+           Estes Express (EXLA), PICO RIVERA CA → PICO RIVERA CA, 1 pc, 100 lbs
+160135858 → CANCELED.  created 08/02 04:50, canceled 08/02 04:52
 ```
 
-**Step 3 — read exactly these four fields** and record them verbatim:
+**What the cancellation does to this test — all four are ways a cancelled record reads as a clean
+negative when the defect was real:**
 
-| Field | Why it matters |
+1. **`status` is contaminated.** It now reads `CANCELED`, which does not match the `stDispatched`
+   regex. "Status doesn't match" is therefore explained by the cancellation **regardless of what it
+   said at the time**. That term is dead as evidence in *both* directions.
+2. **The record may be gone, not merely voided.** Cancel tries `DELETE /applet/v1/book/{BOLId}`
+   **first**, falling back to `POST /applet/v1/book/{BOLId}/void` only if the DELETE fails
+   (`showCancelShipmentConfirm`, `portal.html:7398`). A successful DELETE means "not found" is the
+   expected result and rules out nothing.
+3. **Dispatch fields may have been cleared by the void.** Unknown, and not determinable from this
+   repo. If `dispatched` and `ti.dispatchDate` come back falsy, that is consistent with *both* "it
+   was never dispatched" and "the void cleared them."
+4. **The tracking timeline shows no dispatch event** — created, then cancelled, nothing between.
+   Suggestive of never-accepted, but carrier-event data does not reflect the booking record's
+   `dispatched` flag, so it is not the discriminator.
+
+**Read these fields — the full chains, not the short list the superseded version gave.** The
+original named `dispatchDate` alone and would have produced a **false negative**, because `:7631`
+ORs in `estimatedPickupDate`:
+
+| Field | Why |
 |---|---|
-| `dispatched` | first term of the `disp` union at `portal.html:7650` |
-| `dispatchDate` (also `dispatchedDate`) | second term — a date alone lights the checkpoint |
-| `status` (also `Status`) | third term — matched against `/DISPATCH\|PICKED UP\|IN TRANSIT\|OUT FOR\|ARRIV\|DEPART\|DELIVER\|POD/` at `:7647` |
-| `proNumber` / `pro` | a PRO usually means a carrier really did accept; its absence supports rejection |
+| `dispatched` | first term of the `disp` union, `:7650` |
+| `trackingInformation.dispatchDate` | real dispatch date, first half of the second term |
+| **`estimatedPickupDate`** | **booking-time field that also satisfies the second term — the Candidate C mechanism** |
+| `lastStatus`, `trackingInformation.lastStatusExternal` / `lastStatusInternal` / `statusName`, `status` | the full `statusStr` chain at `:7626`, in precedence order |
+| `carrierPRO`, `vendor.PRO`, `trackingInformation.PRO` / `proNumber`, `proNumber` | a PRO means a carrier accepted; note `isShipmentDispatched` (`:5193`) reads a **different** field set than the timeline, so read both |
 
-**Step 4 — read off the verdict:**
+**Verdict table:**
 
-| Observation | Conclusion | Fix belongs |
+| Observation | Conclusion | Rules out |
 |---|---|---|
-| **Any** of: `dispatched === true`, a non-empty dispatch date, or a status matching that regex | **Stored-state hypothesis HOLDS.** Primus recorded a dispatched state despite three rejections, and the timeline faithfully rendered it | At the boundary: the timeline must reflect **tender outcome**, not record state, and a rejected tender must not be storable as dispatched |
-| **All** of: `dispatched` falsy, dispatch date empty, status not matching | **Stored-state hypothesis is DEAD.** The timeline could not have drawn that checkpoint from this record | Candidate A (`:6230`) or B — and A is the one to check first, because it is the one that can report a dispatch that never left the browser |
-| Record not found even from the owning account | Nothing is ruled out. Do not proceed on assumption — re-check the BOL number against the original observation | — |
+| `dispatched === true`, **or** a non-empty `trackingInformation.dispatchDate`, **or** any PRO | **Stored-state confirmed.** The record claims dispatched on a tender that was rejected | Explains the checkpoint. Fix at the boundary: tender outcome must drive the timeline, and a rejected tender must not be storable as dispatched |
+| All of those falsy **but `estimatedPickupDate` is set** | **CANDIDATE C** — the checkpoint was lit by a booking field | Confirms C without needing Test C |
+| All falsy **including** `estimatedPickupDate`, status `CANCELED` | **NOTHING IS RULED OUT.** Every one of these is consistent with the cancellation having cleared or overwritten it | Nothing. Do not read this as a negative |
+| Fields **absent** from the payload (missing, not `false`) | **NOTHING IS RULED OUT.** A voided record may not carry them | Nothing. Absence is not `false` |
+| HTTP 404 / not found | **NOTHING IS RULED OUT** — the DELETE path above makes this the *expected* result | Nothing |
 
-**Step 5 — if the hypothesis dies, discriminate A from B.** Re-attempt a dispatch on a *test* BOL
-(Haynes) with the Network tab open. **If no request to `/applet/v2/dispatch/` is made and the UI
-still reports success, Candidate A is live** and is the higher-severity finding in this section.
+**Three of five outcomes now rule out nothing.** That is the honest state of this read after the
+cancellation, and it is the reason Test C leads.
 
-**Do not fix before Step 4 is answered.** The two causes need opposite fixes, and §8.863's whole
-point is that guessing which one is live is how this class survives.
+#### Candidate A — and why Step 5 as originally written was dangerous
+
+The superseded Step 5 said to "re-attempt a dispatch on a test BOL with the Network tab open." **That
+cannot work as a safe test, because the short-circuit can only fire after a real dispatch has already
+completed.** Every writer of `window._lastBooked` initialises `dispatched: false` (`:10958`, `:11167`,
+`:11223`, `:14034`); the only assignment to `true` is `:6339`, at the end of a successful
+`_canonicalDispatch`. So reaching the short-circuit requires tendering for real first.
+
+**Safe substitute — set the flag directly against a BOLId that does not exist:**
+
+```js
+window._lastBooked = { BOLId: 'NO-SUCH-BOL-TEST', BOLNumber: 'NO-SUCH-BOL-TEST', dispatched: true };
+const r = await _canonicalDispatch('NO-SUCH-BOL-TEST');
+console.log(r);   // watch the Network tab
+```
+
+| Observation | Verdict |
+|---|---|
+| `{ok:true, alreadyDispatched:true, dispatchOk:true}` and **no network request at all** | **Candidate A's mechanism is confirmed**: a success return with no call. The `:6230` guard precedes the token fetch, the terms resolution and the PRE charge gate, so nothing else can intervene |
+| A request to `/applet/v2/dispatch/NO-SUCH-BOL-TEST` appears (and fails harmlessly on a nonexistent BOL) | The short-circuit did not fire; re-read `:6230` |
+
+This proves the **mechanism** exists. It cannot prove the mechanism was the cause on 160135857 —
+that page session's state is gone and is not recoverable.
+
+**Do not fix before Test C is answered.** The candidates need different fixes in different files,
+and §8.863's whole point is that guessing which one is live is how this class survives.
+
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
