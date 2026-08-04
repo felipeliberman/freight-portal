@@ -21,27 +21,34 @@ function orderKey(inv) {
  */
 export function classifyInvoice(invoice, siblings) {
   const bol = invoice && invoice.shipment && invoice.shipment.BOLNumber;
-  if (!bol) return { classification: 'hold', reason: 'no BOLNumber — cannot establish siblings' };
+  if (!bol) return { classification: 'hold', reason: 'no BOLNumber — cannot establish siblings', primaryInvoiceNumber: null };
 
   const list = (Array.isArray(siblings) ? siblings : [])
     .filter(s => s && s.shipment && String(s.shipment.BOLNumber) === String(bol));
 
-  if (!list.length) return { classification: 'hold', reason: 'invoice not present in its own sibling set' };
-  if (!list.some(s => String(s.invoiceId) === String(invoice.invoiceId))) {
-    return { classification: 'hold', reason: 'invoice not present in its own sibling set' };
+  if (!list.length || !list.some(s => String(s.invoiceId) === String(invoice.invoiceId))) {
+    return { classification: 'hold', reason: 'invoice not present in its own sibling set', primaryInvoiceNumber: null };
   }
-  if (list.length === 1) return { classification: 'primary', reason: 'only invoice on this BOL' };
+  if (list.length === 1) return { classification: 'primary', reason: 'only invoice on this BOL', primaryInvoiceNumber: null };
 
   // Any sibling with no usable ordering key makes the whole ordering untrustworthy.
   if (list.some(s => !s.issueDate)) {
-    return { classification: 'hold', reason: 'a sibling has no issueDate — ordering is not decidable' };
+    return { classification: 'hold', reason: 'a sibling has no issueDate — ordering is not decidable', primaryInvoiceNumber: null };
   }
 
   const sorted = [...list].sort((a, b) => orderKey(a).localeCompare(orderKey(b)));
   const first = sorted[0];
-  return String(first.invoiceId) === String(invoice.invoiceId)
-    ? { classification: 'primary', reason: `earliest of ${list.length} on BOL ${bol}` }
-    : { classification: 'rebill', reason: `later of ${list.length} on BOL ${bol}` };
+  const isPrimary = String(first.invoiceId) === String(invoice.invoiceId);
+
+  // The primary's invoice NUMBER, DERIVED from the sibling set — Primus hands it to us nowhere.
+  // Neither the booking nor the invoice detail references a sibling invoice; this is the only
+  // route, and it costs no extra call because the classifier already holds the set.
+  // Treated like ARCode: derived values are labelled as derived (spec §5.31).
+  const primaryInvoiceNumber = isPrimary ? null : (first.invoiceNumber ?? null);
+
+  return isPrimary
+    ? { classification: 'primary', reason: `earliest of ${list.length} on BOL ${bol}`, primaryInvoiceNumber: null }
+    : { classification: 'rebill', reason: `later of ${list.length} on BOL ${bol}`, primaryInvoiceNumber };
 }
 
 /**

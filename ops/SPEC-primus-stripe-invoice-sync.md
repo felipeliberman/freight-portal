@@ -1377,6 +1377,62 @@ Scope: a support line on the login card (`support@freightandlogistics.ai`, and t
 permitted here — this is an onboarding/access surface, not error-fallback copy; see CLAUDE.md's
 no-phone-as-fallback rule, which this does not breach).
 
+### 5.31 The fourth custom field is CONDITIONAL on classification
+
+**REBILL → `Original Invoice`. PRIMARY → `Your Ref #`.** Stated here explicitly rather than left as
+a side effect of the code.
+
+| classification | fourth field | value |
+|---|---|---|
+| `rebill` | `Original Invoice` | the primary's invoice number |
+| `primary`, `hold`, unclassified | `Your Ref #` | `ledger.customer_reference` |
+
+**Why it wins on a rebill, and only there.** `Your Ref #` comes from the shipment, so a rebill
+carries the *same* value as its primary — it tells the clerk nothing they do not already have on
+the invoice they filed. The original invoice number is **the only thing on a rebill not recoverable
+from anything else on the page**. On a primary there is no original to point at, so swapping the
+field there would lose the customer's own reference for nothing.
+
+Rendered, both live pilot rebills:
+
+```
+Invoice #141015          Invoice #142264
+BOL #   160133034        BOL #   160134933
+PRO #   402052249        PRO #   402052249
+Carrier Pilot Freight…   Carrier Pilot Freight…
+Original Invoice 140061  Original Invoice 141886
+OVERSIZE SURCHARGE …     RESIDENTIAL DELIVERY FEE …
+$55.00                   $55.00
+```
+
+**Labelled as a POINTER.** `Original Invoice` with a bare number: the field NAME carries the
+"which invoice" meaning, so a clerk cannot read it as this invoice's own number. `Re: Invoice …`
+inside the value was considered and rejected — it duplicates the label and spends 12 of the 30
+available characters restating it.
+
+#### It is DERIVED — treated like ARCode
+
+**Primus hands us this nowhere.** Neither the booking nor the invoice detail references a sibling
+invoice. The value comes from the **classifier's sibling set**, which is already computed to decide
+primary-vs-rebill, so it costs no additional call.
+
+**Derivation:** among all list records sharing the BOLNumber, ordered by `issueDate` then
+`invoiceId` ascending, the earliest record's `invoiceNumber`.
+
+**INDEPENDENT CORROBORATION — the rule, written before anything consults it.**
+`GET /document/bolnumber/{n}` returns multiple `INV` entries on a rebilled BOL (§8). That is a
+second path to the same fact. **Nothing fetches it today and nothing should be built to.** But if it
+is ever consulted and disagrees with the derived value, **the disagreement must SURFACE — an
+exception, not a silent resolution.** Two paths to one fact that quietly disagree is how a wrong
+number reaches a customer looking authoritative. Neither path wins by default.
+
+#### Negative control — a rebill with no derivable original OMITS the field
+
+Every `hold` path returns a null pointer, so a rebill normally always has one. Defensively, when it
+does not: **the field is omitted and `Your Ref #` renders instead.** Chosen over quarantine — the
+invoice is otherwise complete and correct, and withholding a valid bill over a pointer field is
+worse than shipping it without one. Reversible fails open. The pointer is never guessed.
+
 ### 5.4 Memo and documents
 
 ```
@@ -1978,7 +2034,7 @@ from the cold outreach campaign on the root domain.
 | **D4** | Credit-note path for net-negative rebills (§5.2) | Phase 9 |
 | **D5** | Is the `COI` on a BOL the carrier's or ours? (§8) | Phase 8 |
 | **D7** | Authoritative dispute-notice wording, transcribed from the current Primus invoice email (§5.5). If >369 chars, which short form goes in the memo | Phase 5 |
-| **D10** | Rebill→original linkage: what a rebill carries pointing at the invoice it supplements (§5.3) | Phase 6 |
+| ~~D10~~ | **CLOSED 2026-08-03** — rebills carry `Original Invoice`, derived from the classifier's sibling set (§5.31) | — |
 | **D8** | ~~Clock start~~ **CLOSED**: Stripe's send timestamp (§5.5). Still open: the business-day calendar for rendering an explicit deadline | Phase 9 |
 | **D9** | Delivery answered (§0.1.1 — Primus + QBO email, both stopping at go-live). **Still open:** can Payless log into the portal and pay via the modal? That path survives the routine change and is the same two-live-paths failure | Phase 9 |
 | **D6** | Stripe email subject line — currently "New invoice from Freight and Logistics, Inc. #\<number\>", carries no BOL or PO reference. Gmail will thread these for customers the way QBO reminders threaded for us | Phase 10 |

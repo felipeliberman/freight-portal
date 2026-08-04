@@ -69,3 +69,32 @@ test('VOID-AWARENESS IS NOT AVAILABLE — recorded, not silently accepted', () =
   assert.equal(classifyInvoice(B, [A, B]).classification, 'rebill',
     'even if A were voided, which we cannot see');
 });
+
+// ── the derived original-invoice pointer ─────────────────────────────────────────────────────
+
+test('a rebill carries the PRIMARY invoice number, derived from the sibling set', () => {
+  // The real pilot pair: 140061 (primary) then 141015 ($55 rebill), both BOL 160133034.
+  const p = { ...A, invoiceNumber: 140061 };
+  const r = { ...B, invoiceNumber: 141015 };
+  assert.equal(classifyInvoice(r, [p, r]).primaryInvoiceNumber, 140061);
+});
+
+test('a PRIMARY never carries a pointer — there is no original to point at', () => {
+  const p = { ...A, invoiceNumber: 140061 };
+  const r = { ...B, invoiceNumber: 141015 };
+  assert.equal(classifyInvoice(p, [p, r]).primaryInvoiceNumber, null);
+  assert.equal(classifyInvoice(p, [p]).primaryInvoiceNumber, null);
+});
+
+test('NEGATIVE: every hold path returns a null pointer, never a guess', () => {
+  assert.equal(classifyInvoice({ invoiceId: '1', shipment: {} }, []).primaryInvoiceNumber, null);
+  assert.equal(classifyInvoice(B, [A]).primaryInvoiceNumber, null, 'absent from its own sibling set');
+  const undated = inv('999', '160133034', null);
+  assert.equal(classifyInvoice(A, [A, undated]).primaryInvoiceNumber, null, 'undecidable ordering');
+});
+
+test('a primary with no invoiceNumber yields null rather than "undefined"', () => {
+  const p = { ...A, invoiceNumber: undefined };
+  const r = { ...B, invoiceNumber: 141015 };
+  assert.equal(classifyInvoice(r, [p, r]).primaryInvoiceNumber, null);
+});

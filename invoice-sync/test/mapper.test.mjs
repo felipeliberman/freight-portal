@@ -660,3 +660,50 @@ test('EVERY send-blocker is reported, not just the last one', () => {
   assert.equal(r.payload.send_blocked.all.length, 2);
   assert.throws(() => assertSendable(r.payload));
 });
+
+// ── the fourth field is CONDITIONAL on classification ────────────────────────────────────────
+
+test('a REBILL replaces Your Ref # with the Original Invoice pointer', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, classification: 'rebill', primaryInvoiceNumber: 140061, customerReference: '129320' });
+  const f = r.payload.invoice.custom_fields;
+  assert.deepEqual(f.map(x => x.name), ['BOL #', 'PRO #', 'Carrier', 'Original Invoice']);
+  assert.equal(f[3].value, '140061');
+  assert.ok(!f.some(x => x.name === 'Your Ref #'), 'Your Ref # is duplicated from the primary');
+});
+
+test('a PRIMARY keeps Your Ref # — swapping it there would lose it for nothing', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, classification: 'primary', primaryInvoiceNumber: null, customerReference: '129320' });
+  const f = r.payload.invoice.custom_fields;
+  assert.deepEqual(f.map(x => x.name), ['BOL #', 'PRO #', 'Carrier', 'Your Ref #']);
+  assert.equal(f[3].value, '129320');
+});
+
+test('NEGATIVE: a rebill with NO derivable original OMITS the pointer, never guesses', () => {
+  // Chosen over quarantine: the invoice is otherwise complete and correct, and withholding a valid
+  // bill over a pointer field would be worse than shipping it without one.
+  for (const n of [null, undefined, '', '   ']) {
+    const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+      { booking: BOOKING, classification: 'rebill', primaryInvoiceNumber: n, customerReference: '129320' });
+    const f = r.payload.invoice.custom_fields;
+    assert.ok(!f.some(x => x.name === 'Original Invoice'), `${JSON.stringify(n)} must not render a pointer`);
+    assert.equal(f[3].name, 'Your Ref #', 'falls back rather than leaving an empty slot');
+    assert.equal(r.ok, true, 'and the invoice still builds');
+  }
+});
+
+test('an UNCLASSIFIED invoice keeps Your Ref # — the pointer is rebill-only', () => {
+  for (const c of [null, 'hold', 'primary']) {
+    const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+      { booking: BOOKING, classification: c, primaryInvoiceNumber: 140061, customerReference: '129320' });
+    assert.ok(!r.payload.invoice.custom_fields.some(x => x.name === 'Original Invoice'),
+      `classification ${c} must not render a pointer even when one is supplied`);
+  }
+});
+
+test('the pointer is normalised like any customer-visible number', () => {
+  const r = buildStripeInvoice(narrowInvoiceDetail(rawDetail()), CUSTOMER,
+    { booking: BOOKING, classification: 'rebill', primaryInvoiceNumber: '140061.0' });
+  assert.equal(r.payload.invoice.custom_fields[3].value, '140061');
+});

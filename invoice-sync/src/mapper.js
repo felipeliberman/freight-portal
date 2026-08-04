@@ -208,7 +208,7 @@ export const MEMO_MAX = 500;
  * one bad record must not stop a run (spec §6.5).
  */
 export function buildStripeInvoice(detail, customer, {
-  customerReference = null, booking = null, classification = null,
+  customerReference = null, booking = null, classification = null, primaryInvoiceNumber = null,
   disputeNotice = null, documentsUrl = null,
   supportEmail = 'accounting@freightandlogistics.ai', supportPhone = '800-687-3713',
   verifiedRecipients = null, valueSink = null,
@@ -287,11 +287,28 @@ export function buildStripeInvoice(detail, customer, {
   // else in the email body or on the hosted page. The consignee's NAME is recoverable from the
   // attached PDF, and now lives in the footer; the carrier is recoverable from nowhere else.
   // The fourth slot stays the CUSTOMER's reference — the only field on the invoice that is theirs.
+  //
+  // THE FOURTH FIELD IS CONDITIONAL ON CLASSIFICATION (spec §5.31).
+  // On a REBILL it points at the invoice being supplemented. `Your Ref #` is duplicated from the
+  // primary, so on a rebill it tells the clerk nothing they do not already have on the invoice
+  // they filed; the original invoice number is the ONLY thing on a rebill not recoverable from
+  // anything else on the page. On a PRIMARY there is no original to point at, so `Your Ref #`
+  // stays — swapping it there would lose the customer's own reference for nothing.
+  //
+  // Labelled "Original Invoice" so it reads as a POINTER, never as this invoice's own number.
+  const originalPointer = classification === 'rebill' ? customerVisibleNumber(primaryInvoiceNumber) : null;
+  const fourth = originalPointer
+    ? customField('Original Invoice', originalPointer)
+    // OMIT, not quarantine, when a rebill has no derivable original: the invoice is otherwise
+    // complete and correct, and withholding a valid bill over a pointer field would be worse than
+    // shipping it without one. Falls back to the customer's reference rather than an empty slot.
+    : customField('Your Ref #', customerReference);
+
   const custom_fields = [
     customField('BOL #', detail.shipment.BOLNumber),
     customField('PRO #', detail.shipment.carrierPRO),
     customField('Carrier', booking && booking.carrier ? booking.carrier.name : null),
-    customField('Your Ref #', customerReference),
+    fourth,
   ].filter(Boolean);
 
   const memoOut = buildMemo({ disputeNotice, supportEmail, supportPhone, documentsUrl });
