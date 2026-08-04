@@ -700,13 +700,42 @@ of "we tested on someone who could receive it." `ap@paylessrugs.com` verificatio
 recipient-confirmation work stop being preconditions for the *pilot* — they return only when a real
 customer is added.
 
-> ### BLOCKED — the test account's identity is not yet known
+> ### BLOCKED 2026-08-04 — the test account's identity is INCONSISTENT INSIDE PRIMUS
 >
-> `AR_ALLOWLIST` is currently `5406` (Payless). **It must not be repointed by guessing.** The
-> allowlist is the only thing standing between the pilot and the full book, and `checkArCode`
-> (`invoice-sync/src/config.js:93`) matches on exact ARCode, so a wrong value silently claims the
-> wrong customer's invoices or none at all. Required from the owner, verbatim — see the identity
-> checklist in §0.2.
+> Not a missing value. **Primus reports two different codes for the same invoice**, and QBO agrees
+> with the one the poll does not use.
+>
+> | Source | Field | Value |
+> |---|---|---|
+> | Primus invoice **list** | `ARCode` | **`12345678`** |
+> | Primus invoice **detail** | `customerInfo.customerCode` | **`1234`** |
+> | Primus detail | `customerInfo.customerName` | `Freight and Logistics, Inc. - TEST` |
+> | Primus detail | `customerInfo.customerId` | `33717` |
+> | QBO | `DisplayName` | `Freight and Logistics, Inc. - TEST-1234` (suffix `1234`) |
+>
+> Verified on **both** invoices (#141604 `invoiceId 1563993653`, #141385 `invoiceId 1269958425`).
+> This is not a transcription error at either end — the two Primus endpoints genuinely disagree.
+>
+> **Neither value can drive the pilot:**
+>
+> - `AR_ALLOWLIST="12345678"` — the poll claims (list matches), then `resolveCustomer` searches QBO
+>   for `12345678`, finds no `-12345678` suffix, and returns `no_display_name_suffix`. Even had it
+>   matched, the detail cross-check at `customers.js:192` compares `customerCode` (`1234`) against
+>   the list ARCode (`12345678`), disagrees, and returns `null`. **Two independent guards reject it.**
+> - `AR_ALLOWLIST="1234"` — the poll filter reads the **list** ARCode (`12345678`), which is not
+>   allowlisted, so the invoices are never claimed at all. This is why the 5,603-invoice scan found
+>   zero: the scan was correct, the input value was not.
+>
+> **The guards are behaving exactly as designed** — `customers.js:188-198` exists precisely to refuse
+> a join whose two sides disagree, and it fails closed rather than picking one. Nothing here is a
+> code defect. **This is a DATA problem on the account, and fixing it is an owner decision:** make
+> Primus's list ARCode and detail customerCode agree, and make the QBO DisplayName suffix match
+> whichever wins. **The matcher must not be relaxed to accommodate it** — that hardening is what
+> stops `Acme-15406` billing as `5406`.
+>
+> **Note for the wider book:** §0.2's "`customerInfo.customerCode` MATCHES ON 11 OF 11" was verified
+> on Payless, where the two agree. This account proves the two fields **can** diverge, so that match
+> is a property of Payless's data rather than a guarantee of the API. The cross-check is load-bearing.
 
 **Payless data is RETAINED as worked examples.** The 11 rendered invoices, BOL 160134786's
 aggregation, `vendor.cost` 273.57 and the under-$300 surcharge finding are **evidence** — they
@@ -2836,6 +2865,85 @@ that puts freight on a truck.** The discriminator was *assumed* from a field nam
 through the code that consumes it. That is the whole argument for §0.26's anchors and for §8.863's
 rule that reachability and mechanism are traced, never inferred — applied here to a procedure
 written in this document, two sections above the rule that would have caught it.
+
+
+## 8.865 HARD API CONSTRAINTS on `/invoice` — phase 9 planning must respect these
+
+Established 2026-08-04 by direct probing with the real `PrimusClient` (same auth, same GET-only
+allowlist, same retry). Every claim below reproduced at least twice, paced, to separate real
+constraints from rate-limiting.
+
+### 1. VISIBILITY DOES NOT DEPEND ON SENDING — the architecture concern is RESOLVED
+
+**This was the question that could have killed the design**, so it was answered by controlled
+experiment rather than reasoning: two invoices on the same account, comparable in every other way,
+one SENT from Primus and one never sent.
+
+| | #141604 | #141385 |
+|---|---|---|
+| Issued | 2026-07-13 | 2026-07-09 |
+| Primus "Sent" light | **green (sent)** | **red (never sent)** |
+| **Present in `GET /invoice`?** | **YES** | **YES** |
+| `status.sent` | `true` | `false` |
+| every other status field | identical | identical |
+
+Both status objects are `estimatedCosts/actualCosts/costActualClosed/charges/readyToInvoice/generated
+= true, paid = false`. **The two records differ in exactly one field: `sent`.**
+
+Across the window, **91 of 5,401 invoices carry `status.sent === false`** and are returned normally.
+
+**So not-sending in Primus does NOT make an invoice invisible to the sync.** The plan — stop sending
+from Primus, let Stripe be the only delivery — does not blind the poll. The requirements are not
+mutually exclusive.
+
+**`status` carries `readyToInvoice`, `generated` and `sent` as three independent booleans.** The poll
+keys on `generated` (`invoices.js:110`), which is orthogonal to `sent`. `readyToInvoice` was `true`
+on 100% of records sampled, so it is not a useful discriminator; `generated` is the right key and
+needs no change.
+
+### 2. A POISONED DATE — any window containing 2026-04-29 returns HTTP 500
+
+Isolated by holding `issuedTo` fixed and walking `issuedFrom`:
+
+```
+issuedFrom 2026-04-27  OK        issuedFrom 2026-04-30  OK
+issuedFrom 2026-04-28  OK        issuedFrom 2026-05-01  OK
+issuedFrom 2026-04-29  FAIL 500  ← reproduced 4×, across two different issuedTo values
+```
+
+One date poisons every window that spans it. It explains the earlier failures of the 365-day scan,
+the 120-day window, and a 60-day historical chunk — all of which contained it.
+
+**Why this is dangerous rather than merely annoying:** it surfaces as **HTTP 500**, which
+`PrimusClient._sendWithRetry` treats as transient — three retries with backoff, then throw. A poll
+window spanning that date therefore fails on **every run, forever**, while looking exactly like an
+upstream blip. That is §8.863's class in the infrastructure: **a permanent condition wearing a
+transient's clothes.**
+
+The pilot never hit it by luck alone: the 60-day claims window starts 2026-06-05, six weeks later.
+
+### 3. A HISTORY FLOOR — nothing before ~2026-03 is retrievable
+
+`2026-01-01..2026-02-28` and every 2025 window tested return HTTP 500, deterministically, twice
+each. `2026-03-01..2026-04-28` returns page 1 but **500s on page 2**, so even the boundary region is
+only partly readable.
+
+Deepest successful read: **5,603 invoices spanning 2026-03-02 → 2026-08-03**.
+
+**Consequence: backfill and historical reconciliation beyond roughly five months are impossible
+through this endpoint.** Any phase 9 plan that assumes it can re-derive history — to reconcile
+ledger gaps, to re-render a disputed invoice, or to prove what was billed — must not assume this
+endpoint can supply it.
+
+### 4. Operational notes
+
+- Windows **ending today** succeed up to at least 90 days; the 120-day failure was the poisoned date,
+  not length. Length itself was never shown to be the limit.
+- Transient `fetch failed` errors occur under sustained paging and are distinguishable from the
+  deterministic 500s only by retrying — a scan without per-page retry **silently under-covers**, which
+  is how a partial scan nearly supported a false absence claim during this investigation.
+- **Any absence claim from this endpoint must state its page-failure count.** Coverage is not
+  complete merely because the loop finished.
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
