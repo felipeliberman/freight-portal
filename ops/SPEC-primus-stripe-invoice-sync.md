@@ -43,7 +43,7 @@ it. Both are required before phase 6.
 
 ### 0.1 The portal already has a live invoice-payment surface
 
-`portal.html:4968-5030` renders a "Pay Invoices" modal listing Primus invoices and pays them via
+`portal.html:4114-4176` renders a "Pay Invoices" modal listing Primus invoices and pays them via
 `stripe-payments` `/create-payment-intent`, passing the invoice numbers flattened into a PaymentIntent
 `description` string. It creates **no Stripe Invoice object** and leaves no link back to one.
 
@@ -52,8 +52,13 @@ Consequences that must be designed for, not discovered:
 - **Two payable surfaces for the same debt.** After sync, a customer can pay in the portal modal *and*
   on the Stripe hosted invoice page. Neither knows about the other. ACH settles over days, so both can
   be in flight at once and both succeed.
-- **Card surcharge mismatch.** The portal adds a 2.9% + $0.30 convenience fee on card
-  (`portal.html:4536`). A synced Stripe invoice paid by card carries no such line. Same invoice, two
+- **Card surcharge mismatch.** The portal adds a 2.9% convenience fee on card
+  (`cardFeeOn()`, `portal.html:3625`). **Re-anchored during the 2026-08-04 sweep, and the prose was
+  wrong as well as the line:** the citation pointed at `portal.html:4536`, whose content was
+  `const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;` — a formula that no longer
+  exists, because the fee became **2.9% flat with no flat component** (§8.7, verified live). The
+  surrounding sentence still said "2.9% + $0.30" and has been corrected here.
+  A synced Stripe invoice paid by card carries no such line. Same invoice, two
   prices, and the cheaper one is the one being emailed.
 - **A portal payment leaves the Stripe invoice open**, feeding the dunning problem in §5.
 
@@ -118,11 +123,11 @@ The portal creates a **bare PaymentIntent**. It never creates, references, or at
 Invoice object.
 
 ```
-portal.html:4126   qbo-api/invoices?docNumber=<Primus invoice #>   → _qboId, _qboBalance
-portal.html:4984   stripe-payments/create-payment-intent           → PaymentIntent
+portal.html:3255   qbo-api/invoices?docNumber=<Primus invoice #>   → _qboId, _qboBalance
+portal.html:4113   stripe-payments/create-payment-intent           → PaymentIntent
    worker :185       description = "Invoices: 140488, 140061"      ← FREE TEXT, not a reference
-portal.html:4999   _recordQboPayments(invoices, paymentIntent.id)
-portal.html:4496   qbo-api/payment { invoiceId:_qboId, amount, paymentDate, stripePaymentIntentId }
+portal.html:4128   _recordQboPayments(invoices, paymentIntent.id)
+portal.html:3625   qbo-api/payment { invoiceId:_qboId, amount, paymentDate, stripePaymentIntentId }
 ```
 
 The complete Stripe surface of `stripe-payments` is `payment_intents`, `payment_methods`,
@@ -148,7 +153,7 @@ same identifier**, with no link between the objects that represent it.
 **1. Double payment. Nothing prevents it.**
 - *Customer:* pays 140488 on the Stripe hosted page, and again in the portal (or vice versa). Both
   succeed. They are charged twice. **The two amounts differ** — the portal adds a 2.9% + $0.30 card
-  convenience fee (`portal.html:4536`); a Stripe invoice carries no such line.
+  convenience fee (`portal.html:3665`); a Stripe invoice carries no such line.
 - *Stripe:* two unrelated successful objects — one Invoice marked paid, one PaymentIntent with a
   description string. Nothing flags a duplicate.
 - *QBO:* one payment written by the portal, one arriving via Stripe. Potential double credit (see 3).
@@ -177,7 +182,7 @@ same identifier**, with no link between the objects that represent it.
 #### Partial protections, and exactly how far they reach
 
 **`_qboBalance` reading zero** is real but **late**. The portal reads the balance from QBO
-(`portal.html:4126`), so an invoice already paid in Stripe *does* eventually show zero and drop out
+(`portal.html:3255`), so an invoice already paid in Stripe *does* eventually show zero and drop out
 of the payable list.
 
 How late: Stripe → QBO, plus QBO's own balance update. Until that lands, **the portal shows the
@@ -253,7 +258,8 @@ Read-only survey 2026-08-03. **Not fixed. Queue item 1 (§8.6).**
 Under §0.05 the portal is the only payment surface, which makes this the **single point where
 money-received becomes money-recorded**. That raises its severity rather than lowering it.
 
-`portal.html:4489-4508`. The comment reads *"Best-effort — never blocks the success UI, since Stripe
+`portal.html:3633` (anchor: `// amount is the QBO Balance, falling back to the invoice total.
+Best-effort — never`). The comment reads *"Best-effort — never blocks the success UI, since Stripe
 has already captured the funds."* The reasoning is sound; the implementation goes past best-effort
 into unobservable.
 
@@ -292,10 +298,10 @@ problem.
 
 | Site | Formula | Role |
 |---|---|---|
-| `portal.html:4536` | `subtotal * 0.029 + 0.30` | modal summary (displayed) |
-| `portal.html:4604` | `subtotal * 0.029 + 0.30` | receipt (displayed) |
-| `portal.html:4947` | `subtotal * 0.029 + 0.30` | fee row (displayed) |
-| `portal.html:4783` | `subtotal * 1.029 + 0.30` | **`calcTotal` — the CHARGED amount** |
+| `portal.html:3665` | `subtotal * 0.029 + 0.30` | modal summary (displayed) |
+| `portal.html:3733` | `subtotal * 0.029 + 0.30` | receipt (displayed) |
+| `portal.html:4076` | `subtotal * 0.029 + 0.30` | fee row (displayed) |
+| `portal.html:3912` | `subtotal * 1.029 + 0.30` | **`calcTotal` — the CHARGED amount** |
 
 Three display sites computed the fee directly and rendered it via `.toFixed(2)`. The fourth
 computed the *total* in a different shape, and that total is what reaches
@@ -406,6 +412,41 @@ In practice:
 - Prefer showing whole current state (`cat` the file, `git status`) over showing a delta computed
   from an artifact you produced yourself.
 - An exit code is evidence that a command ran, not that it did what you wanted.
+
+### 0.26 Code citations carry an anchor — STANDING RULE
+
+**Every `portal.html:NNNN` citation (or any line-number citation into a large file) must carry a
+function name or a distinctive string alongside the number.**
+
+A bare line number rots silently. Worse, it rots *invisibly*: after an edit above it, the citation
+still looks precise, still points at real code, and now describes the wrong thing. **A stale
+citation reads as verified when it isn't** — the same failure this document keeps warning about,
+applied to the document itself.
+
+The 2026-08-04 sweep is the evidence. Deleting 869 lines (D7) shifted **32 of 40** citations. Of the
+rest: one pointed at a card-fee formula that **no longer exists in any form** (§0.1's
+`const fee = ... * 0.029 + 0.30`, dead since the fee became 2.9% flat) with the surrounding prose
+still quoting the old formula; one pointed into a deleted block; two could not be re-located at all
+from their bare numbers because the cited content was `//` and `}`.
+
+Note also that `portal.html:4536` meant **three different things** in three different sections,
+depending on when each was written. The number alone cannot tell you which.
+
+Required form — number plus anchor:
+
+> `cardFeeOn()`, `portal.html:3625`
+> `portal.html:21477`, anchor `const invUrl = p => PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p;`
+
+In practice:
+- **Prefer the function name.** It survives edits that line numbers do not, and it is greppable.
+- **Re-locate by content, never by arithmetic.** The naive shift after a deletion is wrong whenever
+  the same change also edits other lines — in D7 the true shift differed from −869.
+- **Never guess a replacement number.** If content re-location fails, mark the citation
+  **UNVERIFIED** and record what it used to say, so the next reader knows the pointer is broken
+  rather than trusting it.
+- When a change moves code, sweep the citations in the same commit. `git blame` the spec line →
+  read the cited file at that commit → find that exact content now. That is mechanical and cheap;
+  what is expensive is a spec whose references quietly lie.
 
 ### 0.3 This is a separate Worker
 
@@ -1280,8 +1321,8 @@ label diff is prepared separately on request.
 **The portal's fee logic does not distinguish card type in any way.** The entire rule is:
 
 ```js
-portal.html:4536   const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
-portal.html:4604   var   fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+portal.html:3665   const fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
+portal.html:3733   var   fee = paymentMethod === 'card' ? subtotal * 0.029 + 0.30 : 0;
 ```
 
 One branch — ACH or not-ACH. Every card Stripe accepts, **including debit**, is charged 2.9% + $0.30.
@@ -1295,11 +1336,11 @@ there is no card to inspect.
 #### Exact current user-facing wording — verbatim, unchanged
 
 ```
-portal.html:4560   Convenience fee (2.9% + $0.30)
-portal.html:4626   Convenience fee (2.9% + $0.30)
-portal.html:4859   Pay by Card   —   2.9% + $0.30 convenience fee
-portal.html:4859   Pay by Bank   —   ACH transfer - No fee
-portal.html:4947   Convenience fee (2.9% + $0.30)
+portal.html:3689   Convenience fee (2.9% + $0.30)
+portal.html:3755   Convenience fee (2.9% + $0.30)
+portal.html:3988   Pay by Card   —   2.9% + $0.30 convenience fee
+portal.html:3988   Pay by Bank   —   ACH transfer - No fee
+portal.html:4076   Convenience fee (2.9% + $0.30)
 ```
 
 Four disclosure sites, three render paths, one string. **Not changed.**
@@ -1314,7 +1355,7 @@ shared by the Stripe invoice (`number`), QBO (`docNumber`), and the portal's own
 
 **2. Survive the login round trip — and `_finalizeLogin` actively destroys tab state.**
 
-`portal.html:10285` runs `localStorage.removeItem('rp_tabs')` and `rp_active_title` on **every**
+`portal.html:9421` runs `localStorage.removeItem('rp_tabs')` and `rp_active_title` on **every**
 login, and `doLogout` (`:9562`) does the same. So any pending-invoice value parked in `rp_tabs` is
 wiped by the very act of logging in.
 
@@ -1335,9 +1376,10 @@ refresh does not silently reopen it.
 customer, the portal must not open or display that invoice.
 
 **What exists today.** The portal fetches invoices from `PRIMUS_BASE` =
-`https://freightandlogistics-api.shipprimus.com` (`portal.html:2107`) — the **customer/portal API**,
+`https://freightandlogistics-api.shipprimus.com` (`portal.html:1236`) — the **customer/portal API**,
 which is scoped to one customer's own data by the bearer token
-(`GET /applet/v1/invoice?limit=100&page=N`, `portal.html:22333`, `Authorization: Bearer <token>`).
+(`GET /applet/v1/invoice?limit=100&page=N`, `portal.html:21477`, anchor `const invUrl = p =>
+PRIMUS_BASE + '/applet/v1/invoice?limit=100&page=' + p;`, `Authorization: Bearer <token>`).
 
 **So server-side scoping does exist, and it is the right kind:** the API returns only the
 authenticated customer's invoices. An invoice belonging to another customer is not in the response
@@ -1362,7 +1404,7 @@ accounts.
 
 ### 5.9 Login screen — no support contact (scope)
 
-`portal.html:969-994` is the entire login screen. It has email, password, an error line, a Sign in
+`portal.html:967` is the entire login screen. It has email, password, an error line, a Sign in
 button, a Remember me checkbox, and one link: *"Don't have an account? Open one free →"*.
 
 **There is no support contact, no "forgot password", no "trouble signing in".** Confirmed by search
@@ -1904,7 +1946,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 
 | # | Item | Ref |
 |---|---|---|
-| **B0** | **A REJECTED TENDER DRAWS A GREEN "DISPATCHED" CHECKPOINT.** BOL 160135857 — carrier rejected 3×, portal showed dispatched, no error at any point. Timeline reads stored record state, never the tender outcome (`portal.html:8521`). **Highest-severity open item. Blocks broad customer exposure.** Confirmed observed, cause unverified — do not fix before the record is read | §8.864 |
+| **B0** | **A REJECTED TENDER DRAWS A GREEN "DISPATCHED" CHECKPOINT.** BOL 160135857 — carrier rejected 3×, portal showed dispatched, no error at any point. Timeline reads stored record state, never the tender outcome (`portal.html:7650`). **Highest-severity open item. Blocks broad customer exposure.** Confirmed observed, cause unverified — do not fix before the record is read | §8.864 |
 | B1 | `_recordQboPayments` — six silent failure modes; the only writeback from payment to books, and it cannot report its own failure | §0.1.3 |
 | B2 | Debit cards are still surcharged, which is not permitted in the US. The cap fix did not address it | §5.7 |
 | B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
@@ -1935,7 +1977,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 ### E. Parked, deliberately
 
 `wip/gate-outcome-rewrite` — the outcome-based save-stall detector. Regresses layer2 case 54; cause
-identified at `portal.html:15754`. Untouched until picked up on purpose.
+identified at `portal.html:14887`. Untouched until picked up on purpose.
 
 ## 8.65 Layer3 `agreed-config-dropped-on-pull` — UNREPRODUCED, closed
 
@@ -1986,7 +2028,7 @@ Consequence: **Stripe balance and QBO revenue diverge by the fee on every card p
 receives $10.29; QBO records $10.00 against the invoice; the $0.29 exists in Stripe and nowhere in
 the books.
 
-`_recordQboPayments` (`portal.html:4493-4495`) deliberately records `_qboBalance` — the invoice
+`_recordQboPayments` (`portal.html:3622-3624`) deliberately records `_qboBalance` — the invoice
 balance — falling back to the Primus invoice total. Neither includes the fee, so this is the code
 behaving as written rather than a defect in it.
 
@@ -2146,7 +2188,7 @@ changed until it is.
 
 | Candidate | Window | Clock starts | Where it is published |
 |---|---|---|---|
-| **A** | 10 business days | **invoice date** | `portal.html:9524` §6, `index.html:1930` §12 — the CONTRACT |
+| **A** | 10 business days | **invoice date** | `portal.html:8653` §6, `index.html:1930` §12 — the CONTRACT |
 | **B** | 48 hours | **delivery date** | `KNOWLEDGE.md:82`, `:134`, `:245`, `:247` — the AGENT, and the deployed Worker |
 
 They differ in **length and in starting event**, so they cannot be reconciled by rounding — a
@@ -2222,7 +2264,7 @@ invoice-sync build.
 
 | Source | Text | Window | Clock |
 |---|---|---|---|
-| `portal.html:9524` Terms §6 | "Claims must be filed in writing within **10 business days of invoice**" | 10 business days | invoice date |
+| `portal.html:8653` Terms §6 | "Claims must be filed in writing within **10 business days of invoice**" | 10 business days | invoice date |
 | `index.html:1930` Terms §12 | same | 10 business days | invoice date |
 | `KNOWLEDGE.md:82` §5 | "written claim is filed **within 48 hours of delivery**" | 48 hours | delivery date |
 | `KNOWLEDGE.md:134` FAQ | "written claims must be filed within 48 hours of delivery" | 48 hours | delivery date |
@@ -2318,9 +2360,11 @@ catch." That 503 was only ever added to the public route. The portal route kept 
 another four days, in the same file, under a header comment that said its behavior was correct and
 "must stay that way."
 
-**Fixed Worker-side, not client-side**, so both surfaces inherit it and `portal.html:1573` starts
-working as already written; a client-side patch would leave the Worker still returning 200 for a
-failure and hand the same lie to the next consumer. Verified with negative controls in both
+**Fixed Worker-side, not client-side.** At the time of the fix the reasoning was that both surfaces
+would inherit it and `portal.html:1573` would start working as already written — that consumer has
+since been deleted (D7), which **strengthens** rather than weakens the choice: a client-side patch
+would have been deleted along with the client, leaving the Worker still returning 200 for a failure
+and handing the same lie to the next consumer. Verified with negative controls in both
 directions against the real Worker module and the real client conditions: upstream throws / HTTP 500
 / non-JSON body → **503**, client renders the outage copy; genuine not-found (no `Result`, or empty
 timeline) → **200 `found:false`**, client still renders "double-check the number"; healthy lookup →
@@ -2398,11 +2442,25 @@ no redirect** (`redirect_url` empty), and the page title is
 `… | 3PL Freight Broker | Los Angeles California`. Two different pages, so the 200 is genuine.
 
 **It can also still be framed:** no `X-Frame-Options` and no `Content-Security-Policy`
-`frame-ancestors` header on the response, so the `portal.html:2074` iframe is not blocked.
+`frame-ancestors` header on the response, so the `portal.html:1203` iframe is not blocked.
 
-So B5 is **not** a current defect. It is recorded only as the last remaining `.com` **content**
-dependency in the repo — `portal.html:1504` (the `[[TALK]]` handler), `:2074` (iframe), `:2076`
-(fallback link) — which would break if Wix hosting ever stopped, but is fine today.
+So B5 is **not** a current defect. It is recorded only as a remaining `.com` **content**
+dependency in the repo — which would break if Wix hosting ever stopped, but is fine today.
+
+**UPDATED 2026-08-04 — one of the three is gone.** The list was `portal.html:1504` (the `[[TALK]]`
+handler), `:2074` (iframe), `:2076` (fallback link). The `[[TALK]]` handler lived **inside the
+`#public-view` widget**, so deleting that widget (D7, commit `3978ecf`) removed it — not as the
+point of the change, but as a side effect worth recording rather than letting it vanish inside an
+882-line deletion.
+
+**Two remain**, both in the meeting panel and both re-anchored this sweep:
+
+| Line | Anchor | What it is |
+|---|---|---|
+| `portal.html:1203` | `<iframe src="https://www.freightandlogistics.com/demo-session"` | the embedded booking iframe |
+| `portal.html:1205` | `<a class="talk-open" href="https://www.freightandlogistics.com/demo-session"` | the fallback link |
+
+Verified by `grep -n "freightandlogistics\.com" portal.html` returning exactly these two.
 
 ## 8.863 DEFECT CLASS — misattributing a system fault to the customer
 
@@ -2560,26 +2618,81 @@ Consequently these remain open:
 
 ### ALTERNATIVE CAUSES — named so the hypothesis is tested, not confirmed
 
-Two candidates would produce the same symptom **without** Primus ever storing a dispatched state:
+Two candidates would produce the same symptom **without** Primus ever storing a dispatched state.
+**They are not equally serious, and the first is the one to hope against.**
 
-- **`:6230`** — `window._lastBooked.dispatched` short-circuits `_canonicalDispatch` to
-  `{ ok:true, alreadyDispatched:true, dispatchOk:true }` **before any network call**. An optimistic
-  local flag set once would make every subsequent attempt report success.
-- **`:7284`** — the dispatch button is painted green with "Dispatched!" by the click handler, and
-  **`:5926`** renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local UI state, not
-  record state.
+**CANDIDATE A — `portal.html:6230`, the more serious by a wide margin.** Anchor:
+`if (window._lastBooked && window._lastBooked.BOLId === BOLId && window._lastBooked.dispatched)`.
+It short-circuits `_canonicalDispatch` to `{ ok:true, alreadyDispatched:true, dispatchOk:true }`
+**before any network call is made**.
 
-### WHAT WOULD FALSIFY THE STORED-STATE HYPOTHESIS
+If this is the live cause, **this is not a display defect.** It is a code path that reports a
+successful dispatch that never left the browser — no tender, no Primus write, nothing for a carrier
+to reject or accept, and a caller that cannot tell the difference because the return shape is
+identical to a real success. A stale or wrongly-set `_lastBooked.dispatched` would make **every
+subsequent attempt on that BOL** report success instantly. That also fits the reported symptom
+better than it first appears: **three rejections in a row with no error** is exactly what a
+short-circuit produces, whereas a stored-field problem would still have made three real API calls
+that each returned a rejection someone could have surfaced.
 
-Pull the BOL 160135857 record from the owning account and read `dispatched`, the dispatch date, and
-the status string. **If they show `false` / empty / a non-dispatch status, the timeline could not
-have drawn that checkpoint from stored state**, the hypothesis is dead, and the cause is one of the
-optimistic-local-state candidates above. If they show a dispatched state despite three rejections,
-the hypothesis holds and the fix belongs at the boundary — the timeline must reflect tender outcome,
-not record state, and a rejected tender must not be storable as dispatched.
+The fix is different in kind, and so is the severity: a stored-field problem is "the timeline reads
+the wrong source", while this is "a dispatch can be reported without being attempted." The second
+demands a structural guarantee — no success return may originate from a path that made no call —
+not a change to how a checkpoint is drawn.
 
-**Do not fix before this is answered.** The two causes need opposite fixes, and §8.863's whole point
-is that guessing which one is live is how this class survives.
+**CANDIDATE B — optimistic UI paint.** `:7284` paints the dispatch button green with "Dispatched!"
+in the click handler, and `:5926` renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local
+UI state, not record state. Real, but it is a display defect and the lesser of the two.
+
+### THE DISCRIMINATING TEST — a procedure, runnable by anyone with account access
+
+**One read discriminates between two causes that need opposite fixes.** Written to be followed by
+someone who did not investigate this and does not need to read the rest of the section.
+
+**Prerequisite:** access to the account that owns BOL **160135857**. It is not the Haynes account —
+`fetchBookingByBOL` was run for both 160135857 and 160135858 from a Haynes session and returned
+not-found for each, which reflects that lookup's scope, not the BOLs' existence.
+
+**Step 1 — get a token.** Log into the portal as the owning customer. In DevTools console,
+`await getToken()` returns the bearer token the portal already uses. No new credential is needed.
+
+**Step 2 — read the record.** Either of these; the second is the portal's own helper and is easier:
+
+```js
+// A. direct — the endpoint the portal uses for a single BOL by number
+const t = await getToken();
+const r = await fetch('https://freightandlogistics-api.shipprimus.com/applet/v1/book/bolnumber/160135857',
+                      { headers: { Authorization: 'Bearer ' + t } });
+const rec = await r.json();
+console.log(r.status, rec);
+
+// B. via the portal helper (unwraps data/results for you)
+const rec = await fetchBookingByBOL('160135857');
+```
+
+**Step 3 — read exactly these four fields** and record them verbatim:
+
+| Field | Why it matters |
+|---|---|
+| `dispatched` | first term of the `disp` union at `portal.html:7650` |
+| `dispatchDate` (also `dispatchedDate`) | second term — a date alone lights the checkpoint |
+| `status` (also `Status`) | third term — matched against `/DISPATCH\|PICKED UP\|IN TRANSIT\|OUT FOR\|ARRIV\|DEPART\|DELIVER\|POD/` at `:7647` |
+| `proNumber` / `pro` | a PRO usually means a carrier really did accept; its absence supports rejection |
+
+**Step 4 — read off the verdict:**
+
+| Observation | Conclusion | Fix belongs |
+|---|---|---|
+| **Any** of: `dispatched === true`, a non-empty dispatch date, or a status matching that regex | **Stored-state hypothesis HOLDS.** Primus recorded a dispatched state despite three rejections, and the timeline faithfully rendered it | At the boundary: the timeline must reflect **tender outcome**, not record state, and a rejected tender must not be storable as dispatched |
+| **All** of: `dispatched` falsy, dispatch date empty, status not matching | **Stored-state hypothesis is DEAD.** The timeline could not have drawn that checkpoint from this record | Candidate A (`:6230`) or B — and A is the one to check first, because it is the one that can report a dispatch that never left the browser |
+| Record not found even from the owning account | Nothing is ruled out. Do not proceed on assumption — re-check the BOL number against the original observation | — |
+
+**Step 5 — if the hypothesis dies, discriminate A from B.** Re-attempt a dispatch on a *test* BOL
+(Haynes) with the Network tab open. **If no request to `/applet/v2/dispatch/` is made and the UI
+still reports success, Candidate A is live** and is the higher-severity finding in this section.
+
+**Do not fix before Step 4 is answered.** The two causes need opposite fixes, and §8.863's whole
+point is that guessing which one is live is how this class survives.
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
