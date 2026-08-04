@@ -15700,99 +15700,105 @@ function _gateFinalText(finalText, ctx) {
       }
     }
 
-    // ── 2b-Q. THE SAVE ASKED AS A QUESTION — the interrogative half of 2b ────────────────────────
-    // 2b enforces a save the model DECLARES ("saving it for you now"). It is structurally blind to
-    // the same stall phrased as a QUESTION, because its sentence filter excludes every sentence
-    // carrying a '?' — so "good to save it?" is not a promise it can see, and no other block in this
-    // gate looks at save language at all. Live: the customer says "save the shipment", the model
-    // answers with its own question and calls nothing. Three things then go wrong at once. The
-    // customer is asked permission for a REVERSIBLE write they just requested (nothing reaches a
-    // carrier until dispatch — asking is the dispatch rule, not the save rule). a37ea40's fixed copy
-    // never renders. And _pendingDraftSaveConsent compares the last bot turn to SAVE_DRAFT_CONFIRM
-    // BYTE-FOR-BYTE, so a paraphrase shows the customer the same words while leaving the state false
-    // — their "yes" cannot reach the deterministic save-consent route, and one save becomes 2-3 turns.
+    // ── 2b-Q. THE SAVE THAT DID NOT HAPPEN — an OUTCOME check, not a phrasing check ──────────────
+    // SUPERSEDES the question-shape detector shipped in 5f09bdf, which was live-proven inert. That
+    // version classified the model's SENTENCES: it looked for a save-ish phrase inside a sentence
+    // carrying a '?'. Two real transcripts killed it on the first try:
+    //   * "Got it — just need two quick things before I save: 1. PO or reference number — got one,
+    //     or should I leave it blank? 2. Special instructions — anything the driver should know?"
+    //     The save reference sits in a sentence with NO '?'; the two '?' sentences mention no save.
+    //   * "…no PO, no special instructions — ready to save?"  Bare verb, no object after it.
+    // Both stalled a save the customer had explicitly asked for, and both slipped the regex. The
+    // lesson is not that the regex was too narrow — it is that CLASSIFYING PROSE IS THE WRONG
+    // INSTRUMENT. Any regex over model text is a guess about phrasing, and the model has unbounded
+    // ways to phrase a stall (and can do it in another language entirely).
     //
-    // THE MECHANISM IS GUARD 1'S, POINTED AT THE AGENT'S OWN OUTPUT: a concept regex over the model's
-    // sentences that DO carry '?'. It reads the model's mouth and never the customer's words — the
-    // only save-request predicates in this file remain _isExplicitShipmentSave / _isAmbiguousSaveIntent,
-    // which are CALLED here, never extended, and _draftSaveVerdict stays the one evaluator.
-    //
-    // ORDERING — 2b RUNS FIRST AND IS UNTOUCHED. The two sentence sets are disjoint by construction
-    // (2b: no '?'; here: '?' required), so on a normal turn only one can match. Where a single reply
-    // carries BOTH a declaration and a question, 2b claims the write through the SYNCHRONOUS
-    // window._gateSaveInFlight latch it sets before scheduling its promise — and that latch is a
-    // precondition below, so at most one save can ever be gate-fired in a turn. Sitting after 2b and
-    // before 2c/2d also means those two only ever see the already-corrected text; both merely APPEND
-    // to it, and both derive from _sentences(text), so a text this block empties is inert to them.
-    var _saveAskRe = /\b(?:sav(?:e|ing)\s+(?:it|that|this|everything|your shipment|the\s+(?:quote|rate|shipment|booking|load))|go(?:ing)?\s+ahead\s+and\s+sav(?:e|ing))\b/i;
-    var _saveAskIs = function (s) { return /\?/.test(s) && _saveAskRe.test(s); };
-    var _saveAsks = _sentences(text).filter(_saveAskIs);
-    if (_saveAsks.length) {
-      var _dsvQ = null;
-      try { _dsvQ = (typeof _draftSaveVerdict === 'function') ? _draftSaveVerdict() : null; } catch (e) { _dsvQ = null; }
-      if (_dsvQ === 'ask') {
-        // (b) THE CANONICAL QUESTION IS THE ONE THAT MUST RENDER — byte-for-byte, from the 7543
-        // constant, because _pendingDraftSaveConsent compares against exactly that string. Same
-        // replacement 2b performs when it catches the declarative form on this verdict.
-        console.log('[FP] gate: the model asked its own save question — replacing with the canonical consent copy');
+    // SO THE TRIGGER IS THE MISSING WRITE, NOT THE WORDING. The customer explicitly asked for a
+    // save; the turn is about to end; no write tool ran. That is a defect whatever the reply says,
+    // and it is decidable from state the gate already has. NOTHING here inspects what the model
+    // wrote. Note this also removes the PO / special-instructions stall as a category: those are
+    // OPTIONAL fields, and the standing rule is that Save is never blocked on a missing field.
+    var _dsvQ = null;
+    try { _dsvQ = (typeof _draftSaveVerdict === 'function') ? _draftSaveVerdict() : null; } catch (e) { _dsvQ = null; }
+
+    // (b) VERDICT 'ask' — the canonical question is the ONLY acceptable text on this turn.
+    // Byte compare against the 7543 constant, because _pendingDraftSaveConsent compares the last bot
+    // turn against exactly that string: a paraphrase shows the customer the right words and leaves
+    // the state FALSE, so their "yes" never reaches the deterministic save-consent route. That is
+    // precisely how the live read-back ("…no special instructions — ready to save?") broke it.
+    // Any non-canonical text is replaced — no question-detection, nothing to phrase around.
+    // WHAT IT COSTS: a reply that bundled an unrelated answer with the ambiguous save ("save the
+    // quote, and what's the transit time?") loses the transit answer. Accepted: an ambiguous save is
+    // the one thing on that turn that can write freight, and the customer can ask again in one line.
+    if (_dsvQ === 'ask') {
+      if (text !== SAVE_DRAFT_CONFIRM) {
+        console.log('[FP] gate: non-canonical text on an ambiguous-save turn — replacing with the consent copy');
         text = SAVE_DRAFT_CONFIRM;
         out.enforced = true;
-      } else if (_dsvQ === 'refuse') {
-        // (c) THE QUESTION IS ALREADY ON SCREEN and this turn did not answer it. Asking again is the
-        // verbatim-repeat trap, and it would also displace the copy the pending state is keyed on.
-        // Strip the ask, keep the rest of the reply — the customer still gets an answer to whatever
-        // they actually said. Nothing is written: no consent exists.
-        console.log('[FP] gate: save question suppressed — the consent question is already pending and unanswered');
-        text = _clean(_sentences(text).filter(function (s) { return !_saveAskIs(s); }));
-        out.enforced = true;
-      } else if (_dsvQ === null && window._bookingPanelContainer && !_tc.save) {
-        // (a) NULL, WITH A SAVE REQUEST ON THIS TURN — the customer asked and the evaluator found no
-        // reason to stop, so the save is owed and the question is the defect. Both arms of the
-        // verdict's own disjunction count, unmodified: an EXPLICIT shipment save (which has always
-        // written immediately, with no question), and an ambiguous one on a turn where the question
-        // is already on screen (which the evaluator reads as the yes).
-        // THE REQUEST IS REQUIRED, and this is the whole reason the gate reads the customer's turn:
-        // a null ALSO covers "nothing save-related happened", and firing there would let the model
-        // volunteer "want me to save it?" into a real write — agent prose becoming shipment state,
-        // which is the one thing this gate exists to forbid.
-        var _uT = (typeof _lastCustomerTurn === 'function') ? _lastCustomerTurn() : '';
-        var _askedToSave = !!((typeof _isExplicitShipmentSave === 'function' && _isExplicitShipmentSave(_uT))
-                           || (typeof _isAmbiguousSaveIntent === 'function' && _isAmbiguousSaveIntent(_uT)));
-        var _lockOkQ = !!(window._bookingLock && window._bookingLock.rate);
-        var _fZipsQ = null;
-        try { _fZipsQ = (typeof collectBookingForm === 'function') ? collectBookingForm() : null; } catch (e) {}
-        var _zipsOkQ = !!(_fZipsQ && _fZipsQ.shipper && _fZipsQ.shipper.zip && _fZipsQ.consignee && _fZipsQ.consignee.zip);
-        if (window._gateSaveInFlight) {
-          // A GATE-FIRED SAVE IS ALREADY RUNNING — 2b caught the declarative half of this very reply
-          // ("I'll save it for you now. Good to save it?"), or a save fired a beat earlier is still
-          // settling. The write is covered either way, so the question is simply false: strip it and
-          // fire NOTHING. This is the no-double-write branch, and it is why the latch is read here
-          // rather than in the outer condition — mutual exclusion must still remove the question.
-          console.log('[FP] gate: save question dropped — a gate-fired save is already in flight this turn');
-          text = _clean(_sentences(text).filter(function (s) { return !_saveAskIs(s); }));
-          out.enforced = true;
-        } else if (_askedToSave && _lockOkQ && _zipsOkQ) {
-          // Identical fire to 2b's: the ONE canonical save path, the same synchronous in-flight
-          // latch, and the same result handling. _execSaveShipment returns NO message when
-          // submitBookingOnly already rendered the confirmation (confirmationRendered), so honouring
-          // it is what this `if (r.message || r.error)` already does — a save can never confirm twice.
-          window._gateSaveInFlight = true;
-          console.log('[FP] gate-enforced save — the model asked instead of saving; firing _execSaveShipment()');
-          Promise.resolve().then(function () { return _execSaveShipment({}); }).then(function (r) {
+      }
+    } else if (_dsvQ === 'refuse') {
+      // (c) UNCHANGED from 5f09bdf. The question is on screen and this turn did not answer it; the
+      // tool route renders SAVE_DECLINED_MSG and ends the turn. Reaching the gate here means the
+      // model did not call save_shipment, so there is no write to stop and nothing to correct —
+      // the customer's actual question still gets its answer.
+      void 0;
+    } else if (_dsvQ === null) {
+      // (a) EXPLICIT SAVE, NO WRITE — force the save the customer asked for.
+      // Every condition is a fact about STATE, never about the reply:
+      //   * the last customer turn is an EXPLICIT shipment save (7609, called unmodified — the same
+      //     predicate _draftSaveVerdict itself uses at 7652). NOT the ambiguous arm: an ambiguous
+      //     save with a null verdict means the consent question is already on screen and was
+      //     answered, which the deterministic save-consent route (18448) owns.
+      //   * the booking panel is open and a carrier is LOCKED — there is a definite thing to save.
+      //   * the ZIPs are present. This is the false-positive guard that matters: without them the
+      //     save cannot succeed, and a model asking for a missing ZIP is asking a REAL blocking
+      //     question. Optional fields (PO, special instructions) are deliberately NOT in this set.
+      //   * NO write tool ran this turn — save, book, or dispatch. Book and dispatch are in the set
+      //     because a FAILED book/dispatch does not end the turn, and firing a save behind one risks
+      //     a second write for freight that may already have a BOL.
+      //   * no gate-fired save is already in flight (2b's declarative branch sets this latch
+      //     SYNCHRONOUSLY at 15665, before its promise runs — which is what actually makes the two
+      //     mutually exclusive, since _turnToolCalls.save is not set until that microtask executes).
+      var _uT = (typeof _lastCustomerTurn === 'function') ? _lastCustomerTurn() : '';
+      var _askedToSave = !!(typeof _isExplicitShipmentSave === 'function' && _isExplicitShipmentSave(_uT));
+      var _noWriteRan = !_tc.save && !_tc.book && !_tc.dispatch;
+      var _lockOkQ = !!(window._bookingLock && window._bookingLock.rate);
+      var _fZipsQ = null;
+      try { _fZipsQ = (typeof collectBookingForm === 'function') ? collectBookingForm() : null; } catch (e) {}
+      var _zipsOkQ = !!(_fZipsQ && _fZipsQ.shipper && _fZipsQ.shipper.zip && _fZipsQ.consignee && _fZipsQ.consignee.zip);
+      if (_askedToSave && window._bookingPanelContainer && _noWriteRan && !window._gateSaveInFlight && _lockOkQ && _zipsOkQ) {
+        // ORDERING — the gate is the LAST thing in the turn. Every tool the model called has already
+        // executed and been awaited by the dispatch loop before this runs, so on a mixed turn
+        // ("save it but change the weight to 500 first") the change is on the form and, when it
+        // carried getRates, already re-rated. The ONE thing that can still be settling is a rate
+        // pull the tool path did not await, so the fire chains behind it rather than writing a rate
+        // that is about to move. Guarded on the flag because _awaitRatePull has an unconditional
+        // 700ms floor and must not be paid on every save.
+        window._gateSaveInFlight = true;
+        console.log('[FP] gate-enforced save — the customer asked for a save and the turn ended without one; firing _execSaveShipment()');
+        Promise.resolve()
+          .then(function () { return window._ratePullInFlight && typeof _awaitRatePull === 'function' ? _awaitRatePull() : null; })
+          .then(function () { return _execSaveShipment({}); })
+          .then(function (r) {
             window._gateSaveInFlight = false;
+            // No message when submitBookingOnly already rendered the confirmation
+            // (confirmationRendered) — so a save can never confirm twice.
             if (r && (r.message || r.error)) appendMessage('bot', r.message || r.error);
-          }).catch(function (e) {
+          })
+          .catch(function (e) {
             window._gateSaveInFlight = false;
             console.warn('[FP] gate-enforced save failed', e);
             appendMessage('bot', 'The save did not go through — please try again, or use the Save Shipment button on the booking panel.');
           });
-          text = _clean(_sentences(text).filter(function (s) { return !_saveAskIs(s); }));
-          out.enforced = true;
-        }
-        // NOT SAFELY PERFORMABLE (no request behind it, no carrier locked, no ZIPs) → this block does
-        // NOTHING and the reply passes through exactly as it does today. Deliberate: there is no new
-        // copy and no new failure mode on the paths this change is not about.
+        // REPLACE THE REPLY ENTIRELY. Whatever the model said, it was a stall on a write that is now
+        // happening, so none of it is true any more; the confirmation is rendered by code. enforced
+        // keeps NEVER-SILENCE from resurrecting the stall into the empty text.
+        text = '';
+        out.enforced = true;
       }
+      // NOT SAFELY PERFORMABLE (no explicit request, a write already ran, no carrier, no ZIPs) →
+      // this block does NOTHING and the reply passes through exactly as it does today. Deliberate:
+      // no new copy and no new failure mode on the paths this change is not about.
     }
 
     // ── 2c. PROMISED BOOK/DISPATCH — NEVER gate-fired (irreversible); truth-correct instead ──
