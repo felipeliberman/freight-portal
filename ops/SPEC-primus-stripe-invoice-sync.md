@@ -435,6 +435,20 @@ In practice:
   from an artifact you produced yourself.
 - An exit code is evidence that a command ran, not that it did what you wanted.
 
+**Added 2026-08-04 — enumerate the assumptions before drawing the conclusion.** When a conclusion
+rests on inference rather than direct observation, write the assumptions down as explicit claims
+*first*, then check them. The failure this prevents is not the visible one.
+
+Worked example from the day it was added (§8.868). Two errors, one visible and one not:
+
+| | the error | how it went |
+|---|---|---|
+| `--date=format-local:'%Y-%m-%dT%H:%M:%SZ'` printed PDT and labelled it `Z` — the `Z` was a literal typed character | **Visible, and it died in two minutes.** It was stated, so it was checkable |
+| "the deployed script equals the source committed around that time" | **Load-bearing, and it went unchecked for the whole analysis** — because it was never stated. It was disproven only by pulling the bundle |
+
+The dangerous assumptions are the ones that feel too obvious to write down. An unstated assumption
+cannot be falsified by anyone, including its author.
+
 ### 0.26 Code citations carry an anchor — STANDING RULE
 
 **Every `portal.html:NNNN` citation (or any line-number citation into a large file) must carry a
@@ -2082,8 +2096,17 @@ Assume no memory of the session that produced this. Everything below is committe
 
 ### The three held stops
 
-1. **Nothing is created in Stripe.** The worker holds no Stripe key. All 11 pilot invoices have been
-   rendered in memory and read; none exists anywhere.
+1. **Nothing is created in Stripe.** ~~The worker holds no Stripe key.~~ **THE SECOND SENTENCE WAS
+   FALSE IN PRODUCTION — discovered 2026-08-04, see §8.869.** A restricted test key
+   (`invoice-sync-test`) was created on 2026-08-03 and bound to the deployed Worker as
+   `STRIPE_RK_TEST`; the project record never mentioned it. It is now revoked. **The first sentence
+   holds and is now positively verified** — Stripe reports the key was never used, and the deployed
+   bundle contains zero Stripe egress. All 11 pilot invoices have been rendered in memory and read;
+   none exists anywhere.
+
+   > This entry is struck through rather than rewritten on purpose. The record and production
+   > diverged for a day and nothing detected it; a clean reword would erase the only evidence that
+   > the gap is possible.
 2. **No customer-facing wording has been written by the assistant.** Still true: the dispute
    notice now rendering (C1, §5.5) was **written by the owner**, not drafted here. `DISPUTE_NOTICE_PENDING`
    remains the fallback whenever a caller supplies no notice, and that case is still send-blocked
@@ -2142,6 +2165,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B3 | The portal payment surface and Stripe invoices can address the same invoice (dissolved by §0.05's architecture, NOT fixed — it returns if the hosted page is ever made payable) | §0.1.2 |
 | B4 | ~~Tracking is broken now~~ — **WRONG, corrected 2026-08-03.** There was no outage: nothing has called `track-proxy` since 2026-07-30, and tracking works today on `fl-tracking` (live-verified, both routes). The row is kept rather than deleted because the error is the lesson — a dead dependency was filed as a customer-facing emergency without checking whether anything reached it. The real live defect it was hiding (`?bol=` returning 200 on upstream failure, rendering our outage as the customer's bad number) is **FIXED**. Retiring the dead Worker is cleanup → **D6** | §8.861, §8.863 |
 | B5 | `www.freightandlogistics.com/demo-session` — **works today**, so NOT broken, but it is Wix-hosting-dependent and is the only remaining `.com` content dependency in the repo | §8.862 |
+| B6 | **An unaccounted-for LIVE restricted Stripe key.** `rk_live_…9lmX` on the same account, created 2026-07-14, **last used 2026-08-04 — today**. Nothing in this project accounts for it; it is a different environment, not `invoice-sync`. **DO NOT TOUCH, DO NOT REVOKE — it is in use by something.** Investigate later this week via the Stripe live request log to identify the caller | §8.869 |
 
 ### C. Before anything is created in Stripe
 
@@ -2151,6 +2175,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | C2 | ~~`ap@paylessrugs.com` verification~~ — **not a pilot blocker**: the pilot subject is the owner's test account, and `felipe@freightandlogistics.com` was cleared **by owner assertion** (no check exists). **Returns as a hard blocker for any real customer**; the unverified-address finding in §5.6 stands untouched | §5.6 |
 | C3 | The Stripe never-payable configuration, and a test that pins it | §0.05 |
 | C4 | Void-awareness detection — a corrected primary currently classifies as a rebill | §8.9 |
+| C5 | **The deployed Worker matches no commit — it is a mid-phase-4 working tree.** The running artifact is not reproducible from git; every claim about what is live needs a bundle pull; the deployed code was never reviewed as a diff. Rule adopted, not yet enforced: **nothing deploys from a dirty tree again** — a deploy names a commit, the tree is clean at it, the bundle is verified against a re-bundle. Load-bearing at STOP 1 lift, where "deployed equals reviewed" starts carrying weight it does not carry today | §8.868, §8.866 |
 
 ### D. Not started
 
@@ -2163,6 +2188,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | D5 | Dunning intervals, measured rather than reasoned | §7.1.1 |
 | D6 | **Retire the `track-proxy` Worker.** Dead code, still deployed and still answering. No repo consumers, fully superseded by `fl-tracking`. Confirm no dashboard route and no traffic first, then delete the Worker and `track-proxy/` | §8.861 |
 | D7 | **Delete the `#public-view` widget** (`portal.html:997-1865`) and point logged-out `/portal` at the landing chat. Never executed in 50 days / 619 versions; duplicates a working surface. Owner decision 2026-08-03: delete, do not repair | §8.861 |
+| D8 | **The `wrangler.toml` PENDING block is hand-maintained and has already drifted once.** On 2026-08-04 it listed one of two outstanding ALTERs, so the mechanism meant to catch an unapplied migration had failed silently *before* the hazard did — and nothing in the repo would have stopped a deploy of a `main` that required one. Two independent fixes: a **pre-deploy check that refuses to deploy while the block is non-empty** closes the hazard; **generating the block from `schema.sql`** closes the drift | §8.5, `invoice-sync/wrangler.toml` |
 
 ### E. Parked, deliberately
 
@@ -3098,6 +3124,225 @@ Consequences that phase 9 must respect:
   complete merely because the loop finished.
 
 
+## 8.866 How to pull and verify a deployed Worker bundle — METHOD
+
+Established 2026-08-04 on `invoice-sync`, deliberately while the answer was expected to be boring.
+**"Deployed code equals committed code" is an inference, and it is wrong for this Worker today
+(§8.868).** Anything claimed about what is live needs this procedure, not a git log.
+
+**1. Pull the deployed script.**
+
+```
+TOK=$(grep -m1 '^oauth_token' ~/Library/Preferences/.wrangler/config/default.toml | sed 's/.*= *"//; s/"$//')
+curl -s -H "Authorization: Bearer $TOK" \
+  "https://api.cloudflare.com/client/v4/accounts/b800adf3aeb0eb8ecbf33032450a24a2/workers/scripts/<name>" \
+  -o deployed.raw
+```
+
+Use the **base** `/scripts/<name>` path. The `/content` sub-path returns error 10405 for an OAuth
+token. The response is **multipart**; the script is the `name="index.js"` part, and it is
+esbuild-bundled — comments survive, but formatting and identifier printing do not.
+
+**2. Re-bundle the candidate commit and diff.** Export it without disturbing the working tree:
+
+```
+git archive <commit> invoice-sync | tar -x -C <scratch>
+cd <scratch>/invoice-sync && wrangler deploy --dry-run --outdir=<out>    # --dry-run does NOT upload
+```
+
+Then normalise (strip `sourceMappingURL`, trailing whitespace, blank lines) and `diff`. Only
+cosmetic esbuild-printing differences should remain. **Count the `<` and `>` lines separately** — a
+one-directional diff means one side is a strict superset, which is what identifies a partial build.
+
+**3. Read the result as a fact, not a formality.** On `invoice-sync` this produced 24 lines present
+only in the deployed script and 181 present only in the re-bundled candidate, which is how the
+finding in §8.868 surfaced.
+
+**Deploy verification, going forward:** a deploy names a commit; the tree is clean at that commit;
+the deployed bundle is pulled and diffed against a re-bundle of it. See §8.868 for why.
+
+
+## 8.867 TIME VALUES CARRY THEIR INTERPRETATION — STANDING RULE
+
+**A time value crossing a boundary carries its UNIT, its ZONE, and its MODALITY, or it is not
+portable.** Three clauses, one root cause: a time value travelling without the metadata needed to
+read it correctly. Each clause below has an instance in this system.
+
+**Clause 1 — UNIT.** `cache.expires_at` holds **seconds** when written by `primus.js:40,127-134`
+and **milliseconds** when written by `customers.js:263-281`, in one column. Each reader compares in
+its own writer's unit, so **this is not a live defect** — but any generic sweep
+(`DELETE FROM cache WHERE expires_at < ?`) is wrong for one of them, and it reads as a bug at 3am.
+**Out of scope, recorded.** When it is fixed, prefer **renaming the columns to carry the unit**
+(`expires_at_ms` / `expires_at_s`) over normalising the values: a name a generic sweep cannot
+misread beats a comment asking it not to.
+
+**Clause 2 — ZONE.** 2026-08-04, during the §8.868 investigation:
+`git log --date=format-local:'%Y-%m-%dT%H:%M:%SZ'` renders **local** time, and the `Z` was a literal
+typed character. PDT was stamped as UTC and a commit appeared to fall on the wrong side of a deploy.
+**Analysis defect only, not a data defect** — verified, not assumed: no locale-dependent formatting
+exists in `invoice-sync/src` or `test` (zero hits for `toLocale|Intl\.|getTimezoneOffset|
+toDateString|toTimeString`); every timestamp written to D1 is a timezone-free epoch integer from
+`Date.now()`; and the one place that formats a date, `windowFor`/`ymd` at `invoices.js:15-23`, uses
+`getUTCFullYear/getUTCMonth/getUTCDate` explicitly. Had it used the local getters, the poll window
+would drift a day near midnight UTC.
+
+**Clause 3 — MODALITY.** *Estimated* is not *occurred*, and *scheduled* is not *happened*. The
+instance is **B0 / §8.864**: `estimatedPickupDate` — a requested, intended time — is assigned to
+`dispatchDate` at `portal.html:7631` and lights a completed "Dispatched" checkpoint at `:7650`. The
+value's unit and zone are both fine; what was dropped is what kind of time it is.
+
+> **IDENTIFIED BY THE ASSISTANT, NOT THE OWNER.** The owner named clauses 1 and 2. B0 as the
+> modality instance is the assistant's identification and is open to rejection; B0's status as a
+> defect is unaffected either way.
+
+**Why modality is in the rule rather than in a taxonomy note: it is checkable by name.** A field
+named `estimated*`, `requested*`, `scheduled*` or `expected*` must not flow unexamined into one
+named for an occurrence (`*Date` on an event, `dispatchDate`, `deliveredAt`, `paidAt`). That is
+greppable at review time, which is what makes this a rule and not an observation.
+
+
+## 8.868 THE DEPLOYED WORKER IS NOT REPRODUCIBLE FROM GIT — OPEN
+
+**Established 2026-08-04 by pulling the deployed bundle (§8.866). The deployed `invoice-sync`
+script matches NO commit.** It is a mid-development working tree.
+
+Evidence, in both directions:
+
+- It **contains** `resolveClaimedCustomers` and `src/customers.js` — phase-4 code committed in
+  `22ab820` at **2026-08-03 23:06:18 UTC**, which is **57 minutes AFTER** the final deploy at
+  **2026-08-03 22:09:41 UTC**.
+- It **lacks** `quarantine`, `auditValues`, `CUSTOMER_INFO_FIELDS` and `newValueSink` — which landed
+  in that *same* commit — and carries an older hand-written `narrowInvoiceDetail`.
+
+So it sits strictly between `c82691c` and `22ab820`: someone deployed to test mid-edit, then
+committed the finished work an hour later. **This is NOT the dashboard drift the estate already
+knows about** (`stripe-payments`, 2026-07-20). Different mechanism, same consequence, and this
+Worker is the one whose `wrangler.toml:9-10` claims `src/` is the only source of truth for it.
+
+**Three consequences:**
+
+1. **The running artifact is not reproducible from git.** There is no commit to check out that
+   rebuilds it.
+2. **Every future claim about what is live requires another bundle pull**, because history cannot
+   answer the question. That is now a permanent cost, not a one-off.
+3. **Whatever is deployed contains code that was never reviewed as a diff.** A working tree is
+   whatever happened to be on disk, including anything uncommitted.
+
+**THE RULE, written down now and acted on later: nothing deploys from a dirty tree again.** A deploy
+names a commit; the tree is clean at that commit; the deployed bundle is verified against a
+re-bundle of it (§8.866). Before phase 9 this stops being hygiene and becomes the thing that makes
+"deploy the reviewed code" mean anything at all.
+
+**Not fixed by redeploying.** A clean redeploy from `main` would make the artifact reproducible
+again, but `main` currently carries phases 5-8, so it is a functional change and not a hygiene
+step — it needs its own decision, and it must not be smuggled in as cleanup.
+
+**UNRESOLVED CORNER, stated rather than solved.** The obvious escape route is closed in both
+directions: production runs an artifact that **cannot be rebuilt** and **cannot be safely replaced**.
+Left open deliberately on 2026-08-04. Do not resolve it by reflex.
+
+**REACHABILITY — nothing invokes it. The artifact is inert.** Verified 2026-08-04 against the
+deployed configuration, not the repo `wrangler.toml` (which is the same inference that failed above):
+
+| vector | result |
+|---|---|
+| cron schedules | `[]` — API `success: true` |
+| `workers.dev` subdomain | `enabled: false`, `previews_enabled: false` |
+| custom domains | 0 account-wide |
+| service bindings from other Workers | 0 — **16 of 16** scripts queried, 0 failures |
+| queue consumers | 0 queues on the account |
+| zone routes | 0 total in the single zone (`freightandlogistics.ai`), 0 to `invoice-sync` |
+| callers in this repo | none outside `invoice-sync/` itself |
+
+**So this is a phase-9 problem, not a live exposure.** It becomes one the moment any trigger is
+added — and the trigger is the cheap part, which is the hazard.
+
+> **Method note, because it nearly went the other way.** Four of these lookups initially returned a
+> clean-looking negative that was actually a failed query: an expired OAuth token, a token without
+> `zone:read`, a `grep '"success":true'` that missed the API's pretty-printed `"success": true`, and
+> a `for x in $VAR` loop that did not split because **zsh does not word-split unquoted variables**.
+> Every one produced "no results found", which is indistinguishable from "no results exist". The
+> counts above are reported *with* their query-success denominators for that reason (§0.25).
+
+
+## 8.869 THE STOP 1 CREDENTIAL — the record and reality diverged, and nothing detected it
+
+**Found 2026-08-04, by the owner, in the Stripe dashboard, after the Cloudflare API showed a
+`secret_text STRIPE_RK_TEST` binding on the deployed Worker.** The project record said no Stripe key
+had ever been loaded. It had.
+
+**The key.** `invoice-sync-test`, test mode, account `acct_1TjE6BAJRfa3jdmD`, created 2026-08-03.
+**Last used: never** — the dashboard field was an em dash, not a date. Scopes, read off the edit
+page: **Customers = Read, Invoices = Write**, every other resource **None** — including Payment
+Intents, Charges, Payment Links, Payment Methods, Payouts, Checkout Sessions, Products and Prices.
+**Now EXPIRED** — revoked by the owner in the Stripe dashboard.
+
+**The Cloudflare binding was deliberately left in place and untouched.** Removing it via `wrangler`
+risks pushing a new version of the deployed script, and that script is the unreproducible partial
+working tree (§8.868). The binding is inert now that the key behind it is revoked. **Do not "tidy"
+it** — that is a deploy wearing a cleanup's clothes.
+
+### What this settles
+
+1. **"Nothing has ever been created in Stripe" — TRUE, and now positively verified rather than
+   assumed.** A never-used key can have created nothing. Two independent sources agree: Stripe's own
+   "last used" is empty, and the deployed bundle contains no Stripe egress (below).
+2. **"No Stripe key has ever been loaded" — FALSE.** One was created and bound on 2026-08-03 and the
+   project record does not contain it.
+3. **STOP 1 was believed to be two independent layers. It was one.** The belief was "no key" AND "no
+   code that calls Stripe". The key was live and bound the entire time, so the *only* thing standing
+   between the deployed Worker and Stripe was that its code constructs no Stripe request — and that
+   was **unverified until 2026-08-04**.
+
+### The egress check that closes layer 2 — verified, not reasoned
+
+Grepped over the 35,299-byte deployed bundle:
+
+| probe | hits |
+|---|---|
+| `api.stripe.com` / `stripe.com` | **0** |
+| `Stripe-Version` / `Idempotency-Key` | **0** |
+| `v1/invoices` / `v1/customers` | **0** |
+| absolute URL literals of any kind | **0** |
+| `fetch(` call sites | **3**, all Primus: `${this.creds.base}/login`, `this.creds.base + full`, and the `fetch(request)` handler |
+
+The build **does** read the secret — `env.STRIPE_RK_TEST` and the `rk_/sk_` prefix validation are
+present — and then never sends it anywhere. So the key was loaded into memory on every run and
+validated, which is corroborating evidence it was real and correctly prefixed. Stripe's "never used"
+and our "zero egress" are two independent paths to the same conclusion.
+
+### Premise count for the day
+
+**Four premises checked on 2026-08-04. Three failed.**
+
+| premise | outcome |
+|---|---|
+| deployed code == committed code | **FAILED** — §8.868 |
+| deploy/commit timestamps establish what is deployed | **FAILED** — §8.867 clause 2, and the working tree defeats it regardless |
+| no Stripe key has ever been loaded | **FAILED** — this section |
+| nothing has ever been created in Stripe | **HELD** — and upgraded from assumption to verified |
+
+The one that held is the one that was load-bearing for customer safety. The three that failed were
+all about *our own record of our own system*, which is the class of belief nothing external
+contradicts until someone looks.
+
+### CREDENTIAL POSTURE FOR TASK 2 — a decision, not an inheritance
+
+The expired key **could not have created a Stripe customer**: Customers was **Read**, not Write. So
+the claim-then-create-customer design (§4.2, `stripe_customer`) could never have run on it.
+
+**Keep that constraint on purpose.** The Task 2 key gets **Invoices = Write, Customers = Read**. The
+owner creates the two pilot customers **by hand in the dashboard**.
+
+**Why:** control 9 says the code must never create a customer implicitly. At **Customers = Read the
+credential enforces that**, rather than a test asserting it — the code *physically cannot* produce a
+customer orphan during the phase where blast radius matters most. Two ARCodes by hand costs nothing.
+`Customers = Write` is added later, when creating customers is intended behaviour rather than a
+failure mode.
+
+**This does not remove control 9.** Belt and braces: the credential makes the failure impossible, the
+test makes the *intent* explicit and survives the day the scope widens.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
@@ -3191,6 +3436,12 @@ Already configured on the account:
 
 **Changed by this revision:** reminders were configured at 7/15/30 days past due. **Turn them off** for
 phases 1–9 (§7.2).
+
+**Restricted-key scopes — DECIDED 2026-08-04, see §8.869 for the reasoning.** The Task 2 key carries
+**Invoices = Write, Customers = Read**, and nothing else. Customers stays at Read *deliberately*, so
+the credential itself makes implicit customer creation impossible; the two pilot customers are
+created by hand in the dashboard. `Customers = Write` is a later, separate decision. The predecessor
+key (`invoice-sync-test`, created 2026-08-03) carried the same scopes and was revoked unused.
 
 **Pending:** custom email domain (`invoice@freightandlogistics.ai`). Requires DNS + DMARC, blocked on
 the Cloudflare zone for the .ai being active. Use a subdomain to isolate transactional deliverability
