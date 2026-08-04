@@ -2012,6 +2012,83 @@ into **executed credit applications** as incorporated contract text. That means:
 and anything historically sent to customers that may point at the `.com` terms page. A verified
 scope over this repo says nothing about those.
 
+## 8.856 BLOCKING PRECONDITION — Terms versioning, before any Terms edit
+
+**This blocks the 3-business-day billing clause and every future Terms edit.** Editing first and
+versioning after compounds the problem: the 3-day change would itself go in unversioned.
+
+`index.html:1710` writes into every executed credit application: *"Terms and Conditions and Privacy
+Policy (https://www.freightandlogistics.ai/?terms=1), **incorporated into and made part of this
+agreement**"*. So editing the Terms silently repoints **every past signer's agreement** at text they
+never saw.
+
+### Shape of the fix — NOT BUILT, scoped only
+
+1. **A version identifier and effective date rendered on the Terms page itself** — e.g.
+   `v2026.1 · effective 2026-08-03`, visible to a reader, not a comment.
+2. **Prior versions archived at stable URLs** — `?terms=1&v=2026.1` or similar — so a signed
+   agreement can point at what was actually agreed rather than at "current".
+3. **The version recorded on each credit application at signing time.** Today `rec.consents
+   .termsAndConditions` is a **boolean** (`index.html:1710`) — it captures THAT they agreed, never
+   WHAT they agreed to. A version string alongside it closes that going forward.
+
+### What is and is not recoverable — checked, not assumed
+
+| Copy | Recoverable? |
+|---|---|
+| `portal.html` Terms | **Partly.** Full git history exists from 2026-06-14; the claims clause has been touched by exactly ONE commit, `8c846a9` (2026-06-15). So the portal text has been unchanged since it was introduced, and any past date since then is reconstructible with `git show <commit>:portal.html`. |
+| `index.html` Terms | **Partly.** Same picture — introduced `70c8e0c` (2026-06-15), one commit, unchanged since. History runs to 2026-06-09. |
+| **Anything before 2026-06-09** | **LOST.** The repo's initial commit is 2026-06-09. Nothing earlier exists here. |
+| **The Wix copy** | **LOST, entirely.** Never in the repo, no history, no snapshots. Whatever it said on any past date is unrecoverable from anything we control. |
+| **Which version a given customer signed** | **NOT RECORDED, for anyone, ever.** The consent is a boolean. Even where the text is reconstructible by date, nothing ties a specific signer to a specific version — that requires cross-referencing their signing date against git history by hand, and only for the copies above. |
+
+**The honest summary:** the *portal and landing* Terms happen to be reconstructible by date because
+they have not changed since June. That is luck, not a mechanism — the first edit ends it unless
+versioning lands first. The Wix copy and anything a customer signed against it are gone.
+
+## 8.857 OPEN DECISION — the cargo-claims window. Two candidates, they cannot both stand.
+
+**Blocks BOTH the KB edit and the Terms edit.** The number is the owner's to decide; nothing is
+changed until it is.
+
+| Candidate | Window | Clock starts | Where it is published |
+|---|---|---|---|
+| **A** | 10 business days | **invoice date** | `portal.html:9524` §6, `index.html:1930` §12 — the CONTRACT |
+| **B** | 48 hours | **delivery date** | `KNOWLEDGE.md:82`, `:134`, `:245`, `:247` — the AGENT, and the deployed Worker |
+
+They differ in **length and in starting event**, so they cannot be reconciled by rounding — a
+shipment delivered before its invoice issues has the two clocks running in opposite order.
+
+**The agent is currently asserting the one that is NOT in the contract.** `KNOWLEDGE.md:245` states
+B is *"our binding requirement"* and *"always governs"*. A customer told 48 hours who files on day 5
+has been given a deadline the contract does not impose; a customer relying on the contract's 10
+business days is being told by our own AI that they are late.
+
+Same class as the stale fee KB — except this one is **contractual, not a price**.
+
+Deliberately NOT bundled with the 3-business-day billing-dispute decision: different window,
+different subject, and merging them would force one number to justify the other.
+
+## 8.858 §5 HEADING — a RETRIEVAL defect, fix it whatever the number is
+
+`KNOWLEDGE.md` §5 is titled **"Billing, adjustments, claims"** — one section covering three
+subjects. That single heading is the mechanism by which a **billing** question retrieves a **claims**
+deadline, and it will keep happening whatever window is chosen. It is a retrieval defect, not a
+wording one.
+
+**Proposed split — NOT APPLIED:**
+
+| New section | Contents |
+|---|---|
+| **§5a Payment terms** | Net 15, late fees, the $50 reprocessing charge, accepted methods |
+| **§5b Billing disputes** | The NEW 3-business-day window, what documentation is required, the consequence. Unambiguous home for the new clause. |
+| **§5c Cargo claims** | The claims window (pending §8.857), the delivery-receipt rule, our role as agent, carrier liability |
+| **§5d Adjustments** | Reweigh/reclass, storage fees — where "we dispute it with the carrier on your behalf" belongs, since that is US acting FOR the customer, the opposite direction from a customer disputing US |
+
+§5d matters more than it looks: `KNOWLEDGE.md:131` and `:161` currently describe us disputing a
+**carrier** on the customer's behalf, and they live in the same neighbourhood as the customer
+disputing **us**. Two opposite directions under one heading is the same defect one level down.
+
 ## 8.86 LIVE DEFECT — two conflicting claims deadlines, already published
 
 Found 2026-08-03 while inventorying dispute windows. **Reported, not fixed** — out of scope for the
