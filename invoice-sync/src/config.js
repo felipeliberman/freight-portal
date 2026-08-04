@@ -5,6 +5,8 @@
 // anything if the mode is impossible to get wrong by accident, so everything here fails closed:
 // an unset, unknown, or mismatched value throws rather than picking a default.
 
+import { normalizeArCode } from './arcode.js';
+
 const MODES = ['test', 'live'];
 
 /**
@@ -117,7 +119,7 @@ export function loadArAllowlist(env) {
   }
   if (v === '*') return { all: true, codes: new Set() };
 
-  const codes = new Set(v.split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+  const codes = new Set(v.split(',').map(normalizeArCode).filter(Boolean));
   if (!codes.size) throw new Error(`AR_ALLOWLIST parsed to an empty list from ${JSON.stringify(raw)}`);
   return { all: false, codes };
 }
@@ -132,7 +134,7 @@ export function loadArAllowlist(env) {
 export function checkArCode(allowlist, arCode) {
   if (allowlist.all) return { allowed: true, reason: 'wildcard' };
 
-  const code = String(arCode === undefined || arCode === null ? '' : arCode).trim().toUpperCase();
+  const code = normalizeArCode(arCode);
   if (!code) return { allowed: false, reason: 'missing_ar_code' };
   if (allowlist.codes.has(code)) return { allowed: true, reason: 'allowlisted' };
 

@@ -7,6 +7,7 @@
 // detail, consignee names, and amounts to another — unrecoverable in a way a skipped invoice is not.
 
 import { findRows, describeShape } from './envelope.js';
+import { normalizeArCode } from './arcode.js';
 import { fetchInvoiceDetail, auditValues, countEmailDrop, countEmailParse } from './detail.js';
 
 const CACHE_TTL_MS = 24 * 3600 * 1000;
@@ -19,7 +20,7 @@ const CACHE_TTL_MS = 24 * 3600 * 1000;
  * customer record cannot do that — the worst case is serving the same correct data twice.
  */
 export function customerCacheKey(arCode) {
-  return `qbo:ar:${String(arCode).trim().toUpperCase()}`;
+  return `qbo:ar:${normalizeArCode(arCode)}`;
 }
 
 /**
@@ -32,8 +33,8 @@ export function displayNameMatchesArCode(displayName, arCode) {
   if (!displayName || arCode === null || arCode === undefined) return false;
   const idx = String(displayName).lastIndexOf('-');
   if (idx === -1) return false;
-  const suffix = String(displayName).slice(idx + 1).trim().toUpperCase();
-  return suffix === String(arCode).trim().toUpperCase();
+  const suffix = normalizeArCode(String(displayName).slice(idx + 1));
+  return suffix === normalizeArCode(arCode);
 }
 
 /**
@@ -189,7 +190,12 @@ export async function resolveCustomer({ primus, db, ledger, arCode, sampleInvoic
     try {
       const detail = await fetchInvoiceDetail(primus, sampleInvoiceId);
       const ci = detail.customerInfo;
-      if (ci && String(ci.customerCode ?? '').trim() !== String(arCode).trim()) {
+      // DELIBERATE LOOSENING (owner decision 2026-08-04, spec §4b): compared with the SHARED
+      // normaliser, so the two Primus endpoints are judged on the same terms as every other ARCode
+      // comparison. The trade is stated rather than hidden — a case variant ('abc1' vs 'ABC1') now
+      // MATCHES where it previously read as a disagreement. This is a safety check becoming
+      // slightly more permissive, taken deliberately, not tidied into place.
+      if (ci && normalizeArCode(ci.customerCode) !== normalizeArCode(arCode)) {
         // The list and the detail disagree about which customer this invoice belongs to. Never
         // reconciled by preferring one — it means an assumption underneath the join is wrong.
         await ledger.recordException('unmatched_ar_code', String(arCode),

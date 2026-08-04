@@ -9,6 +9,7 @@
 
 import { toCents } from './invoices.js';
 import { auditValues, BANNED_FIELDS, NON_PAYLOAD_FIELDS } from './detail.js';
+import { normalizeArCode } from './arcode.js';
 import { summariseFreight, BOOKING_HOSTILE } from './booking.js';
 
 /** Stripe allows exactly 4 custom fields, 30 chars of name and 30 of value. */
@@ -306,8 +307,10 @@ export function buildStripeInvoice(detail, customer, {
   // silently, and "the two are equal" is an unverified claim about Primus.
   //
   // No fallback. Absent means quarantine.
-  const arCode = customer && customer.arCode;
-  if (arCode === null || arCode === undefined || String(arCode).trim() === '') {
+  // Canonical form throughout: this value is written into Stripe metadata and read back when an
+  // orphan is re-found, so it must match what the ledger and stripe_customer store (spec §4b).
+  const arCode = normalizeArCode(customer && customer.arCode);
+  if (!arCode) {
     return { ok: false, quarantine: { reason: 'missing_claimed_ar_code', fields: ['customer.arCode'] } };
   }
 
@@ -403,13 +406,13 @@ export function buildStripeInvoice(detail, customer, {
   const payload = {
     // Reference only. The customer object is NOT created here and this function holds no Stripe key.
     customer_ref: {
-      ar_code: String(arCode),
+      ar_code: arCode,
       qbo_display_name: customer.displayName,
       email: customer.primaryEmail,
       cc: customer.ccEmails,
       // Both ids on the customer, per §0.2 — a later surprise costs a metadata read, not a migration.
       metadata: {
-        ar_code: String(arCode),
+        ar_code: arCode,
         primus_customer_id: customer.primusCustomerId === null || customer.primusCustomerId === undefined
           ? '' : String(customer.primusCustomerId),
       },
@@ -427,7 +430,7 @@ export function buildStripeInvoice(detail, customer, {
         primus_invoice_id: String(detail.invoiceId),
         primus_invoice_number: number === null ? '' : number,
         bol_number: detail.shipment.BOLNumber === null ? '' : String(detail.shipment.BOLNumber),
-        ar_code: String(arCode),
+        ar_code: arCode,
       },
       custom_fields,
       // §5.5 — renders in email, PDF and hosted page.

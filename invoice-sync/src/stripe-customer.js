@@ -16,6 +16,8 @@
 // create this module claims for cannot execute at all during the pilot (spec §8.869). That is the
 // stronger guarantee. This module is what makes the discipline survive the day it becomes Write.
 
+import { normalizeArCode } from './arcode.js';
+
 /**
  * Every legal `stripe_customer.state`. ONE list, imported rather than remembered.
  *
@@ -49,7 +51,7 @@ function assertState(state) {
  * uniqueness constraint says so.
  */
 export function customerIdempotencyKey(mode, arCode) {
-  return `${mode}-primus-ar-${String(arCode).trim().toUpperCase()}`;
+  return `${mode}-primus-ar-${normalizeArCode(arCode)}`;
 }
 
 export class StripeCustomers {
@@ -74,10 +76,8 @@ export class StripeCustomers {
    *   error: re-seeing a customer is free, which is the whole point.
    */
   async claim({ arCode, qboDisplayName = null }) {
-    if (arCode === null || arCode === undefined || String(arCode).trim() === '') {
-      throw new Error('claim() requires an arCode');
-    }
-    const code = String(arCode).trim();
+    const code = normalizeArCode(arCode);
+    if (!code) throw new Error('claim() requires an arCode');
     const now = Date.now();
     const key = customerIdempotencyKey(this.mode, code);
 
@@ -99,7 +99,7 @@ export class StripeCustomers {
   async get(arCode) {
     return this.db
       .prepare('SELECT * FROM stripe_customer WHERE mode = ? AND ar_code = ?')
-      .bind(this.mode, String(arCode).trim())
+      .bind(this.mode, normalizeArCode(arCode))
       .first();
   }
 

@@ -12,6 +12,8 @@
 // Stripe Search cannot substitute for this: it is index-backed with up to ~1min of lag, so a
 // just-created invoice is not findable and two runs 30s apart both see "no match".
 
+import { normalizeArCode } from './arcode.js';
+
 /** Marks exception rows that are a DATA GAP in one record, not an operational failure. */
 export const QUARANTINE_PREFIX = 'quarantine:';
 
@@ -74,6 +76,13 @@ export class Ledger {
     const now = Date.now();
     const key = idempotencyKey(this.mode, primusInvoiceId, version);
 
+    // Stored in the CANONICAL form, because `ar_code` is a join key: stripe_customer is keyed on
+    // (mode, ar_code) and there is no denormalised copy here, so the two columns must agree
+    // character for character or the join silently misses (spec §4b). A blank normalises to NULL
+    // rather than '' — an empty ARCode is not an ARCode, and '' would land it in
+    // resolveClaimedCustomers' `ar_code IS NOT NULL` sweep, where it does not belong.
+    const arCodeStored = arCode === null || arCode === undefined ? null : (normalizeArCode(arCode) || null);
+
     const res = await this.db
       .prepare(
         `INSERT INTO ledger
@@ -82,7 +91,7 @@ export class Ledger {
          VALUES (?, ?, ?, ?, ?, ?, ?, 'intent', ?, ?, ?, ?)
          ON CONFLICT (mode, primus_invoice_id, version) DO NOTHING`
       )
-      .bind(this.mode, String(primusInvoiceId), primusInvoiceNumber, bolNumber, arCode, customerReference,
+      .bind(this.mode, String(primusInvoiceId), primusInvoiceNumber, bolNumber, arCodeStored, customerReference,
             version, totalCents, key, now, now)
       .run();
 

@@ -3417,6 +3417,105 @@ fact about configuration that nothing verifies.
 Corollary for review: a create path that reads `env.STRIPE_RK_*` directly is a regression of this
 decision, however convenient it looks at the call site.
 
+## 8.870 ARCODE NORMALISATION — the join that justifies the schema was broken
+
+**Found 2026-08-04 while enumerating allowlist boundaries, fixed the same day.** The `(mode, ar_code)`
+join between `ledger` and `stripe_customer` is the ENTIRE justification for `ledger` carrying no
+denormalised `stripe_customer_id` (§4.2). **The two sides did not agree on what an `ar_code` is,** so
+the argument for that schema was unsound and nine controls were about to be written on top of it.
+
+| site | stored/compared as | agreed |
+|---|---|---|
+| `config.js` allowlist parse, `checkArCode` | `.trim().toUpperCase()` | ✔ |
+| `customers.js` `customerCacheKey`, `displayNameMatchesArCode` | `.trim().toUpperCase()` | ✔ |
+| `stripe-customer.js` `customerIdempotencyKey` | `.trim().toUpperCase()` | ✔ |
+| `stripe-customer.js` **claim / get** | `.trim()` — no uppercase | ✘ |
+| `ledger.js` **claim** | raw | ✘ |
+
+Demonstrated before the fix:
+
+```
+ledger.ar_code stored  : [" 1234 ", "ABC1", "abc1"]
+stripe_customer stored : ["1234",   "ABC1", "abc1"]
+join: ledger " 1234 " -> *** NO MATCH ***
+```
+
+Worse than a miss: `abc1` and `ABC1` produced **two** `stripe_customer` rows sharing **one**
+idempotency key, so the second create would return the first customer, `attach` would bind one id
+to two rows, and the partial unique index would throw a raw `UNIQUE` error. **A data quirk surfacing
+as a mis-join alarm.**
+
+**Every ARCode ever observed is plain digits — `5406`, `1234`, `2395` — which hid all of it
+completely.** The code already anticipated alphanumeric codes; that is why `checkArCode` bothered to
+uppercase at all.
+
+### The canonical form
+
+```js
+export const normalizeArCode = v => String(v ?? '').trim().toUpperCase();   // src/arcode.js
+```
+
+**Not a new rule — the one five sites already used, extracted and applied at the three that skipped
+it.** Three deliberate exclusions:
+
+- **NO leading-zero stripping.** `checkArCode` reports `near_miss` when a code differs from an
+  allowlist entry only by leading zeros, because that is a config typo rather than a business fact.
+  Folding zero-stripping in would have **deleted a detection mechanism in the name of consistency**.
+- **NO internal-whitespace collapsing.** A space inside an ARCode is bad data, not a formatting
+  variant; collapsing it silently accepts junk, leaving it distinct fails the allowlist. What the
+  join needs is both sides applying the SAME function — consistency, not aggressiveness.
+- **NO Unicode folding beyond `toUpperCase()`. KNOWN EDGE:** SQLite's `UPPER()` is ASCII-only while
+  JS `toUpperCase()` is Unicode-aware, so a non-ASCII ARCode could make the SQL migration and the JS
+  function disagree. Every ARCode observed is ASCII digits. **Recorded rather than engineered for, so
+  the first non-ASCII ARCode is a known case and not a mystery.**
+
+A blank normalises to **SQL NULL, not `''`** — `''` would land the row in `resolveClaimedCustomers`'
+`ar_code IS NOT NULL` sweep and trigger a QBO lookup for the empty string.
+
+### `exceptions.ref` stays RAW — decision, with the reason
+
+`recordException('unmatched_ar_code', String(arCode), …)` writes an un-normalised ARCode, and
+`UNIQUE(mode, kind, ref)` dedupes on it, so `abc1` and `ABC1` can produce two rows for one problem.
+**Left raw deliberately.** `ref` is **polymorphic** — it also holds invoice ids (`invoice:141604`)
+and document-type codes. Normalising it would apply an ARCode rule to data that is often not an
+ARCode, which is a worse defect than an occasional duplicate exception row. **A dedup key is not a
+join key.**
+
+### `customers.js:192` — a deliberate LOOSENING, taken as a decision
+
+The cross-check that refuses the join when the invoice LIST's `ARCode` and the invoice DETAIL's
+`customerInfo.customerCode` disagree (§3.1) now compares through the shared normaliser.
+
+**The trade, stated rather than hidden: the check becomes slightly MORE PERMISSIVE — `abc1` will
+match `ABC1` — in exchange for the two Primus endpoints being compared on the same terms as every
+other ARCode comparison.** Owner decision 2026-08-04. This is a safety check changing behaviour, not
+housekeeping, and the distinction between a consistency change and a safety change wearing one's
+clothes is why it was raised separately rather than folded in.
+
+A genuine disagreement still fails closed, and a test pins both directions.
+
+### The migration — and a STANDING PRECONDITION on it
+
+```sql
+UPDATE ledger SET ar_code = UPPER(TRIM(ar_code))
+ WHERE ar_code IS NOT NULL AND ar_code <> UPPER(TRIM(ar_code));
+```
+
+Applied to remote 2026-08-04. **Before: 0 rows would be rewritten. Changes: 0. After: 11 rows, 1
+distinct code (`5406`), 0 non-canonical.** Re-runnable; the `WHERE` makes it a no-op by construction
+once clean.
+
+> ### ⚠ STANDING PRECONDITION — any run where the count is NON-ZERO must SNAPSHOT FIRST
+>
+> The pre-normalisation value is **not recoverable from the post value**. Today the count is zero,
+> so writing this rule down costs nothing — **and the moment it matters is the moment nobody will
+> think to add it.** Before any non-zero run: capture the affected `(id, ar_code)` pairs, then write.
+
+**Why it ran at all, given it changed nothing:** it exists for **correctness of the sequence, not
+because production needed repairing**. Skipping it because this database happens to be clean would
+leave the next database that *does* carry a dirty value silently broken, with no record that the
+step was ever considered.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
