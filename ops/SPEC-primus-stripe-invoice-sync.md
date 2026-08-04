@@ -2266,11 +2266,11 @@ Both live tracking surfaces call **`fl-tracking`**, and both work — verified l
 | Surface | Constant | Route | Live result |
 |---|---|---|---|
 | Landing chat (`index.html:928`) | `index.html:818` | `?q=` public | `200 ok:true` — ABF Freight, in transit, full timeline |
-| portal.html chat widget (`portal.html:1566`) | `portal.html:1464` | `?bol=` portal | `200 found:true` — same shipment |
+| ~~portal.html chat widget~~ | ~~`portal.html:1464`~~ | `?bol=` portal | `200 found:true` when called by hand — **but nothing calls it; see the third correction below, and D7** |
 
 Negative control: `?q=ZZZ99999` → `200 ok:false found:false`. The logged-in portal's "Track
-Shipment" (`portal.html:1894` → `:23426`) is not a Worker consumer at all — it reads status from
-**Primus booking data** (`fetchBookingByBOL`, the `trackInline` card at `:17595`).
+Shipment" (`portal.html:1023` → `:22559`, post-D7 lines) is not a Worker consumer at all — it reads
+status from **Primus booking data** (`fetchBookingByBOL`, the `trackInline` card at `:16728`).
 
 **Verified-scope method for "nothing calls track-proxy"**: all 115 tracked files enumerated; every
 `http(s)` URL literal extracted from all 94 non-PNG files and grouped —
@@ -2308,8 +2308,8 @@ since its first commit (`1414366`, 2026-06-14).
 
 Found while verifying the above. `fl-tracking`'s **`?bol=` route returned HTTP 200 on upstream
 failure** (`worker.js:96` — the `json()` helper defaults `status = 200`), while the `?q=` route
-correctly returns 503. `portal.html:1573` tests `if(!resp.ok) throw 0`, which never fires on a 200,
-so control reached `:1575` `d.found===false` and rendered **"No status found for #X yet.
+correctly returns 503. `portal.html:1573` (pre-D7; since deleted) tested `if(!resp.ok) throw 0`,
+which never fires on a 200, so control reached `:1575` `d.found===false` and rendered **"No status found for #X yet.
 Double-check the number"** — our outage, rendered as the customer's typo. The client never reads
 `d.error`.
 
@@ -2335,11 +2335,12 @@ wait for a fix that will never come.
 
 Written after the fix, before it shipped, and it corrects this section a third time in one evening.
 
-**`?bol=`'s only consumer is dead code that has never executed.** Its sole caller is `TRACK_API` in
-the `#public-view` widget inside `portal.html`, and that widget's entire script has never run: the
-`srcdoc` attribute terminates at the first literal `"` (`portal.html:1458`, `const TRUCK_IMG = "`),
-so the iframe start tag closes at `:1498` and everything after — ~400 lines including all the
-tracking code — becomes inert raw text inside the `<iframe>` element.
+**`?bol=`'s only consumer is dead code that has never executed.** Its sole caller was `TRACK_API` in
+the `#public-view` widget inside `portal.html`, and that widget's entire script never ran: the
+`srcdoc` attribute terminated at the first literal `"` (`portal.html:1458` **as of `fa3f0a0`**,
+`const TRUCK_IMG = "`), so the iframe start tag closed at `:1498` and everything after — ~400 lines
+including all the tracking code — became inert raw text inside the `<iframe>` element. **All line
+numbers in this paragraph are pre-D7; the block has since been deleted** (`portal.html:997-1865`).
 
 Confirmed three ways: **parse5** (spec-compliant) on the local file; **production bytes**, which are
 byte-identical to local by SHA-256; and **Chrome on the live site**, where `fetchTrack`, `sendMsg`,
@@ -2511,26 +2512,29 @@ This is the most damaging form of §8.863: the misattribution is not "your numbe
 
 ### ESTABLISHED — verified in code this session
 
+**Line numbers below are post-D7** (the widget deletion removed 869 lines, shifting everything after
+`portal.html:1865` by −869). Each was re-located by content, not by arithmetic.
+
 The checkpoint is computed **entirely from stored record state**, never from the tender outcome
-(`portal.html:8521`):
+(`portal.html:7650`):
 
 ```js
 const disp = s.dispatched === true || !!dispatchDate || stDispatched;
 ```
 
-…where `stDispatched` (`:8518`) is a regex over the record's **status string**:
+…where `stDispatched` (`:7647`) is a regex over the record's **status string**:
 `/DISPATCH|PICKED UP|IN TRANSIT|OUT FOR|ARRIV|DEPART|DELIVER|POD/`. All three inputs are fields on
 the BOL record as Primus returns it. **None of them is the result of the tender call.** `reached`
-(`:8527-8533`) then lights the stage monotonically, and the checkpoint rows are built from it at
-`:8922` and `:12854`.
+(`:7656`) then lights the stage monotonically, and the checkpoint rows are built from it at
+`:8051` and `:11987`.
 
 **So the owner's hypothesis is confirmed at the code level: the timeline reads stored status, not
 the tender outcome.** If Primus marks the record dispatched — or merely returns a status string
 containing "DISPATCH" — the green checkpoint is drawn regardless of what the carrier said.
 
-`_canonicalDispatch` (`:7098`) does have honest failure returns: `inFlight`, `needsDisclosure`,
-`chargeFailed` with a code and error (`:7099-7131`). It is called from at least four sites
-(`:7318`, `:8135`, `:12050`, `:15185`). **So the honest path is real, consistent with the correct
+`_canonicalDispatch` (`:6227`) does have honest failure returns: `inFlight`, `needsDisclosure`,
+`chargeFailed` with a code and error. It is called from at least four sites
+(`:6447`, `:7264`, `:11183`, `:14318`). **So the honest path is real, consistent with the correct
 error on BOL 160135858's 500 — but it is not the path that paints the timeline.**
 
 ### NOT ESTABLISHED — and what was actually attempted
@@ -2558,11 +2562,11 @@ Consequently these remain open:
 
 Two candidates would produce the same symptom **without** Primus ever storing a dispatched state:
 
-- **`:7102`** — `window._lastBooked.dispatched` short-circuits `_canonicalDispatch` to
+- **`:6230`** — `window._lastBooked.dispatched` short-circuits `_canonicalDispatch` to
   `{ ok:true, alreadyDispatched:true, dispatchOk:true }` **before any network call**. An optimistic
   local flag set once would make every subsequent attempt report success.
-- **`:8155`** — the dispatch button is painted green with "Dispatched!" by the click handler, and
-  **`:6797`** renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local UI state, not
+- **`:7284`** — the dispatch button is painted green with "Dispatched!" by the click handler, and
+  **`:5926`** renders a "Shipment Dispatched" header from `bc.dispatchOk`. Local UI state, not
   record state.
 
 ### WHAT WOULD FALSIFY THE STORED-STATE HYPOTHESIS
