@@ -3343,6 +3343,24 @@ failure mode.
 **This does not remove control 9.** Belt and braces: the credential makes the failure impossible, the
 test makes the *intent* explicit and survives the day the scope widens.
 
+### THE STRIPE CLIENT IS INJECTED, NOT CONSTRUCTED — a decision, not a style preference
+
+Approved 2026-08-04. The create path takes the Stripe client **as a parameter**:
+`createInvoiceForClaimedRow({ db, ledger, stripe, row })`, refusing with
+`{ ok: false, reason: 'no_stripe_customer' }` when the `(mode, ar_code)` join into `stripe_customer`
+misses.
+
+**The reason is this section, not testability-in-general.** A key sat bound and forgotten on the
+deployed Worker for a day, and nobody knew. If the create path constructs its own client from
+`env`, then **"no key is loaded" is the only thing standing between the code and Stripe** — which is
+precisely the assumption that just failed, and the failure was invisible from inside the system.
+Injection means the path can be exercised end to end with **no key present at all**: a recorder is
+passed in, and the assertion is that nothing was called. The safety property stops depending on a
+fact about configuration that nothing verifies.
+
+Corollary for review: a create path that reads `env.STRIPE_RK_*` directly is a regression of this
+decision, however convenient it looks at the call site.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification

@@ -20,6 +20,36 @@ export function idempotencyKey(mode, primusInvoiceId, version) {
   return `${mode}-primus-inv-${primusInvoiceId}-v${version}`;
 }
 
+/**
+ * Every legal `stripe_state`. ONE list, imported rather than remembered.
+ *
+ * `stripe_state` is free-text TEXT with no CHECK constraint (and SQLite cannot add one to an
+ * existing table without a full rebuild), so a typo writes silently — and a typo'd state matches
+ * NO reader predicate. It is invisible to openForReconcile, invisible to resolveClaimedCustomers,
+ * and swept in by siblingsOfBol: a row that stalls forever with nothing reporting it.
+ *
+ * So the validation lives at the two PARAMETERISED writers. The literal writers (claim → 'intent',
+ * recordFailure → 'failed', supersede → 'void') cannot be wrong and need nothing.
+ *
+ * 'creating' is deliberately ABSENT: it does not exist yet. It lands with the create path, in the
+ * same change that adds it — listing it here first would put this file ahead of the code, which is
+ * the mirror of the drift being avoided.
+ */
+export const STRIPE_STATES = Object.freeze([
+  'intent', 'draft', 'finalized', 'void', 'paid', 'uncollectible', 'failed',
+]);
+
+/** Throws rather than returning false: an unknown state is a programming error, not a data condition. */
+function assertState(state) {
+  if (!STRIPE_STATES.includes(state)) {
+    throw new Error(
+      `Unknown stripe_state ${JSON.stringify(state)} — expected one of ${STRIPE_STATES.join(', ')}. ` +
+      `A misspelt state is written silently and then matches no reader, so this fails closed.`
+    );
+  }
+  return state;
+}
+
 export class Ledger {
   /**
    * @param {D1Database} db
@@ -115,22 +145,42 @@ export class Ledger {
 
   // ── transitions ────────────────────────────────────────────────────────────────────────────
 
-  /** Attach the Stripe invoice to a claimed row once the create returns. */
+  /**
+   * Attach the Stripe invoice to a claimed row once the create returns.
+   *
+   * WRITE-ONCE PER ID. The row accepts an id only when it holds none, or when it already holds the
+   * SAME one. Before this guard the UPDATE was unconditional, so a retry after a lost ledger write
+   * — or a second create — silently replaced the id, and the FIRST Stripe invoice became an object
+   * no ledger row referenced. That is the orphan this whole mechanism exists to prevent,
+   * manufactured by the code meant to record ids.
+   *
+   * Re-attaching the SAME id still returns true: it is a benign retry, not a conflict. A re-run
+   * that re-attaches what it already attached must not start reporting failures on correct work.
+   *
+   * @returns {boolean} true if this row now carries this id; FALSE means a different id is already
+   *   attached and the caller must not treat the create as recorded.
+   */
   async attachStripeInvoice(ledgerId, stripeInvoiceId, state = 'draft') {
-    await this.db
+    assertState(state);
+    if (!stripeInvoiceId) throw new Error('attachStripeInvoice requires a stripeInvoiceId');
+    const res = await this.db
       .prepare(
         `UPDATE ledger SET stripe_invoice_id = ?, stripe_state = ?, last_error = NULL, updated_at = ?
-          WHERE id = ? AND mode = ?`
+          WHERE id = ? AND mode = ?
+            AND (stripe_invoice_id IS NULL OR stripe_invoice_id = ?)`
       )
-      .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode)
+      .bind(stripeInvoiceId, state, Date.now(), ledgerId, this.mode, stripeInvoiceId)
       .run();
+    return (res.meta && res.meta.changes) === 1;
   }
 
   async setState(ledgerId, state) {
-    await this.db
+    assertState(state);
+    const res = await this.db
       .prepare('UPDATE ledger SET stripe_state = ?, updated_at = ? WHERE id = ? AND mode = ?')
       .bind(state, Date.now(), ledgerId, this.mode)
       .run();
+    return (res.meta && res.meta.changes) === 1;
   }
 
   /**

@@ -96,6 +96,50 @@ test('classification is written once and never overwritten', async () => {
   assert.equal((await ledger.get('141886')).classification, 'primary');
 });
 
+// ── the attach guard ─────────────────────────────────────────────────────────────────────────
+//
+// THESE TWO ARE RED BECAUSE A DEFECT REPRODUCES, not because the code is unbuilt. Both were run
+// against unmodified source at e8c2dea/390a0fc and failed there, before any guard existed. That
+// provenance is in the names on purpose: a test that was never seen red proves only that it agrees
+// with the code it was written against.
+//
+// The defect: attachStripeInvoice UPDATEs unconditionally (`WHERE id = ? AND mode = ?`), with no
+// IS NULL guard and no return value. So a retry after a lost ledger write, or a second create,
+// silently replaces the id — and the FIRST Stripe invoice becomes an object no ledger row knows
+// about. That orphan is the exact failure this whole task exists to close, and the code meant to
+// record ids is what manufactures it.
+//
+// The reverse direction is tested too: the guard must refuse a DIFFERENT id without blocking a
+// benign retry of the SAME one, or a re-run that re-attaches what it already attached starts
+// reporting false conflicts.
+
+test('REGRESSION (defect reproduced before the fix): attachStripeInvoice refuses to overwrite a DIFFERENT stripe_invoice_id', async () => {
+  const ledger = new Ledger(freshDb(), 'test');
+  const { row } = await ledger.claim({ primusInvoiceId: '141604', bolNumber: '160135796', arCode: '1234' });
+
+  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_FIRST'), true,
+    'the first attach succeeds AND reports that it did — a silent void return cannot be acted on');
+
+  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SECOND'), false,
+    'a different id is refused, not applied');
+
+  const after = await ledger.get('141604');
+  assert.equal(after.stripe_invoice_id, 'in_FIRST',
+    'the original id survives; overwriting it would orphan in_FIRST in Stripe');
+  assert.equal(after.stripe_state, 'draft');
+});
+
+test('REGRESSION (defect reproduced before the fix): re-attaching the SAME stripe_invoice_id is a benign retry, not a conflict', async () => {
+  const ledger = new Ledger(freshDb(), 'test');
+  const { row } = await ledger.claim({ primusInvoiceId: '141385', arCode: '1234' });
+
+  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SAME'), true);
+  assert.equal(await ledger.attachStripeInvoice(row.id, 'in_SAME'), true,
+    'idempotent re-attach must succeed — the guard blocks a DIFFERENT id, not a repeat of the same one');
+
+  assert.equal((await ledger.get('141385')).stripe_invoice_id, 'in_SAME');
+});
+
 test('BOL siblings surface for the layer-3 guard, excluding void and failed', async () => {
   const ledger = new Ledger(freshDb(), 'test');
   const a = await ledger.claim({ primusInvoiceId: 'I1', bolNumber: '160133942' });
