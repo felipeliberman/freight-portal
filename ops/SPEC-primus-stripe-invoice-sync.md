@@ -3388,7 +3388,14 @@ The expired key **could not have created a Stripe customer**: Customers was **Re
 the claim-then-create-customer design (§4.2, `stripe_customer`) could never have run on it.
 
 **Keep that constraint on purpose.** The Task 2 key gets **Invoices = Write, Customers = Read**. The
-owner creates the two pilot customers **by hand in the dashboard**.
+owner creates the pilot customer **by hand in the dashboard**.
+
+> **CORRECTED 2026-08-04: ONE customer, TWO invoices.** An earlier draft of this section said "the two
+> pilot customers", which was wrong and worth striking rather than quietly fixing. The pilot is ONE
+> ARCode — `1234` — carrying two invoices (#141604 `invoiceId 1563993653`, #141385 `invoiceId
+> 1269958425`). **Two customer rows for one ARCode is precisely what control 5 and the
+> `UNIQUE (mode, ar_code)` constraint exist to refuse**, so building against the old wording would
+> have produced the exact state the schema forbids.
 
 **Why:** control 9 says the code must never create a customer implicitly. At **Customers = Read the
 credential enforces that**, rather than a test asserting it — the code *physically cannot* produce a
