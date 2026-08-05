@@ -2169,6 +2169,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B6 | **An unaccounted-for LIVE restricted Stripe key.** `rk_live_…9lmX` on the same account, created 2026-07-14, **last used 2026-08-04 — today**. Nothing in this project accounts for it; it is a different environment, not `invoice-sync`. **DO NOT TOUCH, DO NOT REVOKE — it is in use by something.** Investigate later this week via the Stripe live request log to identify the caller | §8.869 |
 | B7 | **THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST — LIVE DEFECT.** `HIDDEN = ['DO','COST','COI']` at `portal.html:8110` (+ copy at `:24148`) is the construction §8 rules out: the type codes differ between the two Primus document endpoints, so a denylist built from either is blind to the other, and **any type Primus adds appears to customers by default**. The book is ~90% residential and the documents carry **consignee home addresses and phone numbers**. `documents.js` `CUSTOMER_FACING` and the portal already **disagree about `COI`** — allowed by one, hidden by the other. Enforcement is UI-only today because the fetch is browser→Primus with no server of ours in the path. **GATE: no deep link is designed until closed** | §8.873, §8 |
 | B8 | **NO OWNERSHIP CHECK ON A DIRECT LOOKUP.** `primusToken` is cached ~50 min and `getToken()` returns it without re-checking the session; nothing compares a `bolId` against `currentCustomer`. §5.8's list-membership answer covers invoices but NOT documents, which are a direct `GET /applet/v1/document/{bolId}`. **We cannot verify ownership independently** — every list we could check against comes from the same token and the same API. Primus is the only authority and **that it refuses another customer's bolId is UNVERIFIED**. Failure presents as `'Could not fetch documents'`, indistinguishable from a shipment with no documents, so it would not be reported. **GATE: no deep link is designed until closed** | §8.874, §5.8 |
+| B9 | **LIVE, AND UNRELATED TO THIS BUILD — production mail fails sender authentication.** `portal.html:9765` sends as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** | §8.875 |
 
 ### C. Before anything is created in Stripe
 
@@ -3805,7 +3806,94 @@ customer — adds **no independent authority**. What it does add is real but nar
 message**, or the portal becomes an oracle for which identifiers exist on other accounts. Legible to
 *us* in logs; identical to the customer.
 
+### THE PROBE — and how its result must be recorded
+
+The question is settled by one request: authenticate against the **customer/portal API** as customer
+A, then `GET /applet/v1/document/{bolId}` for a BOL belonging to customer B, with A's token.
+
+**PREPARED 2026-08-04 (broker-side reads, so "empty" is interpretable):**
+
+| role | ARCode | BOLId | BOLNumber | docs seen broker-side |
+|---|---|---|---|---|
+| **A** — owner's test account | 1234 | `1362360734` | 160133693 | 4 — `BOL, LBL, INV, DO` |
+| **B** — another customer | 720 | `136013091` | 303260010320 | **8** |
+
+B's BOL **demonstrably has documents**, so an empty result for it is a *scoping* answer and not a
+document-less shipment. A's own BOL is the **positive control**: it proves the request shape and the
+token are good, so a failure on B means something.
+
+> **RECORD THE RESULT AS VERIFIED-ON-A-DATE, WITH THE ENDPOINT.** However this lands, it is
+> established by **one request against a live third-party API on 2026-08-04**, testing exactly
+> `GET https://freightandlogistics-api.shipprimus.com/applet/v1/document/{bolId}`. Primus can change
+> scoping behaviour without telling us, and a later reader needs to know **what was true when the
+> decision was made**, not only what was decided. A conclusion recorded without its date and its
+> endpoint becomes an assumption within a month.
+
+**A SEPARATE AND POSSIBLY LARGER QUESTION, NOT TESTED.** The broker-side reads returned document
+URLs of the form `https://www.shipprimus.com/Documents.php?id=ND…` — a **public web host with an id
+parameter**, not the authenticated API. **If those URLs resolve without credentials, then API
+scoping is moot**, because the URL itself is the access boundary and it travels in every document
+list we hand out. This was deliberately **not probed**: testing it means fetching another customer's
+document, and that is the owner's call, not a decision to take unilaterally. It is arguably upstream
+of the API question.
+
 **Until this is closed, no deep link is designed, let alone built.**
+
+
+## 8.875 LIVE — PRODUCTION MAIL IS SENT FROM A DOMAIN WHOSE SPF DOES NOT AUTHORISE THE SENDER
+
+**UNRELATED TO THE INVOICE-SYNC THREAD.** It is recorded here only because it was found here, while
+surveying the portal's invoice surfaces on 2026-08-04. It is a live production condition affecting
+mail going to real customers **today**, and it does not wait on anything in this build.
+
+**The sender.** `portal.html:9765` — `const _SG_FROM = 'support@freightandlogistics.ai';`
+Transport is `sendViaEmail()` (`:9768-9790`) → `https://sendgrid-proxy.felipe-b80.workers.dev`
+(deploy-only Worker, no source in this repo).
+
+**The record, verbatim, as published 2026-08-04:**
+
+```
+freightandlogistics.ai        TXT  "v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all"
+_dmarc.freightandlogistics.ai TXT  "v=DMARC1; p=none; rua=mailto:accounting@freightandlogistics.ai"
+s1._domainkey.freightandlogistics.ai   (no CNAME, no TXT)
+s2._domainkey.freightandlogistics.ai   (no CNAME, no TXT)
+em.freightandlogistics.ai              (no CNAME, no TXT)
+```
+
+**SendGrid is not in the SPF record.** Google and HubSpot are. **What it would need is an
+`include:sendgrid.net` term** (or SendGrid's automated-security CNAMEs, which set up SPF and DKIM
+together).
+
+**SendGrid domain authentication is not configured on this domain.** SendGrid's domain auth
+publishes `s1`/`s2._domainkey` CNAMEs and an `em*` CNAME; **none of the three resolves.**
+
+**Why it has not been noticed — and why that is the problem.** DMARC is `p=none`, which asks
+receivers to report and enforce nothing. So mail is delivered **unauthenticated** rather than
+rejected. *Inference, not observation:* SendGrid signs with its own domain when domain auth is
+absent, which would give a valid DKIM signature that does **not align** to
+`freightandlogistics.ai`, so DMARC alignment fails on both mechanisms while `p=none` suppresses any
+consequence. **The failure mode is silent placement — spam foldering, or quiet filtering — that
+nobody reports back to us.** A customer who never received an invoice does not write in to say so.
+
+**Blast radius is wider than the invoice path.** Three `sendViaEmail` call sites, at least two
+customer-facing:
+
+| site | recipient |
+|---|---|
+| `portal.html:4506` | **Email Invoice** — a customer-supplied address, with the Primus invoice PDF attached |
+| `portal.html:9928` | **Support-request confirmation to the customer** — likely far higher volume |
+| `portal.html:9926` | internal, to `support@` |
+
+**How much has already gone out under a failing record: NOT KNOWABLE FROM THE CODE.** There is no
+send log anywhere. `_lastInvoiceSend` (`:4462-4466`) is an in-memory 20-second rate limiter, not a
+record — it does not persist and it counts nothing. The `sendgrid-proxy` Worker has no source in
+this repo, so whether it logs cannot be answered from here. **The only record is SendGrid's own
+Activity Feed, which has limited retention — so if the historical volume matters, it has to be read
+soon rather than reconstructed later.** That absence is itself the finding underneath this one:
+**we do not know what we have sent, to whom, or whether it arrived.**
+
+**DNS is NOT to be changed from here.** The owner has a migration in flight and will make the record
+change themselves.
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
