@@ -2167,6 +2167,8 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B4 | ~~Tracking is broken now~~ — **WRONG, corrected 2026-08-03.** There was no outage: nothing has called `track-proxy` since 2026-07-30, and tracking works today on `fl-tracking` (live-verified, both routes). The row is kept rather than deleted because the error is the lesson — a dead dependency was filed as a customer-facing emergency without checking whether anything reached it. The real live defect it was hiding (`?bol=` returning 200 on upstream failure, rendering our outage as the customer's bad number) is **FIXED**. Retiring the dead Worker is cleanup → **D6** | §8.861, §8.863 |
 | B5 | `www.freightandlogistics.com/demo-session` — **works today**, so NOT broken, but it is Wix-hosting-dependent and is the only remaining `.com` content dependency in the repo | §8.862 |
 | B6 | **An unaccounted-for LIVE restricted Stripe key.** `rk_live_…9lmX` on the same account, created 2026-07-14, **last used 2026-08-04 — today**. Nothing in this project accounts for it; it is a different environment, not `invoice-sync`. **DO NOT TOUCH, DO NOT REVOKE — it is in use by something.** Investigate later this week via the Stripe live request log to identify the caller | §8.869 |
+| B7 | **THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST — LIVE DEFECT.** `HIDDEN = ['DO','COST','COI']` at `portal.html:8110` (+ copy at `:24148`) is the construction §8 rules out: the type codes differ between the two Primus document endpoints, so a denylist built from either is blind to the other, and **any type Primus adds appears to customers by default**. The book is ~90% residential and the documents carry **consignee home addresses and phone numbers**. `documents.js` `CUSTOMER_FACING` and the portal already **disagree about `COI`** — allowed by one, hidden by the other. Enforcement is UI-only today because the fetch is browser→Primus with no server of ours in the path. **GATE: no deep link is designed until closed** | §8.873, §8 |
+| B8 | **NO OWNERSHIP CHECK ON A DIRECT LOOKUP.** `primusToken` is cached ~50 min and `getToken()` returns it without re-checking the session; nothing compares a `bolId` against `currentCustomer`. §5.8's list-membership answer covers invoices but NOT documents, which are a direct `GET /applet/v1/document/{bolId}`. **We cannot verify ownership independently** — every list we could check against comes from the same token and the same API. Primus is the only authority and **that it refuses another customer's bolId is UNVERIFIED**. Failure presents as `'Could not fetch documents'`, indistinguishable from a shipment with no documents, so it would not be reported. **GATE: no deep link is designed until closed** | §8.874, §5.8 |
 
 ### C. Before anything is created in Stripe
 
@@ -3694,6 +3696,117 @@ quietly stops being maintained.**
 `whyRed()` marker. None can be read as a defect, and each carries `DO NOT DELETE THIS TEST TO GREEN
 THE SUITE`. Control 3 additionally records that it **cannot be exercised at all today** —
 `invoice-sync-test` is expired and no key exists (§8.869).
+
+## 8.873 GATE 1 — THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST. LIVE DEFECT.
+
+**This exists today, with no deep link and no Stripe email. It is not a deep-link prerequisite — it
+is a live defect that a deep link would amplify.** Found 2026-08-04 while surveying whether the
+invoice modal could be opened from a URL.
+
+`portal.html:8110` (and a second copy at `:24148`):
+
+```js
+const HIDDEN = ['DO','COST','COI'];
+...
+const visible = docs.filter(d => {
+  const t = (d.fileType||d.type||d.documentType||d.name||'').toUpperCase();
+  return !HIDDEN.some(h => t===h||t.startsWith(h+' '));
+});
+```
+
+**This is the exact construction §8 rules out**, and §8's reason is the one that bites: the type
+codes **do not match between the two Primus document endpoints** — `LBL` and `DO` appear in one,
+`SHP` and `MET` in the other — so **a denylist built from either list is blind to the other**.
+
+**The consequence, stated rather than implied: any document type Primus adds appears to customers by
+default.** The book is **~90% residential**, and the documents carry **consignee home addresses and
+phone numbers** — a POD is a name, a street address and a signature. This is the class of exposure
+that cannot be taken back once a customer has seen it, and it defaults to open.
+
+### The two sources of truth already disagree — on `COI`
+
+| type | `documents.js` `CUSTOMER_FACING` | `portal.html` `HIDDEN` |
+|---|---|---|
+| `COI` | **allowed** | **hidden** |
+
+**Two lists disagreeing about one type today is evidence the reconciliation is overdue, not
+hypothetical.** And neither list is a superset of the other: the portal renders `LBL`/`LABEL`,
+`QUO`/`QUOTE`, `INV`/`INVOICE` and `RECEIPT` (its `DOC_NAMES` map) which `CUSTOMER_FACING` does not
+list; `CUSTOMER_FACING` lists `RECLASS`, `REWEIGH`, `DIM` and `IMG` which the portal has no label for
+and title-cases generically (`portal.html:24155`).
+
+### What has to be decided — scope, not a fix
+
+1. **What the portal's allowlist contains**, and whether it is the same set as `CUSTOMER_FACING` or
+   a deliberately different one. The `COI` disagreement has to be resolved in one direction with a
+   stated reason, not averaged.
+2. **How the two reconcile given the codes differ by endpoint.** One list cannot be correct for both
+   unless it is a union keyed by endpoint, or unless both paths normalise to a shared vocabulary
+   first. §8's `normalizeType()` exists; nothing in `portal.html` uses it.
+3. **Where it is enforced — and this is the hard part.** The portal fetches documents
+   **browser → Primus directly** (`fetchDocuments`, `portal.html:2870`, bearer token, no server of
+   ours in the path). **So today there is no server on which to enforce anything.** Server-side
+   enforcement means interposing something — which is what §8's scoped-link design already
+   contemplates (`docs.` route validating a token, R2 mirror) and which §8.95 records as
+   **deliberately not built**, because mirroring writes customer documents and that is a real
+   data-handling action rather than a refactor. **An allowlist applied in the UI is a display
+   preference, not a control.**
+
+**Until this is closed, no deep link is designed, let alone built.**
+
+
+## 8.874 GATE 2 — NO OWNERSHIP CHECK ON A DIRECT LOOKUP, AND WE MAY NOT BE ABLE TO MAKE ONE
+
+**Today nothing can exploit this, because there is no link to click. A deep link is precisely the
+thing that creates one.**
+
+**What the code does.** `primusLogin()` (`portal.html:1534-1552`) authenticates with the
+**customer's own** Primus credentials (`c.primusUser || c.email`, `c.primusPass`). `primusToken` is
+then cached for ~50 minutes (`:1550`) and `getToken()` (`:1554-1557`) returns it without re-checking
+who the session belongs to. **Nothing in `portal.html` ever compares a `bolId` or an invoice number
+against `currentCustomer` before fetching.**
+
+**§5.8 already solved this for INVOICES, and its answer is right:** resolve the identifier *only
+within the authenticated customer's own fetched invoice set*, so ownership is "a consequence of
+where the data came from rather than of a comparison someone can forget."
+
+**That answer does not carry to DOCUMENTS, because the shape is different.**
+`fetchDocuments(bolId)` (`:2870`) is a **direct lookup** — `GET /applet/v1/document/{bolId}` — not a
+membership test against a list the token already scoped. There is no set to resolve within unless one
+is fetched first.
+
+### Can we verify ownership independently? Plainly: no.
+
+Every list we could check a `bolId` against — shipments, invoices — **is itself fetched with the same
+token from the same API**. Checking Primus's answer against Primus's other answer is not independent
+verification; it is the same authority consulted twice.
+
+**So the honest position is that Primus is the only authority for ownership, and we are trusting it.**
+That changes what a deep link can safely address, which is why it is written here rather than left
+as an implementation detail.
+
+**And the trust is UNVERIFIED.** `config.js:156` and §5.8 record that the customer/portal API "is
+scoped to one customer" — but that is established for **LIST** endpoints returning only that
+customer's rows. **Whether `GET /applet/v1/document/{bolId}` refuses another customer's `bolId` has
+never been tested.** Per the standing rule, anything asserted about Primus needs a second path or it
+is a claim about us. This one has neither.
+
+### What we CAN do, and what it is worth
+
+A same-side check — refuse to fetch unless the identifier appears in a set already fetched for this
+customer — adds **no independent authority**. What it does add is real but narrower:
+
+- it **refuses before the request goes out**, rather than relying on the far end to say no;
+- it makes the failure **legible**. Today a wrong-customer link and a shipment with no documents are
+  **indistinguishable**: both surface as `'Could not fetch documents'` (`:2887`) or an empty list.
+  **A failure nobody can tell from a normal empty state is a failure nobody reports.**
+
+**Failure copy constraint, carried from §5.8:** "not found" and "not yours" must remain the **same
+message**, or the portal becomes an oracle for which identifiers exist on other accounts. Legible to
+*us* in logs; identical to the customer.
+
+**Until this is closed, no deep link is designed, let alone built.**
+
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
