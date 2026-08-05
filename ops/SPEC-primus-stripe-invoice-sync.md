@@ -2167,6 +2167,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B4 | ~~Tracking is broken now~~ — **WRONG, corrected 2026-08-03.** There was no outage: nothing has called `track-proxy` since 2026-07-30, and tracking works today on `fl-tracking` (live-verified, both routes). The row is kept rather than deleted because the error is the lesson — a dead dependency was filed as a customer-facing emergency without checking whether anything reached it. The real live defect it was hiding (`?bol=` returning 200 on upstream failure, rendering our outage as the customer's bad number) is **FIXED**. Retiring the dead Worker is cleanup → **D6** | §8.861, §8.863 |
 | B5 | `www.freightandlogistics.com/demo-session` — **works today**, so NOT broken, but it is Wix-hosting-dependent and is the only remaining `.com` content dependency in the repo | §8.862 |
 | B6 | **An unaccounted-for LIVE restricted Stripe key.** `rk_live_…9lmX` on the same account, created 2026-07-14, **last used 2026-08-04 — today**. Nothing in this project accounts for it; it is a different environment, not `invoice-sync`. **DO NOT TOUCH, DO NOT REVOKE — it is in use by something.** Investigate later this week via the Stripe live request log to identify the caller | §8.869 |
+| B10 | **LIVE — CUSTOMER DOCUMENTS REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH.** Verified 2026-08-04 against the live customer/portal API. A customer token returned another account's full document list **including a POD** (ARCode 720, BOL 303260010320); separately, `Documents.php` URLs serve the PDF to a request with **no `Authorization` header at all**. **Two distinct failures — fixing one does not fix the other.** Precise, not rounded: a filter DOES exist (it removed `DO` for the customer token) — it filters by document **type**, not by **ownership**. **Reachable today by any logged-in customer; nothing has to be built.** Primus-side remediation is the owner's, separately | §8.876, §8.877 |
 | B7 | **THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST — LIVE DEFECT.** `HIDDEN = ['DO','COST','COI']` at `portal.html:8110` (+ copy at `:24148`) is the construction §8 rules out: the type codes differ between the two Primus document endpoints, so a denylist built from either is blind to the other, and **any type Primus adds appears to customers by default**. The book is ~90% residential and the documents carry **consignee home addresses and phone numbers**. `documents.js` `CUSTOMER_FACING` and the portal already **disagree about `COI`** — allowed by one, hidden by the other. Enforcement is UI-only today because the fetch is browser→Primus with no server of ours in the path. **GATE: no deep link is designed until closed** | §8.873, §8 |
 | B8 | **NO OWNERSHIP CHECK ON A DIRECT LOOKUP.** `primusToken` is cached ~50 min and `getToken()` returns it without re-checking the session; nothing compares a `bolId` against `currentCustomer`. §5.8's list-membership answer covers invoices but NOT documents, which are a direct `GET /applet/v1/document/{bolId}`. **We cannot verify ownership independently** — every list we could check against comes from the same token and the same API. Primus is the only authority and **that it refuses another customer's bolId is UNVERIFIED**. Failure presents as `'Could not fetch documents'`, indistinguishable from a shipment with no documents, so it would not be reported. **GATE: no deep link is designed until closed** | §8.874, §5.8 |
 | B9 | **LIVE, AND UNRELATED TO THIS BUILD — production mail fails sender authentication.** `portal.html:9765` sends as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** | §8.875 |
@@ -3894,6 +3895,158 @@ soon rather than reconstructed later.** That absence is itself the finding under
 
 **DNS is NOT to be changed from here.** The owner has a migration in flight and will make the record
 change themselves.
+
+
+## 8.876 LIVE — CUSTOMER DOCUMENTS ARE REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH
+
+**VERIFIED 2026-08-04 by direct request against the live customer/portal API,
+`https://freightandlogistics-api.shipprimus.com`.** Owner-run, credentials never entering tooling.
+
+**TWO DISTINCT FAILURES. Fixing either one does not fix the other**, and they have different
+owners: the first is an authorisation gap in the API, the second is that the document URLs are not
+authenticated at all.
+
+### Layer 1 — `GET /applet/v1/document/{bolId}` is not scoped by customer
+
+| # | request | result |
+|---|---|---|
+| **2 — control** | A's own BOL `1362360734` (BOL 160133693, ARCode 1234) with **A's customer token** | **HTTP 200, 3 documents: `BOL, LBL, INV`** |
+| **3 — the test** | **customer B's** BOL `136013091` (BOL 303260010320, **ARCode 720**) with **A's customer token** | **HTTP 200, 5 documents: `BOL, LBL, QUO, INV, POD`** |
+
+**A customer token returned the complete document list for an account that is not theirs — including
+a POD.** On a residential shipment a POD is a name, a street address and a signature, and the book
+is ~90% residential.
+
+**THE PRECISE FINDING, WHICH IS NOT "NO SCOPING" — do not round it off.** The control returned
+**three** documents where the broker-side read of the same BOL returned **four** (`BOL, LBL, INV, DO`).
+**`DO` was filtered out for the customer token.** So a filtering layer **does exist** and does apply
+per-credential — **it filters by document TYPE and not by document OWNERSHIP.** That is a materially
+different fact from "Primus does not scope": the mechanism is present and the ownership dimension is
+simply absent from it.
+
+> ### THE PRECISE FINDING EXISTS BECAUSE A PREDICTION WAS WRONG
+>
+> The control was predicted to return **four** documents — the broker-side list for that BOL. It
+> returned **three**. The prediction was made by reading the broker view and assuming the customer
+> view would match.
+>
+> **Had the counts agreed, "Primus does not scope" would have gone into the record — and it would
+> have been less true than what is now known.** The mismatch is the entire reason the `DO` filter was
+> noticed, and therefore the reason we know a **per-credential filtering layer exists and simply has
+> no ownership dimension**. That distinction is not cosmetic: it will matter when Tier C is designed,
+> because it means the mechanism to extend is present rather than absent.
+>
+> A prediction that fails loudly is worth more than one that quietly matches.
+
+Two consequences follow that "no scoping" would have hidden. The server already applies a type
+filter whose rules we do not know and did not choose — so the portal's own `HIDDEN` denylist
+(§8.873) is partially redundant with a server-side filter nobody documented. And B's list contained
+`QUO` and `POD`, neither of which the portal's denylist would have hidden.
+
+### Layer 2 — the document URLs are unauthenticated
+
+Command 4, `curl -I` with **no `Authorization` header**, against a `Documents.php` URL:
+
+```
+HTTP/1.1 200 OK
+Content-Disposition: attachment; filename="BOL_160133693.pdf"
+Content-Type: application/x-download
+Content-Length: 5953
+Pragma: public
+```
+
+**It serves the PDF to an unauthenticated request.** The only thing between a URL and a customer
+document is the `t=` parameter — **and that parameter travels inside every document list the portal
+already hands to customers.** URLs redacted from the evidence above and everywhere below.
+
+**This is the more serious of the two**, because it is reachable with no account at all, and because
+any authorisation fix on the API leaves it untouched.
+
+### Reachability — nothing has to be built
+
+**This is not a deep-link prerequisite and never was.** Any logged-in portal customer holds a valid
+token and can call that endpoint today. No link, no route, no new surface. The deep-link survey is
+only how it was found.
+
+### What this settles
+
+1. **A raw Primus `bolId` can never appear in a customer-facing URL.** The identifier must be
+   **ours** — opaque, per-invoice, resolved by something we control. That is a redesign, and it
+   **folds §8/§8.95's scoped-link work in** rather than leaving it beside this.
+2. **Ownership cannot be delegated to Primus.** §8.874 recorded that we were trusting it and that
+   the trust was unverified. It is now verified, and it does not hold.
+
+**Primus-side remediation is the owner's, handled separately. What the portal exposes and what it
+can reduce is §8.877.**
+
+
+## 8.877 WHAT THE PORTAL EXPOSES, AND WHAT WE CAN REDUCE WITHOUT PRIMUS
+
+Scoped strictly to **our** code. Primus-side remediation is separate and the owner's.
+
+### What makes §8.876 reachable, from the code
+
+1. **THE ENABLER — the customer's Primus bearer token lives in the browser.** `primusToken`
+   (`portal.html:1394`), set from `primusLogin()` (`:1548`), and every invoice / shipment / document
+   request goes **browser → Primus directly**. So every logged-in customer already holds a working
+   credential for an endpoint that does not check ownership. **Nothing has to be built and no link
+   has to exist.**
+2. **Raw `Documents.php` URLs are rendered into the DOM.** `openDocsModal` reads
+   `doc.url||doc.fileUrl||doc.documentUrl||doc.link` (`:8141`) and writes it into an attribute:
+   `onclick="downloadDoc('${safeUrl}','${safeLabel}')"` (`:8154`). Because those URLs need no auth
+   (layer 2), they are copyable from page source, survive into browser history, and **work for
+   anyone they are forwarded to, forever, with no account.**
+3. **They are cached in memory with the URL retained.** `_bolDocuments` / `_normalizeDocs`
+   (`:2719-2741`) keeps `{type, name, url}`.
+4. **They are sent to the Anthropic API as tool results.** `documents: validDocs` at `:14345` and
+   `:14372`, where `validDocs = _documentsFor(...)` includes `url`. Tool results are appended to the
+   conversation and posted back to the model. **So unauthenticated customer-document links leave our
+   infrastructure to a third-party LLM provider, and sit in conversation history.** This is the one
+   exposure whose beneficiary is not even the customer.
+5. **`bolId` is rendered into markup** — `onclick="openDocsModal('${bolId}','${bol}')"` (`:5273`,
+   `:7900`). Not a leak of *other* customers' ids, but it teaches the id shape and hands every
+   customer their own working examples.
+
+### What we can reduce, in ascending order of cost — and the ceiling of each
+
+**TIER A — stop sending document URLs to the model. Smallest change, and the only one that removes
+a whole category rather than restraining a customer.** Strip `url` from the tool results at `:14345`
+and `:14372`; the agent needs to know documents *exist* and their types, never their links. This
+costs nothing the customer can already do and takes an unauthenticated credential out of a
+third-party system. **Highest ratio of exposure removed to code changed.**
+
+**TIER B — constrain the unscoped lookup with the scoped list.** Refuse to call `fetchDocuments(bolId)`
+unless that `bolId` appears in a shipment/invoice set already fetched for this customer.
+
+> **This corrects §8.874's reasoning, AND THE CORRECTION CAME FROM THE PROBE — not from thinking
+> harder about it.** §8.874 argued that checking a list fetched with the same token adds no
+> independent authority: "Primus consulted twice, not two authorities." That argument was sound and
+> could not have been improved by more reasoning, because **the fact it turned on was not available
+> until one request was made**: the LIST endpoints **are** scoped and the document lookup is **not**.
+> The list is therefore a *strictly stronger* authority than the lookup, and constraining the weak
+> one by the strong one is a real gain rather than theatre.
+>
+> Worth keeping as a pattern: a well-formed argument from the facts on hand was overturned by a
+> single cheap test. **The test was available the whole time.**
+
+**Ceiling, stated:** it is client-side, so it stops the portal being the instrument and stops
+link-driven or accidental reach. **It does not stop a customer who opens devtools** — they hold the
+token and can call Primus directly.
+
+**TIER C — take the Primus token out of the browser.** Proxy Primus through a Worker that holds the
+credential and authorises every request against the session. **This is the only change that stops
+deliberate cross-account access**, because it is the only one that removes the customer's ability to
+call the unscoped endpoint themselves. It is also the prerequisite for serving document **bytes**
+through us so a raw `Documents.php` URL never reaches a client at all.
+
+### The honest ceiling on layer 2
+
+**Nothing we control fixes the unauthenticated document URL.** That is Primus's to fix. What we can
+do is **stop handing it out** — and doing that completely requires Tier C, because as long as the
+browser talks to Primus directly it receives the URLs regardless of what we render. Tiers A and B
+reduce how far those URLs travel; only C stops us distributing them.
+
+**None of this is implemented. Recorded 2026-08-04 as analysis, not a plan.**
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
