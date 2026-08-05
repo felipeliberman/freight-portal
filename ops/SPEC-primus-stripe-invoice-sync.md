@@ -4046,7 +4046,38 @@ do is **stop handing it out** — and doing that completely requires Tier C, bec
 browser talks to Primus directly it receives the URLs regardless of what we render. Tiers A and B
 reduce how far those URLs travel; only C stops us distributing them.
 
-**None of this is implemented. Recorded 2026-08-04 as analysis, not a plan.**
+### TIER A — LANDED 2026-08-04. B and C untouched.
+
+`_toolResultSafe()` (`portal.html`, beside `_documentsFor`) deep-strips document URLs — forbidden
+keys at any depth, and `Documents.php` links found inside string values — and **every**
+`tool_result` serialisation routes through it. `raw` at the second agent's boundary stays
+unscrubbed, because the client may need the URLs to render; only what goes to the model is cleaned.
+Pinned by `evals/tool-result-urls.test.js` (6 checks).
+
+> **THE BOUNDARY ASSERTION FOUND WHAT A CALLER-BASED FIX COULD NOT.** The change was scoped as "strip
+> `url` at `:14345` and `:14372`" — two known-leaking lines. Written as a boundary property instead,
+> the test's source check found **THREE** `tool_result` serialisation sites. Patching the two named
+> lines would have left the third unguarded **permanently**, and every tool added later with it.
+>
+> This is the worked example for whether boundary assertions are worth their awkwardness: the
+> property was enforced over a site nobody had found, because the assertion was written over the
+> *shape* rather than over the *instances*.
+
+**One test had to be corrected, and the correction matters.** Its first form asserted the
+*producing call* was clean — both the "one particular call" shape the file exists to avoid, and a
+direct contradiction of its own negative control, which requires `_documentsFor()` to KEEP its URLs
+for the renderer. Two tests disagreeing about whether the client keeps URLs is the situation
+normally resolved by deleting whichever goes red — which would have been the wrong one. It is
+re-pointed at the boundary with its red-on-HEAD output preserved verbatim in the file, so the
+provenance sits where the next reader will find it.
+
+**WHAT TIER A DOES NOT CLOSE.** §8.876 **layer 1** (cross-account document reads) and **layer 2**
+(unauthenticated document URLs) both remain **open, and both remain a Primus problem**. Tier B and
+Tier C are untouched. **The exposure that closed is the one whose beneficiary was never the
+customer** — document links leaving our infrastructure to a third party. Nothing a customer can
+reach has changed.
+
+**Tiers B and C remain analysis, not a plan.**
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note

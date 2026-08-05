@@ -2741,6 +2741,41 @@ function _documentsFor(BOLId, dispatchDocs) {
   return (id && _bolDocuments[id]) || [];
 }
 
+// ── NO DOCUMENT URL MAY REACH THE MODEL (spec §8.877 Tier A) ────────────────────────────────
+//
+// Primus document URLs are UNAUTHENTICATED (§8.876 layer 2 — verified 2026-08-04: `curl -I` with no
+// Authorization header returns the PDF). They are therefore bearer credentials in URL form.
+//
+// Tool results are JSON.stringify'd and POSTed to the Anthropic API, so any URL inside one leaves
+// our infrastructure to a third party and sits in conversation history — for no benefit to the
+// customer whose document it is. Nobody chose that: `documents: validDocs` carries `url` only
+// because _documentsFor() returns it, and the client renderer genuinely needs it.
+//
+// So the strip belongs HERE, at the serialisation boundary — not on the producing call sites. There
+// are THREE tool_result sites, and a fix aimed at the two that leak today would leave the property
+// unenforced for every tool added later.
+//
+// The agent needs to know a document EXISTS and what TYPE it is. It has never needed the link;
+// get_documents already returns {type, label} and proves the pattern.
+//
+// Verified before adopting the blanket rule: NO tool result legitimately carries a URL today.
+// (`iconUrl` is client-side modal rendering; get_documents drops `url` before returning.)
+var _DOC_URL_KEYS = ['url', 'fileUrl', 'documentUrl', 'link', 'href'];
+var _DOC_URL_RE   = /https?:\/\/[^\s"']*Documents\.php[^\s"']*/gi;
+function _toolResultSafe(node) {
+  if (node === null || node === undefined) return node;
+  if (typeof node === 'string') return node.replace(_DOC_URL_RE, '[document link removed]');
+  if (typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(_toolResultSafe);
+  var out = {};
+  for (var k in node) {
+    if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+    if (_DOC_URL_KEYS.indexOf(k) !== -1) continue;   // drop the key outright, at any depth
+    out[k] = _toolResultSafe(node[k]);
+  }
+  return out;
+}
+
 // Resolve a customer-supplied BOL reference (a BOLNumber, or already a BOLId) to the canonical
 // BOLId the PUT path needs. FAILS LOUDLY — there is deliberately NO fallback to the raw input.
 // That fallback was the routing half of the save 404: the agent passes a BOL *Number*, the lookup
@@ -15663,8 +15698,8 @@ async function aiConverse(userText) {
         // These synthetic notes are model-facing only (consumed as tool_result on the next loop) and
         // never reach the customer — only finalText / _showBot / appendMessage render to chat.
         const _pairResult = (tu) => tu.id === toolUse.id
-          ? { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) }
-          : { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify({ ok: false, ignored: true, note: 'Only one action runs per turn; this was not processed. Take actions one at a time — reissue it as your next step if still needed.' }) };
+          ? { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(_toolResultSafe(result)) }
+          : { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(_toolResultSafe({ ok: false, ignored: true, note: 'Only one action runs per turn; this was not processed. Take actions one at a time — reissue it as your next step if still needed.' })) };
         convo.push({ role: 'assistant', content: content });
         convo.push({ role: 'user', content: content.filter(b => b.type === 'tool_use').map(_pairResult) });
         showTyping();
@@ -24884,7 +24919,9 @@ async function _waybExecTool(tu) {
     else if (tu.name === 'render_chart') result = await _waybRenderChart(tu.input);
     else result = { error: 'unsupported tool: ' + tu.name };
   } catch (err) { console.error('waybAgent tool error (' + tu.name + '):', err); result = { error: 'tool execution failed' }; }
-  return { raw: result, block: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) } };
+  // `raw` stays UNSCRUBBED — the client may need the URLs to render. Only `block`, which is what
+  // goes to the model, is cleaned.
+  return { raw: result, block: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(_toolResultSafe(result)) } };
 }
 
 // Trim history to the cap WITHOUT ever splitting a tool_use / tool_result pair. A conversation
