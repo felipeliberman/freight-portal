@@ -27,18 +27,22 @@
 --   5. ALTER TABLE ledger ADD COLUMN issue_date TEXT                  -- NOT re-runnable
 --   6. ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT            -- NOT re-runnable
 --   7. ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER           -- NOT re-runnable
+--   8. ALTER TABLE ledger ADD COLUMN first_sent_at INTEGER            -- NOT re-runnable
+--   9. CREATE TABLE IF NOT EXISTS invoice_send (...)                  -- idempotent
+--  10. CREATE INDEX IF NOT EXISTS invoice_send_inv_idx / _out_idx     -- idempotent
 --
 -- A SECOND DATABASE is also required — schema-links.sql, applied to its own D1 (`invoice-links`).
 -- It is separate on purpose: the public Worker reads it, and the ledger's D1 also holds `cache`,
 -- which carries customer email addresses. See that file.
 --
--- Apply every ALTER (1, 2, 5, 6, 7) as an explicit --command. Apply 3 and 4 by re-running this
--- file, which is a no-op for every table that already exists:
+-- Apply every ALTER (1, 2, 5, 6, 7, 8) as an explicit --command. Apply 3, 4, 9 and 10 by re-running
+-- this file, which is a no-op for every table that already exists:
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN issue_date TEXT"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER"
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN first_sent_at INTEGER"
 --   wrangler d1 execute invoice-sync --remote --file=./schema.sql
 --
 -- And the SECOND database, which is its own D1 and its own apply:
@@ -48,11 +52,16 @@
 -- Verify POSITIVELY afterwards — never an exit code (spec §0.25):
 --   wrangler d1 execute invoice-sync  --remote --command "PRAGMA table_info(ledger)"
 --   wrangler d1 execute invoice-sync  --remote --command "SELECT sql FROM sqlite_master WHERE tbl_name='stripe_customer'"
+--   wrangler d1 execute invoice-sync  --remote --command "SELECT sql FROM sqlite_master WHERE tbl_name='invoice_send'"
 --   wrangler d1 execute invoice-links --remote --command "SELECT name, sql FROM sqlite_master WHERE tbl_name='invoice_link'"
 --
 -- DOWN MIGRATION:
---   1, 2, 5, 6, 7 — DO NOTHING. An added nullable column with no reader is inert, and dropping it
---          is a riskier operation than the one it would undo.
+--   1, 2, 5, 6, 7, 8 — DO NOTHING. An added nullable column with no reader is inert, and dropping
+--          it is a riskier operation than the one it would undo.
+--   9, 10 — DROP TABLE invoice_send. EXPIRES AT THE FIRST SEND: once a row exists it is the ONLY
+--          record that an invoice was emailed. SendGrid's Activity Feed retains 3 days (§8.875),
+--          so after 72 hours dropping this table destroys evidence that cannot be reconstructed —
+--          including the date C1's dispute clock runs from.
 --   3, 4 — DROP TABLE stripe_customer. THIS EXPIRES AT THE FIRST STRIPE CREATE: once the table
 --          holds a stripe_customer_id, dropping it orphans every Stripe object keyed through it,
 --          which is precisely the failure the table exists to prevent. After the first create
@@ -124,6 +133,17 @@ CREATE TABLE IF NOT EXISTS ledger (
   -- already active (invoice_link_active refuses the duplicate), reads the token back, and re-stamps.
   -- MIGRATION: statement 7 in the PENDING block.
   link_minted_at        INTEGER,
+
+  -- WRITE-ONCE. When we FIRST emailed this invoice — never "when we last did".
+  --
+  -- C1's dispute clause starts a 3-business-day clock on our send date. Anchored on the latest
+  -- send instead, a resend in week three would silently move a customer's dispute deadline under
+  -- them — a contractual change nobody decided to make. Write-once makes the anchor unmovable BY
+  -- CONSTRUCTION rather than by discipline, the same guard link_minted_at already carries.
+  --
+  -- Denormalised from invoice_send on purpose: this also makes "minted but never sent" a
+  -- single-table query with no join (see Ledger.openMintedUnsent).
+  first_sent_at         INTEGER,
 
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL,
@@ -203,6 +223,65 @@ CREATE TABLE IF NOT EXISTS stripe_customer (
 CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq
   ON stripe_customer (mode, stripe_customer_id)
   WHERE stripe_customer_id IS NOT NULL;
+
+
+-- ── invoice_send ─────────────────────────────────────────────────────────────────────────────
+-- THE SEND LOG (spec §8.883). What we sent, to whom, when, and what happened — INCLUDING failures.
+--
+-- ── WHY A TABLE AND NOT COLUMNS ON `ledger` ──────────────────────────────────────────────────
+-- One invoice has SEVERAL attempts: a retry, a resend, a bounce, a corrected recipient. Columns on
+-- `ledger` hold only the last one, and "what did we send, to whom" is exactly the question that
+-- must survive the second attempt.
+--
+-- ── WHY THIS DATABASE AND NOT THE LINKS DATABASE — A BOUNDARY, NOT A LAYOUT CHOICE ───────────
+-- The links database is READ BY THE PUBLIC WORKER, and its entire data surface is possession-tier
+-- by construction (schema-links.sql). RECIPIENT EMAIL ADDRESSES MUST NOT BE REACHABLE FROM THERE.
+-- That is the second time this boundary has decided a placement — the first was keeping `cache`,
+-- which carries customer emails, out of the public Worker's reach. It is a boundary, and it is
+-- recorded as one so the next placement question is answered by it rather than re-argued.
+--
+-- ── NO UNIQUE CONSTRAINT, DELIBERATELY ───────────────────────────────────────────────────────
+-- A RESEND IS LEGITIMATE. Preventing an ACCIDENTAL double-send is a claim-before-send guard in
+-- code; a constraint here cannot tell the two apart and would block the legitimate one. Recorded
+-- as deliberately absent for the same reason `expires_at` is (schema-links.sql) — so its absence
+-- reads as a decision rather than an oversight, and nobody "fixes" it.
+CREATE TABLE IF NOT EXISTS invoice_send (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  mode                TEXT    NOT NULL,          -- 'test' | 'live', as everywhere
+  ledger_id           INTEGER NOT NULL,          -- the spine
+  primus_invoice_id   TEXT    NOT NULL,          -- survives a ledger rebuild
+  token               TEXT,                      -- WHICH link went; a re-mint after revoke differs
+
+  -- The address as sent. Kept verbatim: the question this answers is "who actually received it".
+  recipient           TEXT    NOT NULL,
+  -- WHERE THE ADDRESS CAME FROM ('qbo_cache' | 'primus_detail' | ...). This is the column that
+  -- answers "how did this reach the wrong person" without a reconstruction, which is what C2's
+  -- recipient-verification rule needs.
+  recipient_source    TEXT,
+
+  attempted_at        INTEGER NOT NULL,          -- epoch ms, kept ALONGSIDE sent_date, not replaced
+
+  -- ── THE BUSINESS DATE, RECORDED — NOT DERIVED (spec §8.867) ────────────────────────────────
+  -- YYYY-MM-DD in **America/Los_Angeles**. THE ZONE NAME IS WRITTEN HERE ON PURPOSE so a future
+  -- migration cannot silently reinterpret existing rows.
+  --
+  -- "Business day" means OUR business days, and we operate in Los Angeles. A contractual clock must
+  -- not depend on whoever reads `attempted_at` later picking a zone: 2026-08-11 03:30 UTC is
+  -- 2026-08-10 in Los Angeles — a DIFFERENT DAY, and C1's 3-business-day window would start on the
+  -- wrong one. §8.867 already governs this (a time value crossing a boundary carries its unit, its
+  -- zone and its modality); this is that rule applied, not a new one.
+  sent_date           TEXT,
+
+  outcome             TEXT    NOT NULL,          -- 'sent' | 'failed' | 'refused' (SEND_OUTCOMES)
+  provider            TEXT,                      -- 'sendgrid'
+  provider_message_id TEXT,                      -- SendGrid X-Message-Id — the join to their side
+  provider_status     INTEGER,                   -- HTTP status
+  -- Reason + message ONLY. NEVER an upstream response body (spec §6.3).
+  error               TEXT
+);
+
+CREATE INDEX IF NOT EXISTS invoice_send_inv_idx ON invoice_send (mode, primus_invoice_id);
+CREATE INDEX IF NOT EXISTS invoice_send_out_idx ON invoice_send (mode, outcome);
 
 
 -- ── exceptions ───────────────────────────────────────────────────────────────────────────────

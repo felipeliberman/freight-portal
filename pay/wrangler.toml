@@ -30,6 +30,26 @@ preview_urls = false
 # rejected — the stronger form, and indistinguishable from an unknown token.
 LINK_MODE = "test"
 
+# THE PILOT BOUND, welded into the token query (§8.882). Set to the pilot ARCode(s), comma
+# separated, or '*' for the full book. FAILS CLOSED: unset or empty serves NOTHING — it is never
+# defaulted, because an absent bound silently meaning "everything" is what would put a real
+# customer's invoice on a public URL. Must match invoice-sync's AR_ALLOWLIST.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# ⚠ BEFORE YOU REMOVE AN ARCode FROM THIS LIST — READ THIS (spec §8.884)
+#
+# THIS LIST IS NO LONGER ONLY A WRITE-SIDE CONTROL. Since §8.882 the bound is welded into the
+# invoice-link token query, so it also decides which links RESOLVE.
+#
+# REMOVING AN ARCode KILLS LINKS ALREADY IN THAT CUSTOMER'S INBOX. Their invoice URL starts
+# returning the generic 404 page — no explanation, indistinguishable from an unknown token,
+# because the refusal is deliberately silent (a loud one would be an oracle). They will not
+# report it as an error; they will simply not pay.
+#
+# WIDENING IS SAFE. NARROWING IS A LIVE-ACCESS CHANGE, not a configuration tidy. Revoke links
+# deliberately (InvoiceLinks.revoke) rather than by removing a code from this list.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+AR_ALLOWLIST = "1234"
+
 # ── NOT YET CREATED. Schema-first: the database exists before this deploys. ──────────────────
 #   wrangler d1 create invoice-links-test
 #   wrangler d1 create invoice-links-live

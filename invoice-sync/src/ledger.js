@@ -41,6 +41,44 @@ export const STRIPE_STATES = Object.freeze([
   'intent', 'creating', 'draft', 'finalized', 'void', 'paid', 'uncollectible', 'failed',
 ]);
 
+/**
+ * The send-log outcome vocabulary (spec §8.883). CLOSED, for the same reason STRIPE_STATES is: a
+ * misspelt value is written silently and then matches no reader.
+ *
+ * 'refused' is NOT 'failed'. Failed means we tried and the provider rejected it; refused means we
+ * never tried — no recipient, outside the bound, a guard fired. Collapsing them would make "we
+ * never attempted this" look like a transient error somebody retries.
+ */
+export const SEND_OUTCOMES = Object.freeze(['sent', 'failed', 'refused']);
+
+function assertOutcome(outcome) {
+  if (!SEND_OUTCOMES.includes(outcome)) {
+    throw new Error(
+      `Unknown send outcome ${JSON.stringify(outcome)} — expected one of ${SEND_OUTCOMES.join(', ')}.`
+    );
+  }
+  return outcome;
+}
+
+/**
+ * The date IN OUR BUSINESS ZONE, recorded rather than derived (spec §8.867, §8.883).
+ *
+ * THE ZONE IS PART OF THE CONTRACT, not a formatting preference: C1's dispute clause runs on
+ * business days, "business day" means ours, and we operate in Los Angeles. 2026-08-11 03:30 UTC is
+ * 2026-08-10 here — a different day, and the wrong one to start a clock on.
+ *
+ * 'en-CA' yields YYYY-MM-DD, which sorts lexically and matches every other date column in the
+ * schema. Intl carries the DST rules; computing an offset by hand is how this goes wrong twice a
+ * year.
+ */
+export const SEND_DATE_ZONE = 'America/Los_Angeles';
+
+export function businessDate(at, zone = SEND_DATE_ZONE) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(at));
+}
+
 /** Throws rather than returning false: an unknown state is a programming error, not a data condition. */
 function assertState(state) {
   if (!STRIPE_STATES.includes(state)) {
@@ -400,6 +438,91 @@ export class Ledger {
       .bind(at, Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
+  }
+
+  /**
+   * Record ONE send attempt, success or failure (spec §8.883).
+   *
+   * ALWAYS WRITES A ROW. A failure is the record you must not lose: without it an invoice whose
+   * email failed looks identical to one never attempted, and SendGrid's Activity Feed retains three
+   * days (§8.875) — so a send not logged at send time is unrecoverable in 72 hours.
+   *
+   * ON SUCCESS it also stamps `ledger.first_sent_at`, WRITE-ONCE. A resend records its own row but
+   * cannot move the anchor: C1's dispute clock runs from our send date, and a later copy must not
+   * shift a customer's deadline under them.
+   *
+   * @returns {{id:number, firstSend:boolean}} firstSend=true when this attempt set the anchor.
+   */
+  async recordSend({ ledgerId, primusInvoiceId, token = null, recipient, recipientSource = null,
+                     outcome, provider = null, providerMessageId = null, providerStatus = null,
+                     error = null, at = Date.now() }) {
+    assertOutcome(outcome);
+    if (!ledgerId) throw new Error('recordSend() requires a ledgerId');
+    if (!recipient) throw new Error('recordSend() requires a recipient — the log exists to answer "to whom"');
+
+    const res = await this.db
+      .prepare(
+        `INSERT INTO invoice_send
+           (mode, ledger_id, primus_invoice_id, token, recipient, recipient_source,
+            attempted_at, sent_date, outcome, provider, provider_message_id, provider_status, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(this.mode, ledgerId, String(primusInvoiceId), token, String(recipient), recipientSource,
+            at, businessDate(at), outcome, provider, providerMessageId, providerStatus, error)
+      .run();
+
+    // Only a SEND starts the clock. A failed attempt is a try, not a send — the clause runs from
+    // the latter, and treating a 400 as the start would give the customer a window against an
+    // invoice they never received.
+    let firstSend = false;
+    if (outcome === 'sent') firstSend = await this.markFirstSent(ledgerId, at);
+
+    return { id: res.meta && res.meta.last_row_id, firstSend };
+  }
+
+  /**
+   * Stamp the moment this invoice was FIRST emailed. WRITE-ONCE via `IS NULL`.
+   *
+   * Same shape and same reason as markLinkMinted: the value is "when we first sent", never "when we
+   * last sent". The guard is in the WHERE rather than in a caller's if-statement, so a resend
+   * cannot move a contractual anchor even if a future caller forgets that it must not.
+   */
+  async markFirstSent(ledgerId, at = Date.now()) {
+    const bound = this.bound();
+    const res = await this.db
+      .prepare(
+        `UPDATE ledger SET first_sent_at = ?, updated_at = ?
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND first_sent_at IS NULL`
+      )
+      .bind(at, Date.now(), ledgerId, this.mode, ...bound.params)
+      .run();
+    return (res.meta && res.meta.changes) === 1;
+  }
+
+  /**
+   * Invoices whose link was minted but which were never successfully sent (spec §8.883).
+   *
+   * THE QUERY THE SEND LOG EXISTS FOR. Minted-but-never-sent must not be a state discovered by a
+   * customer asking why they never got an invoice. Single-table, no join — which is what
+   * denormalising `first_sent_at` onto the ledger buys.
+   *
+   * Bound-scoped like every other read here.
+   */
+  async openMintedUnsent({ limit = 100 } = {}) {
+    const bound = this.bound();
+    const res = await this.db
+      .prepare(
+        `SELECT id, primus_invoice_id, primus_invoice_number, ar_code, link_minted_at
+           FROM ledger
+          WHERE mode = ? AND ${bound.sql}
+            AND link_minted_at IS NOT NULL
+            AND first_sent_at IS NULL
+          ORDER BY link_minted_at ASC
+          LIMIT ?`
+      )
+      .bind(this.mode, ...bound.params, limit)
+      .all();
+    return (res && res.results) || [];
   }
 
   /** Void + reissue (spec §4.4): a finalized Stripe invoice cannot be edited. */

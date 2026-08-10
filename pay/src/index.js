@@ -15,6 +15,10 @@
 //   3. THE BINDING is one D1 and nothing else.
 //   4. THE RENDERER is server-side, so session-tier data never reaches a browser to be hidden —
 //      §8.873's lesson that a boundary enforced in the UI is a display preference.
+//   5. THE AR ALLOWLIST is welded into the token query (§8.882), so a row outside the pilot bound
+//      is NOT ADDRESSABLE from here — not fetched and then rejected. The mint refusing is the
+//      primary control; this is the second one, and it covers rows that never passed through the
+//      mint at all (a restored backup, a manual insert, a future writer that forgets).
 // LAYERS 1 AND 3 ARE THE REAL ONES: they hold when this file is wrong.
 //
 // ── ENUMERATION: THE ENTROPY IS THE CONTROL, NOT A RATE LIMIT (§8.880) ───────────────────────
@@ -25,6 +29,9 @@
 // the credential-in-a-log problem, reappearing where nobody would look for it.
 
 import { resolveToken } from '../../invoice-sync/src/invoice-link.js';
+// arcode.js is PURE and dependency-free. config.js would drag Primus credentials, Stripe key
+// resolution and mode config into a bundle served from the open internet, to parse one string.
+import { parseAllowlist } from '../../invoice-sync/src/arcode.js';
 import { DISPUTE_NOTICE } from '../../invoice-sync/src/dispute-notice.js';
 import { COPY } from './copy.js';
 
@@ -109,7 +116,19 @@ export default {
     const m = TOKEN_RE.exec(url.pathname);
     if (!m) return notFound();
 
-    const link = await resolveToken(env.LINKS, env.LINK_MODE, m[1]);
+    // Parsed per request rather than at module scope: parseAllowlist THROWS on an unset value, and
+    // a throw at module scope in a Worker is a hard 1101 on every request with no useful log. Here
+    // it is one caught failure, and an unset AR_ALLOWLIST fails CLOSED — serving nothing — which is
+    // the correct direction for a public route.
+    let bound;
+    try {
+      bound = parseAllowlist(env.AR_ALLOWLIST);
+    } catch (err) {
+      console.error(JSON.stringify({ evt: 'link.misconfigured', error: String(err && err.message || err) }));
+      return notFound();
+    }
+
+    const link = await resolveToken(env.LINKS, env.LINK_MODE, m[1], bound);
     if (!link) {
       // PREFIX ONLY. The miss rate is the enumeration signal; the token is not ours to log.
       console.log(JSON.stringify({ evt: 'link.miss', mode: env.LINK_MODE, prefix: m[1].slice(0, 6) }));

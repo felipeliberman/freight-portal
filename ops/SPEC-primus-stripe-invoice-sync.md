@@ -4768,6 +4768,204 @@ was not code but a fact — the second document endpoint shape, now recorded in 
 **Layout:** all three buttons carried `flex:1`, so three equal thirds become two equal halves.
 Phone rendering remains in the only-a-human-can-verify list.
 
+## 8.882 THE ALLOWLIST ON THE MINT PATH — step 4, and the rule that did not transfer
+
+**A DEFECT, found by asking where the bound was asserted on THIS path rather than assuming it was
+inherited.** Closed 2026-08-10, pinned by a test proven red on the HEAD that introduced it.
+
+### THE ORDERING WAS BACKWARDS
+
+`Ledger` and `StripeCustomers` hold the allowlist in their CONSTRUCTOR, so the pilot bound cannot be
+forgotten at a call site. **`InvoiceLinks` was written after both and did not inherit it** — its
+constructor was `(db, mode)`, and `mint()` normalised the ARCode, stored it, and never tested
+membership.
+
+So a real customer's invoice would **acquire a working public link FIRST**, and the only trace of
+the refusal would be **`markLinkMinted` returning `false` — the same value it returns for an
+already-stamped row.** A boolean nobody reads. `resolveToken` filtered on mode and revocation only,
+so the public route would serve that link regardless.
+
+**Not a theoretical ordering complaint.** The red test minted a link for ARCode `5406`, outside the
+pilot bound, and then resolved it through the public read path:
+
+```
+A LINK WAS MINTED FOR ARCode 5406, OUTSIDE THE PILOT BOUND, AND THE PUBLIC ROUTE SERVES IT.
+      token: 5O2XQBqXDi2mN9tcWreA0g
+      invoice 141604, BOL 160133693, $273.57
+      This is a real customer's invoice reachable by anyone holding the URL, with no session.
+```
+
+### THE LARGER FINDING — A RULE APPLIED TO TWO CLASSES IS NOT A RULE
+
+This is the constructor-bound lesson from step B **reappearing in a class written after it.** The
+rule lived in two classes and in a spec paragraph. **Neither is a mechanism**, and nothing made the
+third class inherit it. Nothing would have made the fourth.
+
+**So the mechanism is now a test, not a paragraph.** `THE RULE, GENERALISED` enumerates every class
+holding an ARCode-scoped bound and asserts each REFUSES to be built without one. **The next such
+class fails there on the day it is added**, rather than in a pilot post-mortem.
+
+### WHAT CHANGED
+
+- **`InvoiceLinks` takes the allowlist in its constructor** and validates its SHAPE, not just its
+  presence. Never defaulted.
+- **`mint()` REFUSES an out-of-bound ARCode — it does not mint-then-fail-to-stamp.** It THROWS,
+  matching `Ledger.claim`: a silent refusal would be indistinguishable from "already minted", and
+  the caller would send an email whose link does not exist.
+- **`resolveToken` welds the bound into its WHERE** — belt and braces at the owner's instruction.
+  This covers what the mint guard structurally CANNOT: a row that is **already there**. A restored
+  backup, a manual insert, a future writer that forgets — none pass through `mint()`.
+- **`revoke`, `touch` and `_activeFor` are bound-scoped too.** `_activeFor` is unreachable for an
+  out-of-bound code, but the discipline is that the bound is welded into the query rather than
+  remembered by the caller — which is the entire point of the fix.
+- **`parseAllowlist` moved to `arcode.js`**, which is pure and dependency-free. The public `pay`
+  Worker needs the same bound; importing `config.js` to get it would drag Primus credentials and
+  Stripe key resolution into a bundle served from the open internet **to parse one string.**
+
+### TWO CONSEQUENCES, NAMED RATHER THAN DISCOVERED LATER
+
+**A refusal is SILENT to the customer, deliberately.** `resolveToken` returns `null` for
+out-of-bound exactly as it does for unknown and revoked. A loud refusal would tell a stranger which
+tokens exist (§5.8 — "not found" and "not yours" are one message). A test asserts the three are
+indistinguishable.
+
+**NARROWING THE ALLOWLIST KILLS LIVE LINKS.** A link minted under a wider bound stops resolving if
+the bound later shrinks — the customer's URL goes to the 404 page with no explanation. For a pilot
+this is the correct direction (fail closed), and widening is harmless. **But it means AR_ALLOWLIST
+is no longer only a write-side control: it is now load-bearing on links already in customers'
+inboxes.** Recorded because the person who narrows it later will not be the person who read this.
+
+## 8.883 THE SEND LOG — step 4, schema approved 2026-08-10
+
+**`invoice_send` (new table) + `ledger.first_sent_at` (write-once).** What we sent, to whom, when,
+and what happened — **including failures.** Migration statements 8, 9 and 10; schema-first, applied
+before any code that uses them.
+
+### WHY IT COULD NOT WAIT FOR A LATER STEP
+
+**Minted-but-never-sent was going to be indistinguishable from minted-and-sent.** An invoice whose
+link existed and whose email silently failed would look exactly like one delivered a month ago.
+
+**And there is no second path to fall back on.** SendGrid's Activity Feed retains **three days**
+(§8.875), so a send not logged at send time is unrecoverable in 72 hours — the retention finding
+from this morning arriving where it actually bites.
+
+### A TABLE, NOT COLUMNS ON `ledger`
+
+One invoice has **several attempts**: a retry, a resend, a bounce, a corrected recipient. Columns on
+`ledger` hold only the last, and *"what did we send, to whom"* is precisely the question that must
+survive the second attempt.
+
+### THIS DATABASE AND NOT THE LINKS DATABASE — A BOUNDARY, NOT A LAYOUT CHOICE
+
+The links database is **read by the public Worker**, and its entire data surface is possession-tier
+by construction. **Recipient email addresses must not be reachable from there.**
+
+**This is the SECOND time that boundary has decided a placement** — the first was keeping `cache`,
+which carries customer emails, out of the public Worker's reach. Stated here as a boundary rather
+than a preference, so the next placement question is answered by it instead of re-argued.
+
+### `first_sent_at` IS WRITE-ONCE, AND THAT IS A CONTRACTUAL GUARANTEE
+
+C1's dispute clause starts a **3-business-day clock on our send date.** Anchored on the *latest*
+send, **a resend in week three would silently move a customer's dispute deadline under them** — a
+contractual change nobody decided to make.
+
+Write-once via `IS NULL` in the WHERE makes the anchor **unmovable by construction rather than by
+discipline**, the same guard `link_minted_at` carries. A resend still records its own row; it simply
+cannot move the anchor. **Only `outcome='sent'` stamps it** — a failed attempt is a *try*, not a
+send, and starting the clock on a 400 would give a customer a window against an invoice they never
+received.
+
+It is denormalised from `invoice_send` on purpose: it also makes the sweep a **single-table query
+with no join** (`Ledger.openMintedUnsent`).
+
+### `sent_date` IS RECORDED, NOT DERIVED — zone `America/Los_Angeles`
+
+**THE ZONE NAME IS WRITTEN BESIDE THE COLUMN IN `schema.sql`** so a future migration cannot silently
+reinterpret existing rows.
+
+*"Business day"* means **our** business days, and we operate in Los Angeles. A contractual clock must
+not depend on whoever reads the epoch integer later picking a zone: **2026-08-11 03:30 UTC is
+2026-08-10 in Los Angeles — a different day**, and the wrong one to start a three-day window on. The
+epoch value is kept alongside, not replaced.
+
+> **THIS IS THE THIRD TIME-REPRESENTATION PROBLEM ON THIS PROJECT.** Seconds versus milliseconds in
+> `cache.expires_at`; PDT mislabelled as `Z` in an analysis; and now a business-day boundary over an
+> epoch integer. **§8.867 already governs it** — a time value crossing a boundary carries its unit,
+> its zone and its modality. Cited rather than restated, so the rule is seen being APPLIED rather
+> than reinvented for a third time.
+
+### `recipient_source` — KEPT
+
+`'qbo_cache' | 'primus_detail' | …`. It is the column that answers **"how did this reach the wrong
+person"** without a reconstruction, which is exactly what C2's recipient-verification rule needs.
+
+### NO UNIQUE CONSTRAINT — DELIBERATELY ABSENT
+
+**A resend is legitimate.** Preventing an *accidental* double-send is a **claim-before-send guard in
+code**; a constraint cannot tell the two apart and would block the legitimate one.
+
+Recorded as deliberately absent for the same reason `expires_at` is (§8.879): **so its absence reads
+as a decision rather than an oversight**, and nobody "fixes" it. A test asserts no UNIQUE index
+appears on the table.
+
+### CORRECTION — WHERE THE MINT IS CALLED FROM. The requirement was right, the placement wrong.
+
+**Owner's requirement, and it stands:** minted-but-never-sent is not an acceptable state to ship,
+even briefly.
+
+**The placement drawn from it did not follow.** Step 4 was framed as "wire the mint into a send
+path", which reads as minting during the POLL. **That would MANUFACTURE the forbidden state on every
+run** — every minted link would sit unsent until some later step sent it, making
+minted-but-never-sent a STANDING CONDITION rather than an anomaly. The exact opposite of the
+requirement.
+
+**MINT AT SEND TIME, immediately before the send.** The window becomes milliseconds wide and exists
+only when the transport genuinely fails — which is what the send log is for. **So the mint call site
+belongs with step 6's transport, not here.**
+
+Step 4 therefore lands what makes that call SAFE when it comes — the gate that refuses (§8.882), the
+log that records, the query that detects — and deliberately leaves `InvoiceLinks.mint()` with no
+production caller.
+
+**Recorded as a correction rather than folded in silently:** the requirement was the owner's and it
+was correct; the step framing derived from it was not, and the difference between the two is the
+whole finding.
+
+### THE DOWN MIGRATION EXPIRES AT THE FIRST SEND
+
+`DROP TABLE invoice_send` is safe only until a row exists. After that it is the **only** record that
+an invoice was emailed — and after 72 hours SendGrid cannot reconstruct it, **including the date
+C1's clock runs from.**
+
+---
+
+## 8.884 AR_ALLOWLIST HAS BECOME A LIVE-ACCESS CONTROL — raised out of §8.882
+
+**It began as a blast-radius bound on what we WRITE. Since §8.882 it is welded into the invoice-link
+token query, so it also decides which customer-facing links RESOLVE.** That is a change in kind, not
+in scope, and it deserves its own item rather than a paragraph inside the change that caused it.
+
+### WHAT REMOVING AN ARCode NOW MEANS
+
+**It kills links already in that customer's inbox.** Their invoice URL starts returning the generic
+404 page — **no explanation, and indistinguishable from an unknown token**, because the refusal is
+deliberately silent (a loud one would be an oracle for which tokens exist, §5.8).
+
+**Nobody reports that as an error. The invoice simply goes unpaid.**
+
+**Widening is safe. Narrowing is an operational change to live customer access**, not a
+configuration tidy. To kill one link, **revoke it** (`InvoiceLinks.revoke`) — that is the mechanism
+built for it, and it leaves a record.
+
+### THE WARNING LIVES IN THE CODE, NOT ONLY HERE
+
+A spec paragraph is not a mechanism — the lesson of §8.882 itself. So the warning sits **where the
+list is edited**: `invoice-sync/wrangler.toml` and `pay/wrangler.toml` beside the value, and in
+`parseAllowlist` (`arcode.js`), the one place both Workers parse it. **Anyone editing that list meets
+the warning before they change it**, which a spec section cannot guarantee.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification

@@ -77,3 +77,43 @@ export function isAllowlisted(allowlist, arCode) {
   if (!code) return true;
   return !!(allowlist && allowlist.codes && allowlist.codes.has(code));
 }
+
+/**
+ * Parse an AR_ALLOWLIST env value into the {all, codes} shape.
+ *
+ * LIVES HERE, NOT IN config.js, FOR A BUNDLING REASON. The public `pay` Worker needs this bound
+ * too (resolveToken welds it into its WHERE), and config.js reaches Primus credentials, Stripe keys
+ * and mode resolution. Importing it from a public Worker would pull all of that into a bundle
+ * served from the open internet to satisfy one string parse. arcode.js is pure and dependency-free,
+ * which is exactly what a public bundle should be able to import.
+ *
+ * FAILS CLOSED. An unset or empty value THROWS rather than meaning "everything" — "empty means all"
+ * is precisely the misconfiguration that would blast the entire book (§3.1). Widening requires
+ * typing '*', which is deliberate, greppable, and logged.
+ *
+ * ── ⚠ THIS LIST IS NOW A LIVE-ACCESS CONTROL, NOT ONLY A WRITE-SIDE ONE (spec §8.884) ────────
+ *
+ * It began as a blast-radius bound on what we WRITE. Since §8.882 it is also welded into the
+ * invoice-link token query, so it decides which customer-facing links RESOLVE.
+ *
+ * **REMOVING AN ARCode KILLS LINKS ALREADY IN THAT CUSTOMER'S INBOX.** Their URL starts returning
+ * the generic 404 — no explanation, and indistinguishable from an unknown token, because the
+ * refusal is deliberately silent (a loud one would be an oracle for which tokens exist). Nobody
+ * reports that as an error; the invoice simply goes unpaid.
+ *
+ * WIDENING IS SAFE. NARROWING IS AN OPERATIONAL CHANGE TO LIVE CUSTOMER ACCESS. To kill one link,
+ * revoke it (InvoiceLinks.revoke) — that is the mechanism built for it, and it leaves a record.
+ */
+export function parseAllowlist(raw, varName = 'AR_ALLOWLIST') {
+  const v = raw === undefined || raw === null ? '' : String(raw).trim();
+  if (!v) {
+    throw new Error(
+      `${varName} is unset. It fails closed — set it to the pilot ARCode(s) (e.g. "5406"), ` +
+      `or to "*" to run the full book. Full-book is spec phase 10 and needs a backfill first (§3.1).`
+    );
+  }
+  if (v === '*') return { all: true, codes: new Set() };
+  const codes = new Set(v.split(',').map(normalizeArCode).filter(Boolean));
+  if (!codes.size) throw new Error(`${varName} parsed to an empty list from ${JSON.stringify(raw)}`);
+  return { all: false, codes };
+}

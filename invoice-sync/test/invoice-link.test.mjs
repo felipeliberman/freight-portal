@@ -15,6 +15,10 @@
 //      leak from a table that does not hold it — which is why this asserts the table's SHAPE, not
 //      just what a renderer chooses to show.
 //   4. MODE NAMESPACING, as everywhere: a test-mode link must never satisfy a live-mode lookup.
+//
+// THE AR ALLOWLIST IS NOT TESTED HERE. These tests take ANY_AR (the wildcard) because they are
+// about the store's properties, not the pilot bound — the same split the Ledger tests use. The
+// bound has its own file: test/invoice-link-allowlist.test.mjs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,7 +53,7 @@ test('the invoice-link store exists', async () => {
 
 test('PROPERTY: minting twice for one invoice returns the SAME token, not an error', async () => {
   const { InvoiceLinks } = await mod();
-  const links = new InvoiceLinks(freshLinksDb(), 'test');
+  const links = new InvoiceLinks(freshLinksDb(), 'test', ANY_AR);
   const snap = { invoiceNumber: '141604', issueDate: '2026-07-13', dueDate: '2026-08-12', totalCents: 27357, bolNumber: '160133693' };
 
   const a = await links.mint({ primusInvoiceId: '1563993653', arCode: '1234', ...snap });
@@ -63,7 +67,7 @@ test('PROPERTY: minting twice for one invoice returns the SAME token, not an err
 
 test('PROPERTY: a REVOKED link can be replaced, and the replacement is a different token', async () => {
   const { InvoiceLinks } = await mod();
-  const links = new InvoiceLinks(freshLinksDb(), 'test');
+  const links = new InvoiceLinks(freshLinksDb(), 'test', ANY_AR);
   const args = { primusInvoiceId: 'I1', arCode: '1234', invoiceNumber: '141604', issueDate: '2026-07-13', dueDate: '2026-08-12', totalCents: 100, bolNumber: 'B1' };
 
   const first = await links.mint(args);
@@ -80,7 +84,7 @@ test('PROPERTY: a REVOKED link can be replaced, and the replacement is a differe
 test('PROPERTY: the snapshot is frozen at mint — a later invoice edit does not restate the link', async () => {
   const { InvoiceLinks } = await mod();
   const db = freshLinksDb();
-  const links = new InvoiceLinks(db, 'test');
+  const links = new InvoiceLinks(db, 'test', ANY_AR);
 
   const { token } = await links.mint({
     primusInvoiceId: 'I1', arCode: '1234', invoiceNumber: '141604',
@@ -116,7 +120,7 @@ test('PROPERTY: the possession tier is a SCHEMA boundary — behind-session fiel
 
 test('resolve() returns the possession snapshot and nothing beyond it', async () => {
   const { InvoiceLinks } = await mod();
-  const links = new InvoiceLinks(freshLinksDb(), 'test');
+  const links = new InvoiceLinks(freshLinksDb(), 'test', ANY_AR);
   const { token } = await links.mint({
     primusInvoiceId: 'I1', arCode: '1234', invoiceNumber: '141604',
     issueDate: '2026-07-13', dueDate: '2026-08-12', totalCents: 27357, bolNumber: '160133693',
@@ -131,8 +135,8 @@ test('resolve() returns the possession snapshot and nothing beyond it', async ()
 test('NEGATIVE CONTROL: a test-mode link never satisfies a live-mode lookup', async () => {
   const { InvoiceLinks } = await mod();
   const db = freshLinksDb();
-  const t = new InvoiceLinks(db, 'test');
-  const l = new InvoiceLinks(db, 'live');
+  const t = new InvoiceLinks(db, 'test', ANY_AR);
+  const l = new InvoiceLinks(db, 'live', ANY_AR);
 
   const { token } = await t.mint({ primusInvoiceId: 'I1', arCode: '1234', invoiceNumber: 'N', issueDate: 'd', dueDate: 'd', totalCents: 1, bolNumber: 'B' });
   assert.equal(await l.resolve(token), null, 'a test-mode link resolved in live mode');

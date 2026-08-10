@@ -109,6 +109,20 @@ PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"
 # backfill first, because non-allowlisted invoices are never recorded and the rolling poll window
 # will not reach back for them. NOTE (§8.865): a backfill beyond ~2026-03 is IMPOSSIBLE through
 # this endpoint, and any window spanning 2026-04-29 returns HTTP 500.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# ⚠ BEFORE YOU REMOVE AN ARCode FROM THIS LIST — READ THIS (spec §8.884)
+#
+# THIS LIST IS NO LONGER ONLY A WRITE-SIDE CONTROL. Since §8.882 the bound is welded into the
+# invoice-link token query, so it also decides which links RESOLVE.
+#
+# REMOVING AN ARCode KILLS LINKS ALREADY IN THAT CUSTOMER'S INBOX. Their invoice URL starts
+# returning the generic 404 page — no explanation, indistinguishable from an unknown token,
+# because the refusal is deliberately silent (a loud one would be an oracle). They will not
+# report it as an error; they will simply not pay.
+#
+# WIDENING IS SAFE. NARROWING IS A LIVE-ACCESS CHANGE, not a configuration tidy. Revoke links
+# deliberately (InvoiceLinks.revoke) rather than by removing a code from this list.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
 AR_ALLOWLIST = "1234"
 # Rolling poll window, days. Deliberately OVERLAPS previous runs — that overlap is what catches an
 # invoice skipped by a page shift (spec §3). Clamped to 2..90 in code.

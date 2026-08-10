@@ -5,7 +5,7 @@
 // anything if the mode is impossible to get wrong by accident, so everything here fails closed:
 // an unset, unknown, or mismatched value throws rather than picking a default.
 
-import { normalizeArCode } from './arcode.js';
+import { normalizeArCode, parseAllowlist } from './arcode.js';
 
 const MODES = ['test', 'live'];
 
@@ -109,19 +109,9 @@ export function assertLivemode(mode, stripeObject) {
  * requires typing '*', which is deliberate, greppable, and logged.
  */
 export function loadArAllowlist(env) {
-  const raw = env.AR_ALLOWLIST;
-  const v = raw === undefined || raw === null ? '' : String(raw).trim();
-  if (!v) {
-    throw new Error(
-      `AR_ALLOWLIST is unset. It fails closed — set it to the pilot ARCode(s) (e.g. "5406"), ` +
-      `or to "*" to run the full book. Full-book is spec phase 10 and needs a backfill first (§3.1).`
-    );
-  }
-  if (v === '*') return { all: true, codes: new Set() };
-
-  const codes = new Set(v.split(',').map(normalizeArCode).filter(Boolean));
-  if (!codes.size) throw new Error(`AR_ALLOWLIST parsed to an empty list from ${JSON.stringify(raw)}`);
-  return { all: false, codes };
+  // Delegates to arcode.js so there is ONE parser. The public `pay` Worker needs the same bound and
+  // must not import this file to get it — see parseAllowlist's note on why.
+  return parseAllowlist(env.AR_ALLOWLIST);
 }
 
 /**

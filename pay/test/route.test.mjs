@@ -60,7 +60,12 @@ function seed(db, over = {}) {
   return db;
 }
 
-function env(db, mode = 'live') { return { LINKS: db, LINK_MODE: mode }; }
+// AR_ALLOWLIST is part of the route's config now (§8.882): the pilot bound is welded into the
+// token query, so a row outside it is not addressable from the public Worker. '1234' matches the
+// ar_code seed() writes.
+function env(db, mode = 'live', allowlist = '1234') {
+  return { LINKS: db, LINK_MODE: mode, AR_ALLOWLIST: allowlist };
+}
 const req = (path, init) => new Request('https://pay.freightandlogistics.ai' + path, init);
 
 // ── the route surface ────────────────────────────────────────────────────────────────────────
