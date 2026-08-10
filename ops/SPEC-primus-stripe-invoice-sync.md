@@ -589,6 +589,24 @@ profitSummary             // INTERNAL — cost, sell, profit, GP%
 
 `customerInfo.customerCode` == `ARCode` on the list response.
 
+### Documents — TWO endpoint shapes, not one (found 2026-08-10)
+
+```
+GET /applet/v1/document/{BOLId}          — used everywhere in portal.html (fetchDocuments)
+GET /applet/v1/document/bol/{BOLNumber}  — keyed on the NUMBER, not the internal id
+```
+
+**The second form is real and was in production code**, but it appeared exactly ONCE in
+`portal.html` — inside the Email Invoice handler, fetching the invoice PDF to attach. **Found while
+removing that handler as dead code, which would have deleted the only record of it.**
+
+**MARKED observed-in-use, NOT tested.** We know it was *called*; we have not confirmed it *works* —
+and the button it belonged to **never ran** (§8.881), so it is entirely possible nothing has ever
+exercised this path. Treat it as a lead, not a fact, until a request is made and its response read.
+
+Why it may matter: `{BOLNumber}` is the identifier a customer quotes, while `{BOLId}` is internal.
+A path keyed on the number would let a lookup skip the id resolution `_resolveBOLId` exists to do.
+
 ### Customer resolution
 
 `ARCode` → QBO customer. QBO `DisplayName` is `<Company>-<ARCode>`:
@@ -3142,8 +3160,24 @@ Timestamped by us, logged by us, ours to produce on demand.
 **Record this as a STRENGTHENING, not a housekeeping note.** A dispute window that starts on **a date
 we can prove** is a materially better contractual term than one starting on **a flag we did not own
 and could not evidence**. The ambiguity is closed by the architecture change rather than by a
-decision about wording — and the send log that makes the date provable is therefore not optional
-tooling, it is what the term rests on.
+decision about wording.
+
+> ### ⚠ LIVE GAP — THE IMPROVEMENT CREATED AN EXPOSURE, AND IT IS OPEN TODAY
+>
+> **We cannot currently prove the date.** There is no send log. `_lastInvoiceSend`
+> (`portal.html:4462`) is an in-memory rate limiter that neither persists nor counts, and
+> `sendgrid-proxy` has no source in this repo. **We do not know what we have sent, to whom, or
+> whether it arrived.**
+>
+> **A contractual term resting on a timestamp nobody records is not enforceable.** The 3-business-day
+> clock is only better than the old flag *if the date is evidenced*; without a log it is worse,
+> because it reads as precise while being unsupportable — and **the first dispute is where that
+> surfaces**, which is the worst possible moment to discover it.
+>
+> **This is a live gap, not a future feature.** It was created by a design improvement, which is
+> exactly why it is easy to miss: nothing regressed, and the thing that got better is the thing that
+> now needs evidence it never needed before. The send log is not optional tooling — **it is what the
+> term rests on.** Design: §8.881.
 
 
 ## 8.866 How to pull and verify a deployed Worker bundle — METHOD
@@ -4324,6 +4358,21 @@ the sync Worker on the public internet for the first time.
 > answering requests from strangers.** It stays private — `workers_dev = false`, no routes, no public
 > surface — and that is a security property to preserve, not a default to inherit.
 
+### THERE IS NO DRAFT STATE IN AN EMAIL — a property of this design, not a caveat
+
+Under the Stripe design, **a mistake stayed a draft.** `auto_advance:false` meant nothing sent
+itself, a wrong payload sat unread until someone looked, and a Stripe draft can be deleted. That was
+a real safety net and it was doing more work than it was credited for.
+
+**Delivery by our own mail removes it entirely. A send is a send. There is no void, no unsend, and
+no equivalent of deleting a draft.**
+
+So the safety property has to be carried by something else, and **the only thing carrying it is the
+pilot recipient**: the owner's own address, on the owner's own test account, which no other person
+can log into. **That is now the only thing standing between a wrong template and a customer reading
+it** — not a review step, not drafts-only, not test mode. When a non-pilot recipient is added, that
+protection is gone in the same instant, which is why C2 is a hard gate rather than a preference.
+
 ### What this closes and what it does not
 
 It makes B8 tractable — session gives identity, token gives selection, and §5.8's rule that an
@@ -4564,6 +4613,59 @@ out), **no rate-limiting rule**, **no deploy**, and **nothing mints a token**. B
 the route are commented in `wrangler.toml` with the create-and-verify commands beside them.
 Schema-first: the databases exist before this deploys.
 
+
+## 8.881 CORRECTION — "the portal sends invoice emails today" was FALSE. It never sent.
+
+**Recorded as a CORRECTION, not an edit.** Several sessions of planning treated the portal's Email
+Invoice button as a live send path with real recipients. **It has never sent an invoice.**
+
+`portal.html`'s `#inv-email-btn` handler read `_lastInvoiceSend` on its first statement. The
+identifier was referenced three times and **declared nowhere**, so the handler threw `ReferenceError`
+before doing anything. `git log -S '_lastInvoiceSend'` returns **exactly one commit** — and
+`git log --diff-filter=A` shows that same commit **ADDED `portal.html`**. **Born broken. 57 days. No
+deployed version could ever have sent one.**
+
+**The failure was SILENT** — no dialog, no user-facing error, the button simply did nothing. That is
+how it survived on a live site unnoticed.
+
+### THIS ALSO CORRECTS §8.875's BLAST RADIUS — one error, written once
+
+§8.875 recorded the failing-SPF blast radius as *"wider than invoices: Email Invoice (`:4506`) and
+the customer support confirmation (`:9928`)."* **It was narrower.** The only customer-facing mail the
+portal has ever sent is the support confirmation. **No invoice ever went out unauthenticated,
+because none ever went out.**
+
+### HOW THE ERROR HAPPENED — the class, not the instance
+
+The call site was read, the payload traced into `sendViaEmail`, the transport confirmed — and the
+path declared live **without checking that the handler could REACH the call.**
+
+**The destination was verified and the journey inferred.**
+
+**This is the same class as "deployed == committed" (§8.868).** In both cases a well-formed reading
+of real code was defeated by a single unexamined precondition, and in both cases the check that
+would have caught it was cheap and simply never run. The pattern is the finding; the instance is
+only its latest example.
+
+**A general audit for undeclared identifiers across `portal.html` has NOT been done.** `node --check`
+catches syntax, not scope, so nothing in the current gates would find a second one.
+
+### WHAT WAS REMOVED, and what was kept
+
+Removed at this commit: the button markup, the whole handler, all three `_lastInvoiceSend`
+references (no declaration existed to delete), the recipient `prompt()`, the PDF-attachment fetch,
+the inline HTML body, two `alert()`s, and an orphaned `// Wire up Email Invoice button` comment.
+
+**`sendViaEmail` is KEPT** — two live callers on the support path, and it is the transport step 6
+will use.
+
+Discarded deliberately rather than by neglect: the **HTML body** (a field dump styling its heading
+with `var(--ac)`, a CSS variable that does not resolve in mail clients) and the **PDF-attachment
+logic** (superseded by §8.878's *documents are linked, not attached*). The one thing worth keeping
+was not code but a fact — the second document endpoint shape, now recorded in §1.
+
+**Layout:** all three buttons carried `flex:1`, so three equal thirds become two equal halves.
+Phone rendering remains in the only-a-human-can-verify list.
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 

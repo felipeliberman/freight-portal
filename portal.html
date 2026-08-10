@@ -4474,10 +4474,6 @@ function showInvoiceDetail(inv) {
 
       <!-- Actions -->
       <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:4px;">
-        <button id="inv-email-btn" style="background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--tx);">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-          Email Invoice
-        </button>
         <button id="inv-detail-dl-btn" style="background:var(--ac);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;">Download Invoice</button>
         <button id="inv-view-ship-btn" style="background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 16px;font-size:12px;font-weight:500;cursor:pointer;flex:1;text-align:center;${!inv._shipment||!inv._shipment.BOLId?'opacity:.4;cursor:default;':''}color:var(--tx);">View Shipment →</button>
       </div>
@@ -4519,73 +4515,6 @@ function showInvoiceDetail(inv) {
     viewShipBtn.style.opacity = '.4';
     viewShipBtn.style.cursor = 'default';
     viewShipBtn.onclick = null;
-  }
-
-  // Wire up Email Invoice button
-  const emailBtn = overlay.querySelector('#inv-email-btn');
-  if (emailBtn) {
-    emailBtn.onclick = async () => {
-      const now = Date.now();
-      if (now - _lastInvoiceSend < 20000) {
-        alert('Please wait ' + Math.ceil((20000-(now-_lastInvoiceSend))/1000) + ' seconds before sending again.');
-        return;
-      }
-      _lastInvoiceSend = now;
-
-      // Ask for recipient email
-      const recipient = prompt('Send invoice to (email address):', currentCustomer && currentCustomer.email || '');
-      if (!recipient) return;
-
-      const origLabel = emailBtn.innerHTML;
-      emailBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Sending…';
-      emailBtn.disabled = true;
-
-      try {
-        // Try to fetch invoice PDF from ShipPrimus
-        let attachments = [];
-        try {
-          const token = await getToken();
-          const bolNum = f.bolNum || '';
-          if (bolNum) {
-            const pr = await fetch(PRIMUS_BASE + '/applet/v1/document/bol/' + bolNum, { headers: { 'Authorization': 'Bearer ' + token } });
-            if (pr.ok) {
-              const pb = await pr.arrayBuffer();
-              const b64 = btoa(String.fromCharCode(...new Uint8Array(pb)));
-              attachments.push({ content: b64, filename: 'Invoice_' + f.invNum + '.pdf', type: 'application/pdf', disposition: 'attachment' });
-            }
-          }
-        } catch(e) { console.warn('Could not fetch invoice PDF:', e); }
-
-        const htmlBody =
-          `<div style="font-family:sans-serif;font-size:14px;color:#333;max-width:600px;">` +
-          `<h2 style="color:var(--ac);">Invoice #${f.invNum}</h2>` +
-          `<p>Please find your invoice details below${attachments.length ? ' and the attached PDF' : ''}.</p>` +
-          `<table style="border-collapse:collapse;width:100%;margin:16px 0;">` +
-          `<tr><td style="padding:8px;border-bottom:1px solid #e5e2d9;color:#666;">Invoice #</td><td style="padding:8px;border-bottom:1px solid #e5e2d9;font-weight:600;">${f.invNum||'—'}</td></tr>` +
-          `<tr><td style="padding:8px;border-bottom:1px solid #e5e2d9;color:#666;">BOL #</td><td style="padding:8px;border-bottom:1px solid #e5e2d9;font-weight:600;">${f.bolNum||'—'}</td></tr>` +
-          `<tr><td style="padding:8px;border-bottom:1px solid #e5e2d9;color:#666;">Amount</td><td style="padding:8px;border-bottom:1px solid #e5e2d9;font-weight:600;">${f.rawAmt!=null?'$'+Number(f.rawAmt).toFixed(2):'—'}</td></tr>` +
-          `<tr><td style="padding:8px;border-bottom:1px solid #e5e2d9;color:#666;">Due Date</td><td style="padding:8px;border-bottom:1px solid #e5e2d9;font-weight:600;">${fmtDate(f.due)||'—'}</td></tr>` +
-          `<tr><td style="padding:8px;color:#666;">Status</td><td style="padding:8px;font-weight:600;">${f.status||'—'}</td></tr>` +
-          `</table>` +
-          `<p>If you have any questions please contact us at <a href="tel:+18006873713">(800) 687-3713</a> or <a href="mailto:support@freightandlogistics.ai">support@freightandlogistics.ai</a>.</p>` +
-          `<p style="color:#999;font-size:11px;">Freight and Logistics, Inc. · 145 S Fairfax Ave #200, Los Angeles, CA 90036</p></div>`;
-
-        await sendViaEmail({
-          to: recipient,
-          subject: 'Invoice #' + f.invNum + ' — BOL #' + f.bolNum,
-          htmlBody,
-          attachments,
-        });
-
-        emailBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2.5" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> Sent!';
-        setTimeout(() => { emailBtn.innerHTML = origLabel; emailBtn.disabled = false; }, 3000);
-      } catch(e) {
-        console.error('Invoice email error:', e);
-        emailBtn.innerHTML = origLabel;
-        emailBtn.disabled = false;
-        alert('Failed to send email. Please try again or contact support.');
-      }
-    };
   }
 
   // Also need to fetch breakdown if not cached
