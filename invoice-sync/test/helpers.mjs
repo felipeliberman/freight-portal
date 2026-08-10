@@ -8,6 +8,10 @@ import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCHEMA = readFileSync(join(HERE, '..', 'schema.sql'), 'utf8');
+// The invoice-link store is a SEPARATE database on purpose (schema-links.sql) — the public
+// Worker's whole data surface is possession-tier by construction. Kept separate here too, so a
+// test cannot accidentally prove a property by reading across a boundary production does not have.
+const LINKS_SCHEMA = readFileSync(join(HERE, '..', 'schema-links.sql'), 'utf8');
 
 class D1Stmt {
   constructor(stmt) { this.stmt = stmt; this.args = []; }
@@ -58,6 +62,13 @@ export function whyRed(what, why) {
 export function freshDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);
+  return new D1Like(db);
+}
+
+/** The invoice-link database. Deliberately a DIFFERENT connection — see LINKS_SCHEMA above. */
+export function freshLinksDb() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(LINKS_SCHEMA);
   return new D1Like(db);
 }
 

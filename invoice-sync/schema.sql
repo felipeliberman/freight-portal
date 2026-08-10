@@ -24,24 +24,41 @@
 --   2. ALTER TABLE ledger ADD COLUMN customer_reference TEXT          -- NOT re-runnable
 --   3. CREATE TABLE IF NOT EXISTS stripe_customer (...)               -- idempotent
 --   4. CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq ...  -- idempotent
+--   5. ALTER TABLE ledger ADD COLUMN issue_date TEXT                  -- NOT re-runnable
+--   6. ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT            -- NOT re-runnable
+--   7. ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER           -- NOT re-runnable
 --
--- Apply 1 and 2 as explicit --command ALTERs. Apply 3 and 4 by re-running this file, which is a
--- no-op for every table that already exists:
+-- A SECOND DATABASE is also required — schema-links.sql, applied to its own D1 (`invoice-links`).
+-- It is separate on purpose: the public Worker reads it, and the ledger's D1 also holds `cache`,
+-- which carries customer email addresses. See that file.
+--
+-- Apply every ALTER (1, 2, 5, 6, 7) as an explicit --command. Apply 3 and 4 by re-running this
+-- file, which is a no-op for every table that already exists:
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN issue_date TEXT"
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT"
+--   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER"
 --   wrangler d1 execute invoice-sync --remote --file=./schema.sql
 --
+-- And the SECOND database, which is its own D1 and its own apply:
+--   wrangler d1 create invoice-links
+--   wrangler d1 execute invoice-links --remote --file=./schema-links.sql
+--
 -- Verify POSITIVELY afterwards — never an exit code (spec §0.25):
---   wrangler d1 execute invoice-sync --remote --command "PRAGMA table_info(ledger)"
---   wrangler d1 execute invoice-sync --remote --command "SELECT sql FROM sqlite_master WHERE tbl_name='stripe_customer'"
+--   wrangler d1 execute invoice-sync  --remote --command "PRAGMA table_info(ledger)"
+--   wrangler d1 execute invoice-sync  --remote --command "SELECT sql FROM sqlite_master WHERE tbl_name='stripe_customer'"
+--   wrangler d1 execute invoice-links --remote --command "SELECT name, sql FROM sqlite_master WHERE tbl_name='invoice_link'"
 --
 -- DOWN MIGRATION:
---   1, 2 — DO NOTHING. An added nullable column with no reader is inert, and dropping it is a
---          riskier operation than the one it would undo.
+--   1, 2, 5, 6, 7 — DO NOTHING. An added nullable column with no reader is inert, and dropping it
+--          is a riskier operation than the one it would undo.
 --   3, 4 — DROP TABLE stripe_customer. THIS EXPIRES AT THE FIRST STRIPE CREATE: once the table
 --          holds a stripe_customer_id, dropping it orphans every Stripe object keyed through it,
 --          which is precisely the failure the table exists to prevent. After the first create
 --          there is no down migration, only a forward fix.
+--   invoice-links — DROP TABLE invoice_link. EXPIRES AT THE FIRST LINK SENT: once a customer holds
+--          a link, dropping the table does not revoke it, it makes it unresolvable AND unrevocable.
 
 
 -- ── ledger ───────────────────────────────────────────────────────────────────────────────────
@@ -93,6 +110,20 @@ CREATE TABLE IF NOT EXISTS ledger (
   -- MIGRATION: statement 1 in the PENDING block at the top of this file. (schema.sql is
   -- CREATE IF NOT EXISTS, so re-running it will NOT add this to a table that already exists.)
   paid_first_seen_at    INTEGER,
+
+  -- Captured AT CLAIM from the LIST response, which carries both (spec §1) — the same reason
+  -- customer_reference is captured there. The possession page must render without a Primus call on
+  -- an unauthenticated route, so these have to exist before a link is minted.
+  -- MIGRATION: statements 5 and 6 in the PENDING block.
+  issue_date            TEXT,
+  invoice_due_date      TEXT,
+
+  -- Write-once stamp: the moment a customer-facing link was first minted for this invoice.
+  -- THE RECONCILIATION POINT for a half-failed mint. The mint writes the LINKS database and then
+  -- stamps here — two databases, no transaction. If the stamp fails, a re-run finds the link
+  -- already active (invoice_link_active refuses the duplicate), reads the token back, and re-stamps.
+  -- MIGRATION: statement 7 in the PENDING block.
+  link_minted_at        INTEGER,
 
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL,

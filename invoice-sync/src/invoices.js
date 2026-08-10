@@ -146,6 +146,10 @@ export async function pollWindow({ primus, ledger, allowlist, checkArCode, issue
     const { claimed, row } = await ledger.claim({
       primusInvoiceId: inv.invoiceId,
       primusInvoiceNumber: inv.invoiceNumber ?? null,
+      // Claim-time capture, like customerReference: the LIST carries both (spec §1), and the
+      // possession page must render without a Primus call on an unauthenticated route (§8.878).
+      issueDate: inv.issueDate ?? null,
+      invoiceDueDate: inv.invoiceDueDate ?? null,
       bolNumber,
       arCode: arCode === null ? null : String(arCode),
       customerReference,

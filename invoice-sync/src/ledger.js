@@ -91,7 +91,7 @@ export class Ledger {
    *   already owns this (invoice, version); `row` is the existing record. Not an error — the whole
    *   point of the overlapping window is that re-seeing an invoice is free.
    */
-  async claim({ primusInvoiceId, primusInvoiceNumber = null, bolNumber = null, arCode = null, customerReference = null, version = 1, totalCents = null }) {
+  async claim({ primusInvoiceId, primusInvoiceNumber = null, bolNumber = null, arCode = null, customerReference = null, version = 1, totalCents = null, issueDate = null, invoiceDueDate = null }) {
     if (!primusInvoiceId) throw new Error('claim() requires primusInvoiceId');
     // THROWS rather than returning claimed:false. A silent refusal here would be indistinguishable
     // from "already claimed", and the invoice would be suppressed forever with no signal — the
@@ -116,11 +116,13 @@ export class Ledger {
       .prepare(
         `INSERT INTO ledger
            (mode, primus_invoice_id, primus_invoice_number, bol_number, ar_code, customer_reference,
+            issue_date, invoice_due_date,
             version, stripe_state, total_cents, idempotency_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'intent', ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'intent', ?, ?, ?, ?)
          ON CONFLICT (mode, primus_invoice_id, version) DO NOTHING`
       )
       .bind(this.mode, String(primusInvoiceId), primusInvoiceNumber, bolNumber, arCodeStored, customerReference,
+            issueDate, invoiceDueDate,
             version, totalCents, key, now, now)
       .run();
 
@@ -376,6 +378,26 @@ export class Ledger {
           WHERE id = ? AND mode = ? AND ${bound.sql} AND paid_first_seen_at IS NULL`
       )
       .bind(at, ledgerId, this.mode, ...bound.params)
+      .run();
+    return (res.meta && res.meta.changes) === 1;
+  }
+
+  /**
+   * Stamp the moment a customer-facing link was first minted (spec §8.879).
+   *
+   * WRITE-ONCE by the `IS NULL` guard, and that is what makes it the reconciliation point: the mint
+   * writes the LINKS database and then stamps here — two databases, no transaction. If the stamp
+   * fails, a re-run finds the link already active, reads the token back, and re-stamps. The value is
+   * "when we first minted", never "when we last looked".
+   */
+  async markLinkMinted(ledgerId, at = Date.now()) {
+    const bound = this.bound();
+    const res = await this.db
+      .prepare(
+        `UPDATE ledger SET link_minted_at = ?, updated_at = ?
+          WHERE id = ? AND mode = ? AND ${bound.sql} AND link_minted_at IS NULL`
+      )
+      .bind(at, Date.now(), ledgerId, this.mode, ...bound.params)
       .run();
     return (res.meta && res.meta.changes) === 1;
   }

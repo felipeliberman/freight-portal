@@ -4369,6 +4369,88 @@ The pilot stays on the owner's own test account. Verification is required before
 recipient.
 
 
+## 8.879 THE INVOICE LINK STORE — step 2, built 2026-08-10
+
+`schema-links.sql` + `src/invoice-link.js`. The token SELECTS an invoice; the portal session
+AUTHORISES (§8.878). Four properties, each recorded because the shape alone does not explain them.
+
+### 1. THE SNAPSHOT IS FROZEN AT MINT — and the duplication is only apparent
+
+The link row carries invoice number, dates, amount and BOL. So does `ledger`. **A future reader will
+see two copies of an invoice number and want to normalise them. They must not.**
+
+§4.4 records that Primus invoices are **editable after issuance**. A join to live data would
+**silently restate the amount on a link someone received a month ago**, and the customer would be
+looking at a number that never appeared in their email. Frozen at mint is the correct behaviour.
+
+**These are DIFFERENT FACTS that happen to agree at mint time:** the ledger holds *what the invoice
+currently is*, the link holds *what the customer was sent*. Pinned by a test that mints at 27357,
+re-mints at 99999, and asserts the resolve still reads 27357.
+
+### 2. THE POSSESSION TIER IS A SCHEMA BOUNDARY FIRST, A RENDERING RULE SECOND
+
+The owner set the tier as a UI allowlist. **It is applied one layer below the renderer, which is
+where it actually holds: a field cannot leak from a table that does not hold it.**
+
+`customer_reference` — the customer's own PO — is behind the session, so **there is no column for
+it**. Nor for consignee, shipper, line items, charges, weights or commodity. A test reads
+`PRAGMA table_info` and asserts nine behind-session fields are absent as columns, so a later
+convenience that adds one fails immediately rather than at a review nobody runs.
+
+### 3. NO `expires_at` — omitted as a DECISION, not an oversight
+
+AR runs long; a link that dies at 30 days generates support calls rather than protecting anything.
+The control is **revocation**, not expiry. An inert nullable column would **invite someone to set it
+and quietly re-litigate a settled decision**.
+
+**If it is ever wanted it is one additive nullable column — the cheapest migration shape there is.
+The door is not closed, it is simply not standing open.**
+
+### 4. THE MINT IS IDEMPOTENT PER INVOICE
+
+`UNIQUE (mode, primus_invoice_id) WHERE revoked_at IS NULL` gives it at the database. **What the code
+does on hitting it matters as much: it returns the existing token, never an error.**
+
+**A re-send of the same invoice must reach the SAME link.** Two live links to one invoice means
+revoking a leaked one leaves the other open — the customer with two copies of an email holds two
+keys, and killing one is indistinguishable from killing both. The mint also handles losing the race:
+if the index refuses the insert, it reads the winner back, because the caller wants *a* link rather
+than necessarily its own.
+
+### TWO DATABASES — and what a half-failed mint does
+
+The public Worker reads the links database. The ledger's D1 also holds `cache`, which carries
+**customer email addresses**. Binding a public route there and promising to read one table is a
+convention, not a control. Held apart, **the public Worker's entire data surface is possession-tier
+by construction.** Same boundary as keeping Primus credentials off it: the thing answering strangers
+holds only what strangers may see. The FILE lives with `invoice-sync` because `invoice-sync` is the
+**writer**, and schema-first means whoever owns the migration owns the file.
+
+**THE COST, NAMED: THE MINT IS NOT TRANSACTIONAL.** It writes the links database, then stamps
+`ledger.link_minted_at` in the other one. If the mint succeeds and the stamp fails, a re-run finds
+the link already active, the unique index refuses a duplicate, the caller reads the token back and
+re-stamps. **`link_minted_at` is write-once, and that is what makes it the reconciliation point** —
+the value is "when we first minted", never "when we last looked". **This is the orphan problem in a
+new place, and its shape is already known.**
+
+### The token
+
+128 bits from `crypto.getRandomValues` — **the CSPRNG is named in the code deliberately, because
+"random" is the word that hides the difference** between it and `Math.random`, and a token minted
+from the latter is guessable by anyone who watches a few issue. 22 base64url characters: long enough
+that enumeration is not a threat model rather than merely impractical, short enough to survive mail
+clients' line-wrapping.
+
+**`resolve()` returns `null` for both a revoked and an unknown token — deliberately the same
+answer**, so the route cannot become an oracle for which tokens exist. Same reasoning as §5.8
+requiring "not found" and "not yours" to be one message.
+
+### Not applied
+
+Seven pending ALTERs on `invoice-sync` and **a second D1 that does not exist yet**. Schema-first:
+both land before any code reading them deploys.
+
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
