@@ -1,0 +1,56 @@
+# pay — the PUBLIC possession route. Spec §8.878, §8.880.
+#
+# DELIBERATELY NOT invoice-sync. Adding a public route there would force a deploy of an artifact
+# that matches no commit and cannot be safely replaced (C5), and would put the sync Worker on the
+# public internet for the first time. THE SEPARATION IS A BOUNDARY, NOT A DEPLOYMENT CONVENIENCE:
+# the thing holding our Primus credentials must not be the thing answering requests from strangers.
+#
+# THIS WORKER HOLDS: one D1 binding, to a database containing ONLY possession-tier data.
+# No Primus credentials. No SendGrid key. No ledger binding.
+#
+# TWO DATABASES, ONE PER MODE — the stronger form, taken deliberately: a live Worker with no
+# binding to test data cannot serve test data under any bug, and migrating live rows later is worse
+# than a second migration path today. The `mode` column is kept anyway as a SECOND assertion, so a
+# live row in the test database is DETECTABLE rather than merely impossible.
+#
+# RATE LIMITING BELONGS AT THE CLOUDFLARE EDGE, NOT IN CODE, and it is for COST AND AVAILABILITY.
+# The entropy is the confidentiality control (§8.880). Configure a rate-limiting rule on the route
+# after it exists; do not mistake it for the thing protecting the tokens.
+
+name = "pay"
+main = "src/index.js"
+compatibility_date = "2026-08-10"
+
+# No public preview surface beyond the custom domain below.
+workers_dev = false
+preview_urls = false
+
+[vars]
+# 'test' | 'live'. Part of every query, so a token from the other mode is NOT FOUND rather than
+# rejected — the stronger form, and indistinguishable from an unknown token.
+LINK_MODE = "test"
+
+# ── NOT YET CREATED. Schema-first: the database exists before this deploys. ──────────────────
+#   wrangler d1 create invoice-links-test
+#   wrangler d1 create invoice-links-live
+#   wrangler d1 execute invoice-links-test --remote --file=../invoice-sync/schema-links.sql
+#   wrangler d1 execute invoice-links-live --remote --file=../invoice-sync/schema-links.sql
+# Verify POSITIVELY, never an exit code (§0.25):
+#   wrangler d1 execute invoice-links-test --remote --command "SELECT name, sql FROM sqlite_master WHERE tbl_name='invoice_link'"
+#
+# [[d1_databases]]
+# binding = "LINKS"
+# database_name = "invoice-links-test"
+# database_id = "<create it first>"
+
+# ── NOT YET ROUTED. ─────────────────────────────────────────────────────────────────────────
+# pay.freightandlogistics.ai verified free 2026-08-10: no A/AAAA/CNAME/TXT on the name, ZERO
+# Workers custom domains and ZERO zone worker routes on the account, and the `freight-portal` Pages
+# project claims only the apex and `www` — not a wildcard. A Workers custom domain provisions its
+# own certificate, so cert scope is not a blocker either.
+#
+# [[routes]]
+# pattern = "pay.freightandlogistics.ai"
+# custom_domain = true
+
+# NO CRON. This Worker is request-driven only; it must never hold a scheduled handler.

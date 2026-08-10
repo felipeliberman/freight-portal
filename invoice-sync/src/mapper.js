@@ -10,6 +10,7 @@
 import { toCents } from './invoices.js';
 import { auditValues, BANNED_FIELDS, NON_PAYLOAD_FIELDS } from './detail.js';
 import { normalizeArCode } from './arcode.js';
+import { DISPUTE_NOTICE_PENDING } from './dispute-notice.js';
 import { summariseFreight, BOOKING_HOSTILE } from './booking.js';
 
 /** Stripe allows exactly 4 custom fields, 30 chars of name and 30 of value. */
@@ -223,30 +224,11 @@ export function buildFooter(booking) {
  * supplied, the slot renders a visible placeholder and the payload is send-blocked. A placeholder
  * an AP clerk can see is honest; fabricated contractual language is not.
  */
-export const DISPUTE_NOTICE_PENDING = '\u00ab DISPUTE NOTICE \u2014 PENDING OWNER WORDING (D7) \u00bb';
-
-/**
- * THE APPROVED BILLING-DISPUTE NOTICE. Owner-authored and APPROVED 2026-08-04 \u2014 not a draft, and
- * not to be reworded, trimmed or "tightened" without the owner. Measured: 264 chars, against a
- * 368-char budget once the contact line and a documents link are present (\u00a75.5).
- *
- * THIS IS A BILLING-DISPUTE CLAUSE. It is NOT the cargo-claims window (\u00a78.857 / A1) and the two
- * must never be conflated: different subject, different clock, different legal basis.
- *   - Cargo claims: 5 days to report concealed damage, 9 months to file. Carmack territory.
- *   - This clause: 3 business days to dispute an INVOICE. A negotiated contractual term.
- *
- * 49 USC 14705 sets an 18-month limitation on actions to recover OVERCHARGES; it imposes no floor
- * on a contractual dispute-NOTICE window, so 3 business days stands as a negotiated term rather
- * than being pre-empted by the statute.
- *
- * DEFINITIONAL NOTE, unresolved: "the date sent" is the clock's start. Once Stripe becomes the
- * delivery mechanism (\u00a70.1.1), "sent" means the Stripe send \u2014 not the Primus `status.sent` flag,
- * which \u00a78.865 shows varies independently. Worth pinning before the first real dispute.
- */
-export const DISPUTE_NOTICE =
-  'Dispute this invoice within 3 business days of the date sent. Send written notice with ' +
-  'supporting documentation to accounting@freightandlogistics.ai. Without timely notice and ' +
-  'documentation, no dispute will be filed with the carrier and the invoice is due in full.';
+// DISPUTE_NOTICE and DISPUTE_NOTICE_PENDING moved to ./dispute-notice.js so the public pay
+// Worker can import the ONE definition without pulling this module's Primus-shaped dependencies
+// into a public bundle. Re-exported here because existing callers and tests import them from this
+// module, and a rename is not this change's business.
+export { DISPUTE_NOTICE, DISPUTE_NOTICE_PENDING } from './dispute-notice.js';
 
 /**
  * Recipients cleared to receive invoices.

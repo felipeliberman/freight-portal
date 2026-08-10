@@ -4451,6 +4451,120 @@ Seven pending ALTERs on `invoice-sync` and **a second D1 that does not exist yet
 both land before any code reading them deploys.
 
 
+## 8.880 THE POSSESSION ROUTE — pay.freightandlogistics.ai. Built 2026-08-10, not deployed.
+
+`pay/` — the FIRST thing this estate has ever exposed publicly. One route, one binding, one tier.
+
+**Hostname verified free 2026-08-10** before building rather than after: no A/AAAA/CNAME/TXT on
+`pay.freightandlogistics.ai`, **zero** Workers custom domains and **zero** zone worker routes on the
+account, and the `freight-portal` Pages project claims only the apex and `www` — not a wildcard. A
+Workers custom domain provisions its own certificate, so cert scope is not a blocker.
+
+### THE SURFACE
+
+`GET`/`HEAD` `/i/:token` and nothing else. **No health route** — `invoice-sync` has one only because
+it is unreachable; a public health endpoint is surface for no benefit. Everything else is 404, other
+methods are 405, and **query parameters are IGNORED rather than validated**: a parameter that is
+parsed is a parameter that can be attacked, and the token is the only input this route accepts.
+
+**Scoped to possession ONLY. The document byte-proxy is a separate step** — verifying a session is a
+different security problem, and folding it in here would pull identity back toward the public edge.
+**Consequence to record rather than discover: §8.878's invariant 1 ("never hand a `Documents.php`
+URL to a client") is NOT satisfied by this step. It is not yet applicable** — there is no document
+route to violate it. Nobody should later read step 3 as having closed it.
+
+### THE STANDING RULE THE OWNER ASKED FOR — entropy is the control, the limiter is not
+
+> **A RATE LIMIT IS NOT A CONFIDENTIALITY CONTROL. THE ENTROPY IS.**
+>
+> The question "what happens at a thousand tokens a minute?" reads as a security question and is
+> not one. Against 2^128 a thousand guesses a minute finds nothing; the search space is what
+> protects the tokens. **Rate limiting exists for COST AND AVAILABILITY** — Worker invocations, D1
+> reads, log volume — and belongs at the Cloudflare edge, not in code, where it rejects before the
+> Worker runs and needs no state.
+>
+> **CONFLATING THE TWO IS HOW SHORT TOKENS SHIP BEHIND A LIMITER AND ARE BELIEVED SAFE.** If a
+> future design shortens a token, adding a rate limit does not compensate. The limiter buys money;
+> the entropy buys secrecy. They are not substitutes in either direction.
+
+**The miss rate is the only enumeration signal**, so it is logged — **by PREFIX ONLY**. A full token
+in a log is the credential-in-a-log problem removed from tool results in `0f1ee26`, reappearing
+somewhere nobody would look for it.
+
+### A KNOWN, ACCEPTED TIMING DIFFERENCE
+
+A malformed token is rejected by regex before any database call; an unknown one costs a lookup. That
+is observable. **It is accepted, not overlooked.** Searching a 128-bit space by timing is not a
+threat model, and a constant-time façade over it would be theatre with a latency bill. Recorded so a
+later reader finds a decision rather than an oversight.
+
+### THE THREE SCENARIOS, ALL ONE ANSWER
+
+Unknown, revoked, malformed and wrong-mode produce an **identical 404 body**. Four causes, one
+output: any distinction makes the route an oracle for which tokens exist (§5.8 — "not found" and
+"not yours" are one message). A test asserts the bodies are byte-identical, because this is the kind
+of property a later "improve the error message" ticket removes while believing it is helping.
+
+**Wrong-mode is NOT FOUND rather than REJECTED**, which is the stronger form: the mode is in the
+`WHERE` clause, so a cross-mode token matches no row instead of being caught by a check.
+
+### HEADERS — asserted in a test, not set and trusted
+
+`Cache-Control: private, no-store` on **every** response including 404s: a possession page cached at
+the edge and served to the wrong person is the worst failure this route has. `Referrer-Policy:
+no-referrer`, because **the token is in the URL and the CTA links into the portal** — a default
+policy hands the token to the next origin. Both are asserted, because **a header that silently stops
+being sent is exactly the regression nothing notices.** `X-Content-Type-Options: nosniff` and a
+`Content-Security-Policy` are also set; the CSP was added by the assistant rather than asked for,
+and is cheap to remove.
+
+### STOP 2 HOLDS — the copy is the owner's, and the route cannot ship without it
+
+`pay/src/copy.js` holds every customer-visible string. Prose was seeded with `PENDING OWNER WORDING`
+sentinels — the same shape as `DISPUTE_NOTICE_PENDING` — and one test was RED BY DESIGN until the
+owner filled them. **COPY SUPPLIED BY THE OWNER 2026-08-10 and used verbatim.** `isShippable()` is
+kept green rather than deleted: it is what stops a future edit reintroducing a placeholder.
+
+**The as-sent pair, and the owner's reasoning for it:** the first line states a fact with a date and
+does not apologise for it; **the second says THE PORTAL WINS without saying the email was wrong.** A
+customer holding a six-week-old email and seeing a different number needs to know which to act on,
+and the answer is always the portal. It does not claim the invoice *has* been revised, only what to
+do if it has.
+
+### KNOWN COPY/MECHANISM MISMATCH — recorded, not silently fixed
+
+The 404 body reads *"Invoice links expire when an invoice is reissued or cancelled."* **Expiry is the
+one mechanism deliberately NOT built** (§8.879 — `expires_at` omitted, revocation is the control).
+
+**It does not mislead a customer**: the sentence names the real causes in the same breath, and the
+action is the same either way. **The risk is internal** — a future engineer reading customer copy
+that says links expire may go looking for the expiry or add one, which is the exact loop §8.879's
+omission note exists to close. Owner's words, kept as written; the mismatch is written down here so
+it is met as a known thing rather than as evidence.
+
+**The 404 copy is EMAIL-ONLY**, asserted by a regex that fails on any phone-shaped string. This is
+error/failure copy and the no-phone-as-fallback contract governs it.
+
+### THREE FIT ISSUES, FLAGGED RATHER THAN ADJUSTED
+
+1. **The CTA had no destination.** "View documents and pay" targets two session-tier surfaces behind
+   a deep link that does not exist (D2). It points at the portal root for now — the customer signs
+   in and finds the invoice — and gains the token parameter when D2 lands. **The copy is untouched;
+   only the href was a choice.**
+2. **The issue date appears twice** — once as the `Issued` field, once inside the as-sent sentence.
+   Left as-is: removing the field would leave the date only inside prose, which reads worse for an
+   AP clerk scanning.
+3. **The date renders `2026-07-13`, not "13 July 2026."** `{issue_date}` interpolates the snapshot
+   verbatim. Formatting is a presentation choice not made on the owner's behalf.
+
+### WHAT IS NOT DONE
+
+**No D1 binding** (the two databases do not exist), **no route** (the custom domain is commented
+out), **no rate-limiting rule**, **no deploy**, and **nothing mints a token**. Both the binding and
+the route are commented in `wrangler.toml` with the create-and-verify commands beside them.
+Schema-first: the databases exist before this deploys.
+
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification

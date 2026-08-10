@@ -29,10 +29,33 @@ export function newToken() {
 }
 
 /** Exactly the possession tier (§8.878). Any read that widens this widens the unauthenticated tier. */
-const POSSESSION_FIELDS = Object.freeze([
+export const POSSESSION_FIELDS = Object.freeze([
   'token', 'primus_invoice_id', 'ar_code',
   'invoice_number', 'issue_date', 'due_date', 'total_cents', 'bol_number',
 ]);
+
+/**
+ * Resolve a token to the POSSESSION TIER. STANDALONE on purpose.
+ *
+ * The public Worker imports THIS and not the class, so the bundle it serves from a public route
+ * contains no mint and no revoke — no write path at all. Minimal surface is not a slogan here: the
+ * less code answering strangers, the less there is to be wrong about.
+ *
+ * Returns null for a REVOKED token and for an UNKNOWN one — deliberately the SAME answer, so the
+ * caller cannot become an oracle for which tokens exist (§5.8: "not found" and "not yours" are one
+ * message). A later change that distinguishes them will look like a kindness and is not one.
+ */
+export async function resolveToken(db, mode, token) {
+  if (!token) return null;
+  const row = await db
+    .prepare(
+      `SELECT ${POSSESSION_FIELDS.join(', ')} FROM invoice_link
+        WHERE mode = ? AND token = ? AND revoked_at IS NULL`
+    )
+    .bind(mode, String(token))
+    .first();
+  return row || null;
+}
 
 export class InvoiceLinks {
   /**
@@ -99,15 +122,7 @@ export class InvoiceLinks {
    * null — the same answer, so the route cannot become an oracle for which tokens exist.
    */
   async resolve(token) {
-    if (!token) return null;
-    const row = await this.db
-      .prepare(
-        `SELECT ${POSSESSION_FIELDS.join(', ')} FROM invoice_link
-          WHERE mode = ? AND token = ? AND revoked_at IS NULL`
-      )
-      .bind(this.mode, String(token))
-      .first();
-    return row || null;
+    return resolveToken(this.db, this.mode, token);
   }
 
   /** Kill ONE link without touching the invoice. A replacement can then be minted. */
