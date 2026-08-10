@@ -4966,6 +4966,57 @@ list is edited**: `invoice-sync/wrangler.toml` and `pay/wrangler.toml` beside th
 `parseAllowlist` (`arcode.js`), the one place both Workers parse it. **Anyone editing that list meets
 the warning before they change it**, which a spec section cannot guarantee.
 
+## 8.885 THE UNDECLARED-IDENTIFIER GATE — `evals/undeclared-identifiers.test.js`
+
+**`node --check` catches syntax, not scope.** Nothing in the gates would have found a second
+`_lastInvoiceSend`, so this is the mechanism rather than an intention to look again.
+
+### WHAT IT DOES
+
+Real scope resolution over **all three inline `<script>` blocks** — which share one global scope at
+runtime, so scanning only the largest reports cross-block references as undeclared and produces
+seven false positives. `var`/function hoisting to function scope, `let`/`const`/`class` to block
+scope, params, catch params, named function expressions. It therefore finds **both** the
+declared-nowhere case and the harder **cross-scope** one: declared in function A, read in unrelated
+function B.
+
+### IT IS A GATE, NOT A REPORT
+
+**Exit 1 on any name not on the ACCEPTED list**, with the reason recorded per accepted name — "it
+was on the list" is not a reason, and the next person must be able to re-derive the judgement rather
+than trust it. The failure output states the three questions to ask before adding anything, and
+says plainly: **do not silence this by adding the name.**
+
+### PROVEN, THREE WAYS
+
+| Revision | Exit | |
+|---|---|---|
+| `b4d451f^` (pre-removal) | **1** | names `_lastInvoiceSend` at `portal.html:4529` — **it would have caught the real defect** |
+| current HEAD | **0** | 12 unresolved names, all accepted |
+| HEAD + injected `_neverDeclaredProbe` | **1** | catches a newly introduced one |
+
+### WHAT IT FOUND, AND WHAT IS NOW ON RECORD
+
+Twelve names, none a live defect: two external libraries, four `typeof`-guarded (which never throws
+on an undeclared name), and **two latent items worth knowing about**:
+
+- **Five landing-page click-delegation calls** (`expandAndAsk`, `sendMsg`, `showSignup`,
+  `closeSignup`, `submitForm`) — defined nowhere in `portal.html`, unguarded, but unreachable: the
+  trigger attributes exist only inside the handler's own selector strings. **DEAD BUT ARMED** —
+  adding that markup turns five ReferenceErrors live at once.
+- **`sysPrompt`** — the cross-scope case. Declared in `aiFreightAnswer` (marked dead), read in
+  `clientSideSearch` (no call site). Latent.
+
+Left in place rather than removed: deleting live-looking code is its own risk, and the gate now
+names both every run.
+
+### A TOOL IN A SCRATCHPAD IS NOT A GATE
+
+It was written as a throwaway and would have stayed one. **That is how the 57 days happened** — the
+check that would have caught `_lastInvoiceSend` was cheap and simply never run. Committing it, with
+`acorn`/`acorn-walk` as devDependencies beside `jsdom`, is the difference between a finding and a
+mechanism.
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
