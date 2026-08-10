@@ -2170,7 +2170,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B10 | **LIVE — CUSTOMER DOCUMENTS REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH.** Verified 2026-08-04 against the live customer/portal API. A customer token returned another account's full document list **including a POD** (ARCode 720, BOL 303260010320); separately, `Documents.php` URLs serve the PDF to a request with **no `Authorization` header at all**. **Two distinct failures — fixing one does not fix the other.** Precise, not rounded: a filter DOES exist (it removed `DO` for the customer token) — it filters by document **type**, not by **ownership**. **Reachable today by any logged-in customer; nothing has to be built.** Primus-side remediation is the owner's, separately | §8.876, §8.877 |
 | B7 | **THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST — LIVE DEFECT.** `HIDDEN = ['DO','COST','COI']` at `portal.html:8110` (+ copy at `:24148`) is the construction §8 rules out: the type codes differ between the two Primus document endpoints, so a denylist built from either is blind to the other, and **any type Primus adds appears to customers by default**. The book is ~90% residential and the documents carry **consignee home addresses and phone numbers**. `documents.js` `CUSTOMER_FACING` and the portal already **disagree about `COI`** — allowed by one, hidden by the other. Enforcement is UI-only today because the fetch is browser→Primus with no server of ours in the path. **GATE: no deep link is designed until closed** | §8.873, §8 |
 | B8 | **NO OWNERSHIP CHECK ON A DIRECT LOOKUP.** `primusToken` is cached ~50 min and `getToken()` returns it without re-checking the session; nothing compares a `bolId` against `currentCustomer`. §5.8's list-membership answer covers invoices but NOT documents, which are a direct `GET /applet/v1/document/{bolId}`. **We cannot verify ownership independently** — every list we could check against comes from the same token and the same API. Primus is the only authority and **that it refuses another customer's bolId is UNVERIFIED**. Failure presents as `'Could not fetch documents'`, indistinguishable from a shipment with no documents, so it would not be reported. **GATE: no deep link is designed until closed** | §8.874, §5.8 |
-| B9 | **LIVE, AND UNRELATED TO THIS BUILD — production mail fails sender authentication.** `portal.html:9765` sends as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** | §8.875 |
+| B9 | ~~**LIVE — production mail fails sender authentication**~~ — **CLOSED 2026-08-10.** Owner published SendGrid Domain Authentication (three CNAMEs under `em2177`/`s1`/`s2._domainkey`) and added `include:sendgrid.net` to the apex SPF; verified here against the authoritative nameservers, with real DKIM keys at both selectors and exactly one `_dmarc` record. Root cause: Domain Authentication had never been configured — only Single Sender Verification, which proves mailbox ownership and does nothing for SPF or DKIM. The wizard's fourth (DMARC) row was **declined on purpose**: two DMARC records on one name break DMARC. **STILL OPEN UNDERNEATH: no aligned mail has been OBSERVED passing** (DNS state is a precondition, not a result), and **there is still no send log**. DMARC stays `p=none` until an `Authentication-Results` header is seen `portal.html:9765` sends as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** | §8.875 |
 
 ### C. Before anything is created in Stripe
 
@@ -2194,6 +2194,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | D6 | **Retire the `track-proxy` Worker.** Dead code, still deployed and still answering. No repo consumers, fully superseded by `fl-tracking`. Confirm no dashboard route and no traffic first, then delete the Worker and `track-proxy/` | §8.861 |
 | D7 | **Delete the `#public-view` widget** (`portal.html:997-1865`) and point logged-out `/portal` at the landing chat. Never executed in 50 days / 619 versions; duplicates a working surface. Owner decision 2026-08-03: delete, do not repair | §8.861 |
 | D8 | **The `wrangler.toml` PENDING block is hand-maintained and has already drifted once.** On 2026-08-04 it listed one of two outstanding ALTERs, so the mechanism meant to catch an unapplied migration had failed silently *before* the hazard did — and nothing in the repo would have stopped a deploy of a `main` that required one. Two independent fixes: a **pre-deploy check that refuses to deploy while the block is non-empty** closes the hazard; **generating the block from `schema.sql`** closes the drift | §8.5, `invoice-sync/wrangler.toml` |
+| D9 | **`AUTO_PUSH` is aimed at an architecture that no longer exists.** It is not wrong — `RECLASS`/`REWEIGH` are still the two justification documents — but its whole premise is the §8/§8.95 scoped-link + R2-mirror design, which assumed **Stripe as the delivery surface**. With Stripe out (§8.878) "push inline" means something different: our own email, our own Worker serving bytes, no Stripe memo to attach a link to. **Left deliberately untouched at `fd5e87d`** rather than adjusted speculatively — it belongs with plan **step 3**, when the Worker actually serves documents and the push/pull distinction has a real surface again. Logged as an item so it is not rediscovered as a surprise | §8, §8.95, §8.878 |
 
 ### E. Parked, deliberately
 
@@ -3909,8 +3910,59 @@ Activity Feed, which has limited retention — so if the historical volume matte
 soon rather than reconstructed later.** That absence is itself the finding underneath this one:
 **we do not know what we have sent, to whom, or whether it arrived.**
 
-**DNS is NOT to be changed from here.** The owner has a migration in flight and will make the record
-change themselves.
+### CLOSED 2026-08-10 — records published by the owner, verified independently here
+
+**Root cause, and it is worth stating because it is why this looked configured while failing:**
+**Domain Authentication had NEVER been set up.** What existed was **Single Sender Verification** on
+`support@freightandlogistics.ai` — which proves *mailbox ownership* and does **nothing** for SPF or
+DKIM. A green tick in SendGrid against a sender that no receiver could authenticate.
+
+**Published by the owner (Cloudflare, DNS-only, not proxied):**
+
+```
+em2177.freightandlogistics.ai         CNAME  u108760965.wl216.sendgrid.net
+s1._domainkey.freightandlogistics.ai  CNAME  s1.domainkey.u108760965.wl216.sendgrid.net
+s2._domainkey.freightandlogistics.ai  CNAME  s2.domainkey.u108760965.wl216.sendgrid.net
+
+freightandlogistics.ai  TXT  "v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net include:sendgrid.net ~all"
+```
+
+Google and HubSpot unchanged; one include added; qualifier still `~all`.
+
+**Verified 2026-08-10 against the authoritative nameservers (`lovisa.ns.cloudflare.com`), not a
+cache, and cross-checked from `1.1.1.1` and `8.8.8.8`:**
+
+- SPF carries all three includes and `~all`, and there is **exactly one** `v=spf1` record — checked,
+  because two would break SPF the way two DMARC records break DMARC.
+- Both DKIM selectors return **real RSA public keys** (`k=rsa; t=s; p=MIIBIjAN…`, two distinct keys).
+  This is the check that matters: **a CNAME can point at nothing and still "resolve".**
+- `_dmarc` holds **exactly one** record.
+- `em2177` has **no A record**, which is not a defect: the envelope domain inherits
+  `"v=spf1 include:sendgrid.net ~all"` and `MX 20 mx.sendgrid.net` **through the CNAME**, which is
+  what a return-path needs. Followed the chain rather than assume.
+
+> ### THE WIZARD'S FOURTH RECORD WAS DECLINED ON PURPOSE
+>
+> SendGrid's Domain Authentication flow offered a **fourth** record — a DMARC TXT on `_dmarc` reading
+> `v=DMARC1; p=none; rua=mailto:accounting@freightandlogistics.ai`. **We already have that record,
+> with that exact policy.** **TWO DMARC RECORDS ON ONE NAME BREAKS DMARC ENTIRELY** — they do not
+> merge, and the receiver treats the name as having no valid policy.
+>
+> **Recorded because anyone re-running that wizard will be offered it again**, and it will look like
+> a missing record rather than a duplicate.
+
+### WHAT IS NOW TRUE, AND WHAT IS NOT
+
+**True:** SPF authorises SendGrid for our envelope domain, DKIM keys are published under our domain
+at both selectors, and the return-path resolves SPF and MX. **Both alignment mechanisms are in
+place** — the thing that was missing.
+
+**NOT yet true: no aligned message has been observed passing.** All of the above is **DNS state,
+which is a precondition and not a result.** The proof is a real send's `Authentication-Results`
+showing `spf=pass` and `dkim=pass` with `header.d=freightandlogistics.ai`.
+
+**DMARC stays `p=none` until that is seen.** Moving to `quarantine` first is how a misconfiguration
+is discovered by having legitimate invoices rejected.
 
 
 ## 8.876 LIVE — CUSTOMER DOCUMENTS ARE REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH
