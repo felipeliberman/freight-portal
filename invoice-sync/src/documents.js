@@ -14,28 +14,46 @@ export function normalizeType(t) {
   return String(t ?? '').trim().toUpperCase();
 }
 
-/** Safe to expose behind a scoped PULL link. */
-export const CUSTOMER_FACING = Object.freeze(['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'COI', 'POD', 'IMG']);
+/**
+ * THE CANONICAL LIST. Safe to expose to the bill-to. Settled by the owner 2026-08-10 (spec §8.878).
+ *
+ * THE TEST TO APPLY TO THE NEXT TYPE PRIMUS ADDS — sharper than "is it sensitive":
+ *
+ *     A document type is customer-facing only if THE BILL-TO IS ITS SUBJECT,
+ *     not merely a party to the shipment.
+ *
+ * That is what removed IMG and CI. Both concern the shipment; neither is *about* the bill-to.
+ *
+ * `INV` is here because ITS EXCLUSION'S RATIONALE EXPIRED, not because the ruling changed: it read
+ * "superseded by the Stripe invoice", Stripe is gone, and the Primus PDF is what the invoice link
+ * now serves. The exclusion rested on a fact; the fact changed; the conclusion followed.
+ *
+ * MIRRORED in portal.html as CUSTOMER_FACING_DOCS — a DEPLOYMENT CONSTRAINT, not a design choice
+ * (portal.html cannot import across deployments). evals/document-allowlist.test.js fails the moment
+ * they disagree. The mirror ends when the new Worker imports this directly (§8.878 plan step 3).
+ */
+export const CUSTOMER_FACING = Object.freeze(['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'QUO']);
 
 /**
  * Safe to PUSH inline — rebills only, where the document IS the justification for the charge.
  *
- * IMG is deliberately ABSENT. Driver delivery photos show the consignee's house, door, plates and
- * sometimes people. The bill-to is frequently a retailer or third party with no relationship to the
- * delivery address, so pushing IMG hands over their end customer's home. Safe behind a scoped pull
- * link; wrong as a push.
+ * IMG is absent here AND from CUSTOMER_FACING (owner ruling 2026-08-10). Driver delivery photos
+ * show the consignee's house, door, plates and sometimes people. The bill-to is frequently a
+ * retailer whose customer is the consignee, so the common case is showing a retailer a photograph
+ * of someone else's front door. It was previously judged "safe behind a scoped pull link; wrong as
+ * a push" — THAT WAS TOO GENEROUS, and the bill-to-is-the-subject test is what corrects it.
  */
 export const AUTO_PUSH = Object.freeze(['RECLASS', 'REWEIGH']);
 
 /** Named for documentation and for the negative controls. The ALLOWLIST is the enforcement. */
 export const NEVER_EXPOSE = Object.freeze([
   'COST',    // vendor quote — carrier cost
-  'QUO',     // customer quote
-  'INV',     // Primus invoice PDF — superseded by the Stripe invoice
-  'DO', 'CLBL', 'LBL', 'SHP', 'MET',   // carrier / shipping labels
+  'COI',     // certificate of insurance — policy numbers, limits, broker details. OURS and our carriers'
+  'IMG',     // driver delivery photos — the consignee's home. The bill-to is usually not its subject
+  'DO', 'CLBL', 'SHP', 'MET',          // carrier internals / dispatch
   'CLM', 'CLMD',                       // claims correspondence — carrier settlement positions
   'MISDOC',                            // unknown by definition; the drawer everything ambiguous lands in
-  'CI',                                // commercial invoice — can carry the shipper's pricing to THEIR buyer
+  'CI',                                // commercial invoice — the shipper's sale to THEIR buyer, not ours
 ]);
 
 /**

@@ -26,10 +26,14 @@ test('type codes are trimmed and uppercased before ANY comparison', () => {
   assert.equal(classifyDocument('reclass'), 'pull');
 });
 
-test('the live document set exposes ONLY the Bill of Lading', () => {
+test('the live document set exposes the customer-facing four, and excludes the carrier internals', () => {
+  // RULING CHANGED 2026-08-10 (spec §8.878), not drift. INV, LBL and QUO became customer-facing:
+  // INV because its exclusion read "superseded by the Stripe invoice" and Stripe is gone — the
+  // Primus PDF is what the invoice link now serves; LBL and QUO because they are live customer
+  // workflows. COST and DO stay out: carrier cost and dispatch internals.
   const r = selectDocuments(LIVE, 'primary');
-  assert.deepEqual(r.pull.map(d => d.type), ['BOL']);
-  assert.deepEqual(r.excluded.map(d => d.type).sort(), ['COST', 'DO', 'INV', 'LBL', 'QUO']);
+  assert.deepEqual(r.pull.map(d => d.type), ['BOL', 'LBL', 'QUO', 'INV']);
+  assert.deepEqual(r.excluded.map(d => d.type).sort(), ['COST', 'DO']);
   assert.deepEqual(r.push, [], 'a primary pushes nothing');
 });
 
@@ -72,13 +76,22 @@ test('PUSH is rebill-only, and only for the two justification documents', () => 
   }
 });
 
-test('IMG is PULL-ONLY and never pushed, on any classification', () => {
-  // Driver photos show the consignee's house, door, plates and sometimes people. The bill-to is
-  // often a retailer with no relationship to the delivery address.
-  assert.equal(classifyDocument('IMG'), 'pull');
+test('IMG is NEVER exposed — not pulled, not pushed, on any classification', () => {
+  // STRENGTHENED 2026-08-10 (spec §8.878). This previously asserted IMG was PULL-ONLY. That was too
+  // generous and the new assertion is strictly stronger, not a relaxation.
+  //
+  // Driver photos show the consignee's house, door, plates and sometimes people. On a ~90%
+  // residential white-glove book the bill-to is usually the retailer and the consignee is THEIR
+  // customer — so a pull link shows a retailer a photograph of someone else's front door.
+  //
+  // The rule that decided it, and the one to apply to the next type Primus adds: a document is
+  // customer-facing only if THE BILL-TO IS ITS SUBJECT, not merely a party to the shipment.
+  assert.equal(classifyDocument('IMG'), 'never');
   assert.ok(!AUTO_PUSH.includes('IMG'));
   for (const c of ['rebill', 'primary', 'hold', null]) {
-    assert.deepEqual(selectDocuments([{ type: 'IMG' }], c).push, [], `IMG pushed on ${c}`);
+    const r = selectDocuments([{ type: 'IMG' }], c);
+    assert.deepEqual(r.push, [], `IMG pushed on ${c}`);
+    assert.deepEqual(r.pull, [], `IMG pulled on ${c}`);
   }
 });
 

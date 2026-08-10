@@ -2741,6 +2741,38 @@ function _documentsFor(BOLId, dispatchDocs) {
   return (id && _bolDocuments[id]) || [];
 }
 
+// ── THE DOCUMENT ALLOWLIST (spec §8.878, work-queue B7) ─────────────────────────────────────
+//
+// ALLOWLIST, NEVER DENYLIST. The previous `HIDDEN = ['DO','COST','COI']` — defined TWICE — is the
+// construction §8 rules out: the type codes differ between the two Primus document endpoints, so a
+// denylist built from either is blind to the other and ANY TYPE PRIMUS ADDS REACHES CUSTOMERS BY
+// DEFAULT. On a ~90% residential book these carry consignee home addresses and phone numbers.
+//
+// THE TEST FOR THE NEXT TYPE: a document is customer-facing only if THE BILL-TO IS ITS SUBJECT, not
+// merely a party to the shipment. That is what removed IMG (a photo of the consignee's front door,
+// shown to the retailer who bills) and CI (the shipper's sale to THEIR buyer).
+//
+// MIRROR OF invoice-sync/src/documents.js CUSTOMER_FACING. This duplication is a DEPLOYMENT
+// CONSTRAINT, not a design choice — portal.html cannot import an ESM module across deployments.
+// evals/document-allowlist.test.js fails the moment the two disagree. It ends when the new Worker
+// imports the canonical directly (§8.878 plan step 3).
+//
+// SCOPE: this is a RENDER decision and a single source of truth. IT IS NOT ENFORCEMENT — the portal
+// fetches browser→Primus directly with no server of ours in the path. The control arrives with the
+// Worker. Do not read a passing render test as a control.
+var CUSTOMER_FACING_DOCS = ['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'QUO'];
+
+/** The ONE place the portal decides what a customer may see. Both surfaces call this. */
+function _customerFacingDocs(docs) {
+  return (Array.isArray(docs) ? docs : []).filter(function (d) {
+    if (!d) return false;
+    var t = String(d.fileType || d.type || d.documentType || d.name || '').trim().toUpperCase();
+    // Exact match only. `startsWith` would admit "BOLX" and, worse, quietly re-create a prefix
+    // denylist's blindness in allowlist clothing.
+    return CUSTOMER_FACING_DOCS.indexOf(t) !== -1;
+  });
+}
+
 // ── NO DOCUMENT URL MAY REACH THE MODEL (spec §8.877 Tier A) ────────────────────────────────
 //
 // Primus document URLs are UNAUTHENTICATED (§8.876 layer 2 — verified 2026-08-04: `curl -I` with no
@@ -8142,7 +8174,6 @@ async function openDocsModal(bolId, bolNum, isDispatched) {
 
   try {
     const docs = await fetchDocuments(bolId);
-    const HIDDEN = ['DO','COST','COI'];
     const DOC_NAMES = {
       'BOL':'Bill of Lading','LBL':'Shipping Label','LABEL':'Shipping Label',
       'QUO':'Quote','QUOTE':'Quote','INV':'Invoice','INVOICE':'Invoice',
@@ -8159,10 +8190,7 @@ async function openDocsModal(bolId, bolNum, isDispatched) {
       'POD':    `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
       'DEFAULT':`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`
     };
-    const visible = docs.filter(d => {
-      const t = (d.fileType||d.type||d.documentType||d.name||'').toUpperCase();
-      return !HIDDEN.some(h => t===h||t.startsWith(h+' '));
-    });
+    const visible = _customerFacingDocs(docs);
     const body = document.getElementById('docs-modal-body');
     if (!body) return;
     if (!visible.length) {
@@ -24180,18 +24208,16 @@ async function _waybDocuments(input) {
   let docs;
   try { docs = await fetchDocuments(bolId); }
   catch (e) { console.error('waybAgent get_documents error:', e); return { documents: [], message: 'I could not pull up documents for BOL ' + bol + '.' }; }
-  const HIDDEN = ['DO', 'COST', 'COI'];
   const DOC_NAMES = { 'BOL': 'Bill of Lading', 'LBL': 'Shipping Label', 'LABEL': 'Shipping Label', 'QUO': 'Quote', 'QUOTE': 'Quote', 'INV': 'Invoice', 'INVOICE': 'Invoice', 'POD': 'Proof of Delivery', 'RECEIPT': 'Receipt' };
   const _tc = function (s) { return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); }); };
   const _seenLbl = {};
-  const list = (docs || []).map(function (d) {
+  const list = _customerFacingDocs(docs).map(function (d) {
     const typeRaw = (d.fileType || d.type || d.documentType || d.name || '').toUpperCase();
     const url = d.url || d.fileUrl || d.documentUrl || d.link || '';
     // Title-case any unmapped type so "REWEIGH" reads as "Reweigh", consistent with mapped labels.
     return { type: typeRaw, url: url, label: DOC_NAMES[typeRaw] || _tc(typeRaw) || 'Document' };
   }).filter(function (d) {
     if (!d.url) return false;
-    if (HIDDEN.some(function (h) { return d.type === h || d.type.startsWith(h + ' '); })) return false;
     const k = d.label.toLowerCase();
     if (_seenLbl[k]) return false;   // dedupe by label — one button per document type (e.g. a single Invoice)
     _seenLbl[k] = true;
