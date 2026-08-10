@@ -4080,6 +4080,130 @@ reach has changed.
 **Tiers B and C remain analysis, not a plan.**
 
 
+## 8.878 DECISION — THE CUSTOMER-FACING INVOICE IDENTIFIER (2026-08-10)
+
+**Decided: an opaque stored token that SELECTS, with the portal session that AUTHORISES — rendered
+as a TIERED page.** Stripe is out entirely; delivery is our SendGrid mail from
+`freightandlogistics.ai`, the payable invoice page is in the portal because that is where the card
+fee applies, and documents are linked rather than attached.
+
+### The reasoning, recorded so it survives the people who made it
+
+**Options 1-without-login and 2 both put a long-lived, unauthenticated, PII-reaching link into a
+mailbox.** That is the §8.876 layer-2 defect — chosen deliberately this time rather than inherited.
+Signing a design a week after objecting to its exact shape is not a trade, it is a reversal without
+an argument.
+
+**Option 2 (stateless signed token) is ruled out on a narrower and harder point: unrevocable is not a
+property you can walk back once links are in mailboxes.** A stateless token either carries an `exp`
+— and a six-month-old invoice email is dead, on a book where AR runs long — or it does not, and
+there is no off switch for a single leaked link. Rotating the key kills every link at once. The
+middle ground is state, and once you have state you are in option 1 having paid for both.
+
+### The login trade was framed wrongly, and the correction belongs here
+
+It was first framed as friction costing collections. **It is not.** Payment **already requires
+login**: the invoice panel and its Pay button render only inside the logged-in portal, and both the
+card fee and the QBO write need session identity. **The baseline is not "customers pay without
+logging in" — it is "customers have no link at all."** A login-gated deep link is therefore strictly
+better than today, not worse than a no-login payment page that does not exist and could not apply
+the fee or write to the books.
+
+### THE PROPERTY THAT MAKES THE SEQUENCING SAFE — the tiers are independent of D2
+
+**The possession page and the invoice email do NOT depend on the deep link.** A link can go out and
+render its facts before the portal can resolve a token at all. **If D2 slips, mail still ships and
+only documents and payment wait.** That is not a side effect of the tiered design — it is the best
+property it has, and it is why the build can start before the unbuilt piece everything else stacks
+on. Do not collapse the tiers into one page for tidiness; the independence is the point.
+
+### THE TIER BOUNDARY — allowlist, not denylist. SET BY THE OWNER 2026-08-10.
+
+**ON POSSESSION, without a session, the page renders EXACTLY these and nothing else:**
+
+- invoice number
+- invoice date
+- due date
+- total amount due
+- our own company details
+- **the BOL number**
+
+**BEHIND THE SESSION — everything else, by default:** line items, charges, accessorials, consignee
+name and address, shipper details, weights, commodity descriptions, documents, payment.
+
+**The BOL number is the one judgement call and it is IN, deliberately:** customers reference it in
+every reply and phone call, and it is already printed on the Primus invoice PDF attached today — so
+it is not new exposure, it is exposure that already exists on the same surface.
+
+**ANYTHING NOT ON THE FIRST LIST IS BEHIND THE SESSION BY DEFAULT. If a field seems like it should
+move, ASK — do not decide it inside the work.**
+
+**EVERYTHING NOT ON THAT LIST REQUIRES A SESSION, BY DEFAULT.** Documents, payment, line-item
+breakdown, consignee details, shipment particulars. **Allowlist, never denylist — the same rule as
+§8, and for the same reason: a denylist is blind to whatever is added next.**
+
+> **CONSEQUENCE, and it is a real dependency: the email's content decision and the tier boundary are
+> the same decision.** "Possession renders what the email already carries" means every field added to
+> the email body widens the unauthenticated tier. The email template cannot be designed independently
+> of this.
+
+> **CONSEQUENCE 2: the possession page must be SERVER-RENDERED by the Worker.** If `portal.html`
+> renders it, the session-tier data has to reach the browser to be hidden — and a tier boundary
+> enforced in the UI is a display preference, not a control. That is the same error as §8.873's
+> denylist. The possession page is a thin Worker surface; the payable page is the portal.
+
+### THREE INVARIANTS — not implementation notes
+
+1. **The Worker fetches and re-serves document BYTES. It must never hand a `Documents.php` URL to a
+   client.** Resolving a token and returning the Primus URL mints a fresh permanent unauthenticated
+   link: the §8.876 layer-2 defect wearing better hygiene.
+2. **The Worker never accepts a Primus id from the URL.** It derives the BOL from the resolved
+   invoice. The customer cannot express *which* BOL, so cannot ask for another — which is the only
+   defence available, since the probe showed Primus serves any `bolId` to any credential.
+3. **Documents filter to ONE allowlist, in ONE place, read by BOTH consumers.**
+   This is Tier B / B7, and it **lands as part of this work rather than beside it.**
+
+   **`COI` resolves DOWNWARD — hidden, matching the portal, not `documents.js`.** Certificates of
+   insurance can carry policy numbers, limits and broker details that are **ours and our carriers'**,
+   not the customer's.
+
+   > **FIX THE MECHANISM, NOT THE ROW.** The two lists disagreed *because there were two lists*.
+   > Picking a winner without collapsing them leaves the identical defect with a tidier symptom —
+   > and the next divergence will be silent for exactly the same reason. One list, one place, both
+   > consumers importing it.
+
+### WHERE THE PUBLIC ROUTES LIVE — a NEW Worker. Decided 2026-08-10.
+
+**Public routes do NOT go on `invoice-sync`.** Adding one forces a deploy, and the deployed
+`invoice-sync` **matches no commit and cannot be safely replaced** because `main` carries phases 5-8
+(C5). That would drag C5 into this work as a blocker rather than leaving it parked, and it would put
+the sync Worker on the public internet for the first time.
+
+> **THE SEPARATION IS A BOUNDARY, NOT A DEPLOYMENT CONVENIENCE.** `invoice-sync` holds the Primus
+> system credentials and runs unattended. **The thing holding our credentials must not be the thing
+> answering requests from strangers.** It stays private — `workers_dev = false`, no routes, no public
+> surface — and that is a security property to preserve, not a default to inherit.
+
+### What this closes and what it does not
+
+It makes B8 tractable — session gives identity, token gives selection, and §5.8's rule that an
+invoice resolves only within the customer's own fetched set turns the scoped list into a constraint
+on the unscoped lookup. It does **not** fix §8.876 layers 1 or 2, which remain Primus's. It costs the
+most build of the three options; the session tier depends on **D2, which is unbuilt** — but the
+possession tier and the email do not.
+
+### OPEN AGAINST THIS DECISION, 2026-08-10
+
+- **C1 dispute notice — NOT carried over unchanged.** It was written for a Stripe memo field with
+  different length and placement constraints. Same words may still be right; the owner re-approves it
+  **for this surface** before it ships. Do not reuse it on the owner's earlier approval.
+- **B9 / SPF is a GATE on the first send.** No invoice mail goes out from a domain that fails sender
+  authentication with no send log to notice. Owner makes the DNS change; nothing here touches DNS.
+- **C2 — verification required before any NON-PILOT recipient.** The pilot stays on the owner's own
+  test account. The rule for confirming a billing address is to be written **now**, not at the moment
+  someone wants to send.
+
+
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
 
 **A corrected primary is currently classified as a REBILL, and that is the worst misclassification
