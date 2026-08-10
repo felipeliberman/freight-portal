@@ -3128,6 +3128,22 @@ Consequences that phase 9 must respect:
 - **Any absence claim from this endpoint must state its page-failure count.** Coverage is not
   complete merely because the loop finished.
 
+### 6. THE `status.sent` AMBIGUITY IS CLOSED — and the term got STRONGER (2026-08-10)
+
+This section recorded that `sent` is one of three independent status booleans and moves independently
+of anything we control. That mattered because the C1 dispute notice starts its clock at **"the date
+sent"**, and under the Stripe design "sent" would have meant Stripe's send while `status.sent` moved
+on its own — an unresolved referent (`mapper.js` DEFINITIONAL NOTE).
+
+**With Stripe out and delivery moving to our own SendGrid mail, "the date sent" means OUR send.**
+Timestamped by us, logged by us, ours to produce on demand.
+
+**Record this as a STRENGTHENING, not a housekeeping note.** A dispute window that starts on **a date
+we can prove** is a materially better contractual term than one starting on **a flag we did not own
+and could not evidence**. The ambiguity is closed by the architecture change rather than by a
+decision about wording — and the send log that makes the date provable is therefore not optional
+tooling, it is what the term rests on.
+
 
 ## 8.866 How to pull and verify a deployed Worker bundle — METHOD
 
@@ -4127,13 +4143,25 @@ on. Do not collapse the tiers into one page for tidiness; the independence is th
 - total amount due
 - our own company details
 - **the BOL number**
+- **the dispute notice (C1)**
 
 **BEHIND THE SESSION — everything else, by default:** line items, charges, accessorials, consignee
 name and address, shipper details, weights, commodity descriptions, documents, payment.
 
-**The BOL number is the one judgement call and it is IN, deliberately:** customers reference it in
-every reply and phone call, and it is already printed on the Primus invoice PDF attached today — so
-it is not new exposure, it is exposure that already exists on the same surface.
+**The BOL number is IN, deliberately:** customers reference it in every reply and phone call, and it
+is already printed on the Primus invoice PDF attached today — so it is not new exposure, it is
+exposure that already exists on the same surface.
+
+**THE DISPUTE NOTICE IS IN, AND IT IS AN EXPLICIT OVERRIDE OF THE DEFAULT.** The owner's first tier
+list put it behind the session by default; that was corrected 2026-08-10 on this reasoning:
+
+> It is a **contractual term that starts a 3-business-day clock**, and the person most likely to open
+> the email is a **bookkeeper who may never log in**. **A term the reader cannot see is a term that
+> will not hold.** It is our own text about our own policy and discloses nothing about the shipment,
+> so it belongs where it will actually be read.
+
+**Nothing else moves without asking the owner.** This override is recorded as an override precisely
+so it is not read as licence to relocate other fields by similar-sounding argument.
 
 **ANYTHING NOT ON THE FIRST LIST IS BEHIND THE SESSION BY DEFAULT. If a field seems like it should
 move, ASK — do not decide it inside the work.**
@@ -4141,6 +4169,12 @@ move, ASK — do not decide it inside the work.**
 **EVERYTHING NOT ON THAT LIST REQUIRES A SESSION, BY DEFAULT.** Documents, payment, line-item
 breakdown, consignee details, shipment particulars. **Allowlist, never denylist — the same rule as
 §8, and for the same reason: a denylist is blind to whatever is added next.**
+
+> **THE 368-CHARACTER BUDGET IS GONE.** It existed only because Stripe's memo field caps at 500 with
+> fixed overhead (§5.5). Our own email has no such limit and nothing truncates. **If any phrasing in
+> the dispute notice was compressed to fit that budget, it no longer needs to be — and nobody later
+> should preserve the compression as deliberate style.** The text is unchanged by owner decision;
+> the *constraint that shaped it* is not.
 
 > **CONSEQUENCE, and it is a real dependency: the email's content decision and the tier boundary are
 > the same decision.** "Possession renders what the email already carries" means every field added to
@@ -4172,12 +4206,66 @@ breakdown, consignee details, shipment particulars. **Allowlist, never denylist 
    > and the next divergence will be silent for exactly the same reason. One list, one place, both
    > consumers importing it.
 
+### THE COLLAPSED LIST — settled 2026-08-10
+
+Scoping the collapse showed the divergence was **far wider than `COI`**. The portal's denylist was
+`['DO','COST','COI']`, so **everything else rendered**; the allowlist admitted seven types. The gap
+in both directions had to be ruled on rather than averaged.
+
+**CUSTOMER-FACING:** `BOL`, `RECLASS`, `REWEIGH`, `DIM`, `POD`, **`INV`**, **`LBL`**, **`QUO`**.
+
+**NOT customer-facing (added):** **`COI`**, **`IMG`**. **Collapsed without asking, because they were
+never a judgement call:** `CLM`, `CLMD` (claims correspondence — carrier settlement positions), `CI`
+(commercial invoice — can carry the shipper's pricing to *their* buyer), `MISDOC`, `SHP`, `MET`,
+`CLBL`, `DO`, `COST`. **That those were reachable by customers today is B7 stated concretely, and it
+is the reason this step exists.**
+
+**`INV` is IN because ITS RATIONALE EXPIRED, not because the ruling changed.** It sat in
+`NEVER_EXPOSE` under the comment *"Primus invoice PDF — superseded by the Stripe invoice."* **Stripe
+is gone; nothing supersedes it**, and under §8.878 the Primus PDF is what the invoice link serves.
+**Recorded this way deliberately so the next reader sees the dependency** — the exclusion rested on
+a fact, the fact changed, and the conclusion followed. It was not a change of mind.
+
+**`LBL` and `QUO` are IN** as live customer workflows: parcel customers print the label, and the
+quote is the customer's own document.
+
+### `IMG` — found while scoping, not on the owner's list
+
+> **This item was raised by the assistant during scoping and was not on the owner's ruling list.**
+> Recorded as such because the flag, not the ruling, is what nearly got skipped: it was status quo
+> in the portal and would have survived the collapse by inertia.
+
+`IMG` is driver delivery photographs — the consignee's house, door, and sometimes people. It is safe
+**only when the bill-to is the consignee**. On a ~90% residential white-glove book **the bill-to is
+usually the furniture retailer and the consignee is their customer**, so the common case is showing a
+retailer a photograph of someone else's front door.
+
+**Nothing operational breaks.** We still see it as broker, it remains available for claims, and the
+retailer loses a photo they were never the subject of.
+
+> ### THE GENERAL RULE IT IMPLIES
+>
+> **A document type is customer-facing only if the BILL-TO IS ITS SUBJECT — not merely a party to the
+> shipment.**
+>
+> This is the test to apply to the next type Primus adds, and it is sharper than "is it sensitive".
+> **It would have caught `CI` too** — a commercial invoice is about the shipper's sale to *their*
+> buyer, and the bill-to is a party to the shipment without being the subject of that document.
+
 ### WHERE THE PUBLIC ROUTES LIVE — a NEW Worker. Decided 2026-08-10.
 
 **Public routes do NOT go on `invoice-sync`.** Adding one forces a deploy, and the deployed
 `invoice-sync` **matches no commit and cannot be safely replaced** because `main` carries phases 5-8
 (C5). That would drag C5 into this work as a blocker rather than leaving it parked, and it would put
 the sync Worker on the public internet for the first time.
+
+> **THE MIRROR IS A DEPLOYMENT CONSTRAINT, NOT A DESIGN CHOICE, AND IT ENDS AT STEP 3.**
+> "One list, one place" cannot be literal today: `portal.html` cannot import an ESM module from
+> `invoice-sync` across separate deployments. The achievable form is the repo's existing pattern
+> (`build-worker-kb.js` / `landing-kb.test.js`) — **one canonical definition, a mirrored copy, and a
+> drift test that fails the moment they disagree.** When the new Worker lands at plan step 3 it
+> imports the canonical directly, leaving exactly one copy rather than three definitions. **Do not
+> read the mirror as the intended shape.**
 
 > **THE SEPARATION IS A BOUNDARY, NOT A DEPLOYMENT CONVENIENCE.** `invoice-sync` holds the Primus
 > system credentials and runs unattended. **The thing holding our credentials must not be the thing
@@ -4199,9 +4287,34 @@ possession tier and the email do not.
   **for this surface** before it ships. Do not reuse it on the owner's earlier approval.
 - **B9 / SPF is a GATE on the first send.** No invoice mail goes out from a domain that fails sender
   authentication with no send log to notice. Owner makes the DNS change; nothing here touches DNS.
-- **C2 — verification required before any NON-PILOT recipient.** The pilot stays on the owner's own
-  test account. The rule for confirming a billing address is to be written **now**, not at the moment
-  someone wants to send.
+### C2 — THE RECIPIENT VERIFICATION RULE. Accepted 2026-08-10.
+
+An address may receive an invoice only if it is on `VERIFIED_RECIPIENTS`, and it is added only by one
+of three routes — **each leaving a record of WHO decided and WHEN**:
+
+1. **Customer-initiated.** The address appears on correspondence *from* that customer at that domain,
+   referencing their own BOL or invoice. Their own mail is the corroboration.
+2. **Confirmed out-of-band.** Someone contacts a known-good channel already on file from a prior
+   verified interaction and confirms the billing address. Recorded with the date and who confirmed.
+3. **Owner assertion**, as with the pilot — explicitly a human decision rather than a process, and
+   labelled as such. The current entry already is.
+
+**THE TWO PROPERTIES BELOW ARE THE REASONING, NOT THE RULE — kept because the rule without them will
+be relaxed by someone in a hurry.**
+
+**A QBO address is not corroboration.** §5.6's `ap@paylessrugs.com` is the worked example: present in
+QBO, no record of who added it or when. **Age is not provenance.**
+
+**Domain match is not verification.** `ap@customer.com` looking plausible beside `nickz@customer.com`
+is exactly the reasoning that fails — **a typo and a former employee both look plausible in the right
+domain.**
+
+**`unverifiedRecipients()` must keep failing closed on an absent list.** A caller who forgets to pass
+the verified set is blocked, not waved through. That property predates this rule and **must not be
+softened to make the rule convenient.**
+
+The pilot stays on the owner's own test account. Verification is required before any **non-pilot**
+recipient.
 
 
 ## 8.9 VOID-AWARENESS — PHASE 9 GATE, not an open note
