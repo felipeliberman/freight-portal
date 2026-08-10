@@ -2161,6 +2161,29 @@ fails open, irreversible fails closed. Anything asserted about Primus needs a se
 claim about us. And §8.8: **the eval asserts the whole set, not one sample** — two defects this
 session passed 209 unit tests and a single-invoice render, and were caught only by rendering all 11.
 
+### A NEW FACT SWEEPS WHAT WAS STANDING ON THE OLD ONE — general practice, not a tidy
+
+**Closing an item is half the work. The other half is finding every claim elsewhere that rested on
+the assumption the new fact just replaced.** A fact does not stay in its own section: it was load-
+bearing somewhere, and the places it held up do not announce themselves.
+
+Worked example, 2026-08-10 (§8.875). One observation — **Activity Feed retention is 3 days, not the
+wider window assumed** — invalidated two things in other sections that no one would have re-read:
+
+- §8.875 advised reading the feed *"soon rather than reconstructed later."* **Advice nobody can
+  take**, and it would have sat there looking actionable.
+- §8.881's never-sent finding was waiting on the feed as its **second path**. That path is gone, so
+  the finding **rests on git alone, permanently.** Not a task still to do — **a permanent limit on
+  what can be known**, and the two read completely differently to whoever picks this up next.
+
+**The sharper form of that second one, because it is the pattern worth copying:** `git log -S`
+proves one commit touched the identifier. It **cannot** rule out some *other* send path — and with
+retention gone, nothing can. **State the boundary of the evidence, not just its conclusion.**
+
+**How to run the sweep:** grep the old assumption's own words across the spec, not the new fact's.
+The stale claims are phrased in the language of what was believed, so searching for what is now true
+finds nothing. Both invalidations above were found by grepping `Activity Feed`.
+
 ## 8.6 WORK QUEUE — open items as of 2026-08-03 (end of phase 8)
 
 Nothing below is built. Ordered by what blocks what, not by size.
@@ -2188,7 +2211,7 @@ Nothing below is built. Ordered by what blocks what, not by size.
 | B10 | **LIVE — CUSTOMER DOCUMENTS REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH.** Verified 2026-08-04 against the live customer/portal API. A customer token returned another account's full document list **including a POD** (ARCode 720, BOL 303260010320); separately, `Documents.php` URLs serve the PDF to a request with **no `Authorization` header at all**. **Two distinct failures — fixing one does not fix the other.** Precise, not rounded: a filter DOES exist (it removed `DO` for the customer token) — it filters by document **type**, not by **ownership**. **Reachable today by any logged-in customer; nothing has to be built.** Primus-side remediation is the owner's, separately | §8.876, §8.877 |
 | B7 | **THE PORTAL FILTERS CUSTOMER DOCUMENTS BY DENYLIST — LIVE DEFECT.** `HIDDEN = ['DO','COST','COI']` at `portal.html:8110` (+ copy at `:24148`) is the construction §8 rules out: the type codes differ between the two Primus document endpoints, so a denylist built from either is blind to the other, and **any type Primus adds appears to customers by default**. The book is ~90% residential and the documents carry **consignee home addresses and phone numbers**. `documents.js` `CUSTOMER_FACING` and the portal already **disagree about `COI`** — allowed by one, hidden by the other. Enforcement is UI-only today because the fetch is browser→Primus with no server of ours in the path. **GATE: no deep link is designed until closed** | §8.873, §8 |
 | B8 | **NO OWNERSHIP CHECK ON A DIRECT LOOKUP.** `primusToken` is cached ~50 min and `getToken()` returns it without re-checking the session; nothing compares a `bolId` against `currentCustomer`. §5.8's list-membership answer covers invoices but NOT documents, which are a direct `GET /applet/v1/document/{bolId}`. **We cannot verify ownership independently** — every list we could check against comes from the same token and the same API. Primus is the only authority and **that it refuses another customer's bolId is UNVERIFIED**. Failure presents as `'Could not fetch documents'`, indistinguishable from a shipment with no documents, so it would not be reported. **GATE: no deep link is designed until closed** | §8.874, §5.8 |
-| B9 | ~~**LIVE — production mail fails sender authentication**~~ — **CLOSED 2026-08-10.** Owner published SendGrid Domain Authentication (three CNAMEs under `em2177`/`s1`/`s2._domainkey`) and added `include:sendgrid.net` to the apex SPF; verified here against the authoritative nameservers, with real DKIM keys at both selectors and exactly one `_dmarc` record. Root cause: Domain Authentication had never been configured — only Single Sender Verification, which proves mailbox ownership and does nothing for SPF or DKIM. The wizard's fourth (DMARC) row was **declined on purpose**: two DMARC records on one name break DMARC. **STILL OPEN UNDERNEATH: no aligned mail has been OBSERVED passing** (DNS state is a precondition, not a result), and **there is still no send log**. DMARC stays `p=none` until an `Authentication-Results` header is seen `portal.html:9765` sends as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** | §8.875 |
+| B9 | ~~**LIVE — production mail fails sender authentication**~~ — **CLOSED 2026-08-10.** Owner published SendGrid Domain Authentication (three CNAMEs under `em2177`/`s1`/`s2._domainkey`) and added `include:sendgrid.net` to the apex SPF; verified here against the authoritative nameservers, with real DKIM keys at both selectors and exactly one `_dmarc` record. Root cause: Domain Authentication had never been configured — only Single Sender Verification, which proves mailbox ownership and does nothing for SPF or DKIM. The wizard's fourth (DMARC) row was **declined on purpose**: two DMARC records on one name break DMARC. **FULLY CLOSED BY OBSERVATION, same day**: an aligned message was READ at its original hop — `dkim=pass header.i=@freightandlogistics.ai header.s=s1`, `spf=pass`, `dmarc=pass`, signed `d=freightandlogistics.ai`. The assistant's predicted failure (`dkim=pass header.d=sendgrid.net`, identity still on Single Sender) was **REFUTED** — SendGrid re-pointed the sending identity itself. **`spf=none` lines higher in the header stack are Gmail's own `.com`→`.ai` FORWARDING hop, not our send** — do not read them as unresolved. The Activity Feed also shows THREE live delivering paths (signup welcome, support notification, payment confirmation; all Delivered, reputation 100%), so step 6 adds a FOURTH flow to a working transport. **STILL OPEN SEPARATELY: there is no send log** (§8.865.6). **DMARC stays `p=none`** — one aligned message is the precondition for considering `quarantine`, not a reason to move. **ORIGINAL FINDING, retained:** `portal.html:9765` sent as `support@freightandlogistics.ai` via SendGrid, but that domain's SPF is `v=spf1 include:_spf.google.com include:23905256.spf03.hubspotemail.net ~all` — **SendGrid is not in it** — and SendGrid domain authentication is **not configured** (`s1`/`s2._domainkey` and `em` all unresolved). DMARC is `p=none`, so mail delivers **unauthenticated** instead of being rejected, and the failure is **silent spam placement nobody reports**. Affects Email Invoice (`:4506`) and the customer support confirmation (`:9928`). **Volume already sent is unknowable — there is no send log; SendGrid's Activity Feed is the only record and its retention is limited.** Needs `include:sendgrid.net`. **Owner makes the DNS change; a migration is in flight** *(all of the preceding sentence is the ORIGINAL finding as written on 2026-08-04 and is kept as the record of what was believed then — the DNS change was made, and the Email Invoice blast-radius claim was later corrected by §8.881: it never sent.)* | §8.875, §8.881 |
 
 ### C. Before anything is created in Stripe
 
@@ -3944,6 +3967,12 @@ Activity Feed, which has limited retention — so if the historical volume matte
 soon rather than reconstructed later.** That absence is itself the finding underneath this one:
 **we do not know what we have sent, to whom, or whether it arrived.**
 
+> **2026-08-10 — TOO LATE ALREADY, AND THE ADVICE ABOVE CANNOT BE TAKEN.** Retention on this plan is
+> **THREE DAYS**, not the wider window assumed when that paragraph was written. Read it as a
+> statement about the future only: from here, anything not logged at send time is gone in 72 hours.
+> **This is the argument for the send log (§8.865.6)**, which is now the only thing that can answer
+> "what did we send" at all.
+
 ### CLOSED 2026-08-10 — records published by the owner, verified independently here
 
 **Root cause, and it is worth stating because it is why this looked configured while failing:**
@@ -3985,18 +4014,76 @@ cache, and cross-checked from `1.1.1.1` and `8.8.8.8`:**
 > **Recorded because anyone re-running that wizard will be offered it again**, and it will look like
 > a missing record rather than a duplicate.
 
-### WHAT IS NOW TRUE, AND WHAT IS NOT
+### B9 CLOSED 2026-08-10 — BY OBSERVATION, NOT BY INFERENCE
 
-**True:** SPF authorises SendGrid for our envelope domain, DKIM keys are published under our domain
-at both selectors, and the return-path resolves SPF and MX. **Both alignment mechanisms are in
-place** — the thing that was missing.
+An aligned message was **read**, not reasoned about. *Support Request — New Account Signup — Spencer
+Coombs [EUKQL65H]*, sent **2026-08-10 21:24:59 UTC**, roughly 40 minutes after the DNS change.
 
-**NOT yet true: no aligned message has been observed passing.** All of the above is **DNS state,
-which is a precondition and not a result.** The proof is a real send's `Authentication-Results`
-showing `spf=pass` and `dkim=pass` with `header.d=freightandlogistics.ai`.
+**At the ORIGINAL delivery hop:**
 
-**DMARC stays `p=none` until that is seen.** Moving to `quarantine` first is how a misconfiguration
-is discovered by having legitimate invoices rejected.
+```
+dkim=pass    header.i=@freightandlogistics.ai header.s=s1
+spf=pass     bounces+…@em2177.freightandlogistics.ai designates 149.72.123.24 as permitted sender
+dmarc=pass   (p=NONE) header.from=freightandlogistics.ai
+DKIM-Signature:  d=freightandlogistics.ai; s=s1
+Return-Path:     bounces+108760965-9d72-support=freightandlogistics.ai@em2177.freightandlogistics.ai
+```
+
+**Signed by OUR domain with the `s1` key published that day — not by `sendgrid.net`.** Both
+alignment mechanisms confirmed in a real message.
+
+> ### ⚠ ARTIFACT — `spf=none` APPEARS HIGHER IN THE HEADER STACK. IT IS NOT OURS.
+>
+> Further up there are `spf=none` lines against **`freightandlogistics.com`**. That is **Gmail's own
+> forwarding hop** from the `.com` address to the `.ai` mailbox — a different hop, a different
+> domain, and not our send. **The original hop passed all three.**
+>
+> Recorded because a future reader who greps these headers will find `spf=none` and conclude this is
+> unresolved. Read the hop, not the first match.
+
+### A PREDICTION WAS MADE AND REFUTED — recorded together, because that is the point
+
+Before the test, the assistant predicted the likely failure: **`dkim=pass header.d=sendgrid.net`** —
+signed, but by SendGrid's domain rather than ours — on the reasoning that publishing CNAMEs does not
+re-point an existing sender identity, and that the account had been on Single Sender Verification.
+The stated remedy was to fix the sender identity in SendGrid, **not** to touch DNS.
+
+**It did not happen. SendGrid re-pointed the sending identity to the authenticated domain on its
+own.** The prediction was wrong.
+
+**Kept in the record deliberately: a prediction that was STATED and then FAILED is worth more than
+one that quietly held.** It was falsifiable, it was checked, and being wrong is what makes the
+observation worth something — the alternative is an unstated expectation that survives by never
+being tested.
+
+### ALSO OBSERVED — the transport is live, and that changes what step 6 is
+
+The Activity Feed shows **three live paths delivering today**: portal signup welcome emails to
+customers, support-request notifications to `support@freightandlogistics.ai`, and a payment
+confirmation. **All Delivered. Reputation 100%.**
+
+**So step 6 is not building on an untested transport — it is adding a FOURTH flow to one that
+works.** That is a materially different risk profile from the one assumed while the Email Invoice
+button was believed to be the only invoice path.
+
+### THE HISTORICAL QUESTION IS UNANSWERABLE BY THIS ROUTE — closed, not left open
+
+The Activity Feed was to be the **second path** on §8.881's finding that no invoice email has ever
+been sent. **It cannot reach: retention on this plan is THREE DAYS**, not the wider window assumed.
+The button was broken for **57 days**.
+
+**Closed as UNANSWERABLE by observation. The git evidence stands alone** — one commit ever touched
+`_lastInvoiceSend`, and it is the commit that added `portal.html`.
+
+**Recorded that the confirmation was ATTEMPTED and was not available**, rather than left as an open
+task someone re-attempts and re-discovers the same limit. A single-path finding known to be
+single-path is not the same as one that was never checked.
+
+### DMARC STAYS `p=none`
+
+One aligned message passing is **the precondition for CONSIDERING `quarantine`, not a reason to move
+today.** Moving on a single observation is how a misconfiguration in some other flow is discovered by
+having legitimate mail rejected.
 
 
 ## 8.876 LIVE — CUSTOMER DOCUMENTS ARE REACHABLE ACROSS ACCOUNTS, AND THEIR URLs NEED NO AUTH
@@ -4649,6 +4736,20 @@ only its latest example.
 
 **A general audit for undeclared identifiers across `portal.html` has NOT been done.** `node --check`
 catches syntax, not scope, so nothing in the current gates would find a second one.
+
+### THE SECOND PATH WAS ATTEMPTED AND IS UNAVAILABLE — this finding is knowingly single-path
+
+The standing rule wants a second path. The intended one was SendGrid's Activity Feed: if it showed
+no invoice send, that would confirm the git evidence independently. **It cannot: retention is THREE
+DAYS and the button was broken for 57.** Checked 2026-08-10.
+
+**So this finding rests on git alone, permanently — and that is recorded rather than left as an open
+task** someone re-attempts in six months and re-discovers the same limit. A single-path finding
+KNOWN to be single-path is a different thing from one nobody checked.
+
+**The git evidence is strong on its own terms**: `git log -S` returns one commit, and that commit
+added the file. What the second path would have added is confirmation that no OTHER send path
+existed — which git cannot rule out and which now nothing can.
 
 ### WHAT WAS REMOVED, and what was kept
 
