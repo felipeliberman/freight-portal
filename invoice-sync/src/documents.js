@@ -119,6 +119,62 @@ export async function deriveDocToken(secret, primusInvoiceId, bolNumber, type) {
   return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
+/**
+ * Is this candidate the token deriveDocToken would mint for THIS (invoice, bol, type)?
+ *
+ * ── THE TOKEN IS NEVER ASKED WHAT IT IS FOR ──────────────────────────────────────────────────
+ *
+ * The route already knows which invoice, BOL and document type it is about to serve. It re-derives
+ * the token for THAT triple and asks whether the presented one matches. It does not read a scope
+ * out of the token and then honour it — a token that names its own scope is the client naming its
+ * own scope, which is the same defect as trusting a `customerEmail` read out of sessionStorage.
+ * The client supplies exactly one value here: `candidateToken`.
+ *
+ * DERIVES THROUGH deriveDocToken RATHER THAN REIMPLEMENTING THE HMAC, so mint and verify cannot
+ * drift. A verifier with its own copy of the construction is a verifier that will one day accept
+ * tokens nothing issues, or reject tokens already in customers' inboxes.
+ *
+ * @returns {Promise<boolean>} true or false, and nothing else. Unlike resolveCallerArCode this is
+ *   not a lookup with several failure shapes to collapse — it is one comparison.
+ *
+ * A MALFORMED CANDIDATE IS false, NOT A THROW. This reads untrusted input off a URL; throwing
+ * would turn a short or absent token into a 500, which is both a worse answer and a DIFFERENT
+ * answer from the one a merely wrong token gets — and a difference an attacker can see is an
+ * oracle. A missing SECRET still throws, from deriveDocToken: that is our configuration, and it
+ * fails loud, exactly as it does at mint.
+ */
+export async function verifyDocToken(secret, primusInvoiceId, bolNumber, type, candidateToken) {
+  // Derived FIRST, before the candidate is examined at all. Two reasons: a missing secret throws
+  // regardless of what the client sent, so a garbage token cannot mask a misconfiguration; and
+  // every candidate costs the same single HMAC, so there is no early exit to time.
+  const expected = await deriveDocToken(secret, primusInvoiceId, bolNumber, type);
+  return timingSafeEqual(expected, candidateToken);
+}
+
+/**
+ * Constant-time string comparison — deliberately hand-rolled, and NOT `node:crypto`.
+ *
+ * `crypto.timingSafeEqual` THROWS a RangeError when the two buffers differ in length, so the
+ * obvious "use the standard one" answer turns a truncated token in a URL into a 500. It is also a
+ * Node import in a module a public Worker is meant to be able to import directly (§8.878 plan step
+ * 3), where the only guaranteed primitive is the global `crypto` deriveDocToken already uses.
+ *
+ * COMPARING THE LENGTHS DIRECTLY IS FINE. Every token this mints is exactly 32 characters, so the
+ * length is a public constant and reveals nothing about the secret. What must not leak is HOW MUCH
+ * of the token matched — which is precisely what `===` leaks, by returning at the first differing
+ * character and taking longer the longer the shared prefix. The loop below always reads every
+ * character and accumulates the difference instead of branching on it.
+ */
+function timingSafeEqual(expected, candidate) {
+  if (typeof candidate !== 'string') return false;
+  if (expected.length !== candidate.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ candidate.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 /** `{BOLNumber}_{TYPE}.pdf` — Primus's own convention, so a download lands with a sensible name. */
 export function documentFilename(bolNumber, type) {
   return `${bolNumber}_${normalizeType(type)}.pdf`;

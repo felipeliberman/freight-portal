@@ -2,8 +2,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
-  normalizeType, classifyDocument, selectDocuments, deriveDocToken, documentFilename,
+  normalizeType, classifyDocument, selectDocuments, deriveDocToken, verifyDocToken, documentFilename,
   CUSTOMER_FACING, AUTO_PUSH, NEVER_EXPOSE,
 } from '../src/documents.js';
 
@@ -125,4 +128,138 @@ test('the allowlists are frozen and PUSH is a strict subset of CUSTOMER_FACING',
   }
   for (const t of AUTO_PUSH) assert.ok(CUSTOMER_FACING.includes(t), `${t} pushed but not pullable`);
   for (const t of NEVER_EXPOSE) assert.ok(!CUSTOMER_FACING.includes(t), `${t} on both lists`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// verifyDocToken — the half deriveDocToken never had
+//
+// THE THREAT MODEL, because it decides the whole shape of this function. The document route is
+// handed a token off a URL and is about to serve bytes. It must NOT ask the token which invoice it
+// was minted for — that would be the client naming its own scope, the same defect as trusting a
+// `customerEmail` out of sessionStorage. The route already knows which (invoice, bol, type) it is
+// serving; verification re-derives the token for THAT triple and asks whether the presented one
+// matches. The client supplies exactly one thing: the candidate.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const SECRET = 'server-side-secret';
+const INV = '1591052345';
+const BOL = '160133377';
+const TYPE = 'BOL';
+
+test('a token minted by deriveDocToken verifies against the same four inputs', async () => {
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, t), true);
+});
+
+test('a changed primusInvoiceId does not verify', async () => {
+  // Kept as three separate tests rather than one loop: if the invoice component ever stopped
+  // contributing to the digest, a combined case could still fail for the wrong reason and read as
+  // "the test caught it". Each component is pinned on its own.
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  assert.equal(await verifyDocToken(SECRET, '38466460', BOL, TYPE, t), false);
+});
+
+test('a changed bolNumber does not verify', async () => {
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  assert.equal(await verifyDocToken(SECRET, INV, '160133693', TYPE, t), false);
+});
+
+test('a changed type does not verify', async () => {
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, 'POD', t), false);
+});
+
+test('an empty candidate token is false, never a throw', async () => {
+  // The route receives this off a URL. A throw would turn a malformed request into a 500, which is
+  // both a worse answer and a DIFFERENT answer from the one a wrong token gets — and a difference
+  // an attacker can see is an oracle.
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, ''), false);
+});
+
+test('a null or undefined candidate token is false, never a throw', async () => {
+  for (const bad of [null, undefined]) {
+    assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, bad), false, `${bad} must be false`);
+  }
+});
+
+test('a candidate of the RIGHT length but wrong content is false', async () => {
+  // The interesting negative: length alone must not satisfy anything, and a near-miss must be
+  // rejected by content. '0'.repeat(32) is a legal-looking 32-char hex string.
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  assert.equal(t.length, 32, 'the format assumption this test rests on');
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, '0'.repeat(32)), false);
+
+  // One character off, in the last position — the case a prefix-comparison bug would still reject,
+  // and the first position, which a suffix bug would.
+  const lastFlipped = t.slice(0, 31) + (t[31] === 'a' ? 'b' : 'a');
+  const firstFlipped = (t[0] === 'a' ? 'b' : 'a') + t.slice(1);
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, lastFlipped), false);
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, firstFlipped), false);
+});
+
+test('a candidate of a DIFFERENT length is false and does not throw', async () => {
+  // THE TRAP THIS TEST EXISTS FOR. Node's own crypto.timingSafeEqual THROWS a RangeError when the
+  // two buffers differ in length — so the obvious "use the standard constant-time compare" answer
+  // turns a short token in a URL into a 500. Anything used here must answer false instead.
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  const lengths = ['', 'a', t.slice(0, 31), t.slice(0, 16), t + 'a', t + t, 'x'.repeat(1000)];
+  for (const c of lengths) {
+    await assert.doesNotReject(
+      () => verifyDocToken(SECRET, INV, BOL, TYPE, c), `length ${c.length} threw instead of returning false`);
+    assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, c), false, `length ${c.length} must be false`);
+  }
+});
+
+test('NEGATIVE: two invoices\' tokens never verify against each other, on one secret', async () => {
+  // The property the whole per-(invoice, document) scoping exists for. Two parties can bill on one
+  // BOL — shipper-paid and consignee-paid rebill — so holding one party's token must not open the
+  // other's view of the SAME file. Same secret, same BOL, same type: only the invoice differs.
+  const a = await deriveDocToken(SECRET, '1591052345', BOL, TYPE);
+  const b = await deriveDocToken(SECRET, '38466460', BOL, TYPE);
+  assert.notEqual(a, b, 'precondition: the two tokens differ');
+
+  assert.equal(await verifyDocToken(SECRET, '1591052345', BOL, TYPE, a), true);
+  assert.equal(await verifyDocToken(SECRET, '38466460', BOL, TYPE, b), true);
+  assert.equal(await verifyDocToken(SECRET, '38466460', BOL, TYPE, a), false, 'A\'s token opened B\'s invoice');
+  assert.equal(await verifyDocToken(SECRET, '1591052345', BOL, TYPE, b), false, 'B\'s token opened A\'s invoice');
+});
+
+test('a token minted under a DIFFERENT secret does not verify', async () => {
+  // Rotating the secret must invalidate every outstanding token. Since the token is derived and
+  // never stored, the secret is the only thing that can revoke them wholesale.
+  const t = await deriveDocToken('secret-one', INV, BOL, TYPE);
+  assert.equal(await verifyDocToken('secret-two', INV, BOL, TYPE, t), false);
+});
+
+test('verification normalises `type` exactly as minting does', async () => {
+  // `BOL ` carries a trailing space in the live Primus response. If mint normalised and verify did
+  // not, a link built from the live list would fail against a type read back from the same list —
+  // and it would fail as "wrong token", indistinguishable from an attack.
+  const t = await deriveDocToken(SECRET, INV, BOL, 'bol ');
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, 'BOL', t), true);
+  assert.equal(await verifyDocToken(SECRET, INV, BOL, ' Bol', t), true);
+});
+
+test('verification is case-SENSITIVE on the token itself', async () => {
+  // The token is an opaque credential, not a type code. Accepting a case variant would widen the
+  // set of strings that open a document for no benefit to anyone holding a real link.
+  const t = await deriveDocToken(SECRET, INV, BOL, TYPE);
+  const upper = t.toUpperCase();
+  if (upper !== t) assert.equal(await verifyDocToken(SECRET, INV, BOL, TYPE, upper), false);
+});
+
+test('the comparison adds no dependency — documents.js imports nothing', () => {
+  // This module must stay importable by a PUBLIC Worker (§8.878 plan step 3), so its only crypto
+  // is the global `crypto.subtle` deriveDocToken already uses. Asserting on the IMPORT SURFACE is
+  // the whole check: Node's `crypto.timingSafeEqual` — which throws a RangeError on a length
+  // mismatch, the trap the previous test guards behaviourally — is simply unreachable without one.
+  //
+  // Deliberately NOT a grep for the identifier. Comments are source: the first version of this
+  // test matched this file's own explanation of why node:crypto is avoided, and a test that a name
+  // may not be MENTIONED pushes the next author to rename a well-named function or delete the
+  // reasoning. Pin what is reachable, not what is written.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(join(HERE, '..', 'src', 'documents.js'), 'utf8');
+  assert.ok(!/^\s*import\s/m.test(src), 'documents.js must stay dependency-free');
+  assert.ok(!/require\(/.test(src), 'documents.js must not require anything');
 });
