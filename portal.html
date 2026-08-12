@@ -4896,35 +4896,75 @@ function renderShipments(shipments, fullShipmentsList, offset, singleResult, bac
       if (!toDownload.length) return;
       const lbl = shipDlBtn.querySelector('.ship-dl-label');
       shipDlBtn.disabled = true;
-      const token = await getToken();
+      // Same batch discipline as the invoice bulk download: a per-shipment failure is RECORDED and
+      // the loop continues, then the count is reported. Never silent, never fatal to the batch.
+      const failed = [];
+
+      // ── THE TYPE LOOP, TRANSLATED FROM SUBSTRING-MATCHING TO REAL CODES ──────────────────────
+      //
+      // The old loop was `types = ['BOL'] (+ 'LBL','LABEL','SHIPPING')` matched with
+      // `docType => (doc.type||…).toUpperCase().includes(docType)`. Checked against the real Primus
+      // type codes, that resolves to:
+      //
+      //     'BOL'      matched  BOL
+      //     'LBL'      matched  LBL *and CLBL* — 'CLBL'.includes('LBL') is TRUE, which is how a
+      //                         PARCEL carrier label reached this button at all
+      //     'LABEL'    matched  NOTHING — no Primus type contains it. Dead code.
+      //     'SHIPPING' matched  NOTHING — dead code.
+      //
+      // So the honest translation is BOL, then the label as LBL-or-CLBL. Sending 'LABEL' or
+      // 'SHIPPING' to the route would be worse than dead: classifyDocument returns 'unknown' for
+      // both, so the route 404s them — a silent no-op dressed as a refusal.
+      //
+      // EVERY code below classifies 'pull': BOL ✓, LBL ✓, CLBL ✓ (CLBL as of the 2026-08-12 ruling,
+      // which is what makes the parcel case expressible here rather than dropped).
+      const wanted = [{ what: 'BOL', types: ['BOL'], suffix: '' }];
+      if (includeLabel) wanted.push({ what: 'label', types: ['LBL', 'CLBL'], suffix: '_label' });
+
       for (let i = 0; i < toDownload.length; i++) {
         const s = toDownload[i];
-        const bolId = s.BOLId || s.bolId;
-        const bolNum = s.BOLNumber || s.bolNumber || bolId;
+        // NO bolId FALLBACK. The old line was `s.BOLNumber || s.bolNumber || bolId` — which would
+        // put a raw internal id into a customer-facing URL the moment BOLNumber was absent, exactly
+        // what §8.876 settled must never happen. An unresolvable BOL number is a FAILURE, recorded.
+        const bolNum = String(s.BOLNumber || s.bolNumber || '').trim();
         if (lbl) lbl.textContent = 'Downloading ' + (i+1) + ' of ' + toDownload.length + '...';
-        try {
-          const dr = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bolId, { headers: { 'Authorization': 'Bearer ' + token } });
-          if (dr.ok) {
-            const dd = await dr.json();
-            const docs = (dd.data && dd.data.results) || [];
-            const types = ['BOL'];
-            if (includeLabel) types.push('LBL', 'LABEL', 'SHIPPING');
-            for (const docType of types) {
-              const doc = docs.find(d => (d.type||d.fileType||d.name||'').toUpperCase().includes(docType));
-              if (doc && doc.url) {
-                const a = document.createElement('a');
-                a.href = doc.url;
-                a.download = 'BOL_' + bolNum + (docType !== 'BOL' ? '_label' : '') + '.pdf';
-                a.target = '_blank';
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                await new Promise(r => setTimeout(r, 700));
-              }
-            }
+        if (!bolNum || bolNum === '—') { failed.push('a shipment with no BOL number'); continue; }
+
+        for (const want of wanted) {
+          let got = false;
+          for (const type of want.types) {
+            try {
+              const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(bolNum) + '/' + encodeURIComponent(type), {
+                headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+              });
+              if (!res.ok) continue;          // try the next code in this want (LBL → CLBL)
+              const blobUrl = URL.createObjectURL(await res.blob());
+              if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+              _lastDocObjectUrl = blobUrl;
+
+              const a = document.createElement('a');
+              // Filename convention unchanged: BOL_{num}.pdf and BOL_{num}_label.pdf.
+              a.href = blobUrl;
+              a.download = 'BOL_' + bolNum + want.suffix + '.pdf';
+              document.body.appendChild(a); a.click(); document.body.removeChild(a);
+              got = true;
+              await new Promise(r => setTimeout(r, 700));
+              break;
+            } catch(e) { console.error('[bol download]', bolNum, type, e); }
           }
-        } catch(e) {}
+          if (!got) failed.push('BOL ' + bolNum + ' ' + want.what);
+        }
       }
       if (lbl) lbl.textContent = 'Download BOLs (' + selectedShipments.size + ')';
       shipDlBtn.disabled = false;
+      // A count, not a reason — the route 404s for not-ready and not-yours alike. `showInvToast` is
+      // the one module-scope bottom-pill toast in this file; the name is invoice-flavoured but the
+      // element is generic, and inventing a second identical one would be worse.
+      if (failed.length) {
+        showInvToast(failed.length === 1
+          ? 'Could not download ' + failed[0] + '.'
+          : 'Could not download ' + failed.length + ' document(s) — the others finished.');
+      }
     };
 
     document.getElementById('dl-bol-only').onclick = () => doDownload(false);
