@@ -263,3 +263,37 @@ test('the comparison adds no dependency — documents.js imports nothing', () =>
   assert.ok(!/^\s*import\s/m.test(src), 'documents.js must stay dependency-free');
   assert.ok(!/require\(/.test(src), 'documents.js must not require anything');
 });
+
+test('CLBL is CUSTOMER-FACING — the customer\'s own parcel label (owner ruling 2026-08-12)', () => {
+  // ── WHY THIS MOVED, AND WHY IT IS NOT A LOOSENING ───────────────────────────────────────────
+  //
+  // CLBL sat on NEVER_EXPOSE under "carrier internals / dispatch", grouped with DO / SHP / MET.
+  // That grouping was wrong for CLBL specifically: it is the REAL CARRIER LABEL for the customer's
+  // own parcel shipment — the thing they physically stick on the box. Apply §8.878's own test:
+  //
+  //     A document type is customer-facing only if THE BILL-TO IS ITS SUBJECT,
+  //     not merely a party to the shipment.
+  //
+  // The bill-to IS the subject of their own shipping label. This is the same reasoning that
+  // admitted INV, and the opposite of what excluded IMG (a photo of someone else's front door).
+  //
+  // IT IS ALSO LOAD-BEARING, not cosmetic. For a PARCEL shipment CLBL is the PRIMARY action in the
+  // portal — portal.html:6057 `const isPrimary = bc.isParcel ? isClbl : isBOL`, labelled "Download
+  // Carrier Label". Serving parcel documents through a route that enforces this allowlist would
+  // have 404'd exactly the document a parcel customer needs, and 404 is that route's refusal
+  // vocabulary, so it would have read as "not allowed" rather than "we broke it".
+  assert.equal(classifyDocument('CLBL'), 'pull');
+  assert.ok(CUSTOMER_FACING.includes('CLBL'));
+  assert.ok(!NEVER_EXPOSE.includes('CLBL'), 'CLBL must not be on both lists');
+  assert.equal(classifyDocument('clbl '), 'pull', 'and it normalises like every other code');
+
+  // NEGATIVE CONTROLS — the ruling is about CLBL alone, and must not have widened its neighbours.
+  // These three shared its "carrier internals / dispatch" line; they stay out.
+  for (const t of ['DO', 'SHP', 'MET']) {
+    assert.equal(classifyDocument(t), 'never', `${t} moved with CLBL and must not have`);
+  }
+  // And the canary the whole allowlist exists for: carrier COST is never customer-facing.
+  assert.equal(classifyDocument('COST'), 'never', 'COST reaching a customer is the margin leak');
+  assert.equal(classifyDocument('COI'), 'never');
+  assert.equal(classifyDocument('IMG'), 'never');
+});

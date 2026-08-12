@@ -2760,7 +2760,7 @@ function _documentsFor(BOLId, dispatchDocs) {
 // SCOPE: this is a RENDER decision and a single source of truth. IT IS NOT ENFORCEMENT — the portal
 // fetches browser→Primus directly with no server of ours in the path. The control arrives with the
 // Worker. Do not read a passing render test as a control.
-var CUSTOMER_FACING_DOCS = ['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'QUO'];
+var CUSTOMER_FACING_DOCS = ['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'CLBL', 'QUO'];
 
 /** The ONE place the portal decides what a customer may see. Both surfaces call this. */
 function _customerFacingDocs(docs) {

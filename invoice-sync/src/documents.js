@@ -28,11 +28,18 @@ export function normalizeType(t) {
  * "superseded by the Stripe invoice", Stripe is gone, and the Primus PDF is what the invoice link
  * now serves. The exclusion rested on a fact; the fact changed; the conclusion followed.
  *
+ * `CLBL` was added 2026-08-12 by the same test, moved OFF `NEVER_EXPOSE`. It had been grouped with
+ * DO / SHP / MET as "carrier internals", which is wrong for CLBL specifically: it is the real
+ * carrier label for the customer's OWN parcel — the thing they stick on the box — so the bill-to is
+ * plainly its subject. It is also the PRIMARY action for a parcel shipment in the portal
+ * (`isPrimary = bc.isParcel ? isClbl : isBOL`), so leaving it excluded would have made the document
+ * route 404 exactly what a parcel customer needs.
+ *
  * MIRRORED in portal.html as CUSTOMER_FACING_DOCS — a DEPLOYMENT CONSTRAINT, not a design choice
  * (portal.html cannot import across deployments). evals/document-allowlist.test.js fails the moment
  * they disagree. The mirror ends when the new Worker imports this directly (§8.878 plan step 3).
  */
-export const CUSTOMER_FACING = Object.freeze(['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'QUO']);
+export const CUSTOMER_FACING = Object.freeze(['BOL', 'RECLASS', 'REWEIGH', 'DIM', 'POD', 'INV', 'LBL', 'CLBL', 'QUO']);
 
 /**
  * Safe to PUSH inline — rebills only, where the document IS the justification for the charge.
@@ -50,7 +57,8 @@ export const NEVER_EXPOSE = Object.freeze([
   'COST',    // vendor quote — carrier cost
   'COI',     // certificate of insurance — policy numbers, limits, broker details. OURS and our carriers'
   'IMG',     // driver delivery photos — the consignee's home. The bill-to is usually not its subject
-  'DO', 'CLBL', 'SHP', 'MET',          // carrier internals / dispatch
+  'DO', 'SHP', 'MET',                  // carrier internals / dispatch (CLBL moved OUT 2026-08-12 —
+                                       //   see the CUSTOMER_FACING note above for why)
   'CLM', 'CLMD',                       // claims correspondence — carrier settlement positions
   'MISDOC',                            // unknown by definition; the drawer everything ambiguous lands in
   'CI',                                // commercial invoice — the shipper's sale to THEIR buyer, not ours

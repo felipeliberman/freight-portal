@@ -173,7 +173,11 @@ test('valid token and owner matches, but the type is not pull: 404, no document 
 });
 
 test('EVERY never-expose type refuses, one by one', async () => {
-  for (const type of ['COST', 'COI', 'IMG', 'DO', 'CLBL', 'SHP', 'MET', 'CLM', 'CLMD', 'MISDOC', 'CI']) {
+  // CLBL was REMOVED from this list 2026-08-12 — it is now CUSTOMER_FACING (the customer's own
+  // parcel label). Left in place it would have passed VACUOUSLY: the stub's doc list has no CLBL
+  // row, so the 404 would come from 'no such document' rather than from the allowlist, and the test
+  // would claim a refusal it no longer makes.
+  for (const type of ['COST', 'COI', 'IMG', 'DO', 'SHP', 'MET', 'CLM', 'CLMD', 'MISDOC', 'CI']) {
     const f = stubFetch();
     const t = await tokenFor(INV, BOL, type);
     const res = await handleRequest(req(pathFor(t, INV, BOL, type)), env(), f);
@@ -522,7 +526,7 @@ test('SHIPMENT: no bearer → 404, and Primus is never contacted at all', async 
 
 test('SHIPMENT: a non-pull type → 404, refused LOCALLY before any network call', async () => {
   // classifyDocument runs first because it needs no network. A COST must not even cost a lookup.
-  for (const t of ['COST', 'COI', 'IMG', 'DO', 'CLBL', 'MISDOC', 'CI']) {
+  for (const t of ['COST', 'COI', 'IMG', 'DO', 'MISDOC', 'CI']) {   // CLBL removed — now customer-facing
     const f = stubFetch();
     const res = await handleRequest(req(sPath(BOL, t)), env(), f);
     assert.equal(res.status, 404, `${t} was served`);
