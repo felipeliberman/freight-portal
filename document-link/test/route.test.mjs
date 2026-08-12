@@ -66,7 +66,7 @@ function linksDb(arCode, over = {}) {
  * `docFetches` is the assertion that matters throughout this file: "did any byte of a customer
  * document leave Primus". A route that refuses AFTER fetching has already done the thing.
  */
-function stubFetch({ profile, docList, docBytes } = {}) {
+function stubFetch({ profile, book, docList, docBytes } = {}) {
   const calls = [];
   const fn = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -74,7 +74,14 @@ function stubFetch({ profile, docList, docBytes } = {}) {
     if (u.pathname.endsWith('/applet/v1/profile')) {
       return profile ?? jsonRes({ data: { results: { billToInformation: { code: AR } } } });
     }
-    if (u.pathname.includes('/applet/v1/document/bol/')) {
+    // /book/bolnumber — the SHIPMENT route's ownership check. Primus 404s a BOL that is not the
+    // caller's (verified live 2026-08-12, both directions), so `book:` defaults to found and the
+    // not-yours case is a 404 Response, exactly as Primus answers it.
+    if (u.pathname.includes('/applet/v1/book/bolnumber/')) {
+      return book ?? jsonRes({ data: { results: { BOLNumber: BOL, BOLId: 1909827744,
+        thirdParty: { id: 1123086640, name: 'Haynes Brothers Furniture' } } } });
+    }
+    if (u.pathname.includes('/applet/v1/document/bolnumber/')) {
       return docList ?? jsonRes({ data: { results: [{ type: 'BOL', url: DOC_URL, name: 'Bill Of Lading' }] } });
     }
     return docBytes ?? new Response('%PDF-1.4 bytes', { status: 200, headers: { 'content-type': 'application/pdf' } });
@@ -82,6 +89,8 @@ function stubFetch({ profile, docList, docBytes } = {}) {
   fn.calls = calls;
   fn.docFetches = () => calls.filter(c => c.url.includes('Documents.php'));
   fn.profileCalls = () => calls.filter(c => c.url.includes('/applet/v1/profile'));
+  fn.bookCalls = () => calls.filter(c => c.url.includes('/applet/v1/book/bolnumber/'));
+  fn.listCalls = () => calls.filter(c => c.url.includes('/applet/v1/document/bolnumber/'));
   return fn;
 }
 
@@ -315,13 +324,43 @@ test('the built list URL is on exactly the configured applet host, path-anchored
   // loosened enough to let a separator through bolNumber, this is what would catch it.
   const f = stubFetch();
   await handleRequest(req(pathFor(await tokenFor())), env(), f);
-  const listCall = f.calls.find(c => c.url.includes('/applet/v1/document/bol/'));
+  const listCall = f.calls.find(c => c.url.includes('/applet/v1/document/bolnumber/'));
   assert.ok(listCall, 'the list hop did not happen');
   const u = new URL(listCall.url);
   assert.equal(u.hostname, new URL(APPLET).hostname);
   assert.equal(u.protocol, 'https:');
-  assert.equal(u.pathname, `/applet/v1/document/bol/${BOL}`);
+  assert.equal(u.pathname, `/applet/v1/document/bolnumber/${BOL}`);
   assert.equal(listCall.init.headers.Authorization, `Bearer ${BEARER}`);
+});
+
+test('REGRESSION: the list endpoint is /document/bolnumber/ — NOT /document/bol/', async () => {
+  // ── THE DEFECT THIS PINS, FOUND LIVE 2026-08-12 ──────────────────────────────────────────
+  //
+  // The Worker shipped asking for `/applet/v1/document/bol/{n}`, taken from spec §8 (~line 596),
+  // which asserts that form "is real and was in production code". IT IS NOT REAL:
+  //
+  //   HTTP 404  {"error":{"code":404,"message":"Route \/applet\/v1\/document\/bol\/160134944 does not exist."}}
+  //   HTTP 200  /applet/v1/document/bolnumber/160134944
+  //
+  // Verified against Haynes Brothers BOL 160134944 with a real customer token. Had it deployed,
+  // EVERY document would have 404'd — and 404 is this route's refusal vocabulary, so a total
+  // outage would have been indistinguishable from "you are not allowed to see this".
+  //
+  // NO STUB COULD HAVE CAUGHT THIS. A stub answering the path the Worker asks for agrees with
+  // whatever the Worker asks for. That is exactly what the live pre-deploy gate is for, and this
+  // test exists so the *corrected* path cannot silently regress now that it is known.
+  const f = stubFetch();
+  await handleRequest(req(pathFor(await tokenFor())), env(), f);
+
+  const paths = f.calls.map(c => new URL(c.url).pathname);
+  assert.ok(paths.includes(`/applet/v1/document/bolnumber/${BOL}`),
+    `expected the bolnumber path; the Worker asked for: ${JSON.stringify(paths)}`);
+  // The dead form, asserted as a NEGATIVE so a revert cannot pass. Anchored on the trailing slash:
+  // '/document/bol/' is not a prefix of '/document/bolnumber/', which is why the stub above stops
+  // matching — and therefore why reverting the source turns this file red rather than green.
+  for (const p of paths) {
+    assert.ok(!p.startsWith('/applet/v1/document/bol/'), `the dead /document/bol/ route came back: ${p}`);
+  }
 });
 
 // ── CONFIGURATION AND METHOD ─────────────────────────────────────────────────────────────────
@@ -410,4 +449,248 @@ test('the miss log carries a token PREFIX only — never the full token or the b
   assert.ok(!blob.includes(BEARER), 'the BEARER TOKEN reached a log');
   assert.ok(!/[0-9a-f]{32}/.test(blob), 'a full 32-char token reached a log');
   assert.ok(!blob.includes(AR), 'the arCode reached a log');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE SHIPMENT ROUTE — /s/{bolNumber}/{TYPE}. NO TOKEN, DELIBERATELY.
+//
+// This is the route the LIVE caller needs: `_waybOpenDocTab` opens a document for a BOL, from the
+// chat buttons. There is no invoice in that flow, so there is nothing for an invoice-scoped token
+// to bind to — and a token every legitimate caller could mint for itself is not a control, it is
+// ceremony. Ownership here rests on three things, none of which the caller can forge:
+//
+//   1. THE BEARER — Primus issued it only after validating a password.
+//   2. OUR CHECK — the BOL must resolve in the caller's OWN /book/bolnumber set (§5.8: resolve
+//      only within data the token already scoped).
+//   3. PRIMUS'S CHECK — number-keyed lookups are customer-scoped. VERIFIED LIVE 2026-08-12 in both
+//      directions with Haynes' token: own BOL 160134944 → 200 with thirdParty.id 1123086640;
+//      foreign BOL 303260010320 → 404 "Booking not found."
+//
+// ⚠ AND THE REASON THIS ROUTE MAY NEVER TOUCH A bolId. The same token, same session, on the
+// ID-KEYED endpoint returned FIVE documents for a foreign bolId (136013091) including a POD.
+// §8.876's failure is specifically the id-keyed lookups. Number-keyed scopes; id-keyed does not.
+// ROUTE_S_RE takes a bolNumber and the Worker never derives or accepts an id.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const sPath = (bol = BOL, type = TYPE) => `/s/${bol}/${type}`;
+
+test('SHIPMENT: the caller owns the BOL → 200, bytes, and exactly one document fetch', async () => {
+  const f = stubFetch();
+  const res = await handleRequest(req(sPath()), env(), f);
+
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '%PDF-1.4 bytes');
+  assert.equal(res.headers.get('content-type'), 'application/pdf');
+  assert.equal(res.headers.get('content-disposition'), `inline; filename="${BOL}_${TYPE}.pdf"`);
+  assert.equal(res.headers.get('cache-control'), 'private, no-store');
+  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(res.headers.get('access-control-allow-origin'), ALLOWED_ORIGIN);
+  assert.equal(f.bookCalls().length, 1, 'ownership was not checked');
+  assert.equal(f.docFetches().length, 1);
+});
+
+test('SHIPMENT: a BOL not in the caller\'s book → 404, and NO document fetch', async () => {
+  // THE WHOLE ROUTE. Primus answers a foreign BOL with exactly this 404 — reproduced from the live
+  // probe rather than invented. The document list must never be reached.
+  const f = stubFetch({ book: new Response(JSON.stringify({ error: { code: 404, message: 'Booking not found.' } }),
+    { status: 404, headers: { 'content-type': 'application/json' } }) });
+  const res = await handleRequest(req(sPath('303260010320')), env(), f);
+  assert.equal(res.status, 404);
+  assert.equal(f.bookCalls().length, 1, 'ownership must be checked');
+  assert.equal(f.listCalls().length, 0, 'the document LIST was reached for a foreign BOL');
+  assert.equal(f.docFetches().length, 0, 'a foreign document was fetched');
+});
+
+test('SHIPMENT: a 200 from /book with no record is still not ownership → 404', async () => {
+  // An empty envelope is not a "yes". Treating a well-formed empty answer as ownership is how a
+  // check becomes decorative.
+  for (const body of [{}, { data: {} }, { data: { results: null } }, { data: { results: [] } }]) {
+    const f = stubFetch({ book: jsonRes(body) });
+    const res = await handleRequest(req(sPath()), env(), f);
+    assert.equal(res.status, 404, `${JSON.stringify(body)} was treated as ownership`);
+    assert.equal(f.docFetches().length, 0);
+  }
+});
+
+test('SHIPMENT: no bearer → 404, and Primus is never contacted at all', async () => {
+  const f = stubFetch();
+  const res = await handleRequest(req(sPath(), { bearer: null }), env(), f);
+  assert.equal(res.status, 404);
+  assert.equal(f.calls.length, 0, 'a request went out with no caller identity');
+});
+
+test('SHIPMENT: a non-pull type → 404, refused LOCALLY before any network call', async () => {
+  // classifyDocument runs first because it needs no network. A COST must not even cost a lookup.
+  for (const t of ['COST', 'COI', 'IMG', 'DO', 'CLBL', 'MISDOC', 'CI']) {
+    const f = stubFetch();
+    const res = await handleRequest(req(sPath(BOL, t)), env(), f);
+    assert.equal(res.status, 404, `${t} was served`);
+    assert.equal(f.calls.length, 0, `${t} reached the network`);
+  }
+});
+
+test('SHIPMENT: every CUSTOMER_FACING type is servable', async () => {
+  for (const t of ['BOL', 'LBL', 'QUO', 'INV', 'POD', 'RECLASS', 'REWEIGH', 'DIM']) {
+    const f = stubFetch({ docList: jsonRes({ data: { results: [{ type: t, url: DOC_URL }] } }) });
+    const res = await handleRequest(req(sPath(BOL, t)), env(), f);
+    assert.equal(res.status, 200, `${t} was refused`);
+  }
+});
+
+test('SHIPMENT: the list has no row of that type → 404, nothing fetched', async () => {
+  const f = stubFetch({ docList: jsonRes({ data: { results: [{ type: 'POD', url: DOC_URL }] } }) });
+  const res = await handleRequest(req(sPath(BOL, 'BOL')), env(), f);
+  assert.equal(res.status, 404);
+  assert.equal(f.docFetches().length, 0);
+});
+
+test('SHIPMENT REGRESSION: the caller cannot name the target host', async () => {
+  // The doc-proxy shape, on the new route. The query string must be IGNORED — not honoured, and
+  // not rejected either, so its presence changes nothing.
+  for (const q of ['?url=https://evil.example/x', '?host=evil.example&target=https://evil.example']) {
+    const f = stubFetch();
+    const res = await handleRequest(req(sPath() + q), env(), f);
+    assert.equal(res.status, 200, 'the query string was not ignored');
+    for (const c of f.calls) {
+      const h = new URL(c.url).hostname;
+      assert.ok(h === DOCHOST || h === APPLET_HOST, `fetched a caller-named host: ${h}`);
+    }
+  }
+});
+
+test('SHIPMENT: the document URL host is EXACT, not a suffix', async () => {
+  for (const host of ['evilshipprimus.com', 'shipprimus.com', 'www.shipprimus.com.evil.example']) {
+    const f = stubFetch({ docList: jsonRes({ data: { results: [{ type: 'BOL', url: `https://${host}/Documents.php?id=1` }] } }) });
+    const res = await handleRequest(req(sPath()), env(), f);
+    assert.equal(res.status, 404, `${host} passed`);
+    assert.equal(f.calls.filter(c => new URL(c.url).hostname === host).length, 0, `${host} was fetched`);
+  }
+});
+
+test('SHIPMENT: ALL THREE hops ask redirect:manual, and a 3xx on any of them is 404', async () => {
+  const f = stubFetch();
+  await handleRequest(req(sPath()), env(), f);
+  for (const c of f.calls) {
+    assert.equal(c.init.redirect, 'manual', `${c.url} did not ask for redirect:manual`);
+  }
+  for (const which of ['book', 'docList', 'docBytes']) {
+    for (const status of [301, 302, 307, 308]) {
+      const g = stubFetch({ [which]: new Response(null, { status, headers: { Location: 'https://evil.example/x' } }) });
+      const res = await handleRequest(req(sPath()), env(), g);
+      assert.equal(res.status, 404, `${which} ${status} was followed or accepted`);
+      assert.equal(g.calls.filter(c => c.url.includes('evil.example')).length, 0, 'a redirect was chased');
+    }
+  }
+});
+
+test('SHIPMENT: bolId-shaped input is NOT accepted as a bolNumber shortcut', async () => {
+  // §8.876 is the id-keyed lookups. This route must never construct or accept one. A bolId here is
+  // simply treated as a bolNumber and refused by /book, which is the correct and boring outcome.
+  const f = stubFetch({ book: new Response(JSON.stringify({ error: { code: 404, message: 'Booking not found.' } }), { status: 404 }) });
+  const res = await handleRequest(req(sPath('136013091')), env(), f);
+  assert.equal(res.status, 404);
+  assert.equal(f.docFetches().length, 0);
+  for (const c of f.calls) {
+    assert.ok(!/\/applet\/v1\/document\/\d+$/.test(new URL(c.url).pathname),
+      `the id-keyed document endpoint was called: ${c.url}`);
+  }
+});
+
+test('SHIPMENT: a malformed /s/ path is 404 and never reaches the network', async () => {
+  for (const p of ['/s/', '/s/160133377', `/s/${BOL}/BOL/extra`, '/s//BOL', `/s/${BOL}/BOL!`]) {
+    const f = stubFetch();
+    const res = await handleRequest(req(p), env(), f);
+    assert.equal(res.status, 404, `${p} was routed`);
+    assert.equal(f.calls.length, 0, `${p} reached the network`);
+  }
+});
+
+test('SHIPMENT: the route needs NO secret and NO link store', async () => {
+  // It uses neither verifyDocToken nor ownsInvoice, so it must not fail closed on their config.
+  // The invoice route still must — asserted alongside, so the two cannot drift into one rule.
+  const f = stubFetch();
+  const bare = { PRIMUS_APPLET_HOST: APPLET_HOST, PRIMUS_DOCUMENT_HOST: DOCHOST };
+  assert.equal((await handleRequest(req(sPath()), bare, f)).status, 200, 'the shipment route demanded config it does not use');
+
+  const g = stubFetch();
+  assert.equal((await handleRequest(req(pathFor(await tokenFor())), bare, g)).status, 404,
+    'the INVOICE route must still fail closed without DOC_TOKEN_SECRET and LINKS');
+  assert.equal(g.docFetches().length, 0);
+});
+
+test('REGRESSION: fetch is never invoked as a METHOD — "Illegal invocation" in Workers', async () => {
+  // ── FOUND LIVE 2026-08-12, AFTER A FULLY GREEN SUITE ────────────────────────────────────────
+  //
+  // The Worker held its fetch on a context object and called `ctx.fetchImpl(...)`. That is a
+  // METHOD call, so `this` is `ctx` — and Cloudflare's global fetch refuses a detached `this`:
+  //
+  //   {"evt":"doc.error","error":"Illegal invocation: function called with incorrect `this` reference."}
+  //
+  // Every request 404'd through the catch. And because 404 is this route's refusal vocabulary, a
+  // total outage was INDISTINGUISHABLE from "you are not allowed" — the second time that shape has
+  // bitten in this file. The live probe found it; the suite could not, because a plain stub has no
+  // `this` requirement to violate.
+  //
+  // Modules are strict mode, so an unbound call gives `this === undefined` and a method call gives
+  // the object. That difference is the entire assertion.
+  let sawThis = 'never called';
+  const strictFetch = function (url, init) {
+    sawThis = this === undefined ? 'undefined (correct)' : `object: ${Object.keys(this || {}).join(',')}`;
+    const u = new URL(String(url));
+    if (u.pathname.includes('/applet/v1/book/bolnumber/')) {
+      return jsonRes({ data: { results: { BOLNumber: BOL, thirdParty: { id: 1123086640 } } } });
+    }
+    if (u.pathname.includes('/applet/v1/document/bolnumber/')) {
+      return jsonRes({ data: { results: [{ type: 'BOL', url: DOC_URL }] } });
+    }
+    return new Response('%PDF', { status: 200 });
+  };
+
+  const res = await handleRequest(req(sPath()), env(), strictFetch);
+  assert.equal(sawThis, 'undefined (correct)',
+    `fetch was called with a bound \`this\` (${sawThis}) — Workers throws Illegal invocation`);
+  assert.equal(res.status, 200);
+});
+
+test('REGRESSION: upstream CORS headers are STRIPPED, never passed through', async () => {
+  // ── FOUND LIVE 2026-08-12, on a 200 that was otherwise perfect ──────────────────────────────
+  //
+  // Primus's Documents.php answers with `Access-Control-Allow-Origin: *`. The Worker only SET its
+  // own ACAO when the Origin matched — so on a mismatch there was nothing to overwrite, and
+  // upstream's `*` SURVIVED onto our response:
+  //
+  //   Origin: https://www.freightandlogistics.ai  ->  access-control-allow-origin: https://www.freightandlogistics.ai
+  //   Origin: https://evil.example                ->  access-control-allow-origin: *          ← the defect
+  //
+  // That hands any origin's JavaScript a customer's PDF, which is the entire boundary ALLOWED_ORIGIN
+  // exists to draw — undone by a header we forwarded rather than one we wrote. Deleting beats
+  // overwriting: an upstream header we do not know about cannot be overwritten by name.
+  const withCors = () => new Response('%PDF', { status: 200, headers: {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Expose-Headers': 'X-Whatever',
+    'Timing-Allow-Origin': '*',
+  } });
+
+  // Disallowed origin: NO allow-origin may survive, from us or from upstream.
+  const f = stubFetch({ docBytes: withCors() });
+  const bad = await handleRequest(req(sPath(), { origin: 'https://evil.example' }), env(), f);
+  assert.equal(bad.status, 200);
+  assert.equal(bad.headers.get('access-control-allow-origin'), null,
+    'upstream ACAO leaked to a disallowed origin');
+  assert.equal(bad.headers.get('access-control-allow-credentials'), null);
+  assert.equal(bad.headers.get('access-control-expose-headers'), null);
+  assert.equal(bad.headers.get('timing-allow-origin'), null);
+
+  // Allowed origin: exactly ours, never upstream's '*'.
+  const g = stubFetch({ docBytes: withCors() });
+  const ok = await handleRequest(req(sPath()), env(), g);
+  assert.equal(ok.headers.get('access-control-allow-origin'), ALLOWED_ORIGIN);
+  assert.equal(ok.headers.get('access-control-allow-credentials'), null);
+
+  // And the same on the INVOICE route — one tail, one rule.
+  const h = stubFetch({ docBytes: withCors() });
+  const inv = await handleRequest(req(pathFor(await tokenFor()), { origin: 'https://evil.example' }), env(), h);
+  assert.equal(inv.headers.get('access-control-allow-origin'), null, 'invoice route leaked upstream ACAO');
 });

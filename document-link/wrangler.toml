@@ -93,47 +93,72 @@ PRIMUS_DOCUMENT_HOST = "www.shipprimus.com"
 # already decided safe on possession. The ledger's D1 must NEVER be bound here — it holds
 # `cache` rows carrying customer email addresses.
 #
-# NOT YET CREATED, exactly as in pay/wrangler.toml. Schema-first: the database exists before this
-# deploys. Two databases, one per mode, so a live Worker cannot serve test data under any bug.
-#   wrangler d1 create invoice-links-test
-#   wrangler d1 create invoice-links-live
-#   wrangler d1 execute invoice-links-test --remote --file=../invoice-sync/schema-links.sql
-# Verify POSITIVELY, never an exit code (§0.25):
-#   wrangler d1 execute invoice-links-test --remote --command "SELECT name, sql FROM sqlite_master WHERE tbl_name='invoice_link'"
+# CREATED AND VERIFIED 2026-08-12. Schema-first was followed: the database existed and carried the
+# table before this binding was uncommented.
+#   wrangler d1 create invoice-links-test                       → e18b9c72-8cd3-4a56-9031-670b7d436ce1
+#   wrangler d1 execute invoice-links-test --remote --file=invoice-sync/schema-links.sql
+# Verified POSITIVELY, never an exit code (§0.25) — `SELECT name, sql FROM sqlite_master WHERE
+# tbl_name='invoice_link'` returned the table DDL plus BOTH indexes (invoice_link_active, the
+# partial unique that makes the mint idempotent, and invoice_link_ar_idx) and the UNIQUE(mode,
+# token) autoindex. Four objects, not one.
 #
-# [[d1_databases]]
-# binding = "LINKS"
-# database_name = "invoice-links-test"
-# database_id = "<create it first>"
+# ⚠ THE LIVE DATABASE IS STILL TO CREATE. `invoice-links-live` does not exist. Two databases, one
+# per mode, is the deliberate stronger form: a live Worker with no binding to test data cannot
+# serve test data under any bug. Creating it is part of the live-mode flip, not of this step.
+[[d1_databases]]
+binding = "LINKS"
+database_name = "invoice-links-test"
+database_id = "e18b9c72-8cd3-4a56-9031-670b7d436ce1"
 
-# ── ⚠ PRE-DEPLOY GATE — ONE LIVE READ, BEFORE ANY DEPLOY ─────────────────────────────────────
+# ── ✅ PRE-DEPLOY GATE — CLEARED. ENDPOINT + ENVELOPE VERIFIED LIVE 2026-08-12 ────────────────
 #
-# The Worker parses `data.results[]` from `GET /applet/v1/document/bol/{BOLNumber}`, taking each
-# row's `type` and `url`. That endpoint and envelope are SPEC-RECORDED, NOT LIVE-VERIFIED — §8
-# (~line 596) says it "is real and was in production code", where it appeared exactly once, in the
-# old Email Invoice handler. The tests stub this shape, and a stub agreeing with itself is not
-# evidence about Primus.
+# One real read against **Haynes Brothers Furniture** (Primus 1123086640, the write-test account —
+# NEVER Simply Nursery, who log in), BOL **160134944**, with a real customer bearer token.
 #
-# CONFIRM IT LIVE FIRST, against **Haynes Brothers Furniture** (Primus 1123086640) — the designated
-# write-test account, which books exclusively by email and has NO portal access. **NEVER Simply
-# Nursery**, who log in and would see it. A read is not a write, so nothing needs cancelling after.
+# ⚠ THE GATE CAUGHT A REAL DEFECT, WHICH IS WHY IT EXISTED. The Worker shipped asking for
+# `/applet/v1/document/bol/{n}`, on the authority of spec §8 (~line 596), which states that form
+# "is real and was in production code". IT IS NOT REAL:
 #
-# Check three things, not one: that the endpoint answers; that the envelope really is
-# `data.results`; and that each row carries a `type` and a `url` on `www.shipprimus.com`. If the
-# envelope differs, the Worker returns 404 for EVERY document — a total outage that reads exactly
-# like a permission refusal, because that is the vocabulary this route deliberately speaks.
+#     HTTP 404   /applet/v1/document/bol/160134944
+#                {"error":{"code":404,"message":"Route ... does not exist."}}
+#     HTTP 200   /applet/v1/document/bolnumber/160134944      ← the real one, ONE WORD
 #
-# DO NOT DEPLOY ON THE SPEC NOTE ALONE.
+# Every document would have 404'd, and 404 is this route's refusal vocabulary — so a total outage
+# would have been indistinguishable from "you are not allowed to see this". **NO TEST COULD HAVE
+# FOUND THIS**: a stub answers whatever path the Worker asks for. That is the entire argument for
+# a live gate over a green suite. ⚠ SPEC §8's ENDPOINT LIST IS WRONG AND STILL SAYS `bol` — it
+# will mislead the next reader until corrected.
+#
+# WHAT THE LIVE RESPONSE CONFIRMED, field by field, against the parse at src/index.js:
+#   * envelope is `data.results` — and `results` is an ARRAY (4 rows for this BOL)
+#   * every row carries `type` and `url`; also `name`, `number`, `documentExtension`
+#   * types returned: BOL, LBL, QUO, INV — all four are on CUSTOMER_FACING, so all classify 'pull'
+#   * every `url` is `https://www.shipprimus.com/Documents.php?...` — host matches
+#     PRIMUS_DOCUMENT_HOST exactly
+#   * the QUERY PARAM DIFFERS BY TYPE: id / idLabel / idCQ / idInv, each with a `t=` token. This is
+#     load-bearing evidence for the design: a byte URL CANNOT be constructed from (bolNumber, type),
+#     which is why the Worker takes the URL Primus returns and exact-host-checks it instead.
+#
+# Positive control on the same token: `/applet/v1/profile` → 200, billToInformation.code = '5300'
+# (Haynes). So resolveCallerArCode resolves this account to 5300 — note that is NOT the '1234' in
+# invoice-sync's / pay's AR_ALLOWLIST, so minting for Haynes would be refused until 5300 is added.
 
-# ── NOT YET ROUTED ───────────────────────────────────────────────────────────────────────────
+# ── ROUTE — hostname VERIFIED FREE 2026-08-12, the same way pay.* was ────────────────────────
 #
-# `docs.freightandlogistics.ai` is the hostname §8.95 names for this. NOT verified free — check it
-# the way `pay.freightandlogistics.ai` was checked (no A/AAAA/CNAME/TXT, no Workers custom domain,
-# no zone route, and the `freight-portal` Pages project claiming only the apex and `www`) BEFORE
-# adding the route, not after.
+# Checked before adding, not after. Four independent checks, each with a positive control so a
+# blank answer means "absent" rather than "the query did not work":
+#   * NO A / AAAA / CNAME / TXT on `docs.freightandlogistics.ai` — at 1.1.1.1 AND straight at the
+#     authoritative nameservers (lovisa/ryan.ns.cloudflare.com). Control: `www` resolves
+#     (172.67.209.46, 104.21.23.46), so the query method is sound.
+#   * ZERO zone worker routes on zone a11c3f10ba5f01762471ee2390dfec00.
+#   * ZERO Workers custom domains on the account.
+#   * The `freight-portal` Pages project claims exactly `freight-portal.pages.dev`,
+#     `freightandlogistics.ai` and `www.freightandlogistics.ai` — an explicit list, NOT a wildcard,
+#     and `docs.` is not on it. (`freightandlogistics` Pages claims only its own pages.dev.)
 #
-# [[routes]]
-# pattern = "docs.freightandlogistics.ai"
-# custom_domain = true
+# A Workers custom domain provisions its own certificate, so cert scope is not a blocker.
+[[routes]]
+pattern = "docs.freightandlogistics.ai"
+custom_domain = true
 
 # NO CRON. Request-driven only; this Worker must never hold a scheduled handler.

@@ -24541,12 +24541,22 @@ function _waybOpenExportTab(spec) {
 
 // A document → a right-panel tab containing the document iframe, with an open-in-new-tab
 // escape hatch. The URL is only ever an iframe src / window.open arg — never rendered as text.
-function _waybOpenDocTab(url, label, type, bol) {
+// The document route. Replaces doc-proxy, which took a caller-supplied `?url=` and fetched
+// anything whose hostname ENDED WITH "shipprimus.com" — no token, no session, no ownership check.
+// This route is handed a BOL and a type and decides for itself what to fetch, after proving the
+// caller owns the shipment (spec §8.876, §8.877).
+const DOC_ROUTE = 'https://docs.freightandlogistics.ai';
+// The last object URL handed to the panel. Revoked when the next document opens, so at most one
+// blob is ever held — createObjectURL leaks for the life of the document otherwise.
+let _lastDocObjectUrl = null;
+
+async function _waybOpenDocTab(url, label, type, bol) {
   label = label || type || 'Document';
-  const _u = url || '';
-  // Route the document through the doc-proxy Worker: it strips X-Frame-Options / CSP and forces
-  // Content-Disposition:inline so the PDF renders in the iframe instead of being blocked/downloaded.
-  const _proxyUrl = 'https://doc-proxy.felipe-b80.workers.dev?url=' + encodeURIComponent(_u);
+  // `url` is IGNORED and no longer used. It is still in the signature because the call site passes
+  // it, and because leaving it named makes it obvious to the next reader that the raw Primus URL is
+  // deliberately not what opens the document any more. THE CALLER NAMES NO TARGET.
+  const _bol = String(bol == null ? '' : bol).trim();
+  const _type = String(type == null ? '' : type).trim().toUpperCase();
   const wrap = document.createElement('div');
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;';
@@ -24558,15 +24568,49 @@ function _waybOpenDocTab(url, label, type, bol) {
   openBtn.title = 'Open in new tab'; openBtn.setAttribute('aria-label', 'Open in new tab');
   openBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:-2px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in new tab';
   openBtn.style.cssText = 'display:inline-flex;align-items:center;background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);';
-  openBtn.onclick = function () { if (_u) window.open(_proxyUrl, '_blank', 'noopener'); };
   bar.appendChild(openBtn);
   wrap.appendChild(bar);
-  const frame = document.createElement('iframe');
-  frame.setAttribute('title', label);
-  frame.src = _proxyUrl;
-  frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;';
-  wrap.appendChild(frame);
-  openRightPanel(wrap, label + (bol ? ' · ' + bol : ''));
+
+  const body = document.createElement('div');
+  body.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;color:#706c63;';
+  body.textContent = 'Loading ' + label + '…';
+  wrap.appendChild(body);
+  openRightPanel(wrap, label + (_bol ? ' · ' + _bol : ''));
+
+  // ONE fixed failure line for every reason this can fail. The route answers 404 for unknown,
+  // not-yours, not-shareable and not-ready alike — deliberately, so it cannot be used to probe
+  // other accounts — so the copy must not claim to know which. Email only, never a phone number
+  // (CLAUDE.md: no phone-as-fallback).
+  const fail = function () {
+    body.textContent = DOCS_UNAVAILABLE;
+    openBtn.style.display = 'none';
+  };
+  if (!_bol || !_type) { fail(); return; }
+
+  try {
+    // Option A: the portal FORWARDS its own Primus bearer, which is the only thing the route trusts
+    // for identity. An iframe src cannot carry a header, so the bytes are fetched here and handed
+    // to the frame as a blob — that indirection is the cost of not inventing a session mechanism.
+    const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(_bol) + '/' + encodeURIComponent(_type), {
+      headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+    });
+    if (!res.ok) { fail(); return; }
+    const blobUrl = URL.createObjectURL(await res.blob());
+    if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+    _lastDocObjectUrl = blobUrl;
+
+    const frame = document.createElement('iframe');
+    frame.setAttribute('title', label);
+    frame.src = blobUrl;
+    frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;';
+    body.replaceWith(frame);
+    // The filename the customer sees comes from `download`, not from the response's
+    // Content-Disposition — a blob URL governs its own presentation.
+    openBtn.onclick = function () { window.open(blobUrl, '_blank', 'noopener'); };
+  } catch (e) {
+    console.error('document open failed:', e);
+    fail();
+  }
 }
 
 // ── Way B chart tab ─────────────────────────────────────────────────────────
