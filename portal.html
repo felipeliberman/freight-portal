@@ -7383,7 +7383,65 @@ function showSavedShipmentDispatchModal({ s, BOLId, BOLNumber, openEdit }) {
     if (validDocs.length) {
       _dispatchedDocs = validDocs;
       dlBtn.style.opacity = '1'; dlBtn.style.pointerEvents = 'auto'; dlBtn.style.color = 'var(--tx)';
-      dlBtn.onclick = () => { validDocs.forEach(d => { const a = document.createElement('a'); a.href=d.url; a.target='_blank'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }); };
+      dlBtn.onclick = async () => {
+        // ── ONLY CUSTOMER-FACING TYPES ARE ATTEMPTED, AND THAT IS A FIX, NOT PLUMBING ────────
+        //
+        // `_documentsFor` DOES NOT FILTER BY TYPE. `_normalizeDocs` keeps any row with a `url`,
+        // so this list can carry DO / COST / SHP / MET — and a literal `'Document'` from its own
+        // `d.type || d.fileType || 'Document'` fallback. Until now this button opened every one
+        // of them, which means a dispatch returning a COST row handed the customer a carrier-cost
+        // document. That is §8.873's "a filter applied in the UI is a display preference, not a
+        // control" — except on this path there was no filter at all.
+        //
+        // `_customerFacingDocs` is the portal's ONE render-decision source (mirrored from
+        // documents.js, drift-tested by evals/document-allowlist.test.js). Filtering HERE means
+        // every type that reaches /s/ is guaranteed 'pull', so a 404 in the loop below is a real
+        // failure rather than an internal document being correctly refused — which is the whole
+        // reason the count underneath is worth reading. It also disposes of the `'Document'`
+        // fallback, which classifies 'unknown' and would 404 forever.
+        //
+        // KNOWN, ACCEPTED FOR ONE COMMIT: showBookingConfirmedModal below still receives the
+        // UNFILTERED `validDocs`, so the modal can list a row this button will not fetch. Sites
+        // E/F are the next hunk and close that gap.
+        const servable = _customerFacingDocs(_dispatchedDocs || validDocs);
+        const bolNum = String(BOLNumber || '').trim();
+        const orig = dlBtn.innerHTML;
+        if (!servable.length || !bolNum || bolNum === '—') { showInvToast(DOCS_UNAVAILABLE); return; }
+
+        // Sequential, paced, and each failure RECORDED rather than swallowed — same discipline as
+        // the invoice and shipment bulk downloads. One bad document must not look like success,
+        // and must not cost the customer the documents that were fine.
+        dlBtn.style.pointerEvents = 'none';
+        const failed = [];
+        for (let i = 0; i < servable.length; i++) {
+          const type = String(servable[i].type || servable[i].fileType || '').trim().toUpperCase();
+          dlBtn.textContent = 'Downloading ' + (i+1) + ' of ' + servable.length + '...';
+          try {
+            const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(bolNum) + '/' + encodeURIComponent(type), {
+              headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+            });
+            if (!res.ok) { failed.push(type); continue; }
+            const blobUrl = URL.createObjectURL(await res.blob());
+            if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+            _lastDocObjectUrl = blobUrl;
+
+            const a = document.createElement('a');
+            // Primus's own `{BOLNumber}_{TYPE}.pdf` convention — the same one documentFilename()
+            // uses for the route's Content-Disposition, so a direct hit and this agree.
+            a.href = blobUrl;
+            a.download = bolNum + '_' + type + '.pdf';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            await new Promise(r => setTimeout(r, 700));
+          } catch (e) { console.error('[dispatch docs]', bolNum, type, e); failed.push(type); }
+        }
+        dlBtn.innerHTML = orig;
+        dlBtn.style.pointerEvents = 'auto';
+        if (failed.length) {
+          showInvToast(failed.length === servable.length
+            ? 'Could not download those documents.'
+            : 'Could not download ' + failed.length + ' of ' + servable.length + ' — the others finished.');
+        }
+      };
     }
     if (activeBtn) { activeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Dispatched!'; activeBtn.style.background = '#16a34a'; activeBtn.disabled = true; }
     const priceAmt = parseMoney(rawTotal) || 0;
