@@ -3159,34 +3159,57 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     }
     dlBtn.querySelector('.dl-btn-label').textContent = 'Downloading...';
     dlBtn.disabled = true;
-    const token = await getToken();
+    // ── PER-DOC FAILURE IS COUNTED, NOT SWALLOWED AND NOT FATAL ──────────────────────────────
+    //
+    // This is a BATCH. The old `catch(e) {}` did the worst available thing: a failed invoice was
+    // indistinguishable from a successful one, so five clicks produced three files and no word
+    // about the other two. Aborting the whole batch on the first failure would be equally wrong —
+    // the customer loses the invoices that were fine.
+    //
+    // So: each failure is recorded, the loop continues, and the COUNT is surfaced at the end via
+    // the panel's own toast. Partial success reads as partial success.
+    const failed = [];
     for (let i = 0; i < toDownload.length; i++) {
       const inv = toDownload[i];
-      const bolId = inv._bolId || (inv._shipment && inv._shipment.BOLId) || '';
+      const f = getInvoiceFields(inv);
       dlBtn.querySelector('.dl-btn-label').textContent = 'Downloading ' + (i+1) + ' of ' + toDownload.length + '...';
       try {
-        // Fetch doc URL if not cached
-        let url = inv.docUrl || '';
-        if (!url && bolId) {
-          const token2 = await getToken();
-          const dr = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bolId, { headers: { 'Authorization': 'Bearer ' + token2 } });
-          if (dr.ok) {
-            const dd = await dr.json();
-            const docs = (dd.data && dd.data.results) || [];
-            const invDoc = docs.find(d => { const t = (d.fileType||d.type||d.name||'').toUpperCase(); return t.includes('INV')||t.includes('INVOICE'); });
-            if (invDoc) url = invDoc.url || invDoc.fileUrl || invDoc.documentUrl || invDoc.link || '';
-          }
-        }
-        if (url) {
-          const a = document.createElement('a');
-          a.href = url; a.download = 'Invoice_' + (getInvoiceFields(inv).invNum) + '.pdf';
-          a.target = '_blank'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          await new Promise(r => setTimeout(r, 800)); // brief pause between downloads
-        }
-      } catch(e) {}
+        // The `inv.docUrl` cache is GONE. It held a raw Documents.php URL, which is the thing this
+        // migration exists to stop handing the browser — and the list-fetch below it existed only
+        // to populate that URL. The route does its own document lookup from the BOL number, so
+        // both the cache and the lookup are dead weight rather than something to preserve.
+        //
+        // Type is the literal 'INV': the old code matched `t.includes('INV')||t.includes('INVOICE')`
+        // against the list it fetched, which is the same intent expressed against a list we no
+        // longer hold.
+        const bolNum = String(f.bolNum || '').trim();
+        if (!bolNum || bolNum === '—') { failed.push(f.invNum); continue; }
+        const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(bolNum) + '/' + encodeURIComponent('INV'), {
+          headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+        });
+        if (!res.ok) { failed.push(f.invNum); continue; }
+        const blobUrl = URL.createObjectURL(await res.blob());
+        if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+        _lastDocObjectUrl = blobUrl;
+
+        const a = document.createElement('a');
+        // Filename convention unchanged. `target` is dropped: it did nothing useful beside
+        // `download`, and a blob URL needs no navigation target.
+        a.href = blobUrl; a.download = 'Invoice_' + f.invNum + '.pdf';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        await new Promise(r => setTimeout(r, 800)); // brief pause between downloads
+      } catch(e) { console.error('[invoice download]', e); failed.push(getInvoiceFields(inv).invNum); }
     }
     dlBtn.querySelector('.dl-btn-label').textContent = 'Download Selected';
     dlBtn.disabled = false;
+    // Said plainly, and only when it happened. The toast is short by design (it is a pill), so it
+    // carries the count rather than a reason — the route answers 404 for not-ready and not-yours
+    // alike and this must not claim to know which.
+    if (failed.length) {
+      showInvToast(failed.length === toDownload.length
+        ? (failed.length === 1 ? 'That invoice could not be downloaded.' : 'None of the ' + failed.length + ' invoices could be downloaded.')
+        : 'Could not download ' + failed.length + ' of ' + toDownload.length + ' — the others finished.');
+    }
   };
   btnGroup.appendChild(dlBtn);
 
