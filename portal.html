@@ -4513,21 +4513,66 @@ function showInvoiceDetail(inv) {
   // Download PDF button
   const dlBtn = overlay.querySelector('#inv-detail-dl-btn');
   if (dlBtn) dlBtn.onclick = async function() {
-    const bolId = inv._bolId || '';
-    if (!bolId) return;
-    this.textContent = 'Loading...'; this.disabled = true;
-    try {
-      const token = await getToken();
-      const dr = await fetch(PRIMUS_BASE + '/applet/v1/document/' + bolId, { headers: { 'Authorization': 'Bearer ' + token } });
-      if (dr.ok) {
-        const dd = await dr.json();
-        const docs = (dd.data && dd.data.results) || [];
-        const invDoc = docs.find(d => { const t = (d.fileType||d.type||d.name||'').toUpperCase(); return t.includes('INV')||t.includes('INVOICE'); });
-        if (invDoc && invDoc.url) { window.open(invDoc.url, '_blank'); }
-        else { alert('Invoice PDF not yet available.'); }
+    // ── HOW THE RESULT REACHES THE CUSTOMER, AND WHY NOT window.open ─────────────────────────
+    //
+    // IN-PAGE RIGHT PANEL, never a new tab. The old code called `window.open(invDoc.url)` from
+    // INSIDE an async continuation — after `await getToken()` and `await fetch()`. An await breaks
+    // the user-gesture chain, so the browser treats that open as unsolicited and blocks it. That is
+    // not theoretical: it is the exact mechanism that made downloadDoc's catch-fallback dead code.
+    // A naive "fetch → blob → window.open(blobUrl)" would fetch perfectly and then be swallowed.
+    //
+    // So the bytes are rendered the way _waybOpenDocTab renders them: blob → objectURL → <iframe>
+    // in the right panel. No popup, nothing to block.
+    //
+    // THE MODAL MUST CLOSE FIRST, and only on success. `#right-panel` is z-index 150; this modal's
+    // overlay is 300 — render the panel with the modal still up and the PDF is behind it, invisible.
+    // Closing follows this modal's own precedent (the View Shipment button does `overlay.remove()`
+    // then navigates). Closing only on SUCCESS is what keeps the failure visible: a refusal leaves
+    // the modal open with the note below, rather than dumping the customer somewhere empty.
+    const f = getInvoiceFields(inv);
+    const bolNum = String(f.bolNum || '').trim();
+    const btn = this;
+
+    // Replaces `alert('Invoice PDF not yet available.')`. A browser alert is a modal interruption
+    // that says nothing the page cannot, and it asserted a REASON ("not yet available") the route
+    // deliberately does not distinguish — 404 covers not-ready and not-yours alike.
+    const fail = function () {
+      btn.textContent = 'Download Invoice'; btn.disabled = false;
+      const body = btn.parentElement && btn.parentElement.parentElement;
+      if (!body) return;
+      let note = body.querySelector('#inv-detail-error');
+      if (!note) {
+        note = document.createElement('div');
+        note.id = 'inv-detail-error';
+        note.style.cssText = 'margin-top:12px;padding:10px 12px;background:#faf9f6;border:1px solid #e5e2d9;border-radius:8px;font-size:12px;line-height:1.5;color:#1c1a17;';
+        body.appendChild(note);
       }
-    } catch(e) {}
-    this.textContent = 'Download Invoice'; this.disabled = false;
+      note.textContent = DOCS_UNAVAILABLE;
+    };
+    if (!bolNum || bolNum === '—') { fail(); return; }
+
+    btn.textContent = 'Loading...'; btn.disabled = true;
+    try {
+      const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(bolNum) + '/' + encodeURIComponent('INV'), {
+        headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+      });
+      if (!res.ok) { fail(); return; }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+      _lastDocObjectUrl = blobUrl;
+
+      const wrap = document.createElement('div');
+      const frame = document.createElement('iframe');
+      frame.setAttribute('title', 'Invoice ' + f.invNum);
+      frame.src = blobUrl;
+      frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;';
+      wrap.appendChild(frame);
+      overlay.remove();                                   // success only — see the z-index note above
+      openRightPanel(wrap, 'Invoice ' + f.invNum + (bolNum ? ' · ' + bolNum : ''));
+    } catch (e) {
+      console.error('[invoice view]', e);
+      fail();
+    }
   };
 
   // Fix View Shipment button
