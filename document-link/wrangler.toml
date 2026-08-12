@@ -1,0 +1,139 @@
+# document-link — the DOCUMENT ROUTE. Spec §8.876, §8.877, §8.878, §8.95.
+#
+# THE REPLACEMENT FOR doc-proxy, WHICH IS STILL LIVE AND STILL AN OPEN RELAY.
+#
+# `doc-proxy.felipe-b80.workers.dev` takes `?url=<anything>` and fetches it if the hostname ENDS
+# WITH "shipprimus.com" — no token, no session, no ownership check, `redirect: 'follow'`, and a
+# suffix test that admits `evilshipprimus.com`. It is reachable from the open internet today
+# (verified by request 2026-08-11: `GET /` returns 400 "Missing url param").
+#
+# ORDER OF OPERATIONS, so nothing is deleted while something depends on it:
+#   1. this Worker exists and is tested          ← THIS CARD
+#   2. `_waybOpenDocTab` (portal.html:24544-24566) moves onto this route  ← follow-up, see below
+#   3. doc-proxy is deleted                       ← only after 2 is live
+# DO NOT delete doc-proxy before step 2 ships. Its one caller is the chat document buttons.
+#
+# ── DELIBERATELY NOT ADDED TO invoice-sync OR pay ────────────────────────────────────────────
+#
+# NOT invoice-sync: it holds the Primus SYSTEM credentials and runs unattended, and §8.878's rule
+# is that the thing holding our credentials must not be the thing answering strangers. Adding a
+# public route there also forces a deploy of an artifact that matches no commit (C5).
+#
+# NOT pay: that Worker is scoped to the POSSESSION tier and holds only possession data. §8.880
+# recorded the document byte-proxy as a separate step precisely because verifying a SESSION is a
+# different security problem, and folding it in would pull identity back toward the public edge.
+#
+# So: a third Worker, holding exactly what it needs to answer this one question.
+
+name = "document-link"
+main = "src/index.js"
+compatibility_date = "2026-08-11"
+
+# This one IS meant to be reachable — the portal calls it cross-origin. But not on a guessable
+# workers.dev name in addition to its custom domain: one address, one thing to reason about.
+workers_dev = false
+preview_urls = false
+
+[vars]
+# ── TWO HOPS, TWO HOSTS, ONE BINDING EACH ────────────────────────────────────────────────────
+#
+# BARE HOSTNAMES, never base URLs. The Worker builds `https://${host}` itself, so a scheme, port,
+# path or credential is not expressible here rather than rejected — and there is exactly one named
+# expected host per hop to check against. A configurable base URL is how hop 1 initially shipped
+# with no host check at all: there was nothing to check it against.
+#
+# ⚠ THESE TWO VALUES ARE THE TRUST ROOT FOR THEIR HOPS. The Worker validates their SHAPE and then
+# fetches whatever they name. A well-formed but wrong host cannot be detected at runtime — if this
+# said `evilshipprimus.com`, the fetch would go there. **Changing either line is a live-access
+# change and is reviewed as one**, the same way AR_ALLOWLIST is (§8.884). The runtime guarantee is
+# narrower and precise: whatever these name, both fetches go there and nowhere else, and the
+# CALLER cannot influence either.
+
+# The customer/portal API — where the caller's own bearer token is valid, and where BOTH the
+# identity call (/applet/v1/profile) and the document LIST call are made.
+#
+# NOT the system API. invoice-sync's PRIMUS_BASE is regex-locked to restapi.shipprimus.com and
+# throws if pointed here (config.js:143-148). Two different APIs; the token in hand belongs to this
+# one. Named separately so neither can be mistaken for the other.
+PRIMUS_APPLET_HOST = "freightandlogistics-api.shipprimus.com"
+
+# The EXACT host document bytes live on — `https://www.shipprimus.com/Documents.php?id=…`
+# (spec §8.876 layer 2). Compared with `===`, never endsWith.
+#
+# ⚠ THE WHOLE POINT. `"evilshipprimus.com".endsWith("shipprimus.com")` is TRUE, and that one line
+# is doc-proxy's entire failure. If a future edit ever relaxes this to a suffix, prefix, regex or
+# list, it has rebuilt the open relay. There is a test that fails on `evilshipprimus.com`,
+# `shipprimus.com.evil.example`, `notshipprimus.com` and bare `shipprimus.com`.
+PRIMUS_DOCUMENT_HOST = "www.shipprimus.com"
+
+# ── SECRET — set with `wrangler secret put`, NEVER here ──────────────────────────────────────
+#
+#   wrangler secret put DOC_TOKEN_SECRET
+#
+# The HMAC key deriveDocToken/verifyDocToken share. It DOES NOT EXIST YET — verified 2026-08-11:
+# no `DOC_TOKEN_SECRET` appears in any wrangler.toml, source file or spec in this repo.
+#
+# THE SAME VALUE MUST BE SET ON WHATEVER MINTS. Verification re-derives; a mismatch invalidates
+# every outstanding link at once, silently, as "wrong token". Rotating it revokes the whole
+# outstanding set — which is the only wholesale revocation available, since tokens are derived
+# rather than stored.
+#
+# Unset fails CLOSED: deriveDocToken throws without a secret, the route catches it, and the caller
+# gets the same 404 a wrong token gets. A misconfiguration must not be distinguishable from a
+# refusal by anyone outside.
+
+# ── D1: the LINK STORE, read-only in practice ────────────────────────────────────────────────
+#
+# Supplies ONE fact this route cannot get anywhere trustworthy: the invoice's ar_code, written by
+# InvoiceLinks.mint. It is read from the store rather than from the request because an ARCode the
+# caller could set is not an ownership check — it is a suggestion.
+#
+# THE SAME DATABASE pay reads (schema-links.sql, `invoice_link`), and for the same reason: its
+# entire contents are possession-tier, so a public Worker bound to it can disclose only what was
+# already decided safe on possession. The ledger's D1 must NEVER be bound here — it holds
+# `cache` rows carrying customer email addresses.
+#
+# NOT YET CREATED, exactly as in pay/wrangler.toml. Schema-first: the database exists before this
+# deploys. Two databases, one per mode, so a live Worker cannot serve test data under any bug.
+#   wrangler d1 create invoice-links-test
+#   wrangler d1 create invoice-links-live
+#   wrangler d1 execute invoice-links-test --remote --file=../invoice-sync/schema-links.sql
+# Verify POSITIVELY, never an exit code (§0.25):
+#   wrangler d1 execute invoice-links-test --remote --command "SELECT name, sql FROM sqlite_master WHERE tbl_name='invoice_link'"
+#
+# [[d1_databases]]
+# binding = "LINKS"
+# database_name = "invoice-links-test"
+# database_id = "<create it first>"
+
+# ── ⚠ PRE-DEPLOY GATE — ONE LIVE READ, BEFORE ANY DEPLOY ─────────────────────────────────────
+#
+# The Worker parses `data.results[]` from `GET /applet/v1/document/bol/{BOLNumber}`, taking each
+# row's `type` and `url`. That endpoint and envelope are SPEC-RECORDED, NOT LIVE-VERIFIED — §8
+# (~line 596) says it "is real and was in production code", where it appeared exactly once, in the
+# old Email Invoice handler. The tests stub this shape, and a stub agreeing with itself is not
+# evidence about Primus.
+#
+# CONFIRM IT LIVE FIRST, against **Haynes Brothers Furniture** (Primus 1123086640) — the designated
+# write-test account, which books exclusively by email and has NO portal access. **NEVER Simply
+# Nursery**, who log in and would see it. A read is not a write, so nothing needs cancelling after.
+#
+# Check three things, not one: that the endpoint answers; that the envelope really is
+# `data.results`; and that each row carries a `type` and a `url` on `www.shipprimus.com`. If the
+# envelope differs, the Worker returns 404 for EVERY document — a total outage that reads exactly
+# like a permission refusal, because that is the vocabulary this route deliberately speaks.
+#
+# DO NOT DEPLOY ON THE SPEC NOTE ALONE.
+
+# ── NOT YET ROUTED ───────────────────────────────────────────────────────────────────────────
+#
+# `docs.freightandlogistics.ai` is the hostname §8.95 names for this. NOT verified free — check it
+# the way `pay.freightandlogistics.ai` was checked (no A/AAAA/CNAME/TXT, no Workers custom domain,
+# no zone route, and the `freight-portal` Pages project claiming only the apex and `www`) BEFORE
+# adding the route, not after.
+#
+# [[routes]]
+# pattern = "docs.freightandlogistics.ai"
+# custom_domain = true
+
+# NO CRON. Request-driven only; this Worker must never hold a scheduled handler.
