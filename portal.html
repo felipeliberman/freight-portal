@@ -6135,7 +6135,57 @@ function showBookingConfirmedModal(bc) {
   // an empty row is a defect to SHOW, not to hide. The label always renders once dispatched, and
   // when there is nothing to link, fixed customer-safe copy says so and points at the one handoff
   // we allow. Not a link and not copyable — there is nothing to open. No internal id, ever.
-  const validDocs = (bc.docs || []).filter(d => d.url);
+  // ── THE ONE FILTER, AT THE MODAL'S RENDER ────────────────────────────────────────────────────
+  //
+  // `_documentsFor` does NOT filter by type (it keeps any row with a `url`), so `bc.docs` can carry
+  // DO / COST / SHP / MET and the literal `'Document'` its own fallback invents. Filtering HERE
+  // rather than at a call site is deliberate: BOTH dispatch paths — the My Shipments detail
+  // dispatch and the chat dispatch — hand their documents to this function, so one wrap covers
+  // both, and the modal now shows exactly the set the dispatch Download button fetches.
+  //
+  // CONSEQUENCE, ACCEPTED: a dispatch returning ONLY internal documents now falls into the
+  // "no downloadable documents" branch below. That is correct — there is genuinely nothing
+  // customer-facing to offer — but it means that console line fires in a case it did not before.
+  const validDocs = _customerFacingDocs((bc.docs || []).filter(d => d.url));
+
+  // ONE fetcher for both document surfaces in this modal: the button row below, and the persisted
+  // bar built in closeBtn.onclick. Returns a ready-to-mount element, or null.
+  //
+  // It deliberately does NOT open the panel itself — the two callers need different things around
+  // that call (this modal must close first; the bar must be re-attached after), and burying either
+  // in here would make one of them wrong.
+  const _docBolNum = String(bc.BOLNumber || _bolNumberFor(bc.BOLId) || '').trim();
+  const _fetchBookingDocPanel = async (docType) => {
+    const type = String(docType || '').trim().toUpperCase();
+    if (!_docBolNum || _docBolNum === '—' || !type) return null;
+    try {
+      const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(_docBolNum) + '/' + encodeURIComponent(type), {
+        headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+      });
+      if (!res.ok) return null;
+      const blobUrl = URL.createObjectURL(await res.blob());
+      if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+      _lastDocObjectUrl = blobUrl;
+      const wrap = document.createElement('div');
+      const frame = document.createElement('iframe');
+      frame.setAttribute('title', type);
+      frame.src = blobUrl;
+      frame.style.cssText = 'width:100%;height:calc(100dvh - 170px);min-height:400px;border:1px solid #e5e2d9;border-radius:10px;background:#fff;';
+      wrap.appendChild(frame);
+      return wrap;
+    } catch (e) { console.error('[booking doc]', _docBolNum, type, e); return null; }
+  };
+  // Visible refusal inside the modal, idempotent. Same copy and shape as the docs modal.
+  const _bookingDocFail = () => {
+    let note = body.querySelector('#bk-doc-error');
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'bk-doc-error';
+      note.style.cssText = 'background:#faf9f6;border:1px solid #e5e2d9;border-radius:9px;padding:10px 14px;margin-bottom:16px;font-size:12px;line-height:1.5;color:#1c1a17;';
+      body.appendChild(note);
+    }
+    note.textContent = DOCS_UNAVAILABLE;
+  };
   if (!validDocs.length && bc.dispatchOk) {
     console.error('[FP] DISPATCHED WITH NO DOWNLOADABLE DOCUMENTS — BOL', bc.BOLNumber || _bolNumberFor(bc.BOLId) || '(no confirmed number)',
       '| the dispatch returned', (bc.docs || []).length, 'document(s), none with a URL. Showing the placeholder rather than an empty row.');
@@ -6165,7 +6215,24 @@ function showBookingConfirmedModal(bc) {
       if (bc.isParcel && (isBOL || isLBL)) return;
       const isPrimary = bc.isParcel ? isClbl : isBOL;
       const a = document.createElement('a');
-      a.href = doc.url; a.target = '_blank';
+      // EAGER → LAZY. The button still renders here, exactly as before — the parcel suppression,
+      // isPrimary, icon and label lines above and below are untouched and still decide at RENDER
+      // time which buttons appear and how they look. Only the FETCH moves to the click, so opening
+      // this modal costs zero document requests no matter how many buttons it shows.
+      //
+      // Viewer intent preserved (was target=_blank). Rendered IN-PAGE, never window.open: this runs
+      // after awaits, and a popup opened off the gesture chain is blocked — the mechanism that
+      // killed downloadDoc's fallback and the invoice modal's old exit.
+      a.href = 'javascript:void(0)';
+      a.onclick = async (ev) => {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        const wrap = await _fetchBookingDocPanel(_dt);
+        if (!wrap) { _bookingDocFail(); return; }
+        // Success only. #right-panel is z-index 150 under this overlay, so rendering the panel with
+        // the modal still up would put the PDF behind it. A refusal leaves the modal open.
+        overlay.remove();
+        openRightPanel(wrap, docLabel + ' · ' + _docBolNum);
+      };
       a.style.cssText = 'display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:9px;font-size:12px;font-weight:600;text-decoration:none;transition:all .12s;' +
         (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#f7f5f2;border:1px solid var(--bdr);color:var(--tx);');
       const icon = isBOL
@@ -6203,8 +6270,24 @@ function showBookingConfirmedModal(bc) {
     if (validDocs.length) {
       const panel = document.getElementById('right-panel');
       if (panel) {
-        const existing = panel.querySelector('#bk-persisted-docs');
-        if (!existing) {
+        // ── EXTRACTED SO IT CAN RUN TWICE — AND IT MUST ─────────────────────────────────────
+        //
+        // openRightPanel → renderPanel() does `panel.innerHTML = …`, rebuilding the panel from
+        // rpState.tabs. This bar is injected into the panel DOM directly and is NOT one of those
+        // tabs, so any panel render destroys it. Before this change that was invisible, because the
+        // bar's buttons were plain navigations that never touched the panel; now a click opens a
+        // PDF tab, which rebuilds — and the bar would vanish, taking the customer's route to the
+        // other documents with it. So: build it, and re-attach after every open.
+        //
+        // The `#bk-persisted-docs` guard makes it idempotent, so calling it twice is safe.
+        //
+        // ⚠ OUT OF SCOPE, PRE-EXISTING: this only makes the bar survive ITS OWN clicks. Any other
+        // openRightPanel call — an agent chart, Invoices, My Shipments — still wipes it. Fixing
+        // that properly means making the bar part of rpState or the panel chrome. Logged, not
+        // folded in here.
+        const attachBar = () => {
+          const p = document.getElementById('right-panel');
+          if (!p || p.querySelector('#bk-persisted-docs')) return;
           const bar = document.createElement('div');
           bar.id = 'bk-persisted-docs';
           bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 16px;background:#faf9f6;border-bottom:1px solid var(--bdr);flex-wrap:wrap;';
@@ -6218,7 +6301,17 @@ function showBookingConfirmedModal(bc) {
             if (bc.isParcel && (isBOL2 || isLBL2)) return;
             const isPrimary = bc.isParcel ? isClbl2 : isBOL2;
             const a = document.createElement('a');
-            a.href = doc.url; a.target = '_blank';
+            // Same eager→lazy swap as the modal row: the button renders now, the fetch waits for
+            // the click. No modal to close here — it is already gone by the time this bar exists —
+            // but the bar must be re-attached, because openRightPanel rebuilds the panel.
+            a.href = 'javascript:void(0)';
+            a.onclick = async (ev) => {
+              if (ev && ev.preventDefault) ev.preventDefault();
+              const wrap = await _fetchBookingDocPanel(_dt2);
+              if (!wrap) { showInvToast(DOCS_UNAVAILABLE); return; }
+              openRightPanel(wrap, barLabel + ' · ' + _docBolNum);
+              attachBar();                      // renderPanel() just wiped it — put it back
+            };
             a.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:600;text-decoration:none;' +
               (isPrimary ? 'background:var(--ac);color:#fff;' : 'background:#fff;border:1px solid var(--bdr);color:var(--tx);');
             const icon = isBOL2 ? '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
@@ -6228,10 +6321,11 @@ function showBookingConfirmedModal(bc) {
             a.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icon+'</svg>' + barLabel;
             bar.appendChild(a);
           });
-          const tabBar = panel.querySelector('.rp-tab-bar') || panel.querySelector('[style*="tab"]') || panel.firstElementChild;
+          const tabBar = p.querySelector('.rp-tab-bar') || p.querySelector('[style*="tab"]') || p.firstElementChild;
           if (tabBar && tabBar.parentNode) tabBar.parentNode.insertBefore(bar, tabBar.nextSibling);
-          else panel.insertBefore(bar, panel.firstElementChild);
-        }
+          else p.insertBefore(bar, p.firstElementChild);
+        };
+        attachBar();
       }
     }
   };
