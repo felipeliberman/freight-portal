@@ -8130,20 +8130,27 @@ async function openDocsModal(bolId, bolNum, isDispatched) {
     body.innerHTML = '';
     visible.forEach(doc => {
       const typeRaw = (doc.fileType||doc.type||doc.documentType||doc.name||'').toUpperCase();
-      const url     = doc.url||doc.fileUrl||doc.documentUrl||doc.link||'';
+      // The row's raw Primus URL is deliberately NOT read here any more. It was `const url = …`
+      // and is now dead — removed rather than left, because an unused raw-URL binding sitting
+      // exactly where the exposure used to be is an invitation to put it back.
       const isBolDoc = typeRaw === 'BOL';
       const label   = (isBolDoc && isDispatched === false) ? 'Bill of Lading (Not Valid for Tendering)' : (DOC_NAMES[typeRaw] || typeRaw);
       const icon    = DOC_ICONS[typeRaw] || DOC_ICONS.DEFAULT;
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--bdr);';
-      const safeUrl = url.replace(/'/g,"\'");
-      const safeLabel = label.replace(/'/g,"\'");
+      // The raw Primus URL is NO LONGER passed to the button, and no longer appears in the markup
+      // at all. The route is handed the BOL and the type — both of which were already here and
+      // were simply being dropped — and decides for itself what to fetch. `this` goes along so a
+      // failure lands on the button the customer clicked rather than in the console.
+      const safeBol = String(bolNum || '').replace(/'/g,"\\'");
+      const safeType = String(typeRaw || '').replace(/'/g,"\\'");
+      const safeLabel = label.replace(/'/g,"\\'");
       row.innerHTML = `
         <div style="flex-shrink:0;color:var(--mu);display:flex;align-items:center;">${icon}</div>
         <div style="flex:1;">
           <div style="font-size:13px;font-weight:500;color:var(--tx);">${label}</div>
         </div>
-        <button onclick="downloadDoc('${safeUrl}','${safeLabel}')"
+        <button onclick="downloadDoc(this,'${safeBol}','${safeType}','${safeLabel}')"
           style="background:var(--ac);border:none;border-radius:7px;padding:8px 16px;color:#fff;font-weight:500;font-size:12px;cursor:pointer;font-family:var(--font);white-space:nowrap;display:inline-flex;align-items:center;gap:6px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download
         </button>
@@ -8158,20 +8165,70 @@ async function openDocsModal(bolId, bolNum, isDispatched) {
 }
 
 
-async function downloadDoc(url, label) {
+/**
+ * Download one document, through OUR route — never a raw Primus URL.
+ *
+ * ── WHY THIS CHANGED, AND WHY IT WAS BROKEN THE WHOLE TIME ───────────────────────────────────
+ *
+ * The old version took a `Documents.php` URL and did:
+ *     fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+ * That header is BOTH unnecessary and fatal. Unnecessary because those URLs are unauthenticated
+ * (spec §8.876 layer 2 — verified: `curl -I` with no Authorization returns the PDF). Fatal because
+ * a non-simple header forces a CORS PREFLIGHT to www.shipprimus.com, which does not answer it, so
+ * every request died as `Failed to fetch`. The catch then called `window.open(url)` — after two
+ * awaits, i.e. outside the user-gesture stack, so the browser popup-blocked it too. Both exits
+ * dead: the button did nothing, visibly, since the first commit that introduced it.
+ *
+ * Now it takes (bolNumber, type) — which the call site ALREADY had and merely dropped — and asks
+ * the document route, which proves the caller owns the BOL before serving a byte. The caller names
+ * no target.
+ *
+ * @param {HTMLElement} btn  the clicked button, so failure is VISIBLE rather than a console line.
+ */
+async function downloadDoc(btn, bolNumber, type, label) {
+  const _bol  = String(bolNumber == null ? '' : bolNumber).trim();
+  const _type = String(type == null ? '' : type).trim().toUpperCase();
+  const _orig = btn ? btn.innerHTML : '';
+
+  // A failure the CUSTOMER can see. The route answers 404 for not-yours, not-shareable and
+  // not-ready alike — deliberately, so it cannot be used to probe other accounts — so this says
+  // one honest thing without claiming to know which. Email only, never a phone (no-phone-as-fallback).
+  const fail = function () {
+    if (btn) { btn.disabled = true; btn.style.opacity = '.5'; btn.style.cursor = 'default'; btn.textContent = 'Unavailable'; }
+    const modalBody = document.getElementById('docs-modal-body');
+    if (modalBody) {
+      let note = document.getElementById('docs-modal-error');
+      if (!note) {
+        note = document.createElement('div');
+        note.id = 'docs-modal-error';
+        note.style.cssText = 'margin-top:12px;padding:10px 12px;background:#faf9f6;border:1px solid #e5e2d9;border-radius:8px;font-size:12px;line-height:1.5;color:#1c1a17;';
+        modalBody.appendChild(note);
+      }
+      note.textContent = DOCS_UNAVAILABLE;
+    }
+  };
+  if (!_bol || !_type) { fail(); return; }
+
+  if (btn) { btn.disabled = true; btn.style.opacity = '.6'; btn.textContent = 'Downloading…'; }
   try {
-    const token = await getToken();
-    const resp  = await fetch(url, {headers: {'Authorization': 'Bearer ' + token}});
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const blob  = await resp.blob();
-    const burl  = URL.createObjectURL(blob);
-    const a     = document.createElement('a');
-    a.href = burl; a.download = label + '.pdf';
+    const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(_bol) + '/' + encodeURIComponent(_type), {
+      headers: { 'Authorization': 'Bearer ' + (await getToken()) },
+    });
+    if (!res.ok) { fail(); return; }
+    const blobUrl = URL.createObjectURL(await res.blob());
+    if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
+    _lastDocObjectUrl = blobUrl;
+
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    // This is a DOWNLOAD button, not a viewer — the filename comes from `download`, since a blob
+    // URL governs its own presentation and the response's Content-Disposition does not apply.
+    a.download = ((label || _type) + '.pdf').replace(/[\\/:*?"<>|]/g, '-');
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(burl), 1000);
-  } catch(e) {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = _orig; }
+  } catch (e) {
     console.error('Download error:', e);
-    window.open(url);
+    fail();
   }
 }
 // ── ACCESSORIAL LOOKUP ────────────────────────────────────────────────────────
