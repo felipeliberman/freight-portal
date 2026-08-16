@@ -66,6 +66,36 @@ export const REFUSAL_REASONS = Object.freeze({
    * here rather than escaping as a raw storage-engine error.
    */
   CUSTOMER_ID_ALREADY_CLAIMED: 'customer_id_already_claimed',
+
+  // ── recipient resolution (src/recipient.js) ────────────────────────────────────────────────
+  //
+  // THREE reasons, not one, because each names a DIFFERENT thing for a human to go and do. A
+  // single `bad_recipient` would put "nobody filled the field in", "somebody typo'd it" and "the
+  // record is in a state we refuse to interpret" into one bucket, and the exception queue exists
+  // precisely so that someone can act without a reconstruction.
+
+  /** The selected source is empty. Nowhere to deliver. Action: fill the field in on the console. */
+  NO_RECIPIENT: 'no_recipient',
+
+  /**
+   * The selected source HAD content and none of it survived parsing — `ap@paylessrugs` with no
+   * TLD, a bare name, a stray "see attached". Action: fix the value.
+   *
+   * Distinct from NO_RECIPIENT on purpose: an empty field and a malformed one look identical
+   * downstream, and the malformed one is the more urgent because somebody believed they had
+   * entered an address.
+   */
+  RECIPIENT_UNPARSEABLE: 'recipient_unparseable',
+
+  /**
+   * `remitToSL` is neither '1' nor '0', so WHICH field is authoritative cannot be determined.
+   *
+   * Refused rather than defaulted, in either direction. Defaulting to the billing address would
+   * email AP on a record whose console screen says "same as shipping"; defaulting to main would
+   * ignore an override that exists. Both are silent, both are wrong, and neither is detectable
+   * from the outside — the delivered email looks perfect either way.
+   */
+  RECIPIENT_SOURCE_UNKNOWN: 'recipient_source_unknown',
 });
 
 const ALL = Object.freeze(new Set(Object.values(REFUSAL_REASONS)));

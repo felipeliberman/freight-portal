@@ -90,25 +90,42 @@ export function pickQboCustomer(records, arCode) {
  *
  * A wrong address is the worst shape of failure here: it delivers successfully and looks perfect.
  * So anything not recognisable as an address is discarded rather than guessed at.
+ *
+ * ── `all` AND `dropped`, ADDED FOR RECIPIENT RESOLUTION (src/recipient.js) ────────────────────
+ * `primary`/`cc` are UNCHANGED and every existing caller keeps working. The two new fields exist
+ * because the Primus recipient rule needs a different shape from the QBO one:
+ *
+ *   `all`     — the addresses in the order they appeared. Primus's own console emails an invoice
+ *               to EVERY address on the selected field, so there is no primary/CC distinction to
+ *               make; splitting one off by position would invent a hierarchy the source lacks.
+ *   `dropped` — the discard reasons FOR THIS VALUE. The `sink` counts drops across a whole run,
+ *               which answers "is this getting worse"; `dropped` answers "what happened to THIS
+ *               customer", which is what a refusal message has to say.
+ *
+ * ONE PARSER, TWO SHAPES. A second parser for the Primus fields is the obvious thing to reach for
+ * and would be wrong: the two sources hold the same free-text conventions (comma or semicolon,
+ * display names, stray prose), and two parsers means one of them gets the next fix.
  */
 export function parseEmails(raw, sink = null) {
   countEmailParse(sink);
   const tokens = String(raw ?? '').split(/[,;]/);
   const out = [];
+  const dropped = [];
   const seen = new Set();
   for (const token of tokens) {
     const { address, reason } = extractAddress(token);
     if (!address) {
       // Counted, never silent. A dropped token means the invoice reaches one fewer person.
       countEmailDrop(sink, reason);
+      dropped.push(reason);
       continue;
     }
     const key = address.toLowerCase();
-    if (seen.has(key)) { countEmailDrop(sink, 'duplicate'); continue; }
+    if (seen.has(key)) { countEmailDrop(sink, 'duplicate'); dropped.push('duplicate'); continue; }
     seen.add(key);
     out.push(address);
   }
-  return { primary: out[0] ?? null, cc: out.slice(1) };
+  return { primary: out[0] ?? null, cc: out.slice(1), all: out, dropped };
 }
 
 /** One token → {address} or {reason} for why it was discarded. Never returns a guess. */
