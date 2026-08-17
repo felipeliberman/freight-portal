@@ -110,6 +110,21 @@ export const REFUSAL_REASONS = Object.freeze({
    * a console outage must not turn into an invoice nobody ever sends.
    */
   RECIPIENT_LOOKUP_FAILED: 'recipient_lookup_failed',
+
+  /**
+   * The console ANSWERED, and what came back is not a customer record (src/console-lookup.js).
+   *
+   * DELIBERATELY DISTINCT from RECIPIENT_LOOKUP_FAILED, which means the console did not answer.
+   * The two send a human to different places: an outage is "wait, or page whoever owns the
+   * console", and this is "read the response, something upstream changed shape". Collapsing them
+   * would have someone reading JSON that was never returned.
+   *
+   * `detail.reason` narrows it further — `no_record` (the console's own "No results.", which
+   * arrives as `data: []` with success "true"), `id_missing`, `id_mismatch`,
+   * `accounting_contacts_absent`. All four are refused rather than read as an empty record,
+   * because every one of them is success-shaped.
+   */
+  RECIPIENT_RECORD_UNRECOGNISED: 'recipient_record_unrecognised',
 });
 
 const ALL = Object.freeze(new Set(Object.values(REFUSAL_REASONS)));
