@@ -59,10 +59,19 @@
 # Deploy:  cd invoice-sync && wrangler deploy
 #
 # Secrets (set via `wrangler secret put`, NOT stored here):
-#   PRIMUS_USER      — Primus system API username (shared `claude` user — do NOT alter its perms)
-#   PRIMUS_PASS      — Primus system API password
-#   STRIPE_RK_TEST   — Stripe RESTRICTED key, test mode  (invoice write, customer read)
-#   STRIPE_RK_LIVE   — Stripe RESTRICTED key, live mode  (do not set until spec phase 9)
+#   PRIMUS_USER          — Primus system API username (shared `claude` user — do NOT alter its perms)
+#   PRIMUS_PASS          — Primus system API password
+#   PRIMUS_CONSOLE_USER  — master console (manage.php) username, for the customer record
+#   PRIMUS_CONSOLE_PASS  — master console password
+#   STRIPE_RK_TEST       — Stripe RESTRICTED key, test mode  (invoice write, customer read)
+#   STRIPE_RK_LIVE       — Stripe RESTRICTED key, live mode  (do not set until spec phase 9)
+#
+# THE CONSOLE PAIR IS SEPARATE FROM THE REST PAIR, even where the value is the same today. A
+# console session reaches the console's WRITE surface (SaveShippingLocation, DeleteShippingLocation),
+# so it carries different authority and must be rotatable on its own. Both are REQUIRED: the
+# billing Remit-To address that decides who an invoice is emailed to exists only on the console
+# record, not on the REST API, so a run without them cannot resolve a recipient — and loadConfig
+# throws rather than carrying on and reporting zero work while invoices go unsent.
 #
 # One-time D1 setup (run these, then paste the id below):
 #   wrangler d1 create invoice-sync
@@ -133,6 +142,10 @@ INTERNAL_SEND_ADDRESS = "felipe@freightandlogistics.com"
 #
 # MOVING THIS DATE FORWARD is safe. Moving it BACKWARD arms every invoice between the two dates.
 SEND_FROM_DATE = "2026-08-17"
+# Most invoices one run may email. A blast-radius bound, not a tuning knob — clamped to 1..200 in
+# code, defaulting to 25 when unset, and a run that hits it says how many it dropped rather than
+# truncating silently.
+SEND_CAP = "25"
 
 # Primus system API. Broker-level, all customers. NOT the customer/portal API.
 PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"

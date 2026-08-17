@@ -12,6 +12,9 @@ import { Ledger } from './ledger.js';
 import { windowFor, pollWindow } from './invoices.js';
 import { resolveClaimedCustomers } from './customers.js';
 import { newValueSink, formatValueSink, formatEmailDrops } from './detail.js';
+import { ConsoleSession } from './console-session.js';
+import { loadSendConfig } from './send-guard.js';
+import { runSendPass, formatSendReport } from './send-pass.js';
 
 const LEASE_NAME = 'sync';
 const LEASE_TTL_MS = 10 * 60 * 1000;
@@ -71,6 +74,31 @@ export async function run(env) {
     const valueSink = newValueSink();
     const customers = await resolveClaimedCustomers({ primus, db: cfg.db, ledger, valueSink });
 
+    // ── THE SEND PASS ───────────────────────────────────────────────────────────────────────
+    //
+    // A SECOND WALK OF THE SAME WINDOW, and that is deliberate. pollWindow claims every generated
+    // invoice for the Stripe spine; this selects the far smaller set that is RED and not yet sent
+    // by us. Merging them would couple the Stripe path to the email path — one of them changing
+    // its filter would silently change the other. The cost is a handful of extra list pages
+    // against a bound of one customer, which is the cheap side of that trade.
+    //
+    // The console session is constructed here but LOGS IN LAZILY, on its first lookup. A run with
+    // no candidates therefore establishes no master console session at all.
+    const sendConfig = loadSendConfig(env);
+    const send = await runSendPass({
+      primus, ledger,
+      session: new ConsoleSession(cfg.primusConsole, cfg.db),
+      sendConfig,
+      allowlist: cfg.arAllowlist,
+      checkArCode,
+      issuedFrom, issuedTo,
+      sendFromDate: env.SEND_FROM_DATE || null,
+      cap: clampSendCap(env.SEND_CAP),
+      // NO TRANSPORT. None exists in this package yet; `dryrun` needs none, and any mode that
+      // sends will throw here until one is wired — which is the fail-closed direction.
+      sink: valueSink,
+    });
+
     const optionalNulls = formatValueSink(valueSink);
     const emailDrops = formatEmailDrops(valueSink);
     const quarantined = await ledger.openQuarantines(50);
@@ -81,8 +109,22 @@ export async function run(env) {
       quarantined: quarantined.length,
       optionalNulls,
       emailDrops,
+      send: { ...send, report: undefined, unresolvedDetail: undefined },
       note: 'phases 5+ not built; rows claimed as intent, nothing written to Stripe',
     }));
+
+    // The report is logged as LINES rather than folded into the JSON above: it is the artefact a
+    // human reads before anything is allowed to send, and one address per line is what makes it
+    // readable. It carries recipient addresses on purpose — a redacted version cannot answer the
+    // only question it exists to answer — and it goes to the run log, which is inside the private
+    // boundary. It must not be forwarded anywhere else.
+    for (const line of formatSendReport(send.report)) console.log('[send] ' + line);
+    for (const u of send.unresolvedDetail) {
+      console.warn(`[send] SKIPPED #${u.invoiceNumber} — ${u.reason}`);
+    }
+    if (send.dropped) {
+      console.warn(`[invoice-sync] send cap ${send.cappedAt} reached — ${send.dropped} candidate(s) not processed this run`);
+    }
 
     // A data gap is not an operational failure, but it is still an invoice nobody is billing.
     if (quarantined.length) {
@@ -118,4 +160,16 @@ function clampWindowDays(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return 7;
   return Math.min(90, Math.max(2, Math.floor(n)));
+}
+
+/**
+ * How many invoices one run may email. Bounded blast radius, not a tuning knob.
+ *
+ * Defaults LOW on purpose: an unset value should mean "a handful", never "everything the window
+ * holds". The upper clamp exists so a fat-fingered value cannot turn one tick into a mailout.
+ */
+function clampSendCap(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 25;
+  return Math.min(200, Math.max(1, Math.floor(n)));
 }

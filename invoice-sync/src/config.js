@@ -150,6 +150,29 @@ export function primusCreds(env) {
   return { username, password, base };
 }
 
+/**
+ * Master console credentials, for the customer record the recipient rule needs.
+ *
+ * A SEPARATE SECRET from the REST pair above, even where the value is the same today. A console
+ * session reaches the console's write surface — SaveShippingLocation, DeleteShippingLocation —
+ * so it carries different authority and has to be rotatable on its own.
+ *
+ * REQUIRED, not optional. Without it the send pass cannot resolve a recipient, and the failure
+ * mode of "carry on quietly" is a run that reports zero work while invoices go unsent.
+ */
+export function primusConsoleCreds(env) {
+  const username = env.PRIMUS_CONSOLE_USER || '';
+  const password = env.PRIMUS_CONSOLE_PASS || '';
+  if (!username || !password) {
+    throw new Error(
+      'Missing PRIMUS_CONSOLE_USER / PRIMUS_CONSOLE_PASS. The billing Remit-To address that decides ' +
+      'who an invoice is emailed to exists only on the console record, not on the REST API, so the ' +
+      'send pass cannot resolve a recipient without them.'
+    );
+  }
+  return { username, password };
+}
+
 /** Resolve everything at once so a misconfiguration fails on the first line of a run, not midway. */
 export function loadConfig(env) {
   const mode = resolveMode(env);
@@ -159,6 +182,7 @@ export function loadConfig(env) {
     stripeSecret,
     stripeRestricted: restricted,
     primus: primusCreds(env),
+    primusConsole: primusConsoleCreds(env),
     arAllowlist: loadArAllowlist(env),
     db: requireDb(env),
   };
