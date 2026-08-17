@@ -14,36 +14,67 @@
 -- DEPLOY ORDER IS SCHEMA FIRST, CODE SECOND. Backwards, the running worker issues statements
 -- against columns that do not exist and every write fails mid-run.
 --
--- THIS FILE IS THE RESUME DOCUMENT. Statements 1 and 2 are NOT re-runnable — SQLite has no
+-- THIS FILE IS THE RESUME DOCUMENT. Every ALTER here is NOT re-runnable — SQLite has no
 -- `ADD COLUMN IF NOT EXISTS`, so a second run errors `duplicate column name`. And re-running this
--- file repairs neither of them, because the columns live inside a `CREATE TABLE IF NOT EXISTS`
+-- file repairs none of them, because the columns live inside a `CREATE TABLE IF NOT EXISTS`
 -- that no-ops against an existing table. A half-applied migration is therefore resumed BY COLUMN,
 -- from a fresh PRAGMA — never by re-running the file.
 --
---   1. ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER       -- NOT re-runnable
---   2. ALTER TABLE ledger ADD COLUMN customer_reference TEXT          -- NOT re-runnable
---   3. CREATE TABLE IF NOT EXISTS stripe_customer (...)               -- idempotent
---   4. CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq ...  -- idempotent
+-- ── ALREADY APPLIED — do NOT run these again ─────────────────────────────────────────────────
+-- Verified against production 2026-08-17 by PRAGMA and sqlite_master, not assumed. Re-running 1
+-- or 2 errors `duplicate column name`, which is why they are marked rather than left listed.
+--   1. ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER       -- APPLIED (remote)
+--   2. ALTER TABLE ledger ADD COLUMN customer_reference TEXT          -- APPLIED (remote)
+--   3. CREATE TABLE IF NOT EXISTS stripe_customer (...)               -- APPLIED (remote)
+--   4. CREATE UNIQUE INDEX IF NOT EXISTS stripe_customer_id_uniq ...  -- APPLIED (remote)
+--
+-- ── STILL PENDING ────────────────────────────────────────────────────────────────────────────
+-- Confirmed MISSING on production 2026-08-17.
 --   5. ALTER TABLE ledger ADD COLUMN issue_date TEXT                  -- NOT re-runnable
 --   6. ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT            -- NOT re-runnable
 --   7. ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER           -- NOT re-runnable
---   8. ALTER TABLE ledger ADD COLUMN first_sent_at INTEGER            -- NOT re-runnable
---   9. CREATE TABLE IF NOT EXISTS invoice_send (...)                  -- idempotent
---  10. CREATE INDEX IF NOT EXISTS invoice_send_inv_idx / _out_idx     -- idempotent
+--
+-- ⚠ PREREQUISITE FOR THE POLLER (piece c). These three are not urgent in the abstract, but the
+--   send path reaches them: `Ledger.markLinkMinted` and `openMintedUnsent` both read
+--   `link_minted_at`, and the claim path writes `issue_date` / `invoice_due_date`. Deploying
+--   poller code before applying 5, 6 and 7 means writes failing mid-run against columns that do
+--   not exist — the exact failure the schema-first rule at the top of this block exists to stop.
+--
+-- ── APPLIED 2026-08-17 — statements 8, 9 and 10, no longer pending ───────────────────────────
+--   8. ALTER TABLE ledger ADD COLUMN first_sent_at INTEGER            -- APPLIED (remote + local)
+--   9. CREATE TABLE IF NOT EXISTS invoice_send (...)                  -- APPLIED (remote + local)
+--  10. CREATE INDEX IF NOT EXISTS invoice_send_inv_idx / _out_idx     -- APPLIED (remote + local)
+--
+-- Applied by ./apply-send-log.sh, which reads the DDL out of THIS FILE rather than restating it,
+-- and verifies positively afterwards. Confirmed on production: ledger.first_sent_at present,
+-- invoice_send present with its 14 columns, both indexes present.
+--
+-- TWO THINGS THAT RUN LEARNED, WORTH HAVING WRITTEN DOWN:
+--
+--   * `--file=` DOES NOT WORK AGAINST REMOTE UNDER AN OAUTH LOGIN. It posts to the D1 *import*
+--     endpoint, which returned `Authentication error [code: 10000]` while the same session's
+--     `--command` (query endpoint) worked and `wrangler whoami` reported `d1 (write)`. A remote
+--     apply therefore goes statement by statement; `--file` is still correct for `--local` and
+--     for a fresh database, and may work under an API token rather than an OAuth login.
+--
+--   * REMOTE D1 IS NOT READ-YOUR-WRITES. A verification immediately after creating both indexes
+--     reported one of them NOT FOUND; a direct query moments later showed both. The object
+--     existed, the read had not caught up. apply-send-log.sh retries a check three times before
+--     believing a negative, and anything else verifying a fresh write should do the same.
 --
 -- A SECOND DATABASE is also required — schema-links.sql, applied to its own D1 (`invoice-links`).
 -- It is separate on purpose: the public Worker reads it, and the ledger's D1 also holds `cache`,
 -- which carries customer email addresses. See that file.
 --
--- Apply every ALTER (1, 2, 5, 6, 7, 8) as an explicit --command. Apply 3, 4, 9 and 10 by re-running
--- this file, which is a no-op for every table that already exists:
---   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN paid_first_seen_at INTEGER"
---   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN customer_reference TEXT"
+-- WHAT IS LEFT TO APPLY: statements 5, 6 and 7 only. Each as an explicit --command, because a
+-- remote `--file=` is not usable under an OAuth login (see above):
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN issue_date TEXT"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN invoice_due_date TEXT"
 --   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN link_minted_at INTEGER"
---   wrangler d1 execute invoice-sync --remote --command "ALTER TABLE ledger ADD COLUMN first_sent_at INTEGER"
---   wrangler d1 execute invoice-sync --remote --file=./schema.sql
+--
+-- Statements 1-4 and 8-10 are applied; running any of the ALTERs among them again errors. A
+-- `--file=./schema.sql` remains correct for --local and for a fresh database, where it creates
+-- everything at once.
 --
 -- And the SECOND database, which is its own D1 and its own apply:
 --   wrangler d1 create invoice-links
