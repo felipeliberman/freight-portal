@@ -116,6 +116,24 @@ ALLOW_LIVE_SEND = "false"
 # real and load-bearing (SendGrid's verified sender is on `.com`).
 INTERNAL_SEND_ADDRESS = "felipe@freightandlogistics.com"
 
+# ── THE BACKFILL FLOOR (src/send-candidates.js) ──────────────────────────────────────────────
+# No invoice ISSUED BEFORE THIS DATE is ever a send candidate. Inclusive of the date itself.
+#
+# WHY A FIXED DATE AND NOT A ROLLING ONE: the send rule is "Primus says red AND we have not sent
+# it", and `first_sent_at IS NULL` is true of EVERY row claimed before the send path existed. The
+# poll window is a rolling 7 days, so without a floor the first run that can actually send would
+# sweep up whatever history that window reaches — irreversibly, all at once. A fixed date drawn on
+# the day sending was built means only invoices issued from here forward can ever be emailed.
+#
+# TODAY'S BACKLOG, for the record: 11 unsent ledger rows, all ARCode 5406 (Payless), claimed
+# 2026-08-03 under the previous pilot bound. They are ALREADY excluded twice over — the allowlist
+# is 1234, and their issue_date is NULL because they predate schema statements 5/6. The floor is
+# not what saves them; it is what saves the case nobody has thought of yet, and the one where the
+# allowlist widens.
+#
+# MOVING THIS DATE FORWARD is safe. Moving it BACKWARD arms every invoice between the two dates.
+SEND_FROM_DATE = "2026-08-17"
+
 # Primus system API. Broker-level, all customers. NOT the customer/portal API.
 PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"
 # Pilot scope (spec §3.1). Comma-separated ARCodes. Only these get Stripe drafts; everything else
