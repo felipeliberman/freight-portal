@@ -96,6 +96,20 @@ export const REFUSAL_REASONS = Object.freeze({
    * from the outside — the delivered email looks perfect either way.
    */
   RECIPIENT_SOURCE_UNKNOWN: 'recipient_source_unknown',
+
+  /**
+   * The customer record could not be READ — the console is unreachable, returned a non-200, or the
+   * session could not be established (src/console-session.js).
+   *
+   * A REFUSAL rather than a throw, by this file's own test: a shared production console being down
+   * on an ordinary Tuesday is a normal state of a correct system, and the caller's job is to skip
+   * the invoice and move on.
+   *
+   * TRANSIENT BY CONSTRUCTION. The send candidate rule is `first_sent_at IS NULL`, so an invoice
+   * refused here is simply re-selected on the next run. Nothing may be written that consumes it —
+   * a console outage must not turn into an invoice nobody ever sends.
+   */
+  RECIPIENT_LOOKUP_FAILED: 'recipient_lookup_failed',
 });
 
 const ALL = Object.freeze(new Set(Object.values(REFUSAL_REASONS)));
