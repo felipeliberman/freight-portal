@@ -90,6 +90,32 @@ STRIPE_MODE = "test"
 # Second, independent switch for live mode. Both this AND STRIPE_MODE="live" are required.
 # Flipping to live is spec phase 9 and has its own gate. Do not set this early.
 ALLOW_LIVE_MODE = "false"
+
+# ── EMAIL EGRESS (src/send-guard.js) — a SEPARATE pair from the two above ────────────────────
+# Not a duplicate and not a tidy-up candidate. ALLOW_LIVE_MODE gates STRIPE; these gate EMAIL.
+# One flag arming both would mean flipping Stripe to live also arms customer email in the same
+# edit — two irreversible actions behind one switch, which is what the two-switch shape exists
+# to prevent.
+#
+#   dryrun   — resolve the recipient, write an invoice_send row saying who WOULD have been
+#              emailed, send nothing. The transport is not reached even if one is wired.
+#   internal — really send, but every message is redirected to INTERNAL_SEND_ADDRESS.
+#   live     — the customer's own address. Requires ALLOW_LIVE_SEND="true" as well.
+SEND_MODE = "dryrun"
+ALLOW_LIVE_SEND = "false"
+# Where every non-live message goes. loadSendConfig THROWS if this is unset or is not a real
+# address — the fail-closed direction, because the fallback anyone would reach for is the
+# customer's own.
+#
+# THE SAME ADDRESS AS mapper.js VERIFIED_RECIPIENTS[0], and deliberately so: that list is the set
+# cleared to RECEIVE invoices (owner assertion, 2026-08-04), and a redirected message is an
+# invoice arriving at this mailbox. Sending non-live mail to an address nobody cleared would be
+# the recipient-verification rule holding for customers and not for us.
+#
+# NOTE the domain. This is `.com`, not the `.ai` used for support and reply-to — the split is
+# real and load-bearing (SendGrid's verified sender is on `.com`).
+INTERNAL_SEND_ADDRESS = "felipe@freightandlogistics.com"
+
 # Primus system API. Broker-level, all customers. NOT the customer/portal API.
 PRIMUS_BASE = "https://restapi.shipprimus.com/api/v1"
 # Pilot scope (spec §3.1). Comma-separated ARCodes. Only these get Stripe drafts; everything else

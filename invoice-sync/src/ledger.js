@@ -500,6 +500,29 @@ export class Ledger {
   }
 
   /**
+   * The first DELIVERED send for a ledger row, or null.
+   *
+   * THE RECONCILIATION READ. `recordSend` writes `invoice_send` and THEN stamps `first_sent_at` —
+   * two writes, no transaction (the same shape as markLinkMinted's). If the stamp is lost, the
+   * invoice looks unsent and the next run would email the customer a second time. The send guard
+   * asks this before sending: a delivered row with no anchor means RE-STAMP, never re-send.
+   *
+   * Only `outcome = 'sent'` counts. A 'refused' row is a dry run and a 'failed' row is a delivery
+   * that did not happen; neither may block a real send.
+   */
+  async successfulSendFor(ledgerId) {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM invoice_send
+          WHERE mode = ? AND ledger_id = ? AND outcome = 'sent'
+          ORDER BY attempted_at ASC LIMIT 1`
+      )
+      .bind(this.mode, ledgerId)
+      .first();
+    return row || null;
+  }
+
+  /**
    * Invoices whose link was minted but which were never successfully sent (spec §8.883).
    *
    * THE QUERY THE SEND LOG EXISTS FOR. Minted-but-never-sent must not be a state discovered by a

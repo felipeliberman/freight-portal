@@ -125,6 +125,27 @@ export const REFUSAL_REASONS = Object.freeze({
    * because every one of them is success-shaped.
    */
   RECIPIENT_RECORD_UNRECOGNISED: 'recipient_record_unrecognised',
+
+  // ── sending (src/send-guard.js) ────────────────────────────────────────────────────────────
+
+  /**
+   * This invoice has already been emailed, so this attempt does nothing (control: the send guard).
+   *
+   * `invoice_send` deliberately carries NO unique constraint — a resend is legitimate and a
+   * constraint cannot tell an intentional one from an accidental one. This refusal is therefore
+   * the ONLY thing standing between a re-run and a customer receiving the same invoice twice.
+   *
+   * `detail.reconciled` is true when the guard found a delivered send whose `first_sent_at` stamp
+   * had been lost and repaired the anchor instead of sending again.
+   */
+  ALREADY_SENT: 'already_sent',
+
+  /**
+   * The transport refused, errored, or threw. RETRIABLE BY CONSTRUCTION: `first_sent_at` is left
+   * NULL, so the invoice is selected again on the next run — which is the whole reason the anchor
+   * is stamped on success only.
+   */
+  SEND_FAILED: 'send_failed',
 });
 
 const ALL = Object.freeze(new Set(Object.values(REFUSAL_REASONS)));
