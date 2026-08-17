@@ -21,16 +21,38 @@ function poll(primus, ledger, allowlist = PILOT, limit = 100) {
 
 // ── window ───────────────────────────────────────────────────────────────────────────────────
 
-test('the window is inclusive, YYYY-MM-DD, and spans the requested days', () => {
+// THESE TWO WERE CHANGED, NOT ADDED, and the reason matters: they previously asserted
+// `issuedTo === ymd(now)`, which encoded a WRONG BELIEF about the API rather than a requirement.
+// `issuedTo` is EXCLUSIVE — measured live 2026-08-17: `07-09 → 07-09` returns 0 rows while
+// `07-09 → 07-10` returns 102, all dated 07-09. So the old expectation was green while the poll
+// silently skipped every invoice issued on the current day. A test can be green and wrong.
+
+test('the window ends TOMORROW, because issuedTo is exclusive', () => {
   const w = windowFor(Date.UTC(2026, 7, 3, 17, 30), 7);
-  assert.equal(w.issuedTo, '2026-08-03');
+  assert.equal(w.issuedTo, '2026-08-04', 'the day after "now" — anything less excludes today');
   assert.equal(w.issuedFrom, '2026-07-27');
 });
 
 test('the window pads single-digit months and days', () => {
   const w = windowFor(Date.UTC(2026, 0, 8), 7);
-  assert.equal(w.issuedTo, '2026-01-08');
+  assert.equal(w.issuedTo, '2026-01-09');
   assert.equal(w.issuedFrom, '2026-01-01');
+});
+
+test('TODAY IS INSIDE THE WINDOW — the property the off-by-one broke', () => {
+  // Stated as the invariant rather than as a date arithmetic detail, so it survives a future
+  // rewrite of how the ends are computed.
+  const now = Date.UTC(2026, 7, 17, 23, 59);
+  const { issuedFrom, issuedTo } = windowFor(now, 7);
+  const today = '2026-08-17';
+  assert.ok(today >= issuedFrom, 'today must not precede the start');
+  assert.ok(today < issuedTo, 'today must fall strictly inside an EXCLUSIVE end');
+});
+
+test('the window crosses a month boundary without losing the day', () => {
+  const w = windowFor(Date.UTC(2026, 6, 31, 12, 0), 7);
+  assert.equal(w.issuedTo, '2026-08-01');
+  assert.equal(w.issuedFrom, '2026-07-24');
 });
 
 // ── envelope + money ─────────────────────────────────────────────────────────────────────────

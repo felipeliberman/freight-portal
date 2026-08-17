@@ -11,9 +11,31 @@
 
 import { findRows, findTotalResults } from './envelope.js';
 
-/** Rolling window, inclusive, as YYYY-MM-DD. */
+/**
+ * Rolling window as YYYY-MM-DD. `issuedFrom` INCLUSIVE, `issuedTo` EXCLUSIVE.
+ *
+ * ── issuedTo IS EXCLUSIVE, AND THAT COST US TODAY ────────────────────────────────────────────
+ *
+ * Measured against the live API 2026-08-17, four ways:
+ *
+ *     issuedFrom=2026-07-09 issuedTo=2026-07-09  →   0 results
+ *     issuedFrom=2026-07-09 issuedTo=2026-07-10  → 102 results, every one dated 07-09
+ *     issuedFrom=2026-07-08 issuedTo=2026-07-09  →  37 results, every one dated 07-08
+ *     issuedFrom=2026-07-09 issuedTo=2026-07-11  → 179 results
+ *
+ * This function used to pass `ymd(now)` as `issuedTo`, which therefore EXCLUDED THE CURRENT DAY —
+ * every run silently missed every invoice issued that day, for the Stripe poll and the send pass
+ * alike. Nothing was lost permanently, because the window overlaps and the next day's run picked
+ * them up; but "the window covers today" was false, and no counter said so. The shortfall guard
+ * could not see it either: Primus reported the same total the poll saw, because both were asking
+ * the same wrong question.
+ *
+ * So the end is TOMORROW. Coverage is `days + 1` calendar days, ending with today inclusive —
+ * deliberately one day wider than before rather than narrower, because the overlap is the thing
+ * that absorbs page-shift skips (spec §3) and widening it is the safe direction.
+ */
 export function windowFor(nowMs, days = 7) {
-  const to = new Date(nowMs);
+  const to = new Date(nowMs + 86400000);
   const from = new Date(nowMs - days * 86400000);
   return { issuedFrom: ymd(from), issuedTo: ymd(to) };
 }
