@@ -163,8 +163,16 @@ export const SHAPE_DRIFT_REF = 'console:shape:accountingContacts';
  *     untouched. One outage is one row however many invoices it hits, and a login failure stays
  *     separable from a transport failure.
  *
- * THROWS on anything else. A ref invented for a refusal this module never produces would land
- * real failures under a key nobody is watching, which is worse than an error at the call site.
+ *   PER-INVOICE (`invoice:<id>`) — `customer_id_missing`, raised by the wire (invoice-recipient.js)
+ *     when the invoice carries no `customerInfo.customerId` to look anything up with. Keyed on the
+ *     INVOICE because that is where the gap is; there is no customer record to point at.
+ *
+ *   PER-ARCODE (`ar:<code>`) — the RULE's own refusals (recipient.js): no recipient on the selected
+ *     field, an unparseable one, an unreadable `remitToSL`, an out-of-bound code. The record was
+ *     read fine; its CONTENT is the problem, and the customer is the unit someone acts on.
+ *
+ * THROWS on anything else. A ref invented for a refusal nothing here produces would land real
+ * failures under a key nobody is watching, which is worse than an error at the call site.
  *
  * @param {{ok:boolean, reason?:string, detail?:object}} refusal
  * @returns {string} the exception `ref`
@@ -179,9 +187,17 @@ export function exceptionRefFor(refusal) {
 
   if (reason === REFUSAL_REASONS.RECIPIENT_RECORD_UNRECOGNISED) {
     if (detail.reason === 'accounting_contacts_absent') return SHAPE_DRIFT_REF;
+    if (detail.reason === 'customer_id_missing') return `invoice:${detail.invoiceId ?? ''}`;
     if (detail.reason === 'no_record' || detail.reason === 'id_missing' || detail.reason === 'id_mismatch') {
       return `sl:${detail.requested ?? ''}`;
     }
+  }
+
+  if (reason === REFUSAL_REASONS.NO_RECIPIENT
+      || reason === REFUSAL_REASONS.RECIPIENT_UNPARSEABLE
+      || reason === REFUSAL_REASONS.RECIPIENT_SOURCE_UNKNOWN
+      || reason === REFUSAL_REASONS.NOT_ALLOWLISTED) {
+    return `ar:${detail.arCode ?? ''}`;
   }
 
   throw new Error(

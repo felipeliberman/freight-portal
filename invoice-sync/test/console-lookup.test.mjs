@@ -274,10 +274,32 @@ test('an outage is keyed per STAGE, not per invoice', async () => {
   assert.match(exceptionRefFor(a), /^console:/);
 });
 
-test('a refusal this module never produces throws rather than inventing a ref', () => {
-  assert.throws(() => exceptionRefFor(refuse(REFUSAL_REASONS.NOT_ALLOWLISTED, { arCode: '1' })),
-    /no exception ref/i);
+test('the RULE\'s own refusals are keyed per ARCode', () => {
+  // The record was read fine; its CONTENT is the problem, and the customer is the unit someone
+  // acts on. Added when the wire (piece iii) began recording these — without a ref they could not
+  // be filed at all.
+  for (const reason of [REFUSAL_REASONS.NO_RECIPIENT, REFUSAL_REASONS.RECIPIENT_UNPARSEABLE,
+                        REFUSAL_REASONS.RECIPIENT_SOURCE_UNKNOWN, REFUSAL_REASONS.NOT_ALLOWLISTED]) {
+    assert.equal(exceptionRefFor(refuse(reason, { arCode: '2395' })), 'ar:2395', reason);
+  }
+});
+
+test('a missing customer id on the invoice is keyed per INVOICE', () => {
+  const r = refuse(REFUSAL_REASONS.RECIPIENT_RECORD_UNRECOGNISED,
+    { reason: 'customer_id_missing', invoiceId: 'I1' });
+  assert.equal(exceptionRefFor(r), 'invoice:I1');
+});
+
+test('a refusal outside the closed set still throws rather than inventing a ref', () => {
+  // The set widened when the wire landed; the PROPERTY did not. Anything this path cannot produce
+  // must fail at the call site rather than be filed under a key nobody reads.
+  for (const reason of [REFUSAL_REASONS.CREATE_IN_FLIGHT, REFUSAL_REASONS.ALREADY_MATERIALIZED,
+                        REFUSAL_REASONS.NO_STRIPE_CUSTOMER]) {
+    assert.throws(() => exceptionRefFor(refuse(reason)), /no exception ref/i, reason);
+  }
   assert.throws(() => exceptionRefFor({ ok: true }), /no exception ref/i);
+  assert.throws(() => exceptionRefFor(refuse(REFUSAL_REASONS.RECIPIENT_RECORD_UNRECOGNISED,
+    { reason: 'something_new' })), /no exception ref/i, 'an unknown detail.reason must not fall through');
 });
 
 test('AGAINST THE REAL TABLE: 40 drifting records make ONE row, 3 bad ids make THREE', async () => {
