@@ -186,13 +186,18 @@
 
   function fail(res, data){
     var num = qs('q') || qs('pro') || qs('bol') || '';
+    var detail = document.getElementById('notfound-detail');
+    // No number in the URL at all is a bad link, not an outage — check it before the
+    // fault test below, whose `!data` arm would otherwise swallow every numberless load.
+    if (!num) {
+      detail.textContent = "No shipment number was provided.";
+      show('state-notfound');
+      return;
+    }
     var ourFault = (res && (res.status === 503 || res.status === 429)) ||
       (data && (data.error === 'upstream_error' || data.error === 'rate_limited')) || !data;
     if (ourFault) { show('state-error'); return; }
-    var detail = document.getElementById('notfound-detail');
-    detail.textContent = num
-      ? "We couldn't match \"" + num + "\" to a shipment."
-      : "No shipment number was provided.";
+    detail.textContent = "We couldn't match \"" + num + "\" to a shipment.";
     show('state-notfound');
   }
 
