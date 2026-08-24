@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shipment Tracking</title>
+<style>
+  :root{
+    --ink:#1a1a1e;
+    --ink-soft:#68666f;
+    --paper:#ffffff;
+    --line:#e3e2e6;
+    --accent:#2f2f35;
+    --ok:#16794f;
+    --ok-tint:#e7f5ee;
+    --warn:#8a5a00;
+    --warn-tint:#fdf3e0;
+    --pending:#d3d2d8;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;line-height:1.5;}
+  .wrap{max-width:640px;margin:0 auto;padding:28px 20px 60px;}
+
+  #state-loading, #state-error, #state-notfound{padding:60px 0;text-align:center;color:var(--ink-soft);}
+  #state-loading .spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);
+    border-top-color:var(--accent);margin:0 auto 14px;animation:sp .8s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+  #state-error strong, #state-notfound strong{display:block;color:var(--ink);font-size:15px;margin-bottom:6px;}
+
+  .hidden{display:none !important;}
+
+  .head{padding-bottom:18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;
+    align-items:flex-start;gap:16px;flex-wrap:wrap;}
+  .head .ref{font-size:12px;color:var(--ink-soft);letter-spacing:0.02em;margin-bottom:4px;}
+  .head .lane{font-weight:600;font-size:17px;}
+  .head .lane .via{color:var(--ink-soft);font-weight:400;}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+    padding:6px 12px;border-radius:999px;white-space:nowrap;}
+  .pill.delivered{background:var(--ok-tint);color:var(--ok);}
+  .pill.delivered::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);}
+  .pill.transit{background:var(--warn-tint);color:var(--warn);}
+  .pill.transit::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--warn);}
+
+  .meta-grid{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--line);}
+  .meta-cell{padding:16px 0;}
+  .meta-cell:not(:first-child){padding-left:16px;}
+  .meta-cell .label{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;}
+  .meta-cell .value{font-size:13.5px;font-weight:600;}
+
+  .timeline{padding:22px 0 4px;}
+  .tl-item{display:flex;gap:14px;position:relative;}
+  .tl-item:not(:last-child){padding-bottom:22px;}
+  .tl-item:not(:last-child)::before{content:"";position:absolute;left:6px;top:16px;bottom:0;width:1.5px;background:var(--line);}
+  .tl-dot{width:13px;height:13px;border-radius:50%;flex-shrink:0;margin-top:2px;background:var(--pending);border:2px solid var(--paper);box-shadow:0 0 0 1.5px var(--line);}
+  .tl-item.latest .tl-dot{background:var(--accent);box-shadow:0 0 0 1.5px var(--accent);}
+  .tl-body .tl-title{font-weight:600;font-size:13.5px;margin-bottom:2px;}
+  .tl-item:not(.latest) .tl-title{color:var(--ink-soft);font-weight:500;}
+  .tl-body .tl-desc{font-size:12.5px;color:var(--ink-soft);line-height:1.5;}
+  .tl-body .tl-time{font-size:11.5px;color:#a6a4ac;margin-top:3px;}
+
+  #content{display:none;}
+  #content.show{display:block;}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div id="state-loading">
+    <div class="spin"></div>
+    Looking up shipment…
+  </div>
+
+  <div id="state-error" class="hidden">
+    <strong>Tracking is temporarily unavailable</strong>
+    That's on our end, not the shipment number. Please try again shortly.
+  </div>
+
+  <div id="state-notfound" class="hidden">
+    <strong>No record found</strong>
+    <span id="notfound-detail">We couldn't match that number to a shipment.</span>
+  </div>
+
+  <div id="content">
+    <div class="head">
+      <div>
+        <div class="ref">Ref <span id="f-bol">—</span></div>
+        <div class="lane"><span id="f-origin">—</span> → <span id="f-dest">—</span><span class="via" id="f-carrier-wrap"> via <span id="f-carrier"></span></span></div>
+      </div>
+      <div class="pill" id="f-pill"></div>
+    </div>
+
+    <div class="meta-grid">
+      <div class="meta-cell">
+        <div class="label">Carrier</div>
+        <div class="value" id="f-carrier2">—</div>
+      </div>
+      <div class="meta-cell">
+        <div class="label">Service</div>
+        <div class="value" id="f-service">—</div>
+      </div>
+      <div class="meta-cell">
+        <div class="label">Pieces / Weight</div>
+        <div class="value" id="f-freight">—</div>
+      </div>
+    </div>
+
+    <div class="timeline" id="timeline"></div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var TRACK_WORKER = 'https://fl-tracking.felipe-b80.workers.dev';
+
+  function qs(name){
+    return new URLSearchParams(location.search).get(name);
+  }
+  function esc(s){
+    var d = document.createElement('div');
+    d.textContent = (s == null ? '' : String(s));
+    return d.innerHTML;
+  }
+  function show(id){
+    ['state-loading','state-error','state-notfound','content'].forEach(function(x){
+      var el = document.getElementById(x);
+      if (!el) return;
+      if (x === id) { el.classList.remove('hidden'); if (x === 'content') el.classList.add('show'); }
+      else { el.classList.add('hidden'); if (x === 'content') el.classList.remove('show'); }
+    });
+  }
+
+  function render(d){
+    document.getElementById('f-bol').textContent = d.bol || '—';
+
+    var origin = d.origin || '—';
+    var dest = d.destination || '—';
+    document.getElementById('f-origin').textContent = origin;
+    document.getElementById('f-dest').textContent = dest;
+
+    var carrier = d.carrier || '';
+    document.getElementById('f-carrier').textContent = carrier;
+    document.getElementById('f-carrier-wrap').style.display = carrier ? '' : 'none';
+    document.getElementById('f-carrier2').textContent = carrier || '—';
+    document.getElementById('f-service').textContent = d.service || '—';
+
+    var pieces = (d.pieces != null && d.pieces !== '') ? d.pieces : null;
+    var weight = (d.weight != null && d.weight !== '') ? d.weight : null;
+    var freightBits = [];
+    if (pieces != null) freightBits.push(pieces + (pieces == 1 ? ' pc' : ' pcs'));
+    if (weight != null) freightBits.push(weight + ' lb');
+    document.getElementById('f-freight').textContent = freightBits.length ? freightBits.join(' · ') : '—';
+
+    var pill = document.getElementById('f-pill');
+    if (d.delivered) {
+      pill.className = 'pill delivered';
+      pill.textContent = 'Delivered';
+    } else {
+      pill.className = 'pill transit';
+      pill.textContent = d.currentStatus || 'In transit';
+    }
+
+    var tl = document.getElementById('timeline');
+    tl.innerHTML = '';
+    var events = Array.isArray(d.timeline) ? d.timeline : [];
+    events.forEach(function(ev, i){
+      var item = document.createElement('div');
+      item.className = 'tl-item' + (i === 0 ? ' latest' : '');
+      var when = [ev.date, ev.time].filter(Boolean).join(' ');
+      item.innerHTML =
+        '<div class="tl-dot"></div>' +
+        '<div class="tl-body">' +
+          '<div class="tl-title">' + esc(ev.status || 'Update') + '</div>' +
+          (ev.remarks ? '<div class="tl-desc">' + esc(ev.remarks) + '</div>' : '') +
+          (when ? '<div class="tl-time">' + esc(when) + '</div>' : '') +
+        '</div>';
+      tl.appendChild(item);
+    });
+
+    show('content');
+  }
+
+  function fail(res, data){
+    var num = qs('q') || qs('pro') || qs('bol') || '';
+    var ourFault = (res && (res.status === 503 || res.status === 429)) ||
+      (data && (data.error === 'upstream_error' || data.error === 'rate_limited')) || !data;
+    if (ourFault) { show('state-error'); return; }
+    var detail = document.getElementById('notfound-detail');
+    detail.textContent = num
+      ? "We couldn't match \"" + num + "\" to a shipment."
+      : "No shipment number was provided.";
+    show('state-notfound');
+  }
+
+  function run(){
+    var num = qs('q') || qs('pro') || qs('bol');
+    if (!num) { fail(null, null); return; }
+    show('state-loading');
+    fetch(TRACK_WORKER + '/?q=' + encodeURIComponent(num))
+      .then(function(res){
+        return res.json().catch(function(){ return null; }).then(function(data){
+          return { res: res, data: data };
+        });
+      })
+      .then(function(o){
+        if (o.data && o.data.ok) render(o.data);
+        else fail(o.res, o.data);
+      })
+      .catch(function(){
+        fail(null, null);
+      });
+  }
+
+  run();
+})();
+</script>
+
+</body>
+</html>
