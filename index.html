@@ -3932,16 +3932,20 @@ document.addEventListener('DOMContentLoaded', function(){
   if(ita){ ita.addEventListener('focus',_movieTakeOver); ita.addEventListener('keydown',_movieTakeOver); }
   // Take-over: any REAL click or keypress anywhere → stop the demo and return to the shimmering home.
   ['pointerdown','keydown'].forEach(ev=>document.addEventListener(ev, e=>{ if(!(e.isTrusted && _movieRunning && !_movieKilled())) return; if(ev==='pointerdown' && e.target && e.target.closest && e.target.closest('#right-resizer')) return; _movieTakeOver(); }, true));
-  // Panel deep-link present? (?apply=1 / ?terms=1 / ?privacy=1) — the visitor came for a
-  // specific panel, so suppress the demo auto-play, which would soft-reset and close it.
+  // Panel/track deep-link present? (?apply=1 / ?terms=1 / ?privacy=1 / ?track=) — the visitor
+  // came for a specific panel or lookup, so suppress the demo auto-play, which would soft-reset
+  // and close it.
   let _panelDeepLink=false;
-  try { const _q=new URLSearchParams(location.search); _panelDeepLink = _q.get('apply')==='1' || _q.get('terms')==='1' || _q.get('privacy')==='1'; } catch(e) {}
+  try { const _q=new URLSearchParams(location.search); _panelDeepLink = _q.get('apply')==='1' || _q.get('terms')==='1' || _q.get('privacy')==='1' || !!_q.get('track'); } catch(e) {}
   if(!_movieKilled() && !_panelDeepLink && window.innerWidth>768) _mt(startMovie, 2000); // no auto-play on mobile or when a panel deep-link is present
   initVoiceMode();
   // Deep-link: /?apply=1 opens the Credit Application panel (used by the dispatch
   // modal's "Apply for Net 15 terms" link in portal.html, and any future entry point).
   // /?terms=1 and /?privacy=1 open the Terms and Privacy panels — used by the credit-app
   // form's legal links so they open in a NEW TAB without losing the customer's form data.
+  // /?track={number} runs a live public lookup immediately, same as typing the number into
+  // the chat — built for partners (e.g. Freight Club) who need a one-click tracking link to
+  // embed in their own portal rather than sending customers to type a number here.
   try {
     const _dl = new URLSearchParams(location.search);
     // Embed mode: portal iframes this page as /?apply=1&embed=1 — strip the landing chrome (CSS on data-embed).
@@ -3949,6 +3953,12 @@ document.addEventListener('DOMContentLoaded', function(){
     if(_dl.get('apply')==='1' && typeof openCreditAppPanel==='function'){ _mt(openCreditAppPanel, 300); }
     if(_dl.get('terms')==='1' && typeof openTermsPanel==='function'){ _mt(openTermsPanel, 300); }
     if(_dl.get('privacy')==='1' && typeof openPrivacyPanel==='function'){ _mt(openPrivacyPanel, 300); }
+    const _trackNum = (_dl.get('track')||'').trim();
+    // Same shape check as the Worker's own validation (fl-tracking ?q= route) — malformed or
+    // missing values just fall through to the normal welcome screen, no error state.
+    if(_trackNum && /^[A-Za-z0-9-]{4,40}$/.test(_trackNum) && typeof _trackShipment==='function' && typeof showChatArea==='function'){
+      _mt(function(){ showChatArea(); _trackShipment(_trackNum); }, 300);
+    }
   } catch(e) {}
 });
 </script>
