@@ -6,8 +6,13 @@
 // path not explicitly allowed below returns 404 and is never publicly readable at
 // www.freightandlogistics.ai — regardless of what else lands in the repo.
 //
-// Servable, and nothing else: the customer-facing HTML pages (index, portal, admin),
+// Servable, and nothing else: the customer-facing HTML pages (index, portal, admin, track),
 // logo.png, logo-white.png, sample-slip.png, and the logos/ + docs/ image directories.
+//
+// track.html is the unbranded partner tracking page — partners embed
+// /track.html?q={PRO} in their own portal, so it must be publicly reachable. It carries no
+// branding and reads only the public fl-tracking Worker, so it exposes nothing the landing
+// page's own tracking does not.
 //
 // The Credit Application is NOT a standalone page — it renders in the index.html right
 // pane and is opened via the /?apply=1 deep-link, so no /apply route is allowlisted here.
@@ -20,6 +25,7 @@ const ALLOWED_EXACT = new Set([
   '/', '/index', '/index.html',
   '/portal', '/portal.html',
   '/admin', '/admin.html',
+  '/track', '/track.html',
   '/logo.png', '/logo-white.png', '/sample-slip.png',
 ]);
 const ALLOWED_PREFIXES = ['/logos/', '/docs/'];
