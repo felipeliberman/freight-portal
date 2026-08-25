@@ -3333,10 +3333,19 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
     }
     // Resolve each selected invoice's QBO Id + Balance by its DocNumber before
     // opening the Stripe modal, so the payment can be recorded back to QBO on success.
+    //
+    // A lookup that fails is NOT a soft failure. Both failure modes here — the fetch throwing, and a
+    // 200 that carries no invoices[0] — used to leave _qboId as '' and fall through to the modal
+    // anyway; _recordQboPayments then silently skipped exactly those invoices. That is how a single
+    // ACH charge covering 9 invoices posted to QBO against only 4 of them, leaving the customer
+    // charged in full with 5 invoices still showing open. Charging is irreversible, so it fails
+    // CLOSED: if even one id is missing we never open the modal. Same rule, same shape, and the same
+    // reason as the out-of-view guard above — never pay a partial set.
     const lbl = payBtn.querySelector('.pay-btn-label');
     const prevLbl = lbl ? lbl.innerHTML : '';
     if (lbl) lbl.textContent = 'Loading…';
     payBtn.disabled = true;
+    const qboUnresolved = [];
     try {
       await Promise.all(invsToPay.map(async inv => {
         const docNum = getInvoiceFields(inv).invNum;
@@ -3349,11 +3358,21 @@ function renderInvoices(invoices, fullInvoicesList, _invDateFrom, _invDateTo) {
             inv._qboId = String(q0.Id || '');
             inv._qboBalance = (q0.Balance != null && !isNaN(Number(q0.Balance))) ? Number(q0.Balance) : null;
           }
-        } catch (e) { console.error('[QBO lookup] failed for invoice', docNum, e); }
+          // No match, or a match with no usable Id — both leave nothing to post the payment against.
+          if (!inv._qboId) qboUnresolved.push({ docNum, reason: q0 ? 'no Id on the QBO record' : (res.ok ? 'no QBO invoice matched' : 'lookup HTTP ' + res.status) });
+        } catch (e) {
+          console.error('[QBO lookup] failed for invoice', docNum, e);
+          qboUnresolved.push({ docNum, reason: 'lookup request failed' });
+        }
       }));
     } finally {
       payBtn.disabled = false;
       if (lbl) lbl.innerHTML = prevLbl;
+    }
+    if (qboUnresolved.length) {
+      console.warn('[invoice pay] could not resolve a QBO id for every selected invoice; aborting before charge', qboUnresolved);
+      showInvToast('We could not verify ' + (qboUnresolved.length === 1 ? 'invoice ' + qboUnresolved[0].docNum : qboUnresolved.length + ' of these invoices') + ' — nothing was charged. Please try again or email support@freightandlogistics.ai.');
+      return;
     }
     showStripePaymentModal(invsToPay);
   };
@@ -3718,43 +3737,102 @@ function cardFeeOn(subtotal) {
   return Math.floor(cents * 0.029) / 100;
 }
 
-// Record each paid invoice back to QuickBooks Online after Stripe succeeds, using
-// the QBO Id resolved at pay time (see the Pay Selected handler). The payment
-// amount is the QBO Balance, falling back to the invoice total. Best-effort — never
-// blocks the success UI, since Stripe has already captured the funds.
+// Record each paid invoice back to QuickBooks Online after Stripe has CAPTURED the funds, using
+// the QBO Id resolved at pay time (see the Pay Selected handler). The payment amount is the QBO
+// Balance, falling back to the invoice total.
+//
+// Call this ONLY once the money has actually moved. A QBO payment is a ledger write: posting one
+// against funds that are merely in flight marks an invoice paid that nobody has been debited for.
+// The ACH branch therefore calls this only on 'succeeded', never on 'processing'.
+//
+// Still best-effort in the sense that it never throws and never blocks the success UI — by the time
+// it runs the charge is irreversible, so failing the UI would only hide a completed payment. But it
+// no longer fails SILENTLY: it returns the list of invoices it could not post, so the caller can say
+// so. A skipped invoice used to be indistinguishable from a posted one, which is what let a 9-invoice
+// payment report success while 5 of the 9 were never recorded.
 async function _recordQboPayments(invoices, stripePaymentIntentId) {
   const paymentDate = new Date().toISOString().split('T')[0];
-  await Promise.all((invoices || []).map(inv => {
-    if (!inv._qboId) return Promise.resolve(null);
+  const failures = [];
+  await Promise.all((invoices || []).map(async inv => {
+    const docNum = getInvoiceFields(inv).invNum;
+    // Should be unreachable — the Pay Selected handler aborts before the modal when any id is
+    // missing. Kept as a backstop, and it now REPORTS rather than silently returning null.
+    if (!inv._qboId) {
+      console.error('[QBO payment] no QBO id for invoice', docNum, '— not posted');
+      failures.push({ docNum, reason: 'unresolved QBO id' });
+      return;
+    }
     const amount = (inv._qboBalance != null && !isNaN(inv._qboBalance))
       ? Number(inv._qboBalance)
       : (parseFloat(getInvoiceFields(inv).rawAmt) || 0);
-    return fetch('https://qbo-api.felipe-b80.workers.dev/payment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId: inv._qboId,
-        amount,
-        paymentDate,
-        stripePaymentIntentId: stripePaymentIntentId || null
-      })
-    }).then(r => r.json()).catch(e => { console.error('[QBO payment] failed for invoice', inv._qboId, e); return null; });
+    try {
+      const res = await fetch('https://qbo-api.felipe-b80.workers.dev/payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: inv._qboId,
+          amount,
+          paymentDate,
+          stripePaymentIntentId: stripePaymentIntentId || null
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      // qbo-api signals failure two ways — a non-2xx status, and an { error } body. The old code
+      // read only r.json() and so treated a 404 'Invoice not found' as a successful post.
+      if (!res.ok || (data && data.error)) {
+        console.error('[QBO payment] rejected for invoice', docNum, res.status, data);
+        failures.push({ docNum, reason: (data && data.error) || ('HTTP ' + res.status) });
+      }
+    } catch (e) {
+      console.error('[QBO payment] failed for invoice', docNum, e);
+      failures.push({ docNum, reason: 'request failed' });
+    }
   }));
+  return failures;
 }
 
-function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
+// opts.achInitiated — the ACH debit was accepted by Stripe but has NOT settled (status 'processing').
+// The money has not moved yet, so every claim on this screen has to be in the future tense: submitted,
+// not confirmed; will be applied, not paid. opts.qboFailures — invoices whose payment could not be
+// recorded to QuickBooks even though the funds WERE captured (card path); shown as a warning so a
+// silent partial post can't masquerade as a clean one.
+function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4, opts) {
+  opts = opts || {};
+  const achInitiated = !!opts.achInitiated;
+  const qboFailures = opts.qboFailures || [];
   // Clear box contents
   box.innerHTML = '';
 
   // Header
   const hdr = document.createElement('div');
   hdr.style.cssText = 'background:#bd27bc;border-radius:16px 16px 0 0;padding:28px 24px 24px;text-align:center;';
-  hdr.innerHTML = `
+  hdr.innerHTML = achInitiated ? `
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <div style="color:#fff;font-size:20px;font-weight:700;margin-bottom:4px;">Payment Submitted</div>
+    <div style="color:#f5d0f5;font-size:13px;">Your bank transfer is on its way — it settles in 2-5 business days.</div>
+  ` : `
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
     <div style="color:#fff;font-size:20px;font-weight:700;margin-bottom:4px;">Payment Confirmed</div>
     <div style="color:#f5d0f5;font-size:13px;">A confirmation email has been sent to you.</div>
   `;
   box.appendChild(hdr);
+
+  // In-flight notice — states plainly that the invoices stay open until the transfer settles, so the
+  // customer is not left wondering why they still show a balance after "paying" them.
+  if (achInitiated) {
+    const pend = document.createElement('div');
+    pend.style.cssText = 'padding:12px 24px;background:#fdf6e3;border-bottom:1px solid #e5c07b;font-size:12px;color:#8a6d3b;line-height:1.5;';
+    pend.textContent = 'These invoices will stay open until the transfer settles, then they are marked paid. We have emailed you a copy of this submission.';
+    box.appendChild(pend);
+  }
+
+  // Funds captured, ledger not updated for every invoice — say so rather than implying a clean post.
+  if (qboFailures.length) {
+    const warn = document.createElement('div');
+    warn.style.cssText = 'padding:12px 24px;background:#fdf6e3;border-bottom:1px solid #e5c07b;font-size:12px;color:#8a6d3b;line-height:1.5;';
+    warn.textContent = 'Your payment went through in full. ' + (qboFailures.length === 1 ? 'Invoice ' + qboFailures[0].docNum + ' may take longer to' : qboFailures.length + ' of these invoices may take longer to') + ' show as paid in your account — no action is needed, but email support@freightandlogistics.ai if it has not updated in one business day.';
+    box.appendChild(warn);
+  }
 
   // Confirmation ID
   if (confirmationId) {
@@ -3798,7 +3876,7 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
   }
   const totalRow = document.createElement('div');
   totalRow.style.cssText = 'display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:10px 0 0;' + (fee === 0 ? 'border-top:1px solid #e5e2d9;margin-top:8px;' : '');
-  totalRow.innerHTML = `<span>Total Paid</span><span>$${Number(total).toFixed(2)}</span>`;
+  totalRow.innerHTML = `<span>${achInitiated ? 'Total Submitted' : 'Total Paid'}</span><span>$${Number(total).toFixed(2)}</span>`;
   summary.appendChild(totalRow);
   const methodNote = document.createElement('div');
   methodNote.style.cssText = 'font-size:11px;color:#888;margin-top:6px;';
@@ -3813,11 +3891,13 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
 
   // Download Receipt button
   const dlBtn = document.createElement('button');
-  dlBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download Receipt`;
+  // A receipt is proof of a completed payment. On an unsettled ACH there is nothing to receipt yet,
+  // so the document (and this button) say submitted — the same claim the header makes, kept in step.
+  dlBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${achInitiated ? 'Download Confirmation' : 'Download Receipt'}`;
   dlBtn.style.cssText = 'width:100%;background:#bd27bc;color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;';
   dlBtn.onmouseover = () => dlBtn.style.background = '#8e1b8d';
   dlBtn.onmouseout  = () => dlBtn.style.background = '#bd27bc';
-  dlBtn.onclick = () => generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4);
+  dlBtn.onclick = () => generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4, achInitiated);
   btnWrap.appendChild(dlBtn);
 
   // Done button
@@ -3832,7 +3912,9 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
   box.appendChild(btnWrap);
 }
 
-function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4) {
+// achInitiated — the ACH debit is in flight, not settled. The document is then a submission
+// confirmation, not a receipt: nothing has been paid yet and it must not say it has.
+function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, cardBrand, cardLast4, achInitiated) {
   var date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   var time = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
   var refNum = 'FL-' + Date.now().toString().slice(-8);
@@ -3862,16 +3944,18 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
     '<div style="display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 32px 10px;border-bottom:1px solid #e5e2d9;"><span>Convenience fee (2.9%)</span><span>$' + fee.toFixed(2) + '</span></div>'
     : '';
 
-  var achNote = paymentMethod === 'ach' ? '<div style="padding:8px 32px;font-size:11px;color:#888;">ACH transfers typically settle within 2-5 business days.</div>' : '';
+  var achNote = achInitiated
+    ? '<div style="padding:8px 32px;font-size:11px;color:#888;">This is a confirmation that your bank transfer was submitted, not a receipt of payment. ACH transfers typically settle within 2-5 business days; these invoices stay open until the transfer settles.</div>'
+    : (paymentMethod === 'ach' ? '<div style="padding:8px 32px;font-size:11px;color:#888;">ACH transfers typically settle within 2-5 business days.</div>' : '');
 
-  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment Receipt - Freight and Logistics, Inc.</title>' +
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + (achInitiated ? 'Payment Submitted' : 'Payment Receipt') + ' - Freight and Logistics, Inc.</title>' +
     '<style>* { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: system-ui, -apple-system, sans-serif; background: #f5f4f0; padding: 40px 20px; } .card { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,.08); } @media print { body { background: #fff; padding: 0; } .card { box-shadow: none; border-radius: 0; } }</style>' +
     '</head><body><div class="card">' +
 
     '<div style="background:#bd27bc;padding:24px 32px;display:flex;align-items:center;justify-content:space-between;">' +
       '<img src="' + logoUrl + '" alt="Freight and Logistics, Inc." style="height:24px;width:auto;filter:brightness(0) invert(1);" onerror="this.style.display=\'none\'">' +
       '<div style="text-align:right;">' +
-        '<div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;">Payment Receipt</div>' +
+        '<div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;">' + (achInitiated ? 'Payment Submitted' : 'Payment Receipt') + '</div>' +
         '<div style="font-size:11px;color:#f5d0f5;">' + date + ' at ' + time + '</div>' +
         (shortId ? '<div style="font-size:11px;color:#f5d0f5;">Confirmation <span style="font-weight:700;color:#fff;">' + shortId + '</span></div>' : '') +
         '<div style="font-size:11px;color:#f5d0f5;">' + cardLabel + '</div>' +
@@ -3885,7 +3969,7 @@ function generatePaymentReceipt(invoices, total, paymentMethod, confirmationId, 
     feeSection +
 
     '<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:12px 32px;border-top:1px solid #e5e2d9;">' +
-      '<span style="color:#1a1a1a;">Total Paid</span>' +
+      '<span style="color:#1a1a1a;">' + (achInitiated ? 'Total Submitted' : 'Total Paid') + '</span>' +
       '<span style="color:#bd27bc;">$' + Number(total).toFixed(2) + '</span>' +
     '</div>' +
 
@@ -4231,15 +4315,44 @@ function showStripePaymentModal(invoices) {
           payment_method: window._achPaymentMethod
         });
         if (error) throw new Error(error.message);
-        // Record the payment against each invoice in QuickBooks Online (best-effort).
-        await _recordQboPayments(invoices, paymentIntent && paymentIntent.id);
-        // Send confirmation email
-        await fetch(WORKER + '/send-confirmation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'ach' })
-        });
-        showPaymentSuccess(overlay, box, invoices, total, 'ach');
+        // An ACH debit is INITIATED here, not captured. confirmUsBankAccountPayment resolves without
+        // an error and with status 'processing' on the happy path — settlement is 2-5 business days
+        // away and can still fail (insufficient funds, closed account, revoked authorization). The
+        // absence of `error` therefore proves only that Stripe accepted the instruction.
+        //
+        // This used to fall straight through to the QBO post, the "your payment has been received"
+        // email and a "Payment Confirmed" screen, on money that had not moved. A ledger write and a
+        // customer-facing claim of receipt are both irreversible in the way that matters — you cannot
+        // un-tell someone they paid — so they fail CLOSED and wait for real settlement.
+        const achStatus = (paymentIntent && paymentIntent.status) || 'unknown';
+        if (achStatus === 'processing') {
+          // NO QBO post. The invoices stay open until the funds settle. Nothing records this payment
+          // to QuickBooks today — that is the payment_intent.succeeded webhook's job (not built yet),
+          // so until it exists settled ACH payments are posted to QBO by hand.
+          await fetch(WORKER + '/send-confirmation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'ach', achStatus: 'initiated', confirmationId: (paymentIntent && paymentIntent.id) || '' })
+          });
+          showPaymentSuccess(overlay, box, invoices, total, 'ach', (paymentIntent && paymentIntent.id) || '', null, null, { achInitiated: true });
+          return;
+        }
+        if (achStatus === 'succeeded') {
+          // Funds actually captured — the pre-existing behaviour is correct here. In practice Stripe
+          // does not return 'succeeded' synchronously for US bank debits, so this path is effectively
+          // unreachable from the browser and exists so a same-turn settlement is never mishandled.
+          const qboFailures = await _recordQboPayments(invoices, paymentIntent && paymentIntent.id);
+          await fetch(WORKER + '/send-confirmation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'ach', confirmationId: (paymentIntent && paymentIntent.id) || '' })
+          });
+          showPaymentSuccess(overlay, box, invoices, total, 'ach', (paymentIntent && paymentIntent.id) || '', null, null, { qboFailures });
+          return;
+        }
+        // requires_payment_method, requires_action, canceled, unknown — not a payment. Surface the
+        // status instead of showing a success screen for it.
+        throw new Error('Your bank transfer could not be completed (status: ' + achStatus + '). No payment was taken — please try again or email support@freightandlogistics.ai.');
       } catch(e) {
         if (errEl) errEl.textContent = e.message || 'Payment failed. Please try again.';
         confirmBtn.textContent = 'Pay $' + total.toFixed(2);
@@ -4273,15 +4386,17 @@ function showStripePaymentModal(invoices) {
       const cardBrand = pmDetails.brand || (paymentIntent.payment_method_types && paymentIntent.payment_method_types[0] === 'card' ? 'card' : '');
       const cardLast4 = pmDetails.last4 || '';
       const confirmationId = paymentIntent.id || '';
-      // Record the payment against each invoice in QuickBooks Online (best-effort).
-      await _recordQboPayments(invoices, confirmationId);
+      // Card funds ARE captured at this point, so the payment is real and the received-email is
+      // truthful. Record it against each invoice in QuickBooks — never blocking, but any invoice that
+      // fails to post comes back so the success screen can say so rather than implying a clean post.
+      const qboFailures = await _recordQboPayments(invoices, confirmationId);
       // Send confirmation email
       await fetch(WORKER + '/send-confirmation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerEmail, invoices: invoiceMeta, total, paymentMethod: 'card', confirmationId, cardBrand, cardLast4 })
       });
-      showPaymentSuccess(overlay, box, invoices, total, 'card', confirmationId, cardBrand, cardLast4);
+      showPaymentSuccess(overlay, box, invoices, total, 'card', confirmationId, cardBrand, cardLast4, { qboFailures });
     } catch(e) {
       document.getElementById('stripe-card-error').textContent = e.message || 'Payment failed. Please try again.';
       confirmBtn.textContent = 'Pay $' + total.toFixed(2);
