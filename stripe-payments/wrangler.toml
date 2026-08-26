@@ -6,11 +6,15 @@
 # src/index.js was last reconciled FROM the deployed worker on 2026-07-20.
 #
 # Deploy:  cd stripe-payments && wrangler deploy
-# Secrets (set via `wrangler secret put`, NOT stored here):
-#   STRIPE_SK        — Stripe secret key (live)
-#   STRIPE_SK_TEST   — Stripe secret key (test mode; used by skFor() for setup/save/charge)
-#   SENDGRID_KEY     — SendGrid API key
-#   RECAPTCHA_SECRET — reCAPTCHA v3 secret
+# Secrets (set via `wrangler secret put` OR the Cloudflare dashboard, NOT stored here):
+#   STRIPE_SK                  — Stripe secret key (live)
+#   STRIPE_SK_TEST             — Stripe secret key (test mode; used by skFor() for setup/save/charge)
+#   SENDGRID_KEY               — SendGrid API key
+#   RECAPTCHA_SECRET           — reCAPTCHA v3 secret
+#   STRIPE_WEBHOOK_SECRET      — signing secret for the LIVE /webhook destination
+#   STRIPE_WEBHOOK_SECRET_TEST — signing secret for the test-mode /webhook destination
+# Dashboard-set secrets DO appear in `wrangler secret list` and survive `wrangler deploy`
+# (verified 2026-08-26) — secrets are not part of the code bundle.
 name = "stripe-payments"
 main = "src/index.js"
 compatibility_date = "2026-06-17"
@@ -22,3 +26,22 @@ compatibility_date = "2026-06-17"
 [[kv_namespaces]]
 binding = "STRIPE_KV"
 id = "61a138675f464fd3aa6ca671f043ad92"
+
+# Service binding to qbo-api, for the settlement webhook's QuickBooks writes.
+#
+# This is NOT a style preference — a plain fetch() to the qbo-api URL does not work. Both Workers
+# live on the same felipe-b80.workers.dev zone, and a Worker subrequest to a same-zone hostname
+# LOOPS BACK to the calling Worker: the webhook's POST to qbo-api.../payment was answered by
+# stripe-payments' own unknown-path fallback, {"error":"Not found"} 404, on every delivery
+# (diagnosed live 2026-08-26). The identical request by curl succeeds, which is what made it look
+# like a QuickBooks problem rather than a routing one.
+#
+# The binding also keeps these calls off the public internet entirely. That matters because
+# qbo-api has NO authentication (its ALLOWED_ORIGINS is CORS, which only browsers honour), so
+# every caller that stops using the public URL is one less thing depending on that gap. It does
+# NOT close the gap: portal.html still calls qbo-api directly from the browser.
+#
+# Requires no change to qbo-api itself — the binding is declared entirely on this side.
+[[services]]
+binding = "QBO"
+service = "qbo-api"

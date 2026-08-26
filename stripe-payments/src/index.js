@@ -469,6 +469,7 @@ export default {
       for (const r of rows) {
         const mk = "wh:posted:" + pi.id + ":" + r.qboId;
         try {
+          // Already posted on an earlier delivery — counts as posted, never re-sent.
           if (await env.STRIPE_KV.get(mk)) { posted.push(r); continue; }
         } catch (e) {
           // Cannot prove this invoice is unposted -> do not post it. Retry later.
@@ -477,7 +478,10 @@ export default {
           continue;
         }
         try {
-          const res = await fetch("https://qbo-api.felipe-b80.workers.dev/payment", {
+          // env.QBO, NOT fetch() — see the service binding note in wrangler.toml. A plain fetch to
+          // the qbo-api URL loops back to this Worker, because both sit on the same workers.dev
+          // zone; it answers with this Worker's own 404 and never reaches QuickBooks at all.
+          const res = await env.QBO.fetch("https://qbo-api.felipe-b80.workers.dev/payment", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ invoiceId: r.qboId, amount: r.amount, paymentDate, stripePaymentIntentId: pi.id })
@@ -504,7 +508,51 @@ export default {
       if (failed.length) {
         // Non-2xx so Stripe retries. The markers above mean the retry resumes rather than restarts.
         console.error("[webhook] " + failed.length + "/" + rows.length + " invoice(s) failed to post for", pi.id);
-        return json({ error: "QBO posting incomplete", posted: posted.length, failed: failed.length }, 500);
+        // ── Who needs to hear about this, and when ────────────────────────────
+        // Two very different situations share this branch:
+        //
+        //  - NOTHING posted. No split state. Stripe's retries genuinely self-heal this, so staying
+        //    quiet is right — an alert on every attempt is noise that trains you to ignore it. The
+        //    danger is only that retries run out and it ends in silence, so it escalates after
+        //    ATTEMPT_ALERT_AT tries.
+        //  - SOME posted, some did not. This is the split-brain: money captured, part of the ledger
+        //    updated, and nobody can tell which part without going and looking. It is exactly the
+        //    state that had to be unpicked by hand before. Alert straight away.
+        //
+        // Either way the alert NAMES the invoices on both sides. A "something went wrong" message
+        // that omits the split leaves the reconciliation entirely manual, which is the whole thing
+        // this is meant to prevent.
+        const ATTEMPT_ALERT_AT = 3;
+        const isPartial = posted.length > 0;
+        const alertKey = "wh:alerted:" + eventId;
+        const attemptKey = "wh:attempts:" + eventId;
+        let attempts = 1;
+        try {
+          attempts = (parseInt(await env.STRIPE_KV.get(attemptKey) || "0", 10) || 0) + 1;
+          await env.STRIPE_KV.put(attemptKey, String(attempts), { expirationTtl: 60 * 60 * 24 * 7 });
+        } catch (e) { /* counter is best-effort; never let it suppress the alert below */ }
+        let alreadyAlerted = false;
+        try { alreadyAlerted = !!(await env.STRIPE_KV.get(alertKey)); } catch (e) {}
+        if (!alreadyAlerted && (isPartial || attempts >= ATTEMPT_ALERT_AT)) {
+          const li = (arr) => arr.length
+            ? "<ul>" + arr.map((r) => "<li>Invoice #" + r.docNum + " (QBO id " + r.qboId + ") &mdash; $" + Number(r.amount).toFixed(2) + (r.reason ? " &mdash; " + r.reason : "") + "</li>").join("") + "</ul>"
+            : "<p>(none)</p>";
+          const headline = isPartial
+            ? '<p style="font-weight:700;color:#b91c1c;">A settled payment posted to QuickBooks only PARTIALLY. The customer has been charged in full. Some invoices are recorded and some are not.</p>'
+            : '<p style="font-weight:700;color:#b91c1c;">A settled payment has failed to post to QuickBooks after ' + attempts + ' attempts. NOTHING has been recorded. The customer has been charged in full.</p>';
+          await alertAccounting(
+            (isPartial ? "ACH posted PARTIALLY to QuickBooks — " : "ACH failing to post to QuickBooks — ") + pi.id,
+            headline +
+            "<p>PaymentIntent: <code>" + pi.id + "</code><br>Amount: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
+            "<br>Customer: " + (md.fl_email || pi.receipt_email || "unknown") +
+            "<br>Attempt: " + attempts + "</p>" +
+            "<p><strong>Posted to QuickBooks (do NOT post these again):</strong></p>" + li(posted) +
+            "<p><strong>NOT posted (these need posting by hand if the retries do not clear):</strong></p>" + li(failed) +
+            "<p>Stripe keeps retrying for about three days. Each retry re-posts only the invoices in the second list &mdash; the first list is protected and cannot double-post. If the retries succeed you will not hear again; nothing further is needed unless this is still unresolved after that window.</p>"
+          );
+          try { await env.STRIPE_KV.put(alertKey, "1", { expirationTtl: 60 * 60 * 24 * 7 }); } catch (e) {}
+        }
+        return json({ error: "QBO posting incomplete", posted: posted.length, failed: failed.length, attempts }, 500);
       }
       // Ledger is correct. Only now is the customer told the money arrived.
       const to = md.fl_email || pi.receipt_email || "";
