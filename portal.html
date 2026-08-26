@@ -4300,11 +4300,23 @@ function showStripePaymentModal(invoices) {
       confirmBtn.disabled = true;
       try {
         const stripe = window._stripeInstance;
+        // The QBO id + amount for every selected invoice, carried onto the PaymentIntent as
+        // metadata. ACH settles days from now, long after this page is gone, so the settlement
+        // webhook has no other way to know which invoices the money covers — and it deliberately
+        // will not guess from the `description` string. The Pay Selected handler has already
+        // aborted if any of these failed to resolve, so every entry here is populated.
+        const qboInvoices = invoices.map(i => ({
+          qboId: i._qboId,
+          docNum: getInvoiceFields(i).invNum,
+          amount: (i._qboBalance != null && !isNaN(i._qboBalance))
+            ? Number(i._qboBalance)
+            : (parseFloat(getInvoiceFields(i).rawAmt) || 0)
+        }));
         // Create PaymentIntent
         const piRes = await fetch(WORKER + '/create-payment-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail, customerId: window._stripeCustomerId || undefined })
+          body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail, customerId: window._stripeCustomerId || undefined, qboInvoices })
         });
         const piData = await piRes.json();
         if (piData.error) throw new Error(piData.error);
@@ -4326,9 +4338,10 @@ function showStripePaymentModal(invoices) {
         // un-tell someone they paid — so they fail CLOSED and wait for real settlement.
         const achStatus = (paymentIntent && paymentIntent.status) || 'unknown';
         if (achStatus === 'processing') {
-          // NO QBO post. The invoices stay open until the funds settle. Nothing records this payment
-          // to QuickBooks today — that is the payment_intent.succeeded webhook's job (not built yet),
-          // so until it exists settled ACH payments are posted to QBO by hand.
+          // NO QBO post from here. The invoices stay open until the funds settle, at which point the
+          // payment_intent.succeeded webhook on the stripe-payments Worker posts them to QuickBooks
+          // and sends the settled confirmation. It finds them via the fl_inv_* PaymentIntent
+          // metadata built from qboInvoices above — which is why that list must be complete.
           await fetch(WORKER + '/send-confirmation', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
