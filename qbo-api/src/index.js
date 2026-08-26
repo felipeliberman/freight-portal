@@ -5,9 +5,6 @@ const QBO_API_ROOT = 'https://quickbooks.api.intuit.com/v3/company';
 const QBO_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 const MINOR_VERSION = '73';
 
-// Cap how many customer matches a LIKE lookup returns to the caller.
-const MAX_CUSTOMER_MATCHES = 25;
-
 const ALLOWED_ORIGINS = [
   'https://freightandlogistics.ai',
   'https://www.freightandlogistics.ai'
@@ -128,58 +125,36 @@ function shapeInvoice(inv) {
   };
 }
 
+// LOOKUP BY DocNumber ONLY.
+//
+// This endpoint is PUBLIC and unauthenticated — CORS is not access control, so ALLOWED_ORIGINS
+// above governs browsers and nothing else. Until that is fixed, the size of this route IS the
+// exposure, so it is kept to exactly what production calls.
+//
+// The `?email=` and `?name=` customer searches were REMOVED on 2026-08-26. They took a substring
+// (`LIKE '%value%'`) and answered with up to 25 customers — DisplayName and email address each —
+// so `?name=a` returned a slice of the customer list to anyone who asked, and iterating the
+// alphabet returned most of it. That is a customer-list-with-revenue disclosure reachable by one
+// unauthenticated GET, and it existed to serve callers that turned out not to exist: the whole
+// repo was searched (portal.html, every Worker, every file type) and NOTHING used either
+// parameter. The only production caller of this route is portal.html's invoice-id resolution,
+// which passes docNumber. Removing them cost nothing and removed the largest leak here.
+//
+// Do not restore them for debugging convenience. The QuickBooks MCP tools read the same data with
+// real authentication behind them.
+//
+// NOTE what this route still does NOT do: it will return ANY invoice by DocNumber, to anyone.
+// Constraining that needs caller identity (forward the portal's Primus bearer token, resolve the
+// ARCode, refuse invoices that are not the caller's) and is deliberately a later phase.
 async function handleInvoices(request, env, realmId) {
   const url = new URL(request.url);
-  const email = url.searchParams.get('email');
-  const name = url.searchParams.get('name');
-  if (!email && !name) {
-    return json(request, { error: 'Provide an email or name query parameter' }, 400);
+  const docNumber = url.searchParams.get('docNumber');
+  if (!docNumber) {
+    return json(request, { error: 'Provide a docNumber query parameter' }, 400);
   }
-
-  const customerQuery = email
-    ? `select * from Customer where PrimaryEmailAddr LIKE '%${q(email)}%'`
-    : `select * from Customer where DisplayName LIKE '%${q(name)}%'`;
-
-  const customers = (await queryQBO(env, realmId, customerQuery)).Customer || [];
-  if (customers.length === 0) {
-    return json(request, { customer: null, invoices: [], message: 'No matching customer' }, 404);
-  }
-
-  // A LIKE search can match several customers. Rather than silently pick one,
-  // return the list so the caller can disambiguate and re-query a specific name.
-  if (customers.length > 1) {
-    const matched = customers.length;
-    const shown = customers.slice(0, MAX_CUSTOMER_MATCHES);
-    const message = shown.length < matched
-      ? `Showing ${shown.length} of ${matched} matching customers — refine the query`
-      : `${matched} customers matched — refine the query`;
-    return json(request, {
-      multiple: true,
-      matched,
-      showing: shown.length,
-      customers: shown.map((c) => ({
-        Id: c.Id,
-        DisplayName: c.DisplayName,
-        EmailAddr: (c.PrimaryEmailAddr && c.PrimaryEmailAddr.Address) || null
-      })),
-      invoices: [],
-      message
-    }, 300);
-  }
-
-  const customer = customers[0];
   const invoiceRows =
-    (await queryQBO(env, realmId, `select * from Invoice where CustomerRef = '${q(customer.Id)}'`)).Invoice || [];
-
-  // "Open" = still has an outstanding balance.
-  const openInvoices = invoiceRows
-    .filter((inv) => Number(inv.Balance) > 0)
-    .map(shapeInvoice);
-
-  return json(request, {
-    customer: { Id: customer.Id, DisplayName: customer.DisplayName },
-    invoices: openInvoices
-  });
+    (await queryQBO(env, realmId, `select * from Invoice where DocNumber = '${q(docNumber)}'`)).Invoice || [];
+  return json(request, { invoices: invoiceRows.map(shapeInvoice) });
 }
 
 async function handlePayment(request, env, realmId) {

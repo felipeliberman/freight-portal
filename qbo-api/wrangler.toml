@@ -1,0 +1,36 @@
+# qbo-api — QuickBooks Online invoice reads + payment writes for the customer portal.
+#
+# THIS FILE DID NOT EXIST UNTIL 2026-08-26. The worker was deploy-only, which is how the repo
+# source silently fell a route behind production: the deployed script had a `docNumber` branch in
+# handleInvoices that `src/index.js` never had, and portal.html depends on it for every invoice
+# payment. A `wrangler deploy` from the repo before that reconcile would have DELETED the route and
+# broken invoice payment outright. The source was reconciled from the deployed bundle on
+# 2026-08-26 and verified byte-identical (8,959 bytes) before anything else was changed.
+#
+# ALWAYS pull + diff the deployed script before deploying. Nothing keeps them in sync:
+#   GET https://api.cloudflare.com/client/v4/accounts/<ACCT>/workers/scripts/qbo-api
+#   (multipart; the returned index.js is esbuild-BUNDLED. Compare BUNDLE-to-BUNDLE — bundle the
+#   repo with `wrangler deploy --dry-run --outdir` and diff that. Do NOT try to de-bundle the
+#   deployed script by regex; it invents differences that are not there.)
+#
+# compatibility_date is pinned to what the LIVE worker actually runs, read from the API on
+# 2026-08-26 — NOT to today's date. This is deliberate and load-bearing: the compat date changes
+# runtime semantics but does NOT change the bundle, so a byte-identical-bundle check cannot catch
+# it. Bumping it is a behaviour change and belongs in its own commit, tested on its own.
+#
+# Deploy:  cd qbo-api && wrangler deploy
+# Secrets (set via `wrangler secret put` or the Cloudflare dashboard, NOT stored here):
+#   QBO_CLIENT_ID      — Intuit app client id (used for the refresh-token exchange)
+#   QBO_CLIENT_SECRET  — Intuit app client secret
+name = "qbo-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Shared with the qbo-auth worker, which runs the /connect OAuth flow and seeds these keys:
+#   qbo_access_token, qbo_refresh_token, qbo_realm_id
+# qbo-api both READS them and WRITES rotated tokens back (refreshAccessToken), so the two workers
+# must stay on the SAME namespace — a second namespace would silently split the token store and
+# every refresh would fight the other worker's.
+[[kv_namespaces]]
+binding = "QBO_KV"
+id = "5f03926aade941319612a1dc8b524ae8"
