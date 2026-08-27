@@ -3819,10 +3819,22 @@ function showPaymentSuccess(overlay, box, invoices, total, paymentMethod, confir
 
   // In-flight notice — states plainly that the invoices stay open until the transfer settles, so the
   // customer is not left wondering why they still show a balance after "paying" them.
+  //
+  // Deliberately NOT the amber/cream of a warning band. Nothing is wrong here: the payment worked,
+  // and amber by convention says it did not. It carries the same #fdf0fd magenta wash as the
+  // confirmation band directly below — one colour, so the two read as one designed block rather
+  // than two almost-matching off-whites. #fdf0fd is reused rather than newly mixed precisely so
+  // this band and the confirmation band cannot drift apart; a fresh tint here would have differed
+  // from the card modal's confirmation band by a few units, which is the same mismatch one level up.
+  //
+  // The first clause is the whole point of the two-step ACH flow — it is what stops a customer
+  // emailing support to ask why they still owe money — so it carries the weight. Colour is NOT the
+  // emphasis: the text stays neutral dark, because coloured text on a coloured fill is what makes
+  // these bands look like errors. innerHTML is safe here — every character is a literal below.
   if (achInitiated) {
     const pend = document.createElement('div');
-    pend.style.cssText = 'padding:12px 24px;background:#fdf6e3;border-bottom:1px solid #e5c07b;font-size:12px;color:#8a6d3b;line-height:1.5;';
-    pend.textContent = 'These invoices will stay open until the transfer settles, then they are marked paid. We have emailed you a copy of this submission.';
+    pend.style.cssText = 'padding:12px 24px;background:#fdf0fd;border-bottom:1px solid #e5e2d9;font-size:12px;color:#555;line-height:1.5;';
+    pend.innerHTML = '<span style="font-weight:600;color:#1a1a1a;">These invoices will stay open until the transfer settles, then they are marked paid.</span> We have emailed you a copy of this submission.';
     box.appendChild(pend);
   }
 
