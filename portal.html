@@ -15560,6 +15560,39 @@ function _errDraftSnapshot() {
   } catch (e) { return { _snapshotError: true }; }
 }
 
+// The ONE raw object that used to go into JSON.stringify unbounded. _parseNoRates parks the
+// FULL Primus noRates array on it (`raw`), one entry per declining carrier, with no cap — on a wide
+// lane that alone can exceed the Worker's 8 KB body cap and get the report silently cut mid-JSON.
+// Keep everything that carries diagnostic value (kind, codes, distinct, counts) and DROP the bulk
+// array, recording how many entries were dropped so the log distinguishes "trimmed" from "Primus
+// returned nothing".
+function _errRatePullError() {
+  try {
+    var p = window._lastRatePullError;
+    if (!p) return null;
+    var out = {
+      kind: p.kind || null,
+      codes: Array.isArray(p.codes) ? p.codes.slice(0, 20) : null,
+      distinct: Array.isArray(p.distinct)
+        ? p.distinct.slice(0, 10).map(function (d) { return String(d).slice(0, 200); })
+        : null,
+      counts: null,
+      accessorialReject: !!p.accessorialReject,
+      guard: !!p.guard,
+      rawText: (p.rawText != null ? String(p.rawText).slice(0, 300) : null)
+    };
+    if (p.counts && typeof p.counts === 'object') {
+      out.counts = {};
+      var keys = Object.keys(p.counts);
+      keys.slice(0, 10).forEach(function (k) { out.counts[String(k).slice(0, 200)] = p.counts[k]; });
+      if (keys.length > 10) out.countsDropped = keys.length - 10;
+    }
+    // rawDropped: null = no raw array on the payload at all; a number = that many entries dropped.
+    out.rawDropped = Array.isArray(p.raw) ? p.raw.length : (p.raw != null ? 'non-array' : null);
+    return out;
+  } catch (e) { return { _rateErrorReadFailed: true }; }
+}
+
 function _reportErr(info, err) {
   try {
     info = info || {};
@@ -15568,25 +15601,45 @@ function _reportErr(info, err) {
     var key = name + '|' + fn;
     if (_errRepTotal >= _ERR_REP_MAX) return;                    // session ceiling
     if ((_errRepCounts[key] || 0) >= _ERR_REP_PER_KEY) return;   // per-signature cap
-    _errRepCounts[key] = (_errRepCounts[key] || 0) + 1;
-    _errRepTotal++;
     if (!_errSessionId) _errSessionId = Math.random().toString(36).slice(2, 10);
-    var body = JSON.stringify({
+    // The fields that must survive ANY snapshot problem. Built from strings only, so this object
+    // cannot itself be the thing that fails to serialize.
+    var base = {
       errName: name,
       errMessage: String((err && err.message) || info.errMessage || '').slice(0, 500),
       errStack: String((err && err.stack) || '').slice(0, 4096),
       fn: fn,
       phase: info.phase || null,
-      tool: info.tool || null,
-      endpoint: info.endpoint || null,
-      httpStatus: (info.httpStatus != null ? info.httpStatus : null),
       tsUtc: new Date().toISOString(),
       sessionId: _errSessionId,
-      account: (typeof currentCustomer !== 'undefined' && currentCustomer && currentCustomer.primusCustomerId) || null,
-      draft: _errDraftSnapshot(),
-      lastRatePullError: (window._lastRatePullError || null),
-      reportSeq: _errRepTotal
-    });
+      reportSeq: _errRepTotal + 1
+    };
+    var body = null, snapshotError = null;
+    try {
+      body = JSON.stringify(Object.assign({}, base, {
+        tool: info.tool || null,
+        endpoint: info.endpoint || null,
+        httpStatus: (info.httpStatus != null ? info.httpStatus : null),
+        account: (typeof currentCustomer !== 'undefined' && currentCustomer && currentCustomer.primusCustomerId) || null,
+        draft: _errDraftSnapshot(),
+        lastRatePullError: _errRatePullError()
+      }));
+    } catch (e) {
+      snapshotError = String((e && e.message) || e).slice(0, 200);
+    }
+    // DEGRADED REPORT: a bad snapshot costs detail, never the capture.
+    if (body === null) {
+      try {
+        body = JSON.stringify(Object.assign({}, base, { degraded: true, snapshotError: snapshotError || 'unknown' }));
+      } catch (e2) {
+        return; // even the degraded report will not serialize — nothing safe left to send
+      }
+    }
+    // Counters advance ONLY once there is a body to send. Incrementing before the serialize meant a
+    // stringify failure burned the per-signature budget and transmitted nothing, so three of them
+    // exhausted the cap invisibly — the failure mode this reporter exists to eliminate.
+    _errRepCounts[key] = (_errRepCounts[key] || 0) + 1;
+    _errRepTotal++;
     // keepalive: the turn may be tearing down. .catch(): the reporter must NEVER throw into the
     // failure path it is reporting on.
     fetch(_ERR_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
