@@ -92,15 +92,25 @@ export default {
       if (!ALLOWED_ORIGINS.includes(origin)) {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
+      const CAP = 8192;
       let report = '';
+      let truncated = false;
       try {
-        report = (await request.text()).slice(0, 8192);
+        const raw = await request.text();
+        // At OR over the cap: a body of exactly CAP is indistinguishable from one cut at CAP, so
+        // both are flagged. Silently slicing here produced a log line that looked healthy while
+        // carrying a `report` field cut mid-JSON that no reader could parse — the same
+        // looks-fine-but-is-broken pattern this route exists to eliminate. The cap stays; the
+        // corruption is now visible.
+        truncated = raw.length >= CAP;
+        report = raw.slice(0, CAP);
       } catch (e) {
         report = JSON.stringify({ _readError: String((e && e.message) || e).slice(0, 200) });
       }
       console.error('[FP-ERR] ' + JSON.stringify({
         cfRay: request.headers.get('cf-ray') || null,
         origin: origin,
+        truncated: truncated,
         report: report
       }));
       // 204: the reporter is fire-and-forget and must never give the failing page a body to parse.
