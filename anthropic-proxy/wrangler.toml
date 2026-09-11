@@ -3,3 +3,16 @@
 name = "anthropic-proxy"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
+
+# Workers Logs. MUST live here, not only in the dashboard/script API: a `wrangler deploy`
+# overrides script-API settings with local config, and on 2026-09-11 a deploy silently wiped
+# an observability flip that had been applied via the API minutes earlier. Declarative here =
+# every future deploy re-asserts it.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true

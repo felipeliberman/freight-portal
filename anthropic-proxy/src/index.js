@@ -78,6 +78,35 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // ── CLIENT ERROR CAPTURE (/_clienterr) ────────────────────────────────────────────────────
+    // The portal's agent-failure surfaces POST a structured report here so a BROWSER-side exception
+    // lands in Workers Logs instead of dying in the customer's console. Console-only by design: no
+    // email, no KV, no upstream call, so an abusive caller costs a log line and nothing else.
+    //   - Origin is checked STRICTLY here. The CORS block above only SELECTS a header value; it
+    //     never rejects, so it cannot be relied on as an access control.
+    //   - 8 KB hard cap: the client already caps its own fields, this is the backstop.
+    //   - cf-ray is stamped HERE, server side. The client cannot read it (no
+    //     Access-Control-Expose-Headers, deliberately) and must not try.
+    // Stable '[FP-ERR]' prefix so `wrangler tail anthropic-proxy` and Workers Logs are greppable.
+    if (request.method === 'POST' && new URL(request.url).pathname === '/_clienterr') {
+      if (!ALLOWED_ORIGINS.includes(origin)) {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
+      let report = '';
+      try {
+        report = (await request.text()).slice(0, 8192);
+      } catch (e) {
+        report = JSON.stringify({ _readError: String((e && e.message) || e).slice(0, 200) });
+      }
+      console.error('[FP-ERR] ' + JSON.stringify({
+        cfRay: request.headers.get('cf-ray') || null,
+        origin: origin,
+        report: report
+      }));
+      // 204: the reporter is fire-and-forget and must never give the failing page a body to parse.
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
     if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405, headers: corsHeaders });
     }
