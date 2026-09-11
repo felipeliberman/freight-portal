@@ -15521,6 +15521,78 @@ function _mobileSupportRedirect(text) {
 // Is an error worth retrying? 5xx / 429 / network / timeout = transient; a plain JS error is not.
 function _isTransientErr(s) { return /\b(429|500|502|503|504|520|522|524|529)\b|overloaded|rate.?limit|timeout|network|failed to fetch|abort|proxy error/i.test(String(s == null ? '' : s)); }
 
+// ── CLIENT-ERROR TRANSPORT → anthropic-proxy /_clienterr ──────────────────────────────────────
+// Ships a structured failure report to the Worker so a BROWSER-side exception lands in Workers
+// Logs instead of dying in this customer's console. CAPTURE ONLY: the customer-facing copy is
+// byte-identical to before and nothing here can change what they see.
+//
+// SEND CAP. This codebase has a history of duplicate-retry loops, and an error raised INSIDE a
+// retry could otherwise fire hundreds of POSTs from one session. The same errName+fn is sent at
+// most 3 times, and no session sends more than 20 in total. Counters are IN MEMORY only — no
+// localStorage, no sessionStorage — so they die with the tab. Past either cap the report is
+// dropped SILENTLY: a reporter that complains about being capped is just a second failure surface.
+//
+// NO RAW TOOL INPUT, deliberately. update_quote carries shipper/consignee objects with name,
+// street, contact and phone — exactly the PII that must not leave the browser — and reliably
+// stripping those from arbitrary model-generated JSON is not a job for a regex. Only the
+// normalized, redacted snapshot below is sent.
+var _ERR_ENDPOINT = 'https://anthropic-proxy.felipe-b80.workers.dev/_clienterr';
+var _errRepCounts = {};                              // "errName|fn" -> sends so far this session
+var _errRepTotal = 0;                                // total sends this session
+var _ERR_REP_PER_KEY = 3, _ERR_REP_MAX = 20;
+var _errSessionId = null;
+
+// Redacted draft state: ZIPs, freight numbers and service codes only. No names, no street
+// addresses, no emails, no phones — account identity is the only identifier that travels.
+function _errDraftSnapshot() {
+  try {
+    var s = (typeof lastQuotedShipment !== 'undefined' && lastQuotedShipment) ? lastQuotedShipment : {};
+    var it = (s.items && s.items[0]) || {};
+    return {
+      originZip: s.originZip || null,
+      destZip: s.destinationZip || null,
+      weight: (it.weight != null ? it.weight : null),
+      freightClass: (it.freightClass != null ? it.freightClass : null),
+      accessorials: (Array.isArray(s.accessorials) ? s.accessorials.slice(0, 20) : null),
+      residential: !!(window._residentialStatus && window._residentialStatus.residential === true),
+      hazmat: !!it.hazmat
+    };
+  } catch (e) { return { _snapshotError: true }; }
+}
+
+function _reportErr(info, err) {
+  try {
+    info = info || {};
+    var name = String((err && err.name) || info.errName || 'Error').slice(0, 80);
+    var fn = String(info.fn || 'unknown').slice(0, 80);
+    var key = name + '|' + fn;
+    if (_errRepTotal >= _ERR_REP_MAX) return;                    // session ceiling
+    if ((_errRepCounts[key] || 0) >= _ERR_REP_PER_KEY) return;   // per-signature cap
+    _errRepCounts[key] = (_errRepCounts[key] || 0) + 1;
+    _errRepTotal++;
+    if (!_errSessionId) _errSessionId = Math.random().toString(36).slice(2, 10);
+    var body = JSON.stringify({
+      errName: name,
+      errMessage: String((err && err.message) || info.errMessage || '').slice(0, 500),
+      errStack: String((err && err.stack) || '').slice(0, 4096),
+      fn: fn,
+      phase: info.phase || null,
+      tool: info.tool || null,
+      endpoint: info.endpoint || null,
+      httpStatus: (info.httpStatus != null ? info.httpStatus : null),
+      tsUtc: new Date().toISOString(),
+      sessionId: _errSessionId,
+      account: (typeof currentCustomer !== 'undefined' && currentCustomer && currentCustomer.primusCustomerId) || null,
+      draft: _errDraftSnapshot(),
+      lastRatePullError: (window._lastRatePullError || null),
+      reportSeq: _errRepTotal
+    });
+    // keepalive: the turn may be tearing down. .catch(): the reporter must NEVER throw into the
+    // failure path it is reporting on.
+    fetch(_ERR_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
+  } catch (e) {}
+}
+
 // ── Structured agent-turn failure log — the diagnostic deliverable for the intermittent
 // "trouble connecting" occurrences. A single console.error with a STABLE prefix so the next
 // occurrence self-documents: phase, HTTP status, response-body excerpt, request size, elapsed
@@ -15540,6 +15612,12 @@ function _agentTurnFailed(info) {
       loops: (info.loops != null ? info.loops : null)
     }));
   } catch (e) {}
+  // Ship it. Every agent failure surface already routes through here, so this is the one hook
+  // for the whole agent path. info.err carries the REAL error object (name + stack), which the
+  // console.error above prints but the structured log has always discarded.
+  _reportErr({ fn: '_agentTurnFailed', phase: info.phase, tool: info.tool || null,
+               endpoint: info.endpoint || 'anthropic-proxy', httpStatus: info.status,
+               errMessage: info.errMessage }, info.err);
 }
 
 // Pull a plausible HTTP status out of an error/proxy message ("... 503 ...", "status 429").
@@ -16214,7 +16292,7 @@ async function aiConverse(userText) {
     console.error('[FP] aiConverse turn exception', e); // the REAL error + stack — never swallowed into a generic snag
     const _m = window._lastAgentCallMeta || {};
     const _st = _m.status || _statusFromMsg(e);
-    _agentTurnFailed({ agent: 'aiConverse', phase: 'exception', status: _st, body: (_m.body || String(e && e.message || e)), requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight });
+    _agentTurnFailed({ agent: 'aiConverse', phase: 'exception', status: _st, body: (_m.body || String(e && e.message || e)), err: e, errMessage: String(e && e.message || e), requestBytes: _m.requestBytes, elapsedMs: Date.now() - _turnStartedAt, retryCount: _m.retryCount, toolsInFlight: _toolInFlight });
     window._lastTurnFailed = true;
     // Do NOT roll back the customer's message — dropping it from chatHistory made the next turn treat
     // their just-supplied details (e.g. dimensions) as "missing". The failed turn simply gets no reply.
@@ -21866,6 +21944,18 @@ function showQuoteForm(prefill, silent) {
       const errEl = container.querySelector('#qt-rates-error');
       errEl.textContent = _classifyRateError(e).message;
       errEl.style.display='block';
+      // SECOND CAPTURE SITE. This catch is terminal: the throw is swallowed here and never
+      // reaches aiConverse, so _agentTurnFailed can NEVER see a rate failure. _classifyRateError
+      // also collapses every transport failure into one sentence, discarding status, endpoint and
+      // the structured ._rate payload — this is where that detail is recovered.
+      try {
+        if (typeof _reportErr === 'function') _reportErr({
+          fn: 'doGetRates', phase: 'rate-pull', endpoint: 'primus:/applet/v1/rate/multiple',
+          tool: (window._ratePullInFlight ? 'getRates' : null),
+          httpStatus: (e && e._rate && e._rate.status != null) ? e._rate.status : null,
+          errMessage: String(e && e.message || e)
+        }, e);
+      } catch (e2) {}
       // Fire SmartPaste narration callback even on error — agent will see no rates in state
       // and tell the customer something went wrong.
       if (typeof window._onRatesReady === 'function') {
