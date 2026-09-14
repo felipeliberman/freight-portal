@@ -33,6 +33,38 @@ curl -sS -i -X OPTIONS https://stripe-payments.felipe-b80.workers.dev/<route> \
 **Pass:** `access-control-allow-headers` names EVERY header the client sends — for the
 `/ach-link/*` and `/payment/abandon` routes that means both `Content-Type` AND `Authorization`.
 
+> ### THE OPTIONS RESPONSE IS CACHED FOR ABOUT A MINUTE. READ THIS BEFORE ACTING ON A FAILURE.
+>
+> Run straight after a deploy, this check will often report the **OLD** value — e.g.
+> `Content-Type` only, when you just shipped `Content-Type, Authorization`. **The deploy
+> succeeded. The Worker is fine. You are reading a cached edge response.**
+>
+> **The wrong conclusion is that the deploy did not land.** Do NOT redeploy and do NOT roll back
+> on this reading alone. Either is a change made against a fact that is not true.
+>
+> **The correct response, in order:**
+> 1. Confirm the deployed bundle actually carries the change — this is the authoritative check and
+>    it is not cached:
+>    ```bash
+>    grep -o '"Access-Control-Allow-Headers": "[^"]*"' /tmp/dep.js   # after §3 pulls it
+>    ```
+> 2. Re-probe with a cache-buster:
+>    ```bash
+>    curl -sS -i -X OPTIONS "https://stripe-payments.felipe-b80.workers.dev/<route>?cb=$(date +%s)$RANDOM" \
+>      -H 'Origin: https://www.freightandlogistics.ai' -H 'Cache-Control: no-cache' \
+>      -H 'Access-Control-Request-Method: POST' \
+>      -H 'Access-Control-Request-Headers: authorization,content-type' | grep -i '^access-control-'
+>    ```
+> 3. Or simply wait ~90 seconds and re-run the plain command. It clears on its own.
+>
+> Observed live on 2026-09-14: the plain probe read `Content-Type` immediately after deploy while
+> the deployed bundle already contained `Content-Type, Authorization`; the cache-busted probe was
+> correct at once, and the plain probe was correct ~90s later.
+>
+> **Same trap applies to a CUSTOMER's browser.** Anyone who preflighted during the broken window
+> may hold a cached preflight of their own. A hard reload (Cmd-Shift-R) or a private window clears
+> it — tell them that before concluding the fix did not work for them.
+
 **Why this and not `curl -X POST`:** curl does not enforce CORS. A POST probe returning 401 proves
 the route exists and proves NOTHING about whether a browser can reach it. On 2026-09-14 all four new
 routes answered 401 to curl while every real browser was blocked — preflight 200, POST refused,
