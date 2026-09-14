@@ -42,6 +42,17 @@ id = "61a138675f464fd3aa6ca671f043ad92"
 # NOT close the gap: portal.html still calls qbo-api directly from the browser.
 #
 # Requires no change to qbo-api itself — the binding is declared entirely on this side.
+#
+# `environment` is pinned to what the live binding actually carries, read from the API — NOT because
+# the wiring ever moved. qbo-api declares no [env.*] sections, but a Worker with no named
+# environments still has exactly one, implicitly called "production", and it is the service's
+# default_environment. Omitting the field here made `wrangler deploy` warn that the local config
+# differed from the remote and that it would OVERRIDE it; the server then resolved the omission back
+# to the same default, so the binding came out byte-identical (verified across versions 3b4db72c and
+# e31e333c on 2026-09-14). The field is stated so that warning stops appearing — a config override
+# with no byte change is invisible to the bundle diff, so it cannot be waved through on sight, and
+# the cheapest fix is to leave nothing for it to be ambiguous about.
 [[services]]
 binding = "QBO"
 service = "qbo-api"
+environment = "production"
