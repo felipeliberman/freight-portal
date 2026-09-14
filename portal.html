@@ -3750,44 +3750,78 @@ function cardFeeOn(subtotal) {
 // no longer fails SILENTLY: it returns the list of invoices it could not post, so the caller can say
 // so. A skipped invoice used to be indistinguishable from a posted one, which is what let a 9-invoice
 // payment report success while 5 of the 9 were never recorded.
+//
+// ROUTED THROUGH stripe-payments, NOT qbo-api DIRECTLY. This used to POST straight to qbo-api, which
+// meant the browser and the settlement webhook shared no idempotency state: the only thing stopping
+// the webhook from posting a SECOND payment on a charge this function had already recorded was that
+// card PaymentIntents carried no invoice metadata for it to act on. /qbo-post is the one door both
+// paths go through — it claims a per-PaymentIntent key, verifies with Stripe that the payment really
+// succeeded and that the invoice total does not exceed what was charged, and only then writes.
+//
+// The return contract is UNCHANGED — an array of { docNum, reason } — so the amber "may take longer
+// to show as paid" banner on the success screen still reads exactly what it always did. A LOST RACE
+// IS NOT A FAILURE: if the webhook (or an earlier attempt) already posted an invoice, the ledger is
+// correct and it must not be reported here, or a clean payment paints a warning.
 async function _recordQboPayments(invoices, stripePaymentIntentId) {
-  const paymentDate = new Date().toISOString().split('T')[0];
+  const list = invoices || [];
   const failures = [];
-  await Promise.all((invoices || []).map(async inv => {
+  const postable = [];
+  for (const inv of list) {
     const docNum = getInvoiceFields(inv).invNum;
     // Should be unreachable — the Pay Selected handler aborts before the modal when any id is
     // missing. Kept as a backstop, and it now REPORTS rather than silently returning null.
     if (!inv._qboId) {
       console.error('[QBO payment] no QBO id for invoice', docNum, '— not posted');
       failures.push({ docNum, reason: 'unresolved QBO id' });
-      return;
+      continue;
     }
-    const amount = (inv._qboBalance != null && !isNaN(inv._qboBalance))
-      ? Number(inv._qboBalance)
-      : (parseFloat(getInvoiceFields(inv).rawAmt) || 0);
-    try {
-      const res = await fetch('https://qbo-api.felipe-b80.workers.dev/payment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoiceId: inv._qboId,
-          amount,
-          paymentDate,
-          stripePaymentIntentId: stripePaymentIntentId || null
-        })
-      });
-      const data = await res.json().catch(() => ({}));
-      // qbo-api signals failure two ways — a non-2xx status, and an { error } body. The old code
-      // read only r.json() and so treated a 404 'Invoice not found' as a successful post.
-      if (!res.ok || (data && data.error)) {
-        console.error('[QBO payment] rejected for invoice', docNum, res.status, data);
-        failures.push({ docNum, reason: (data && data.error) || ('HTTP ' + res.status) });
+    postable.push({
+      qboId: String(inv._qboId),
+      docNum,
+      amount: (inv._qboBalance != null && !isNaN(inv._qboBalance))
+        ? Number(inv._qboBalance)
+        : (parseFloat(getInvoiceFields(inv).rawAmt) || 0)
+    });
+  }
+  if (!postable.length) return failures;
+  // The PaymentIntent id is what the whole guard keys off. Without it there is nothing to claim and
+  // nothing to verify against, so refuse rather than post unprotected.
+  if (!stripePaymentIntentId) {
+    console.error('[QBO payment] no PaymentIntent id — nothing posted');
+    postable.forEach(r => failures.push({ docNum: r.docNum, reason: 'no payment reference' }));
+    return failures;
+  }
+  try {
+    const res = await fetch(STRIPE_WORKER + '/qbo-post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paymentIntentId: stripePaymentIntentId, invoices: postable })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.error) {
+      console.error('[QBO payment] rejected', res.status, data);
+      const reason = (data && data.error) || ('HTTP ' + res.status);
+      postable.forEach(r => failures.push({ docNum: r.docNum, reason }));
+      return failures;
+    }
+    const results = Array.isArray(data.results) ? data.results : [];
+    for (const r of postable) {
+      const o = results.find(x => String(x.qboId) === String(r.qboId));
+      // No row back for an invoice we sent is itself a failure — silence must never read as success.
+      if (!o) {
+        failures.push({ docNum: r.docNum, reason: 'no result returned' });
+        continue;
       }
-    } catch (e) {
-      console.error('[QBO payment] failed for invoice', docNum, e);
-      failures.push({ docNum, reason: 'request failed' });
+      // 'posted' and 'already' are both a correct ledger. 'in_flight' means the webhook holds the
+      // claim right now and will finish it — also not a failure the customer needs to hear about.
+      if (o.outcome === 'posted' || o.outcome === 'already' || o.outcome === 'in_flight') continue;
+      console.error('[QBO payment] not posted for invoice', r.docNum, o.outcome, o.reason);
+      failures.push({ docNum: r.docNum, reason: o.reason || o.outcome });
     }
-  }));
+  } catch (e) {
+    console.error('[QBO payment] request failed', e);
+    postable.forEach(r => failures.push({ docNum: r.docNum, reason: 'request failed' }));
+  }
   return failures;
 }
 
@@ -4391,10 +4425,20 @@ function showStripePaymentModal(invoices) {
     confirmBtn.disabled = true;
     try {
       // Create PaymentIntent server-side
+      // The same qboInvoices mapping ACH sends. It is what lets the settlement webhook recognise
+      // the rail and check its own work, and what /qbo-post checks the browser's request against.
+      // Safe only because every QuickBooks write now passes through /qbo-post's shared claim key.
+      const cardQboInvoices = invoices.map(i => ({
+        qboId: i._qboId,
+        docNum: getInvoiceFields(i).invNum,
+        amount: (i._qboBalance != null && !isNaN(i._qboBalance))
+          ? Number(i._qboBalance)
+          : (parseFloat(getInvoiceFields(i).rawAmt) || 0)
+      }));
       const piRes = await fetch(WORKER + '/create-payment-intent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: total, paymentMethod: 'card', invoiceNums, customerEmail })
+        body: JSON.stringify({ amount: total, paymentMethod: 'card', invoiceNums, customerEmail, qboInvoices: cardQboInvoices })
       });
       const piData = await piRes.json();
       if (piData.error) throw new Error(piData.error);

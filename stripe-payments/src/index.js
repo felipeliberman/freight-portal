@@ -125,6 +125,163 @@ export default {
       }
       return rows.length ? rows : null;
     }
+    // ── ONE writer for QuickBooks, ONE key, both rails ─────────────────────────
+    //
+    // Two paths can post the same payment: the browser, the instant a card captures, and this
+    // Worker's webhook, when an ACH debit settles days later. Until now they shared nothing — the
+    // browser posted straight to qbo-api and the webhook kept a private `wh:posted:` marker — so the
+    // only thing preventing a card charge from posting twice was that card PaymentIntents carried no
+    // invoice metadata for the webhook to act on. That is an accident of omission, not a guard, and
+    // it is what stamping the rail (below) would otherwise have removed.
+    //
+    // Both paths now claim the SAME key before writing, so a PaymentIntent can only ever produce one
+    // QBO payment per invoice, whichever arrives first.
+    //
+    // CLAIM BEFORE POSTING, not mark-after. Marking afterwards leaves a window where a crash between
+    // the QBO write and the marker lets a retry post it again. The cost of claiming first is that a
+    // claim whose post then FAILS must be released (below), or a double-post is merely traded for a
+    // silent never-post.
+    //
+    // HONEST LIMIT: Cloudflare KV has no compare-and-set, so this read-then-write is not a mutex. It
+    // closes the SEQUENTIAL race, which is the one that exists here — the browser posts at capture,
+    // the webhook arrives seconds to days later. Two genuinely simultaneous writers could still both
+    // see an empty key. A hard guarantee needs a Durable Object and is deliberately not smuggled in.
+    const QBO_CLAIM_TTL_SEC = 60 * 60 * 24 * 90;
+    const QBO_CLAIM_STALE_MS = 5 * 60 * 1e3;
+    function qboKey(piId, qboId) {
+      return "qbo:posted:" + piId + ":" + qboId;
+    }
+    // Transition read ONLY. Any ACH payment mid-retry when this shipped has markers under the old
+    // webhook-private prefix; ignoring them would re-post invoices that are already in QuickBooks.
+    // Read both, write only the new one. Removable once no `wh:posted:` key can still be live
+    // (they carry a 90-day TTL).
+    function legacyQboKey(piId, qboId) {
+      return "wh:posted:" + piId + ":" + qboId;
+    }
+    async function readQboClaim(piId, qboId) {
+      const raw = await env.STRIPE_KV.get(qboKey(piId, qboId));
+      if (raw) {
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          // Unparseable means SOMETHING claimed it. Treat as done — the safe direction is never
+          // posting twice, and a stuck key surfaces as an unposted invoice a human can see.
+          return { state: "done", by: "unknown" };
+        }
+      }
+      const legacy = await env.STRIPE_KV.get(legacyQboKey(piId, qboId));
+      return legacy ? { state: "done", by: "webhook-legacy" } : null;
+    }
+    async function releaseQboClaim(key) {
+      try {
+        await env.STRIPE_KV.delete(key);
+      } catch (e) {
+        // The claim now outlives a post that never happened. It expires on its own, and until then
+        // the invoice reads as "ambiguous" rather than posting — which alerts a human. Loud, not lost.
+        console.error("[qbo] claim release failed", key, e);
+      }
+    }
+    // THE ONLY function in this Worker that writes a payment to QuickBooks.
+    //
+    // It takes a per-invoice amount and NOTHING ELSE that could stand in for one. The PaymentIntent
+    // is deliberately not a parameter: `pi.amount` is the CHARGED total, which on the card rail
+    // includes the convenience fee and on any multi-invoice payment is the sum of several invoices.
+    // Posting it against a single invoice would over-credit the ledger. Keeping the PI out of scope
+    // here makes that impossible to do by accident rather than merely discouraged.
+    async function postInvoicePayment(o) {
+      const amount = Number(o.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        // Fail closed. An indeterminate amount is never guessed and never substituted.
+        return { outcome: "bad_amount", reason: "no usable invoice amount" };
+      }
+      const key = qboKey(o.piId, o.qboId);
+      let claim;
+      try {
+        claim = await readQboClaim(o.piId, o.qboId);
+      } catch (e) {
+        console.error("[qbo] claim read failed", key, e);
+        return { outcome: "failed", reason: "idempotency read failed" };
+      }
+      if (claim) {
+        if (claim.state === "done") return { outcome: "already", by: claim.by };
+        const age = Date.now() - (Number(claim.at) || 0);
+        if (age < QBO_CLAIM_STALE_MS) return { outcome: "in_flight", by: claim.by };
+        // Claimed and never finished. We cannot know whether QuickBooks received that write, and
+        // guessing either way is a ledger error. Hand it to a human.
+        return { outcome: "ambiguous", by: claim.by, reason: "an earlier attempt claimed this invoice and never finished" };
+      }
+      try {
+        await env.STRIPE_KV.put(key, JSON.stringify({ state: "claimed", by: o.by, at: Date.now() }), { expirationTtl: QBO_CLAIM_TTL_SEC });
+      } catch (e) {
+        console.error("[qbo] claim write failed", key, e);
+        return { outcome: "failed", reason: "idempotency claim failed" };
+      }
+      let res, data;
+      try {
+        // env.QBO, NOT fetch() — see the service binding note in wrangler.toml. A plain fetch to the
+        // qbo-api URL loops back to this Worker, because both sit on the same workers.dev zone.
+        res = await env.QBO.fetch("https://qbo-api.felipe-b80.workers.dev/payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ invoiceId: o.qboId, amount, paymentDate: o.paymentDate, stripePaymentIntentId: o.piId })
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (e) {
+        console.error("[qbo] post failed", o.qboId, e);
+        await releaseQboClaim(key);
+        return { outcome: "failed", reason: "request failed" };
+      }
+      // res.ok AND the body — qbo-api returns { error } with a real status, and reading only the
+      // parsed body is how a 404 "Invoice not found" got treated as a successful post before.
+      if (!res.ok || (data && data.error)) {
+        console.error("[qbo] post rejected", o.qboId, res.status, data);
+        await releaseQboClaim(key);
+        return { outcome: "failed", reason: (data && data.error) || "HTTP " + res.status };
+      }
+      try {
+        await env.STRIPE_KV.put(key, JSON.stringify({ state: "done", by: o.by, at: Date.now() }), { expirationTtl: QBO_CLAIM_TTL_SEC });
+      } catch (e) {
+        // The write landed; only the claim upgrade failed. The claim still blocks a second post
+        // until it goes stale, so this degrades to "ambiguous" and alerts rather than double-posts.
+        console.error("[qbo] claim->done write failed after a successful post", key, e);
+      }
+      return { outcome: "posted", paymentId: data && data.paymentId };
+    }
+    // Is this invoice already settled in QuickBooks? Used before ALERTING, never before posting —
+    // a zero balance means the ledger is already right and there is nothing for a human to do.
+    // A false alert is worse than none: it trains the reader to ignore the real ones.
+    //
+    // Matches on Id, NOT DocNumber. /invoices answers by DocNumber and returns an ARRAY; DocNumber
+    // is not guaranteed unique, so the row still has to be identified by its QBO Id.
+    async function invoiceIsSettled(qboId, docNum) {
+      if (!docNum) return false;
+      try {
+        const res = await env.QBO.fetch("https://qbo-api.felipe-b80.workers.dev/invoices?docNumber=" + encodeURIComponent(docNum));
+        if (!res.ok) return false;
+        const data = await res.json().catch(() => ({}));
+        const match = (data && Array.isArray(data.invoices) ? data.invoices : []).find((i) => String(i.Id) === String(qboId));
+        return !!match && Number(match.Balance) === 0;
+      } catch (e) {
+        // Unknown is not settled. Alerting on an unverifiable invoice is the safe direction.
+        return false;
+      }
+    }
+    // The rail a PaymentIntent actually ran on, for copy that used to say "ACH" unconditionally.
+    //
+    // fl_rail is stamped by us at creation and is authoritative. payment_method_types is the
+    // fallback because it is always present on the event payload and costs no extra API call.
+    // `charges.data[0].payment_method_details.type` is NOT used: on this API version the
+    // PaymentIntent carries `latest_charge` (an id), not an expanded charges array, so reading it
+    // would silently yield undefined and land every event on the neutral label.
+    // `label` heads a subject line ("Card payment settled — ..."); `detail` is the value of the
+    // "Rail:" field in the body, where the neutral case has to read as an ABSENCE of information
+    // rather than as the name of a rail — "Rail: Payment" says nothing while looking like it does.
+    function railOf(pi, md) {
+      const raw = (md && md.fl_rail) || (pi && Array.isArray(pi.payment_method_types) ? pi.payment_method_types[0] : "") || "";
+      if (raw === "card") return { code: "card", label: "Card payment", detail: "Card payment" };
+      if (raw === "ach" || raw === "us_bank_account") return { code: "ach", label: "ACH payment", detail: "ACH payment" };
+      return { code: "unknown", label: "Payment", detail: "unknown" };
+    }
     // Stripe webhook signature. The raw request text MUST be hashed — parsing to JSON and
     // re-stringifying reorders/reformats bytes and the HMAC will never match.
     async function verifyStripeSignature(rawBody, sigHeader, secret, nowSec, toleranceSec = 300) {
@@ -301,33 +458,43 @@ export default {
         if (customerId) piParams.append("customer", customerId);
         if (invoiceNums) piParams.append("description", "Invoices: " + invoiceNums);
         if (isAch) piParams.append("setup_future_usage", "off_session");
-        // ACH ONLY. Card captures synchronously and the browser posts it to QBO right there, so a
-        // card PaymentIntent must never carry this metadata — the webhook keys off it, and a card
-        // event that looked webhook-eligible would post the same payment to QuickBooks a second time.
-        if (isAch) {
-          const rows = Array.isArray(body.qboInvoices) ? body.qboInvoices : [];
-          const clean = rows
-            .map((r) => ({ qboId: String((r && r.qboId) || "").trim(), docNum: String((r && r.docNum) || "").trim(), amount: Number(r && r.amount) }))
-            .filter((r) => r.qboId && Number.isFinite(r.amount) && r.amount > 0);
-          // Every selected invoice must survive the trip. If any row is unusable the payment would
-          // settle and under-post, so refuse to create it at all — the customer is not charged, and
-          // the portal shows the error. Failing here is recoverable; failing at settlement is not.
-          if (rows.length && clean.length !== rows.length) {
-            return json({ error: "Could not record every invoice on this payment. Nothing was charged — please reselect and try again." }, 400);
+        // THE RAIL, stamped on BOTH paths. Downstream copy used to say "ACH" unconditionally because
+        // ACH was the only rail carrying metadata: a card charge missed the eligibility gate below
+        // and was announced as a settled ACH payment needing manual QuickBooks posting, on a payment
+        // the browser had already posted correctly. The rail is now a fact on the PaymentIntent
+        // rather than something the webhook infers from the absence of other fields.
+        piParams.append("metadata[fl_rail]", isAch ? "ach" : "card");
+        // THE INVOICE MAPPING, now on both rails too.
+        //
+        // This is ONLY safe because every QuickBooks write — browser and webhook alike — now goes
+        // through postInvoicePayment() and its shared claim key. Before that existed, the absence of
+        // this metadata on card PaymentIntents was the ONLY thing preventing a second QBO payment on
+        // a charge the browser had already recorded. The two changes are a pair: never reinstate
+        // this stamping without the claim, and never remove the claim while this stamping stands.
+        const qboRows = Array.isArray(body.qboInvoices) ? body.qboInvoices : [];
+        const clean = qboRows
+          .map((r) => ({ qboId: String((r && r.qboId) || "").trim(), docNum: String((r && r.docNum) || "").trim(), amount: Number(r && r.amount) }))
+          .filter((r) => r.qboId && Number.isFinite(r.amount) && r.amount > 0);
+        // Every selected invoice must survive the trip. If any row is unusable the payment would
+        // settle and under-post, so refuse to create it at all — the customer is not charged, and
+        // the portal shows the error. Failing here is recoverable; failing at settlement is not.
+        if (qboRows.length && clean.length !== qboRows.length) {
+          return json({ error: "Could not record every invoice on this payment. Nothing was charged — please reselect and try again." }, 400);
+        }
+        if (clean.length) {
+          let chunks;
+          try {
+            chunks = packQboInvoices(clean);
+          } catch (e) {
+            return json({ error: e.message }, 400);
           }
-          if (clean.length) {
-            let chunks;
-            try {
-              chunks = packQboInvoices(clean);
-            } catch (e) {
-              return json({ error: e.message }, 400);
-            }
-            piParams.append("metadata[fl_v]", FL_META_VERSION);
-            piParams.append("metadata[fl_channel]", "ach");
-            if (customerEmail) piParams.append("metadata[fl_email]", customerEmail);
-            piParams.append("metadata[fl_inv_n]", String(chunks.length));
-            chunks.forEach((c, i) => piParams.append("metadata[fl_inv_" + i + "]", c));
-          }
+          piParams.append("metadata[fl_v]", FL_META_VERSION);
+          // fl_channel is kept ACH-only and unchanged so that PaymentIntents created BEFORE fl_rail
+          // existed still satisfy the webhook's eligibility gate while they are still in flight.
+          if (isAch) piParams.append("metadata[fl_channel]", "ach");
+          if (customerEmail) piParams.append("metadata[fl_email]", customerEmail);
+          piParams.append("metadata[fl_inv_n]", String(chunks.length));
+          chunks.forEach((c, i) => piParams.append("metadata[fl_inv_" + i + "]", c));
         }
         const piRes = await fetch("https://api.stripe.com/v1/payment_intents", {
           method: "POST",
@@ -378,6 +545,9 @@ export default {
       const eventId = event && event.id;
       const pi = (event && event.data && event.data.object) || {};
       const md = pi.metadata || {};
+      // Derived ONCE, up front, and used by every alert below. Every subject and headline in this
+      // handler used to say "ACH" because ACH was the only rail that ever reached them.
+      const rail = railOf(pi, md);
       if (!eventId) return json({ error: "No event id" }, 400);
       if (!env.STRIPE_KV) {
         // No idempotency store means no way to promise we won't double-post. Refuse and let Stripe
@@ -406,8 +576,9 @@ export default {
           ? "<ul>" + rows.map((r) => "<li>Invoice #" + r.docNum + " (QBO id " + r.qboId + ") &mdash; $" + r.amount.toFixed(2) + "</li>").join("") + "</ul>"
           : "<p>No invoice metadata on this PaymentIntent.</p>";
         await alertAccounting(
-          "ACH payment FAILED — " + (pi.id || "unknown PaymentIntent"),
-          '<p style="font-weight:700;color:#b91c1c;">An ACH payment has failed or been returned. Nothing has been changed in QuickBooks &mdash; this needs a human.</p>' +
+          rail.label + " FAILED — " + (pi.id || "unknown PaymentIntent"),
+          '<p style="font-weight:700;color:#b91c1c;">A payment has failed or been returned. Nothing has been changed in QuickBooks &mdash; this needs a human.</p>' +
+          "<p>Rail: " + rail.detail + "</p>" +
           "<p>PaymentIntent: <code>" + (pi.id || "?") + "</code><br>Amount: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
           "<br>Customer: " + (md.fl_email || pi.receipt_email || "unknown") +
           "<br>Reason: " + (lastErr.code || "unknown") + " &mdash; " + (lastErr.message || "no message") + "</p>" +
@@ -429,19 +600,25 @@ export default {
       // 2. Channel. Card posts to QBO synchronously in the browser; acting on a card event here
       //    would post it twice.
       // 3. Row integrity. A missing chunk or malformed triple means an incomplete invoice set.
-      if (md.fl_v !== FL_META_VERSION || md.fl_channel !== "ach") {
+      // The card rail is recorded by the browser at capture and is not this handler's work. It is
+      // recognised by fl_rail now rather than by the ABSENCE of metadata, which is what made a card
+      // charge fall through to the "ACH settled — needs manual posting" alert below while it was in
+      // fact already posted. fl_channel stays in the test for PaymentIntents created before fl_rail.
+      const isAchEvent = md.fl_channel === "ach" || md.fl_rail === "ach";
+      if (md.fl_v === FL_META_VERSION && rail.code === "card") {
+        return json({ received: true, ignored: "card" });
+      }
+      if (md.fl_v !== FL_META_VERSION || !isAchEvent) {
         const why = md.fl_v !== FL_META_VERSION ? "no recognised invoice metadata (created before automatic settlement posting)" : "not an ACH payment";
         console.warn("[webhook] not eligible:", pi.id, why);
-        if (md.fl_channel !== "ach" && md.fl_v === FL_META_VERSION) {
-          // A card payment reaching here is expected and already handled in the browser. Silent.
-          return json({ received: true, ignored: "card" });
-        }
         await alertAccounting(
-          "ACH settled — needs manual QuickBooks posting (" + (pi.id || "unknown") + ")",
-          "<p>An ACH payment has settled, but it carries " + why + ", so nothing was posted to QuickBooks automatically.</p>" +
-          "<p>PaymentIntent: <code>" + (pi.id || "?") + "</code><br>Amount: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
+          rail.label + " settled — needs manual QuickBooks posting (" + (pi.id || "unknown") + ")",
+          "<p>A payment has settled, but it carries " + why + ", so nothing was posted to QuickBooks automatically.</p>" +
+          "<p>PaymentIntent: <code>" + (pi.id || "?") + "</code><br>Rail: " + rail.detail +
+          "<br>Amount charged: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
           "<br>Customer: " + (md.fl_email || pi.receipt_email || "unknown") +
           "<br>Description: " + (pi.description || "none") + "</p>" +
+          "<p>The invoice set on this payment is UNKNOWN &mdash; there is no metadata to read it from, so the amount above is the amount CHARGED and is not necessarily any invoice's balance.</p>" +
           "<p><strong>Action:</strong> post this payment in QuickBooks by hand, against the invoices named in the description. Check whether any of them are already marked paid before posting.</p>"
         );
         // 200: this is a permanent condition. Retrying will never make the metadata appear.
@@ -461,53 +638,48 @@ export default {
         return json({ received: true, handled: "metadata-unreadable" });
       }
       // ── Post each invoice, once, ever ────────────────────────────────────────
-      // The per-invoice marker is the load-bearing idempotency. Scenario it exists for: 6 of 9
-      // invoices post, QBO 500s on the 7th, we return non-2xx, Stripe retries — without these
-      // markers the first 6 would post a SECOND time and the customer's invoices show double-paid.
+      // The claim key inside postInvoicePayment() is the load-bearing idempotency, and it is now
+      // SHARED with the browser rather than private to this handler. Scenario it exists for: 6 of 9
+      // invoices post, QBO 500s on the 7th, we return non-2xx, Stripe retries — without the claim
+      // the first 6 would post a SECOND time and the customer's invoices show double-paid.
+      //
+      // r.amount is the per-invoice amount from the PaymentIntent metadata. pi.amount is NOT passed
+      // and must never be: it is the charged total, which spans every invoice on the payment.
       const paymentDate = new Date().toISOString().split("T")[0];
-      const posted = [], failed = [];
+      const posted = [], failed = [], deferred = [];
+      let ambiguous = false;
       for (const r of rows) {
-        const mk = "wh:posted:" + pi.id + ":" + r.qboId;
-        try {
-          // Already posted on an earlier delivery — counts as posted, never re-sent.
-          if (await env.STRIPE_KV.get(mk)) { posted.push(r); continue; }
-        } catch (e) {
-          // Cannot prove this invoice is unposted -> do not post it. Retry later.
-          console.error("[webhook] marker read failed", mk, e);
-          failed.push({ ...r, reason: "idempotency read failed" });
+        const o = await postInvoicePayment({ piId: pi.id, qboId: r.qboId, amount: r.amount, paymentDate, by: "webhook" });
+        if (o.outcome === "posted") { posted.push(r); continue; }
+        if (o.outcome === "already") {
+          // Someone got here first — an earlier delivery, or the browser. The ledger is already
+          // right, so this counts as posted and says nothing.
+          posted.push({ ...r, reason: "already posted by " + (o.by || "an earlier attempt") });
           continue;
         }
-        try {
-          // env.QBO, NOT fetch() — see the service binding note in wrangler.toml. A plain fetch to
-          // the qbo-api URL loops back to this Worker, because both sit on the same workers.dev
-          // zone; it answers with this Worker's own 404 and never reaches QuickBooks at all.
-          const res = await env.QBO.fetch("https://qbo-api.felipe-b80.workers.dev/payment", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ invoiceId: r.qboId, amount: r.amount, paymentDate, stripePaymentIntentId: pi.id })
-          });
-          const data = await res.json().catch(() => ({}));
-          // res.ok AND the body — qbo-api returns { error } with a real status, and reading only the
-          // parsed body is how a 404 "Invoice not found" got treated as a successful post before.
-          if (!res.ok || (data && data.error)) {
-            console.error("[webhook] QBO post rejected", r.qboId, res.status, data);
-            failed.push({ ...r, reason: (data && data.error) || "HTTP " + res.status });
+        if (o.outcome === "in_flight") {
+          // Another writer holds the claim RIGHT NOW. Not an error and not worth waking anyone for:
+          // if that writer succeeds this becomes "already" on the next delivery, and if it fails it
+          // releases the claim and the next delivery posts. Return non-2xx so there IS a next one.
+          deferred.push({ ...r, reason: "another writer is posting this invoice" });
+          continue;
+        }
+        if (o.outcome === "ambiguous") {
+          // A claim that was never finished. Whether QuickBooks received that write is unknowable
+          // from here, so check the ledger itself before making noise about it.
+          if (await invoiceIsSettled(r.qboId, r.docNum)) {
+            posted.push({ ...r, reason: "already settled in QuickBooks" });
             continue;
           }
-          // Marker written immediately after the write it protects, so a crash between invoices
-          // cannot replay the ones already done.
-          try { await env.STRIPE_KV.put(mk, "1", { expirationTtl: 60 * 60 * 24 * 90 }); } catch (e) {
-            console.error("[webhook] marker write failed after a successful post", mk, e);
-          }
-          posted.push(r);
-        } catch (e) {
-          console.error("[webhook] QBO post failed", r.qboId, e);
-          failed.push({ ...r, reason: "request failed" });
+          ambiguous = true;
+          failed.push({ ...r, reason: o.reason || "an earlier attempt did not finish" });
+          continue;
         }
+        failed.push({ ...r, reason: o.reason || "post failed" });
       }
-      if (failed.length) {
-        // Non-2xx so Stripe retries. The markers above mean the retry resumes rather than restarts.
-        console.error("[webhook] " + failed.length + "/" + rows.length + " invoice(s) failed to post for", pi.id);
+      if (failed.length || deferred.length) {
+        // Non-2xx so Stripe retries. The claim keys above mean the retry resumes rather than restarts.
+        console.error("[webhook] " + failed.length + " failed, " + deferred.length + " deferred of " + rows.length + " invoice(s) for", pi.id);
         // ── Who needs to hear about this, and when ────────────────────────────
         // Two very different situations share this branch:
         //
@@ -522,8 +694,11 @@ export default {
         // Either way the alert NAMES the invoices on both sides. A "something went wrong" message
         // that omits the split leaves the reconciliation entirely manual, which is the whole thing
         // this is meant to prevent.
+        // A purely DEFERRED result is not a failure and never alerts: another writer holds the
+        // claim, and the next delivery resolves it either way. Only real failures are countable
+        // here, or the alert fires on the ordinary browser-wins race.
         const ATTEMPT_ALERT_AT = 3;
-        const isPartial = posted.length > 0;
+        const isPartial = failed.length > 0 && posted.length > 0;
         const alertKey = "wh:alerted:" + eventId;
         const attemptKey = "wh:attempts:" + eventId;
         let attempts = 1;
@@ -533,7 +708,7 @@ export default {
         } catch (e) { /* counter is best-effort; never let it suppress the alert below */ }
         let alreadyAlerted = false;
         try { alreadyAlerted = !!(await env.STRIPE_KV.get(alertKey)); } catch (e) {}
-        if (!alreadyAlerted && (isPartial || attempts >= ATTEMPT_ALERT_AT)) {
+        if (!alreadyAlerted && failed.length > 0 && (isPartial || ambiguous || attempts >= ATTEMPT_ALERT_AT)) {
           const li = (arr) => arr.length
             ? "<ul>" + arr.map((r) => "<li>Invoice #" + r.docNum + " (QBO id " + r.qboId + ") &mdash; $" + Number(r.amount).toFixed(2) + (r.reason ? " &mdash; " + r.reason : "") + "</li>").join("") + "</ul>"
             : "<p>(none)</p>";
@@ -541,18 +716,22 @@ export default {
             ? '<p style="font-weight:700;color:#b91c1c;">A settled payment posted to QuickBooks only PARTIALLY. The customer has been charged in full. Some invoices are recorded and some are not.</p>'
             : '<p style="font-weight:700;color:#b91c1c;">A settled payment has failed to post to QuickBooks after ' + attempts + ' attempts. NOTHING has been recorded. The customer has been charged in full.</p>';
           await alertAccounting(
-            (isPartial ? "ACH posted PARTIALLY to QuickBooks — " : "ACH failing to post to QuickBooks — ") + pi.id,
+            (isPartial ? rail.label + " posted PARTIALLY to QuickBooks — " : rail.label + " failing to post to QuickBooks — ") + pi.id,
             headline +
-            "<p>PaymentIntent: <code>" + pi.id + "</code><br>Amount: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
+            // "Amount charged", not "Amount": on a multi-invoice payment this is the sum of them all,
+            // and on the card rail it also includes the convenience fee. It is never an invoice total.
+            "<p>PaymentIntent: <code>" + pi.id + "</code><br>Rail: " + rail.detail +
+            "<br>Amount charged: $" + (Number(pi.amount || 0) / 100).toFixed(2) +
             "<br>Customer: " + (md.fl_email || pi.receipt_email || "unknown") +
             "<br>Attempt: " + attempts + "</p>" +
             "<p><strong>Posted to QuickBooks (do NOT post these again):</strong></p>" + li(posted) +
             "<p><strong>NOT posted (these need posting by hand if the retries do not clear):</strong></p>" + li(failed) +
+            (deferred.length ? "<p><strong>Waiting on another writer (no action &mdash; these resolve on the next delivery):</strong></p>" + li(deferred) : "") +
             "<p>Stripe keeps retrying for about three days. Each retry re-posts only the invoices in the second list &mdash; the first list is protected and cannot double-post. If the retries succeed you will not hear again; nothing further is needed unless this is still unresolved after that window.</p>"
           );
           try { await env.STRIPE_KV.put(alertKey, "1", { expirationTtl: 60 * 60 * 24 * 7 }); } catch (e) {}
         }
-        return json({ error: "QBO posting incomplete", posted: posted.length, failed: failed.length, attempts }, 500);
+        return json({ error: "QBO posting incomplete", posted: posted.length, failed: failed.length, deferred: deferred.length, attempts }, 500);
       }
       // Ledger is correct. Only now is the customer told the money arrived.
       const to = md.fl_email || pi.receipt_email || "";
@@ -579,13 +758,136 @@ export default {
       }
       if (to && !emailed) {
         await alertAccounting(
-          "ACH posted to QuickBooks, but the customer email failed (" + pi.id + ")",
+          rail.label + " posted to QuickBooks, but the customer email failed (" + pi.id + ")",
           "<p>All " + rows.length + " invoice(s) posted to QuickBooks successfully, but the confirmation email to " + to + " did not send.</p>" +
           "<p>PaymentIntent: <code>" + pi.id + "</code></p><p><strong>Action:</strong> send the customer a confirmation manually. Do NOT re-post the payment &mdash; QuickBooks is already correct.</p>"
         );
       }
       console.log("[webhook] posted " + posted.length + " invoice(s) for " + pi.id);
       return json({ received: true, posted: posted.length, emailed });
+    }
+    // ── /qbo-post — the browser's ONLY route into QuickBooks ───────────────────
+    //
+    // The card rail captures synchronously, so its ledger write happens while the customer is still
+    // on the page. That write used to go from the BROWSER straight to qbo-api, which meant it shared
+    // no idempotency state with the settlement webhook and could not be told apart from any other
+    // caller. Both problems are the same problem: there was no single place where a QuickBooks write
+    // for a PaymentIntent had to pass through.
+    //
+    // This is that place. It claims the shared key, then posts via the service binding.
+    //
+    // WHAT IT VERIFIES, before writing anything:
+    //   1. The PaymentIntent EXISTS and Stripe says its status is "succeeded". A caller cannot post
+    //      against a payment that was never taken.
+    //   2. The invoice total does not EXCEED what was actually charged. A caller cannot inflate the
+    //      credit beyond the money that moved.
+    //   3. If the PaymentIntent carries its own invoice metadata, the request must agree with it.
+    //      Where a stamped mapping exists it wins; the browser cannot substitute a different one.
+    //
+    // WHAT IT DOES NOT DO: it does not authenticate the caller. An Origin check is not access
+    // control (non-browsers set any Origin they like) and would break the pages.dev and github.io
+    // mirrors. The verification above is what narrows this route, not the header.
+    if (pathname === "/qbo-post" && request.method === "POST") {
+      if (!env.STRIPE_KV) return json({ error: "Idempotency store unavailable" }, 503);
+      if (!env.QBO) return json({ error: "QuickBooks service binding unavailable" }, 503);
+      let body;
+      try {
+        body = await request.json();
+      } catch (e) {
+        return json({ error: "Invalid JSON body" }, 400);
+      }
+      const piId = String((body && body.paymentIntentId) || "").trim();
+      if (!/^pi_[A-Za-z0-9_]+$/.test(piId)) return json({ error: "A valid paymentIntentId is required" }, 400);
+      const given = Array.isArray(body && body.invoices) ? body.invoices : [];
+      const rows = given
+        .map((r) => ({ qboId: String((r && r.qboId) || "").trim(), docNum: String((r && r.docNum) || "").trim(), amount: Number(r && r.amount) }))
+        .filter((r) => r.qboId && Number.isFinite(r.amount) && r.amount > 0);
+      if (!rows.length) return json({ error: "No postable invoices in the request" }, 400);
+      // Fail closed on a partially-unusable set, exactly as /create-payment-intent does: posting the
+      // readable subset would under-record the payment silently.
+      if (rows.length !== given.length) {
+        return json({ error: "Some invoices in this request could not be read. Nothing was posted." }, 400);
+      }
+      // ── 1. The PaymentIntent, from Stripe, not from the caller ───────────────
+      // Live key first, then test. The mode is NOT taken from the request: letting a caller choose
+      // the key lets them choose which ledger their claim is checked against.
+      async function fetchPi(sk) {
+        if (!sk) return null;
+        const r = await fetch("https://api.stripe.com/v1/payment_intents/" + encodeURIComponent(piId), {
+          headers: { "Authorization": "Bearer " + sk, "Stripe-Version": STRIPE_VERSION }
+        });
+        const d = await r.json().catch(() => ({}));
+        return r.ok && d && d.id ? d : null;
+      }
+      let pi;
+      try {
+        pi = await fetchPi(STRIPE_SK) || await fetchPi(env.STRIPE_SK_TEST);
+      } catch (e) {
+        // Cannot verify -> do not write. An unreachable Stripe is not permission to post.
+        console.error("[qbo-post] PaymentIntent lookup failed", piId, e);
+        return json({ error: "Could not verify the payment. Nothing was posted." }, 502);
+      }
+      if (!pi) return json({ error: "No such PaymentIntent" }, 404);
+      if (pi.status !== "succeeded") {
+        console.warn("[qbo-post] refused, status", piId, pi.status);
+        return json({ error: "That payment has not succeeded (status: " + pi.status + "). Nothing was posted." }, 409);
+      }
+      // ── 2. The invoice total cannot exceed the money that moved ──────────────
+      // Integer cents on both sides; a float comparison here would reject or admit on rounding.
+      const requestedCents = rows.reduce((n, r) => n + Math.round(r.amount * 100), 0);
+      const chargedCents = Math.round(Number(pi.amount) || 0);
+      if (requestedCents > chargedCents) {
+        console.error("[qbo-post] refused, over-post", piId, requestedCents, ">", chargedCents);
+        await alertAccounting(
+          "Refused a QuickBooks post larger than the payment (" + piId + ")",
+          '<p style="font-weight:700;color:#b91c1c;">A request tried to record MORE against QuickBooks than this payment actually charged. Nothing was posted.</p>' +
+          "<p>PaymentIntent: <code>" + piId + "</code><br>Charged: $" + (chargedCents / 100).toFixed(2) +
+          "<br>Requested: $" + (requestedCents / 100).toFixed(2) + "</p>" +
+          "<p><strong>Action:</strong> this should not happen from the portal. Check what called it before posting anything by hand.</p>"
+        );
+        return json({ error: "The invoice total exceeds the amount charged. Nothing was posted." }, 409);
+      }
+      // ── 3. A stamped mapping wins over the caller's ──────────────────────────
+      const stamped = unpackQboInvoices(pi.metadata || {});
+      if (stamped) {
+        const byId = new Map(stamped.map((r) => [String(r.qboId), r]));
+        const mismatch = rows.find((r) => {
+          const m = byId.get(String(r.qboId));
+          return !m || Math.round(m.amount * 100) !== Math.round(r.amount * 100);
+        });
+        if (mismatch) {
+          console.error("[qbo-post] refused, metadata mismatch", piId, mismatch.qboId);
+          return json({ error: "These invoices do not match the ones recorded on the payment. Nothing was posted." }, 409);
+        }
+      }
+      // ── Post ─────────────────────────────────────────────────────────────────
+      const paymentDate = new Date().toISOString().split("T")[0];
+      const results = [];
+      let sawAmbiguous = false;
+      for (const r of rows) {
+        const o = await postInvoicePayment({ piId, qboId: r.qboId, amount: r.amount, paymentDate, by: "browser" });
+        if (o.outcome === "ambiguous") {
+          // Check the ledger before treating it as a problem — an earlier attempt may well have
+          // landed, in which case there is nothing wrong and nobody to tell.
+          if (await invoiceIsSettled(r.qboId, r.docNum)) {
+            results.push({ qboId: r.qboId, docNum: r.docNum, outcome: "already" });
+            continue;
+          }
+          sawAmbiguous = true;
+        }
+        results.push({ qboId: r.qboId, docNum: r.docNum, outcome: o.outcome, reason: o.reason });
+      }
+      if (sawAmbiguous) {
+        await alertAccounting(
+          "A QuickBooks post was left in an unknown state (" + piId + ")",
+          '<p style="font-weight:700;color:#b91c1c;">An earlier attempt claimed one or more invoices on this payment and never finished, and the invoice is still showing a balance. Whether QuickBooks received that write cannot be determined automatically.</p>' +
+          "<p>PaymentIntent: <code>" + piId + "</code></p>" +
+          "<p><strong>Action:</strong> check these invoices in QuickBooks before posting anything by hand:</p><ul>" +
+          results.filter((r) => r.outcome === "ambiguous").map((r) => "<li>Invoice #" + r.docNum + " (QBO id " + r.qboId + ")</li>").join("") +
+          "</ul>"
+        );
+      }
+      return json({ ok: true, results });
     }
     if (pathname === "/attach-payment-method" && request.method === "POST") {
       try {
