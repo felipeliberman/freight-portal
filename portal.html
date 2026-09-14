@@ -4248,6 +4248,21 @@ function showStripePaymentModal(invoices) {
         <button id="ach-relink-btn" style="margin-left:auto;background:none;border:none;font-size:11px;color:#888;cursor:pointer;text-decoration:underline;">Change</button>
       </div>
     </div>
+    <div id="ach-bank-pending" style="display:none;">
+      <div style="background:#fdf6e3;border:1px solid #e5c07b;border-radius:10px;padding:14px;">
+        <div style="font-size:13px;font-weight:600;color:#8a6d3b;margin-bottom:6px;" id="ach-pending-title">Verifying your bank account</div>
+        <div style="font-size:12px;color:#8a6d3b;line-height:1.5;margin-bottom:10px;" id="ach-pending-body"></div>
+        <a id="ach-verify-link" href="#" target="_blank" rel="noopener" style="display:inline-block;background:#bd27bc;color:#fff;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;text-decoration:none;font-family:var(--font);">Enter the code</a>
+        <button id="ach-pending-change" style="margin-left:10px;background:none;border:none;font-size:11px;color:#8a6d3b;cursor:pointer;text-decoration:underline;font-family:var(--font);">Use a different account</button>
+      </div>
+    </div>
+    <div id="ach-mandate" style="display:none;margin-top:12px;">
+      <div style="background:#f9f8f5;border:1px solid #e5e2d9;border-radius:10px;padding:12px 14px;">
+        <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Authorization</div>
+        <div id="ach-mandate-text" style="font-size:11px;color:#706c63;line-height:1.6;"></div>
+        <button id="ach-mandate-accept" style="margin-top:10px;background:#bd27bc;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Agree and link account</button>
+      </div>
+    </div>
     <div id="ach-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:16px;"></div>
   `;
   window._achPaymentMethod = null;
@@ -4261,27 +4276,67 @@ function showStripePaymentModal(invoices) {
   window._modalCustomerEmail = customerEmail;
   box.appendChild(achSection);
   
-  // Auto-detect linked PaymentMethods when modal opens
+  // ── THREE states, because the second one used to lie ─────────────────────────
+  //
+  // This listed any us_bank_account PaymentMethod on the customer and painted "linked" — with no
+  // way to tell a verified account from one still waiting on microdeposits. A customer whose bank
+  // could not be charged saw a linked bank and an enabled Pay button.
+  //
+  // /ach-link/status tells them apart, and reports a PENDING verification ahead of anything saved,
+  // because finishing that is the customer's real next step. It authenticates with the customer's
+  // own Primus token: the old /get-payment-methods took an email out of the request body, which
+  // means any address returns that customer's bank name and last4 to anyone who asks. That endpoint
+  // is no longer called from here. It is NOT fixed and still wants its own change.
+  function _achShowPanel(which) {
+    const map = { unlinked: 'ach-bank-unlinked', linked: 'ach-bank-linked', pending: 'ach-bank-pending' };
+    Object.keys(map).forEach(k => {
+      const el = document.getElementById(map[k]);
+      if (el) el.style.display = (k === which) ? 'block' : 'none';
+    });
+    const mandate = document.getElementById('ach-mandate');
+    if (mandate) mandate.style.display = 'none';
+    // Pay is only ever possible against a VERIFIED account. A pending one is exactly the state that
+    // produced six unpayable intents for one invoice.
+    const confirmBtn = document.getElementById('pay-confirm-btn');
+    if (confirmBtn && payMethod === 'ach') confirmBtn.disabled = (which !== 'linked');
+  }
+  function _achAuthHeaders() {
+    // The customer's OWN token, captured at their login — not getToken(), which falls back to the
+    // portal's shared service account once it expires. The Worker resolves identity from whatever
+    // it is given, so a service token would simply resolve to the service account and find nothing.
+    return primusToken ? { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + primusToken } : { 'Content-Type': 'application/json' };
+  }
+  function _achRenderPending(d) {
+    const bank = d.bankName || 'Your bank account';
+    const body = document.getElementById('ach-pending-body');
+    const link = document.getElementById('ach-verify-link');
+    const title = document.getElementById('ach-pending-title');
+    if (title) title.textContent = 'Verifying ' + bank + (d.last4 ? ' ending in ' + d.last4 : '');
+    // No promise of an email from US — the descriptor-code email comes from Stripe, and copy that
+    // says "we'll email you" is a promise this product does not keep.
+    if (body) body.textContent = 'Stripe sent a small deposit to this account with a 6-digit code starting with SM. It takes 1-2 business days to appear on your statement. Enter the code to finish linking, then come back here to pay.';
+    if (link) link.href = d.hostedVerificationUrl || '#';
+    _achShowPanel('pending');
+  }
   async function autoDetectLinkedBank() {
-    if (!customerEmail) return;
     try {
-      const pmRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/get-payment-methods', {
+      const r = await fetch(STRIPE_WORKER + '/ach-link/status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: _achAuthHeaders(),
         body: JSON.stringify({ customerEmail })
       });
-      const pmData = await pmRes.json();
-      if (pmData.paymentMethods && pmData.paymentMethods.length > 0) {
-        const pm = pmData.paymentMethods[0];
-        window._achPaymentMethod = pm.id;
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) { console.error('[ach] status', r.status, d); return; }
+      if (d.state === 'pending') { _achRenderPending(d); return; }
+      if (d.state === 'verified') {
+        window._achPaymentMethod = d.paymentMethodId;
         // The customer this PaymentMethod was listed off, straight from the call that listed it.
         // The pay call MUST build its PaymentIntent on this same customer; resolving identity a
         // second time is what let the two disagree and got the confirm rejected by Stripe.
-        window._stripeCustomerId = pmData.customerId || null;
-        document.getElementById('ach-bank-unlinked').style.display = 'none';
-        document.getElementById('ach-bank-linked').style.display = 'block';
-        document.getElementById('ach-bank-name').textContent = pm.bankName + ' linked';
-        document.getElementById('ach-bank-last4').textContent = pm.last4 ? 'Account ending in ' + pm.last4 : '';
+        window._stripeCustomerId = d.customerId || null;
+        document.getElementById('ach-bank-name').textContent = (d.bankName || 'Bank account') + ' linked';
+        document.getElementById('ach-bank-last4').textContent = d.last4 ? 'Account ending in ' + d.last4 : '';
+        _achShowPanel('linked');
       }
     } catch (e) {
       console.error('Error auto-detecting linked bank:', e);
@@ -4334,6 +4389,48 @@ function showStripePaymentModal(invoices) {
     const invoiceNums = invoiceMeta.map(i => i.invNum).join(', ');
     const WORKER = 'https://stripe-payments.felipe-b80.workers.dev';
 
+    // The in-flight guard answered: this invoice already has a live payment. Say what it is and
+    // offer the two ways out — finish verifying it, or cancel it and pay another way. Refusing
+    // without an exit is how a stuck intent becomes a support ticket instead of a paid invoice.
+    async function _showInFlight(d, errElId) {
+      const errEl = document.getElementById(errElId);
+      const url = d.hostedVerificationUrl;
+      const msg = url
+        ? 'Invoice ' + d.docNum + ' already has a bank payment waiting on verification. Finish verifying it, or cancel it to pay another way.'
+        : 'Invoice ' + d.docNum + ' already has a payment in progress. Cancel it to pay another way.';
+      if (!errEl) return;
+      errEl.textContent = '';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'color:#8a6d3b;';
+      wrap.textContent = msg + ' ';
+      if (url) {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+        a.textContent = 'Enter the code';
+        a.style.cssText = 'color:#bd27bc;font-weight:600;';
+        wrap.appendChild(a);
+        wrap.appendChild(document.createTextNode(' \u00b7 '));
+      }
+      const cancel = document.createElement('button');
+      cancel.textContent = 'Cancel it and pay another way';
+      cancel.style.cssText = 'background:none;border:none;color:#bd27bc;font-weight:600;cursor:pointer;text-decoration:underline;font-family:var(--font);font-size:12px;padding:0;';
+      cancel.onclick = async () => {
+        cancel.disabled = true; cancel.textContent = 'Cancelling…';
+        try {
+          const r = await fetch(WORKER + '/payment/abandon', {
+            method: 'POST', headers: _achAuthHeaders(), body: JSON.stringify({ docNum: d.docNum })
+          });
+          const rd = await r.json().catch(() => ({}));
+          if (!r.ok || rd.error) throw new Error(rd.error || 'Could not cancel that payment.');
+          errEl.textContent = 'Cancelled. You can pay this invoice now.';
+        } catch (e) {
+          errEl.textContent = e.message || 'Could not cancel that payment.';
+        }
+      };
+      wrap.appendChild(cancel);
+      errEl.appendChild(wrap);
+    }
+
     // ── ACH flow ─────────────────────────────────────────────────────────────
     if (payMethod === 'ach') {
       const errEl = document.getElementById('ach-error');
@@ -4365,6 +4462,12 @@ function showStripePaymentModal(invoices) {
           body: JSON.stringify({ amount: total, paymentMethod: 'ach', invoiceNums, customerEmail, customerId: window._stripeCustomerId || undefined, qboInvoices })
         });
         const piData = await piRes.json();
+        if (piRes.status === 409 && piData.code === 'payment_in_flight') {
+          await _showInFlight(piData, 'ach-error');
+          confirmBtn.textContent = 'Pay $' + total.toFixed(2);
+          confirmBtn.disabled = false;
+          return;
+        }
         if (piData.error) throw new Error(piData.error);
         // No customer here: the PaymentIntent already carries it, put there by the customerId sent
         // above. Passing it a second time at confirm was always a no-op — the field was hardcoded
@@ -4441,6 +4544,14 @@ function showStripePaymentModal(invoices) {
         body: JSON.stringify({ amount: total, paymentMethod: 'card', invoiceNums, customerEmail, qboInvoices: cardQboInvoices })
       });
       const piData = await piRes.json();
+      if (piRes.status === 409 && piData.code === 'payment_in_flight') {
+        // The guard covers CARD too. Paying by card while a bank payment sits pending verification
+        // is the way a customer actually gets charged twice for one invoice.
+        await _showInFlight(piData, 'stripe-card-error');
+        confirmBtn.textContent = 'Pay $' + total.toFixed(2);
+        confirmBtn.disabled = false;
+        return;
+      }
       if (piData.error) throw new Error(piData.error);
       // Confirm card payment with Stripe.js
       const stripe = window._stripeInstance;
@@ -4503,82 +4614,138 @@ function showStripePaymentModal(invoices) {
     const achLinkBtn   = document.getElementById('ach-link-btn');
     const achRelinkBtn = document.getElementById('ach-relink-btn');
 
+    // Standard ACH debit authorization. NOT reviewed by anyone qualified — this is placeholder
+    // wording that follows the usual shape, and it needs a proper review before it can be relied on.
+    // Stripe requires that the customer be shown authorization terms and accept them BEFORE the
+    // intent is confirmed; nothing was shown here at all previously.
+    const ACH_MANDATE_TEXT = 'By clicking Agree and link account, you authorize Freight and Logistics, Inc. to debit the bank account specified above for any amount owed for charges arising from your use of our services, pursuant to our website and terms, until this authorization is revoked. You may amend or cancel this authorization at any time by providing notice to us with 30 (thirty) days notice. If you use our services periodically or make periodic payments, you authorize us to initiate debits from your account on the dates you have specified.';
+
+    // ── Linking a bank is a SETUP, not a payment ───────────────────────────────
+    //
+    // This used to create a fully-formed PaymentIntent for the invoice total on every click, then
+    // hand the returned PaymentMethod to /attach-payment-method. Neither step belongs here. The
+    // attach is not part of Stripe's ACH flow at all — a SetupIntent (or setup_future_usage on a
+    // confirmed PaymentIntent) is the documented way to save a bank, and it performs the attach
+    // itself. The hand-rolled call failed every time for one customer, leaving five PaymentMethods
+    // with customer: null, and the flow never confirmed anything, so the microdeposits she was told
+    // to wait for were never sent.
+    //
+    // The SetupIntent path also cannot mint a payable object, which is what stops six $457.49
+    // intents existing for one invoice.
     async function linkBankAccount() {
       const btn = document.getElementById('ach-link-btn') || document.getElementById('ach-relink-btn');
+      const errEl = document.getElementById('ach-error');
+      if (errEl) errEl.textContent = '';
       if (btn) { btn.textContent = 'Connecting...'; btn.disabled = true; }
+      const resetBtn = () => { if (btn) { btn.textContent = 'Link Bank Account'; btn.disabled = false; } };
       try {
-        // Create a SetupIntent for Financial Connections
-        const piRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/create-payment-intent', {
+        const siRes = await fetch(STRIPE_WORKER + '/ach-link/start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: calcTotal('ach'), paymentMethod: 'ach', invoiceNums: '', customerEmail: window._modalCustomerEmail || '' })
+          headers: _achAuthHeaders(),
+          body: JSON.stringify({ customerEmail: window._modalCustomerEmail || customerEmail || '' })
         });
-        const piData = await piRes.json();
-        if (piData.error) throw new Error(piData.error);
+        const siData = await siRes.json().catch(() => ({}));
+        if (siRes.status === 401) throw new Error('Your session has expired. Please sign out and back in, then try again.');
+        if (!siRes.ok || siData.error) throw new Error(siData.error || 'Could not start bank setup.');
 
         // Get customer name for billing details
         let custName = '';
         try { const sess = JSON.parse(sessionStorage.getItem('fl_session') || '{}'); custName = (sess.customer && (sess.customer.companyName || sess.customer.name)) || ''; } catch(e2) {}
         if (!custName) custName = (window._modalCustomerEmail || '').split('@')[0] || 'Customer';
 
-        const { paymentIntent, error } = await stripe.collectBankAccountForPayment({
-          clientSecret: piData.clientSecret,
+        const { setupIntent, error } = await stripe.collectBankAccountForSetup({
+          clientSecret: siData.clientSecret,
           params: {
             payment_method_type: 'us_bank_account',
             payment_method_data: { billing_details: { name: custName, email: window._modalCustomerEmail || customerEmail || '' } }
           },
           expand: ['payment_method']
         });
-
         if (error) throw new Error(error.message);
 
-        const pm = paymentIntent && paymentIntent.payment_method;
-        if (pm) {
-          const pmId = pm.id || pm;
-          // Attach BEFORE the PaymentMethod is ever used. Financial Connections hands back a
-          // PaymentMethod that belongs to nobody, and an unattached one is single-use — reusing it
-          // on the next visit is the "you must attach it to a Customer first" rejection. This is
-          // the literal answer to that error and what makes the bank survive to the next payment.
-          const atRes = await fetch('https://stripe-payments.felipe-b80.workers.dev/attach-payment-method', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentMethodId: pmId, customerEmail: window._modalCustomerEmail || customerEmail || '' })
-          });
-          const atData = await atRes.json().catch(() => ({}));
-          // Fail closed. A bank shown as linked that is not attached is exactly the half-state this
-          // is fixing, so a failed attach shows as a failed link and the customer retries the button.
-          if (!atRes.ok || atData.error || !atData.customerId) {
-            throw new Error('Could not finish linking your bank account. Please try again.');
-          }
-          window._achPaymentMethod = pmId;
-          window._stripeCustomerId = atData.customerId;
+        // The customer closed the Financial Connections modal. Not an error, and not a state to
+        // report as one — the old code had no branch for it at all.
+        if (!setupIntent || setupIntent.status === 'requires_payment_method') { resetBtn(); return; }
+        if (setupIntent.status !== 'requires_confirmation') { resetBtn(); return; }
 
-          const bankName = (pm.us_bank_account && pm.us_bank_account.bank_name) || 'Bank account';
-          const last4    = (pm.us_bank_account && pm.us_bank_account.last4) || '';
-          document.getElementById('ach-bank-unlinked').style.display = 'none';
-          document.getElementById('ach-bank-linked').style.display = 'block';
-          document.getElementById('ach-bank-name').textContent = bankName + ' linked';
-          document.getElementById('ach-bank-last4').textContent = last4 ? 'Account ending in ' + last4 : '';
-          // Update confirm button
-          const confirmBtn = document.getElementById('pay-confirm-btn');
-          if (confirmBtn) confirmBtn.textContent = 'Pay $' + calcTotal('ach').toFixed(2);
-        }
+        // An account was collected — possibly instantly verified, possibly typed in by hand. Either
+        // way the next step is the same: show the authorization, and confirm once it is accepted.
+        const pm = setupIntent.payment_method || {};
+        const u = pm.us_bank_account || {};
+        const mandate = document.getElementById('ach-mandate');
+        const mtext = document.getElementById('ach-mandate-text');
+        if (mtext) mtext.textContent = ACH_MANDATE_TEXT;
+        if (mandate) mandate.style.display = 'block';
+        if (btn) btn.textContent = 'Waiting for authorization…';
+
+        const accept = document.getElementById('ach-mandate-accept');
+        if (!accept) throw new Error('Could not show the authorization terms. Please refresh and try again.');
+        accept.onclick = async () => {
+          accept.disabled = true;
+          accept.textContent = 'Linking…';
+          try {
+            const { setupIntent: si2, error: e2 } = await stripe.confirmUsBankAccountSetup(siData.clientSecret);
+            if (e2) throw new Error(e2.message);
+            if (mandate) mandate.style.display = 'none';
+
+            if (si2 && si2.status === 'succeeded') {
+              // Instantly verified. The PaymentMethod is attached to the customer by the SetupIntent
+              // itself — no separate attach call, which is the whole point.
+              window._achPaymentMethod = si2.payment_method || pm.id || null;
+              window._stripeCustomerId = siData.customerId || null;
+              document.getElementById('ach-bank-name').textContent = (u.bank_name || 'Bank account') + ' linked';
+              document.getElementById('ach-bank-last4').textContent = u.last4 ? 'Account ending in ' + u.last4 : '';
+              _achShowPanel('linked');
+              const confirmBtn = document.getElementById('pay-confirm-btn');
+              if (confirmBtn) confirmBtn.textContent = 'Pay $' + calcTotal('ach').toFixed(2);
+              return;
+            }
+            const na = (si2 && si2.next_action) || {};
+            if (na.type === 'verify_with_microdeposits') {
+              // Record the intent so coming back MEANS something. Without this the customer returns
+              // to a blank panel and starts another setup, which is the loop that produced six.
+              try {
+                await fetch(STRIPE_WORKER + '/ach-link/pending', {
+                  method: 'POST',
+                  headers: _achAuthHeaders(),
+                  body: JSON.stringify({ setupIntentId: si2.id })
+                });
+              } catch (e3) { console.error('[ach] could not record pending setup', e3); }
+              _achRenderPending({
+                bankName: u.bank_name || 'Your bank account',
+                last4: u.last4 || '',
+                hostedVerificationUrl: (na.verify_with_microdeposits || {}).hosted_verification_url || ''
+              });
+              return;
+            }
+            throw new Error('Your bank account could not be linked (status: ' + ((si2 && si2.status) || 'unknown') + '). Please try again or email support@freightandlogistics.ai.');
+          } catch (e4) {
+            if (errEl) errEl.textContent = e4.message || 'Could not link your bank account. Please try again.';
+            accept.disabled = false;
+            accept.textContent = 'Agree and link account';
+            resetBtn();
+          }
+        };
       } catch(e) {
-        const errEl = document.getElementById('ach-error');
         if (errEl) errEl.textContent = e.message || 'Could not connect bank account. Please try again.';
-        if (btn) { btn.textContent = 'Link Bank Account'; btn.disabled = false; }
+        resetBtn();
       }
     }
 
     if (achLinkBtn)   achLinkBtn.onclick   = linkBankAccount;
-    if (achRelinkBtn) achRelinkBtn.onclick  = () => {
+    const _achReset = () => {
       window._achPaymentMethod = null;
       window._stripeCustomerId = null;
-      document.getElementById('ach-bank-linked').style.display = 'none';
-      document.getElementById('ach-bank-unlinked').style.display = 'block';
+      _achShowPanel('unlinked');
       const linkBtn = document.getElementById('ach-link-btn');
       if (linkBtn) { linkBtn.textContent = 'Link Bank Account'; linkBtn.disabled = false; }
     };
+    if (achRelinkBtn) achRelinkBtn.onclick = _achReset;
+    // "Use a different account" while a verification is outstanding. The pending SetupIntent is left
+    // alone deliberately — it stays valid, and Stripe's own 10-day timeout retires it. Starting a new
+    // setup is the customer changing their mind, not a reason to tear down the one still in flight.
+    const achPendingChange = document.getElementById('ach-pending-change');
+    if (achPendingChange) achPendingChange.onclick = _achReset;
 
   } else {
     cardElementWrap.innerHTML = '<div style="font-size:12px;color:#dc2626;">Stripe failed to load. Please refresh and try again.</div>';

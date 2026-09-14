@@ -282,6 +282,108 @@ export default {
       if (raw === "ach" || raw === "us_bank_account") return { code: "ach", label: "ACH payment", detail: "ACH payment" };
       return { code: "unknown", label: "Payment", detail: "unknown" };
     }
+    // ── WHO IS ASKING ──────────────────────────────────────────────────────────
+    //
+    // The bank-link routes below hand back a live capability — a Stripe-hosted verification URL
+    // that completes a bank setup — so "which customer is this" cannot be a field the caller fills
+    // in. /get-payment-methods does exactly that (it reads customerEmail out of the request body
+    // and answers with that customer's bank name and last4), which means one curl with somebody
+    // else's address is enough. That endpoint is left alone here only because tightening it would
+    // break every browser still running the old page; it is NOT fixed and wants its own change.
+    //
+    // These routes take ONLY the customer's own Primus bearer token — the one their login issued,
+    // not the portal's shared service account — and ask Primus who it belongs to. billToInformation
+    // on /applet/v1/profile is self-scoped to the authenticated account, so the answer comes from
+    // Primus rather than from the request. There is no identity field to forge because there is no
+    // identity field.
+    //
+    // Fails safe on the shared token too: portal.html's getToken() falls back to the service
+    // account after 50 minutes, and that token simply resolves to the service account, which owns
+    // no customer's bank link. It gets nothing rather than getting everything.
+    const PRIMUS_BASE = "https://freightandlogistics-api.shipprimus.com";
+    async function primusIdentity(request2) {
+      const auth = request2.headers.get("Authorization") || "";
+      const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
+      if (!m) return null;
+      try {
+        const r = await fetch(PRIMUS_BASE + "/applet/v1/profile", {
+          headers: { "Authorization": "Bearer " + m[1] }
+        });
+        if (!r.ok) return null;
+        const d = await r.json();
+        const bt = (d.data && d.data.results && d.data.results.billToInformation) || null;
+        if (!bt || bt.id == null) return null;
+        return { primusCustomerId: String(bt.id), name: bt.name || "" };
+      } catch (e) {
+        // Cannot establish who this is -> nobody. Never degrade to trusting the body.
+        return null;
+      }
+    }
+    // ── ACH bank link: the pending SetupIntent, so a return visit RESUMES ───────
+    //
+    // A manually-entered bank account cannot be verified instantly; Stripe sends microdeposits that
+    // take 1-2 business days, and the SetupIntent sits in requires_action until the customer enters
+    // the descriptor code. That intent is the thing to come back to. Nothing recorded it before, so
+    // every return visit started over and minted another one — six in two days for one customer,
+    // none of which could ever complete.
+    //
+    // Keyed by the PRIMUS customer id derived from the token above, never by anything the caller
+    // sends. TTL comfortably outlives Stripe's own 10-day microdeposit timeout so the record cannot
+    // disappear while the intent it points at is still live.
+    const ACH_LINK_TTL_SEC = 60 * 60 * 24 * 21;
+    function achLinkKey(primusCustomerId) {
+      return "achlink:" + primusCustomerId;
+    }
+    // ── The in-flight payment guard ────────────────────────────────────────────
+    //
+    // A PaymentIntent stuck in requires_action never posts, so the invoice stays "unpaid" and stays
+    // payable — which is how one invoice collected six intents. The guard stops the seventh.
+    //
+    // It is a CACHED POINTER, NOT A LOCK, and the distinction is the whole design. It is revalidated
+    // against Stripe on every read, so it can never outlive the intent it names: a succeeded, failed,
+    // cancelled or timed-out intent clears it on the next look. A stuck payment therefore degrades
+    // into a payable invoice on its own rather than into a support ticket. The TTL is a backstop for
+    // a revalidation that never happens, not the mechanism.
+    //
+    // Deliberately keyed on the invoice alone: its job is preventing a second payment for the same
+    // invoice, not access control, and the caller already supplies the invoice number.
+    const PAY_GUARD_TTL_SEC = 60 * 60 * 24 * 14;
+    function payGuardKey(docNum) {
+      return "payguard:inv:" + String(docNum);
+    }
+    // Live = still capable of taking money. Anything else is spent or dead and must not block.
+    function intentIsLive(status) {
+      return status === "requires_action" || status === "requires_confirmation" || status === "processing";
+    }
+    async function stripeGet(path) {
+      const r = await fetch("https://api.stripe.com/v1/" + path, {
+        headers: { "Authorization": `Bearer ${STRIPE_SK}`, "Stripe-Version": STRIPE_VERSION }
+      });
+      const d = await r.json().catch(() => ({}));
+      return r.ok && d && d.id ? d : null;
+    }
+    // Reads the guard for one invoice and REVALIDATES it. Returns the live intent, or null after
+    // clearing a pointer that no longer names one.
+    async function liveIntentForInvoice(docNum) {
+      if (!env.STRIPE_KV || !docNum) return null;
+      const key = payGuardKey(docNum);
+      let piId;
+      try { piId = await env.STRIPE_KV.get(key); } catch (e) { return null; }
+      if (!piId) return null;
+      const pi = await stripeGet("payment_intents/" + encodeURIComponent(piId));
+      if (!pi || !intentIsLive(pi.status)) {
+        // The intent it pointed at is spent, dead, or gone. Clear rather than block.
+        try { await env.STRIPE_KV.delete(key); } catch (e) {}
+        return null;
+      }
+      return pi;
+    }
+    function microdepositUrl(intent) {
+      const na = (intent && intent.next_action) || {};
+      if (na.type !== "verify_with_microdeposits") return null;
+      const v = na.verify_with_microdeposits || {};
+      return v.hosted_verification_url || null;
+    }
     // Stripe webhook signature. The raw request text MUST be hashed — parsing to JSON and
     // re-stringifying reorders/reformats bytes and the HMAC will never match.
     async function verifyStripeSignature(rawBody, sigHeader, secret, nowSec, toleranceSec = 300) {
@@ -425,6 +527,163 @@ export default {
         return json({ error: e.message }, 502);
       }
     }
+    // ── /ach-link/start — a SetupIntent, NOT a PaymentIntent ───────────────────
+    //
+    // Linking a bank used to mint a fully-formed, payable PaymentIntent for the invoice total on
+    // every click of "Link Bank Account", before the Financial Connections modal had even opened.
+    // One customer produced six of them at $457.49 apiece. None could charge — none was ever
+    // confirmed — but six payable objects for one invoice is not a thing a link button should be
+    // able to create, and the one that carried no payment method at all was simply an abandoned
+    // modal. A SetupIntent cannot take money, which is the correct shape for "save my bank".
+    //
+    // verification_method is deliberately NOT set. Stripe's default offers instant verification with
+    // manual account-number entry as the fallback. Forcing instant would hard-fail every bank
+    // Financial Connections cannot reach, which is worse than a fallback that works — the fallback
+    // was never the defect here, the handling of it was. Decision, not omission.
+    if (pathname === "/ach-link/start" && request.method === "POST") {
+      const who = await primusIdentity(request);
+      if (!who) return json({ error: "Not signed in" }, 401);
+      try {
+        const { customerEmail } = await request.json().catch(() => ({}));
+        // The Stripe customer stays the email-keyed one the payment path already uses, so nothing
+        // about how invoices get paid moves in this change. Authorisation is the Primus id above;
+        // this is only resolution. (The account has two identity spines — email here, primusCustomerId
+        // on the prepaid path — which is a known open item and not one this change tries to settle.)
+        if (!customerEmail) return json({ error: "Missing customerEmail" }, 400);
+        const customerId = await getOrCreateCustomer(customerEmail);
+        const siParams = new URLSearchParams({ customer: customerId, usage: "off_session" });
+        siParams.append("payment_method_types[]", "us_bank_account");
+        siParams.append("metadata[fl_primus]", who.primusCustomerId);
+        const siRes = await fetch("https://api.stripe.com/v1/setup_intents", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${STRIPE_SK}`, "Stripe-Version": STRIPE_VERSION, "Content-Type": "application/x-www-form-urlencoded" },
+          body: siParams.toString()
+        });
+        const si = await siRes.json();
+        if (si.error) return json({ error: si.error.message }, 400);
+        return json({ clientSecret: si.client_secret, setupIntentId: si.id, customerId });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+    // ── /ach-link/pending — remember the intent so the customer can come back ───
+    //
+    // Called once the confirm has landed in requires_action. This is the entire difference between
+    // "come back in 1-2 days and verify" meaning something and meaning nothing.
+    if (pathname === "/ach-link/pending" && request.method === "POST") {
+      const who = await primusIdentity(request);
+      if (!who) return json({ error: "Not signed in" }, 401);
+      if (!env.STRIPE_KV) return json({ error: "Store unavailable" }, 503);
+      try {
+        const { setupIntentId } = await request.json().catch(() => ({}));
+        if (!/^seti_[A-Za-z0-9_]+$/.test(String(setupIntentId || ""))) {
+          return json({ error: "A valid setupIntentId is required" }, 400);
+        }
+        // Verify it is real, and that it is THIS customer's, before recording it. The id arrives
+        // from the browser, so it is checked against Stripe rather than trusted.
+        const si = await stripeGet("setup_intents/" + encodeURIComponent(setupIntentId));
+        if (!si) return json({ error: "No such SetupIntent" }, 404);
+        if ((si.metadata || {}).fl_primus !== who.primusCustomerId) {
+          return json({ error: "That setup does not belong to this account" }, 403);
+        }
+        await env.STRIPE_KV.put(achLinkKey(who.primusCustomerId), si.id, { expirationTtl: ACH_LINK_TTL_SEC });
+        return json({ ok: true });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+    // ── /ach-link/status — the three states, told apart ─────────────────────────
+    //
+    // The panel used to have two states, and the second one lied: autoDetectLinkedBank listed any
+    // us_bank_account PaymentMethod on the customer and painted "linked", with no idea whether it
+    // could actually be charged. A bank pending microdeposit verification looked identical to a
+    // verified one, so the customer clicked Pay on something that could not pay.
+    //
+    // 'pending' carries the verification URL, so coming back to the portal is a route to finishing
+    // rather than a dead end.
+    if (pathname === "/ach-link/status" && request.method === "POST") {
+      const who = await primusIdentity(request);
+      if (!who) return json({ error: "Not signed in" }, 401);
+      try {
+        const { customerEmail } = await request.json().catch(() => ({}));
+        // A pending setup outranks a saved PaymentMethod: if verification is outstanding, that is
+        // the customer's actual next step whatever else is on file.
+        if (env.STRIPE_KV) {
+          let seti = null;
+          try { seti = await env.STRIPE_KV.get(achLinkKey(who.primusCustomerId)); } catch (e) {}
+          if (seti) {
+            const si = await stripeGet("setup_intents/" + encodeURIComponent(seti) + "?expand[]=payment_method");
+            const url = microdepositUrl(si);
+            if (si && si.status === "requires_action" && url) {
+              const pm = si.payment_method || {};
+              const u = pm.us_bank_account || {};
+              return json({ state: "pending", hostedVerificationUrl: url, bankName: u.bank_name || "Bank account", last4: u.last4 || "" });
+            }
+            // Verified, failed, cancelled or timed out — the pointer is spent either way. Clear it
+            // and fall through to whatever is actually saved on the customer.
+            try { await env.STRIPE_KV.delete(achLinkKey(who.primusCustomerId)); } catch (e) {}
+          }
+        }
+        if (!customerEmail) return json({ state: "none" });
+        const customerId = await getOrCreateCustomer(customerEmail);
+        const pmRes = await fetch(`https://api.stripe.com/v1/payment_methods?customer=${customerId}&type=us_bank_account`, {
+          headers: { "Authorization": `Bearer ${STRIPE_SK}` }
+        });
+        const pmData = await pmRes.json();
+        if (pmData.error) return json({ error: pmData.error.message }, 400);
+        const pm = (pmData.data || [])[0];
+        if (!pm) return json({ state: "none", customerId });
+        const u = pm.us_bank_account || {};
+        // Attached to the customer means a SetupIntent succeeded, which means verified. That is the
+        // property the old listing had no way to establish, because it never went through a setup.
+        return json({ state: "verified", customerId, paymentMethodId: pm.id, bankName: u.bank_name || "Bank account", last4: u.last4 || "" });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+    // ── /payment/abandon — the customer's own way out ──────────────────────────
+    //
+    // The fourth way the in-flight guard clears, and the only one a person drives. Success, failure
+    // and Stripe's 10-day microdeposit timeout all clear it by revalidation without anyone asking;
+    // this is for the customer who has simply changed their mind and wants to pay another way today
+    // rather than wait out a verification they no longer intend to finish.
+    //
+    // Cancelling a PaymentIntent is a write, so it is gated on the caller's own Primus token and on
+    // the intent still being live. It cannot cancel a payment that is already processing or settled
+    // — intentIsLive() admits 'processing', so that is excluded explicitly here: money on the way is
+    // not something a UI button gets to reverse.
+    if (pathname === "/payment/abandon" && request.method === "POST") {
+      const who = await primusIdentity(request);
+      if (!who) return json({ error: "Not signed in" }, 401);
+      if (!env.STRIPE_KV) return json({ error: "Store unavailable" }, 503);
+      try {
+        const { docNum } = await request.json().catch(() => ({}));
+        const doc = String(docNum || "").trim();
+        if (!doc) return json({ error: "A docNum is required" }, 400);
+        const live = await liveIntentForInvoice(doc);
+        if (!live) {
+          // Already clear — revalidation found nothing live and removed the pointer. Report success:
+          // the customer asked for a payable invoice and that is what they have.
+          return json({ ok: true, cleared: true, cancelled: false });
+        }
+        if (live.status === "processing") {
+          return json({ error: "That payment is already on its way to the bank and cannot be cancelled here. Email support@freightandlogistics.ai if it needs stopping.", code: "processing" }, 409);
+        }
+        const cr = await fetch("https://api.stripe.com/v1/payment_intents/" + encodeURIComponent(live.id) + "/cancel", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${STRIPE_SK}`, "Stripe-Version": STRIPE_VERSION }
+        });
+        const cd = await cr.json().catch(() => ({}));
+        if (!cr.ok || cd.error) {
+          console.error("[abandon] cancel refused", live.id, cr.status, cd && cd.error);
+          return json({ error: (cd.error && cd.error.message) || "Could not cancel that payment." }, 400);
+        }
+        try { await env.STRIPE_KV.delete(payGuardKey(doc)); } catch (e) {}
+        return json({ ok: true, cleared: true, cancelled: true });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
     if (pathname === "/create-payment-intent" && request.method === "POST") {
       try {
         const body = await request.json();
@@ -448,6 +707,33 @@ export default {
         // ACH reuses a stored PaymentMethod, so its PaymentIntent MUST carry the owning customer.
         // A customer-less ACH PaymentIntent is exactly the split-brain this endpoint used to ship.
         if (isAch && !customerId) return json({ error: "Could not resolve a Stripe customer for this account" }, customerEmail ? 502 : 400);
+        // ── IN-FLIGHT GUARD ──────────────────────────────────────────────────
+        //
+        // Refuse to mint a second payable intent for an invoice that already has a live one. This is
+        // the mechanism that let one invoice accumulate six: an intent parked in requires_action
+        // never posts, so the invoice never flips to paid, so it stayed selectable and payable
+        // forever. It guards the CARD rail too — paying by card while a bank payment is pending
+        // verification is the way to actually get charged twice.
+        //
+        // It does not refuse outright. It hands back the live intent so the caller can offer to
+        // finish it or cancel it, and liveIntentForInvoice() revalidates against Stripe first, so a
+        // spent or dead pointer clears itself instead of stranding the invoice.
+        const guardRows = Array.isArray(body.qboInvoices) ? body.qboInvoices : [];
+        for (const g of guardRows) {
+          const docNum = String((g && g.docNum) || "").trim();
+          if (!docNum) continue;
+          const live = await liveIntentForInvoice(docNum);
+          if (live) {
+            return json({
+              error: "There is already a payment in progress for invoice " + docNum + ".",
+              code: "payment_in_flight",
+              docNum,
+              paymentIntentId: live.id,
+              intentStatus: live.status,
+              hostedVerificationUrl: microdepositUrl(live)
+            }, 409);
+          }
+        }
         const amountCents = Math.round(amount * 100);
         const piParams = new URLSearchParams({
           amount: amountCents.toString(),
@@ -503,6 +789,17 @@ export default {
         });
         const piData = await piRes.json();
         if (piData.error) return json({ error: piData.error.message }, 400);
+        // Point each invoice at the intent just created. Best-effort by design: a failed write costs
+        // the guard, not the payment, and the next read revalidates whatever it finds anyway.
+        if (env.STRIPE_KV && piData.id) {
+          for (const g of guardRows) {
+            const docNum = String((g && g.docNum) || "").trim();
+            if (!docNum) continue;
+            try { await env.STRIPE_KV.put(payGuardKey(docNum), piData.id, { expirationTtl: PAY_GUARD_TTL_SEC }); } catch (e) {
+              console.error("[guard] could not record in-flight intent for invoice", docNum, e);
+            }
+          }
+        }
         return json({ clientSecret: piData.client_secret, customerId, paymentIntentId: piData.id });
       } catch (e) {
         return json({ error: e.message }, 500);
