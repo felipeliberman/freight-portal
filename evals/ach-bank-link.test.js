@@ -130,6 +130,47 @@ test('copy promises no email this product does not send', () => {
   A.ok(/1-2 business days/.test(seg), 'the pending copy no longer states the 1-2 business day wait');
 });
 
+// ── CORS: the preflight must permit what the client actually sends ───────────
+//
+// This is the check that was missing when the authenticated routes shipped, and the gap cost a live
+// outage: nobody could link a bank. Allow-Headers said "Content-Type", the new routes send
+// Authorization as well, so the browser got a 200 preflight that declined the header its POST
+// needed and blocked the request — 0 bytes transferred, "Failed to fetch" in the panel.
+//
+// It survived a curl probe returning 401 because CURL DOES NOT ENFORCE CORS. A terminal request
+// proves a route exists and proves nothing about whether a browser can reach it. So this asserts the
+// relationship statically, cross-file: every header portal.html sends must appear in the Worker's
+// Allow-Headers. No network and no browser needed, which is what makes it a harness test rather than
+// a thing someone has to remember to check.
+function allowedHeaders() {
+  const m = /"Access-Control-Allow-Headers":\s*"([^"]*)"/.exec(worker);
+  A.ok(m, 'the CORS Allow-Headers entry is gone');
+  return m[1].split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
+}
+
+test('CORS permits every header the portal sends to the Worker', () => {
+  const allowed = allowedHeaders();
+  const i = portal.indexOf('function _achAuthHeaders');
+  A.ok(i > -1, 'the auth-header helper is gone — find where the new routes get their headers');
+  const body = portal.slice(i, portal.indexOf('}', portal.indexOf('return', i)) + 1);
+  const sent = [...body.matchAll(/'([A-Za-z-]+)'\s*:/g)].map(m => m[1].toLowerCase());
+  A.ok(sent.length >= 2, 'could not read the headers the portal sends: ' + JSON.stringify(sent));
+  for (const h of sent) {
+    A.ok(allowed.includes(h),
+      'portal.html sends "' + h + '" but the Worker\'s Access-Control-Allow-Headers is "' + allowed.join(', ') +
+      '" — the browser will block the POST after a 200 preflight, and curl will not notice');
+  }
+});
+
+test('an authenticated route implies Authorization is allowed', () => {
+  // The causal link, asserted directly so the two can never drift apart again: if ANY route gates on
+  // primusIdentity, the preflight has to permit the header that carries the token.
+  const authed = /primusIdentity\(request\)/.test(worker);
+  if (!authed) return;
+  A.ok(allowedHeaders().includes('authorization'),
+    'a route authenticates with a bearer token, but Access-Control-Allow-Headers does not permit Authorization');
+});
+
 test('verification_method stays unset, deliberately', () => {
   A.ok(!/verification_method/.test(workerCode),
     'verification_method is now set — instant-only hard-fails every bank Financial Connections cannot reach');

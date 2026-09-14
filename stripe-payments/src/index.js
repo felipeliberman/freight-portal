@@ -5,10 +5,23 @@ export default {
     const SENDGRID_KEY = env.SENDGRID_KEY;
     const RECAPTCHA_SECRET = env.RECAPTCHA_SECRET;
     const STRIPE_VERSION = "2024-06-20";
+    // Allow-Headers must name EVERY header a caller sends, or the browser blocks the request after
+    // a preflight that looked fine. This said "Content-Type" for as long as no route needed
+    // authentication, and the day the first authenticated routes shipped (/ach-link/*,
+    // /payment/abandon, which send Authorization) bank linking broke for everyone: preflight 200,
+    // POST blocked, 0 bytes transferred, "Failed to fetch" in the panel.
+    //
+    // It is one global object shared by every route, so this is never a per-route problem — and the
+    // route that still worked (/create-payment-intent) had the identical CORS. The difference was
+    // only that it sends Content-Type alone. Adding an authenticated route means checking here.
+    //
+    // NOT catchable by curl: curl does not enforce CORS, so a 401 from the terminal proves the route
+    // exists and proves nothing about whether a browser can reach it. Verify with a real preflight —
+    // OPTIONS carrying Access-Control-Request-Headers — and read what comes back.
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
+      "Access-Control-Allow-Headers": "Content-Type, Authorization"
     };
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
     function json(data, status = 200) {
