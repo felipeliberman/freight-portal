@@ -44,11 +44,30 @@ function injectKnowledge(payload, cacheable) {
 
 export default {
   async fetch(request, env, ctx) {
-    // Lock to your domain only
+    // Lock to your domain only.
+    //
+    // ── WHY THE PRODUCTION PAGES URL IS A MEMBER AND THE PREVIEWS ARE NOT ────────────────────
+    //
+    // This list is read in two places with DIFFERENT effects, and the difference is the whole
+    // reason this entry exists. Below, it only SELECTS a CORS header value, and the block that
+    // does so ORs in a `*.freight-portal.pages.dev` suffix match — so previews already get a
+    // header. At `/_clienterr` it is an ACCESS CONTROL: a non-member's error report is delivered
+    // and then discarded before it is ever logged.
+    //
+    // That asymmetry made the client-error sink BLIND TO freight-portal.pages.dev — the one
+    // origin on which a refused document download is reproducible — so the instrumentation built
+    // to identify the failing origin could not see the failing origin. The production Pages URL
+    // is therefore a member here, EXACTLY, with no suffix.
+    //
+    // PREVIEW DEPLOYMENTS ARE DELIBERATELY STILL EXCLUDED from the sink. They are publicly
+    // reachable and serve arbitrary older code; a log sink that accepts reports from any of them
+    // accepts reports attributable to code nobody is running. The suffix match below stays where
+    // it is and is NOT copied up here — this entry is the narrow allowance, not a policy change.
     const ALLOWED_ORIGINS = [
       'https://freightandlogistics.ai',
       'https://www.freightandlogistics.ai',
-      'https://felipeliberman.github.io'
+      'https://felipeliberman.github.io',
+      'https://freight-portal.pages.dev'
     ];
     const origin = request.headers.get('Origin') || '';
 
