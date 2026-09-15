@@ -9,6 +9,10 @@
 // Servable, and nothing else: the customer-facing HTML pages (index, portal, admin, track),
 // logo.png, logo-white.png, sample-slip.png, and the logos/ + docs/ image directories.
 //
+// privacy.html is the canonical, crawlable Privacy Policy. It is the URL given to the
+// Shopify App Store listing for the F&L Checkout Rates app, so it must be publicly
+// reachable and readable without JavaScript.
+//
 // track.html is the unbranded partner tracking page — partners embed
 // /track.html?q={PRO} in their own portal, so it must be publicly reachable. It carries no
 // branding and reads only the public fl-tracking Worker, so it exposes nothing the landing
@@ -26,6 +30,7 @@ const ALLOWED_EXACT = new Set([
   '/portal', '/portal.html',
   '/admin', '/admin.html',
   '/track', '/track.html',
+  '/privacy', '/privacy.html',
   '/logo.png', '/logo-white.png', '/sample-slip.png',
 ]);
 const ALLOWED_PREFIXES = ['/logos/', '/docs/'];
