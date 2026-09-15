@@ -8804,7 +8804,7 @@ async function downloadDoc(btn, bolNumber, type, label) {
   // A failure the CUSTOMER can see. The route answers 404 for not-yours, not-shareable and
   // not-ready alike — deliberately, so it cannot be used to probe other accounts — so this says
   // one honest thing without claiming to know which. Email only, never a phone (no-phone-as-fallback).
-  const fail = function () {
+  const fail = function (why, res, err) {
     if (btn) { btn.disabled = true; btn.style.opacity = '.5'; btn.style.cursor = 'default'; btn.textContent = 'Unavailable'; }
     const modalBody = document.getElementById('docs-modal-body');
     if (modalBody) {
@@ -8817,15 +8817,41 @@ async function downloadDoc(btn, bolNumber, type, label) {
       }
       note.textContent = DOCS_UNAVAILABLE;
     }
+    // ── CAPTURE ONLY. Everything the customer sees happened above and is unchanged. ──────────
+    //
+    // A REFUSED DOCUMENT USED TO BE COMPLETELY INVISIBLE TO US. The `!res.ok` path — a 404 from
+    // the route, which is this failure's EXPECTED shape — logged nothing at all, so the only
+    // signal this class of failure has ever produced is a customer complaint. The route's own
+    // `doc.miss` lines live in a different Worker's logs, so nothing correlated the refusal with
+    // the browser that saw it.
+    //
+    // `why` SEPARATES THE TWO CAUSES THAT ARE INDISTINGUISHABLE IN THE UI, and they have opposite
+    // fixes: an `http` report means the request ARRIVED and the route refused it (the document
+    // genuinely did not resolve for this caller), while a `threw` report means it never arrived
+    // at all — a failed CORS preflight or a dead network — which is a property of the ORIGIN the
+    // page was served from, not of the document. `origin` in the base payload is what closes that.
+    //
+    // NEVER THROWS INTO THE FAILURE IT IS REPORTING ON: the guard matches this file's existing
+    // idiom (see the doGetRates capture site) and the whole call is wrapped.
+    try {
+      if (typeof _reportErr === 'function') _reportErr({
+        fn: 'downloadDoc',
+        phase: why || 'unknown',
+        endpoint: 'docs:/s/{bol}/' + _type,
+        httpStatus: (res && res.status != null) ? res.status : null,
+        errName: 'DocRefused',
+        errMessage: 'document refused: type=' + _type + ' bol=' + _bol + ' why=' + (why || 'unknown')
+      }, err || null);
+    } catch (e2) {}
   };
-  if (!_bol || !_type) { fail(); return; }
+  if (!_bol || !_type) { fail('preflight'); return; }
 
   if (btn) { btn.disabled = true; btn.style.opacity = '.6'; btn.textContent = 'Downloading…'; }
   try {
     const res = await fetch(DOC_ROUTE + '/s/' + encodeURIComponent(_bol) + '/' + encodeURIComponent(_type), {
       headers: { 'Authorization': 'Bearer ' + (await getToken()) },
     });
-    if (!res.ok) { fail(); return; }
+    if (!res.ok) { fail('http', res); return; }
     const blobUrl = URL.createObjectURL(await res.blob());
     if (_lastDocObjectUrl) { try { URL.revokeObjectURL(_lastDocObjectUrl); } catch (e) {} }
     _lastDocObjectUrl = blobUrl;
@@ -8839,7 +8865,7 @@ async function downloadDoc(btn, bolNumber, type, label) {
     if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = _orig; }
   } catch (e) {
     console.error('Download error:', e);
-    fail();
+    fail('threw', null, e);
   }
 }
 // ── ACCESSORIAL LOOKUP ────────────────────────────────────────────────────────
@@ -15821,6 +15847,17 @@ function _reportErr(info, err) {
       errStack: String((err && err.stack) || '').slice(0, 4096),
       fn: fn,
       phase: info.phase || null,
+      // WHICH ORIGIN THE PAGE WAS SERVED FROM. The portal answers on three
+      // (www, the apex, and the legacy github.io mirror) and they are NOT
+      // interchangeable to every backend it calls — docs.freightandlogistics.ai
+      // allows exactly one, so a failure can be a property of the URL the
+      // customer arrived on rather than of their account or their network.
+      // The proxy already logs the Origin HEADER, which is the unforgeable
+      // copy; this one makes the report self-contained for a reader parsing
+      // only `report`. Read defensively so `base` keeps the property the
+      // comment above claims for it — it is also the degraded-report fallback,
+      // so if building it throws, NOTHING is sent.
+      origin: String((typeof location !== 'undefined' && location && location.origin) || ''),
       tsUtc: new Date().toISOString(),
       sessionId: _errSessionId,
       reportSeq: _errRepTotal + 1
